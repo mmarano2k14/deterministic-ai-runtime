@@ -2,7 +2,7 @@
 
 ## Deterministic AI Runtime Platform
 
-**Current status:** Runtime Pool identity, ProcessHostPool, KubernetesPool, HTTP/gRPC transport preservation, hierarchical child and full-boundary failure recovery, shared durable failure authority, warm reuse, bounded capacity, replay, ledger, lifecycle, and forensics proofs are implemented and validated.
+**Current status:** Runtime Pool identity, ProcessHostPool, KubernetesPool, HTTP/gRPC transport preservation, hierarchical child and full-boundary failure recovery, operator-triggered external parent-boundary failure, shared durable failure authority, warm reuse, bounded capacity, replay, ledger, lifecycle, and forensics proofs are implemented and validated.
 
 This document keeps the historical filename for stable documentation links, but it now describes delivered capability and the remaining distributed-scale work rather than an implementation sequence.
 
@@ -87,12 +87,14 @@ Implemented and validated:
 - in-flight resume with the same `ExecutionId`;
 - durable `SharedRunId` redispatch for local-queued work;
 - exact one-run child recovery;
-- exact five-run full-boundary recovery in the validated 3 × 5 topology;
+- exact five-run full-boundary recovery across the current 3 × 5, 5 × 5, and 7 × 5 closure profiles;
 - warm reuse without intermediate cleanup.
 
 ---
 
 ## Production Validation Matrix
+
+Automatic full-boundary failure:
 
 ```text
 gRPC + ProcessHostPool   PASS
@@ -101,7 +103,18 @@ gRPC + KubernetesPool    PASS
 HTTP + KubernetesPool    PASS
 ```
 
-Each final scenario validates 150 DAGs and 7500 logical steps across two warm cycles with two child crashes and two full-boundary crashes.
+Operator-triggered external full-boundary failure:
+
+```text
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
+```
+
+Current closure profiles range from 3 × 5 to 7 × 5 parent/runtime capacity. The automatic matrix closes 1950 DAGs and 97500 logical steps; the external-manual matrix repeats the same workload profiles. Across both trigger modes this is 3900 completed DAGs, 195000 logical steps, 16 child-runtime failures, 16 full-boundary failures, and 96 exact recoveries.
+
+The largest single closure profile is gRPC ProcessHostPool `7 × 5 × 20 × 2`: 35 reusable runtime slots, 700 DAGs per cycle, 1400 DAGs and 70000 logical steps per scenario. Because both the automatic-parent-failure and external-manual-parent-kill variants are green at that profile, gRPC ProcessHostPool alone contributes 2800 completed DAGs, 140000 logical steps, 4 child-runtime failures, 4 full ProcessHost failures, and 24 exact recoveries to the closure evidence.
 
 See [Runtime Pool Production Validation](../ai/runtime-pool-production-validation.md).
 

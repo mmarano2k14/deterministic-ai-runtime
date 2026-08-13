@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Status: Actively validated by a large unit and integration suite covering MCP, Redis, local runtime pools, HTTP/gRPC ProcessHostPool, KubernetesPool, historical one-runtime-per-Pod Kubernetes hosting, real process and Pod failure, hierarchical child/full-boundary recovery, multi-tenant isolation, replay, ledger, lifecycle, trace, and forensics proof.
+Status: Actively validated by a large unit and integration suite covering MCP, Redis, local runtime pools, HTTP/gRPC ProcessHostPool, KubernetesPool, historical one-runtime-per-Pod Kubernetes hosting, real process and Pod failure, hierarchical child/full-boundary recovery, operator-triggered external parent-boundary failure, multi-tenant isolation, replay, ledger, lifecycle, trace, and forensics proof.
 
 This document describes the testing strategy used to validate the Deterministic AI Runtime.
 
@@ -2292,6 +2292,7 @@ Recovery validation should include replay report, replay ledger, replay trace, e
 | Historical Process HTTP/gRPC regression | P10 green |
 | Existing Kubernetes HTTP/gRPC regression | P5 green |
 | KubernetesPool hierarchical child + Pod failure proof | Green over HTTP and gRPC |
+| External-manual full-boundary failure proof | Green over HTTP/gRPC × ProcessHostPool/KubernetesPool |
 
 ---
 
@@ -2457,7 +2458,9 @@ The goal is to prove runtime guarantees.
 
 ## Final Hierarchical Runtime Pool Production Matrix
 
-The final Runtime Pool production tests use the same workload and failure contract across both transports and both hosting boundaries.
+The final Runtime Pool production tests use the same hierarchical correctness contract across both transports and both hosting boundaries. Two trigger modes are validated.
+
+Automatic full-boundary failure:
 
 ```text
 gRPC + ProcessHostPool   PASS
@@ -2466,28 +2469,28 @@ gRPC + KubernetesPool    PASS
 HTTP + KubernetesPool    PASS
 ```
 
-Per scenario:
+Operator-triggered external full-boundary failure:
 
 ```text
-3 parent boundaries × 5 runtimes = 15 active runtimes
-5 full-capacity waves per cycle
-75 DAGs per cycle
-2 warm cycles
-150 DAGs total
-50 logical steps per DAG
-7500 logical steps total
-2 child runtime crashes at >=25 steps
-2 full parent-boundary crashes
-12 exact recovered runs
-150 replay proofs
-0 lost runs
-0 failed runs
-0 duplicate dispatch
-0 configured-capacity violations
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
 ```
 
-The child and parent failures are staged deterministically: four waves exercise the child failure and convergence; the configured final wave is then used to force one distinct fully busy parent boundary. No synthetic extra runs are added.
+Current closure profiles:
 
-Across all four final scenarios the suite executed 600 DAGs, 30,000 logical steps, 8 child failures, 8 full-boundary failures, and 48 recoveries with no correctness violation.
+```text
+gRPC ProcessHostPool   = 7 × 5 capacity, 20 submission iterations/cycle, 2 cycles, 1400 DAGs, 70000 steps
+HTTP ProcessHostPool   = 3 × 5 capacity, 5 submission iterations/cycle, 2 cycles, 150 DAGs, 7500 steps
+gRPC KubernetesPool    = 5 × 5 capacity, 5 submission iterations/cycle, 2 cycles, 250 DAGs, 12500 steps
+HTTP KubernetesPool    = 3 × 5 capacity, 5 submission iterations/cycle, 2 cycles, 150 DAGs, 7500 steps
+```
+
+Every scenario still performs two child-runtime failures at >=25 / 50 completed steps, two later distinct fully busy parent-boundary failures, 12 exact recoveries, warm reuse across two cycles, and final cleanup only after the second cycle.
+
+The external-manual variants keep the child-runtime kill automatic but replace the parent ProcessHost/Pod kill call with an operator gate. The test publishes an exact target outside the buffered xUnit log and waits until that exact boundary disappears before re-entering the existing recovery path.
+
+Across one automatic matrix the closure workload is 1950 DAGs and 97500 logical steps. The manual/external matrix repeats the same workload profiles. Across both trigger modes the suite therefore closes 3900 DAGs and 195000 logical steps with 16 child failures, 16 full-boundary failures, and 96 exact recovered runs.
 
 See [Runtime Pool Production Validation](runtime-pool-production-validation.md).

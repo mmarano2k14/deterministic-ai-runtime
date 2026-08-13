@@ -871,15 +871,17 @@ Delivered capabilities include:
 - exact routing with no sibling fallback;
 - bounded capacity and warm reuse;
 - child-runtime failure isolation and targeted replacement;
-- full ProcessHost or Pod failure recovery;
+- full ProcessHost or Pod failure recovery in both automatic and operator-triggered external modes;
 - shared durable MongoDB failure facts;
 - append-only runtime lifecycle history;
 - exact assigned-work claims and same-`ExecutionId` in-flight resume;
+- durable queue-first required placement before initial dispatch, with failed placement cleared for recovery redispatch;
+- dynamic KubernetesPool replacement routing through a safe same-Pod Gateway ingress alias while preserving a fresh exact child `RuntimeInstanceId`;
 - replay, ledger, trace, lifecycle, and recovery-forensics proof.
 
 The historical one-runtime-per-Pod Kubernetes mode remains available independently.
 
-The final production matrix is green across HTTP/gRPC × ProcessHostPool/KubernetesPool. Remaining infrastructure hardening focuses on multi-control-plane recovery ownership, Redis Cluster compatibility, multi-node scale, and managed-hosting operations.
+Both the automatic and operator-triggered external production matrices are green across HTTP/gRPC × ProcessHostPool/KubernetesPool. The current closure profiles include 7 × 5 gRPC ProcessHostPool capacity and 5 × 5 gRPC KubernetesPool capacity in addition to the 3 × 5 HTTP profiles. Remaining infrastructure hardening focuses on multi-control-plane recovery ownership, Redis Cluster compatibility, multi-node scale, and managed-hosting operations.
 
 See:
 

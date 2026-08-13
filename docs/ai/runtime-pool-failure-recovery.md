@@ -1,6 +1,6 @@
 # Runtime Pool Failure Recovery
 
-**Status:** Implemented and end-to-end validated for child-runtime and full-boundary failure in ProcessHostPool and KubernetesPool over HTTP and gRPC.
+**Status:** Implemented and end-to-end validated for child-runtime and full-boundary failure in ProcessHostPool and KubernetesPool over HTTP and gRPC, including both scenario-triggered and operator-triggered external full-boundary failure.
 
 This document describes how one exact failure fact becomes one exact recovery operation while preserving durable DAG identity, sibling safety, bounded capacity, and historical evidence.
 
@@ -206,6 +206,8 @@ ExecutionId absent
 
 The same contract prevents a vanished local queue from becoming a lost run.
 
+If the original queue-first shared run carried required placement, recovery redispatch does not keep placement that points at failed capacity. The durable `SharedRunId` remains authoritative, but failed runtime/host placement is cleared so admission can select valid replacement capacity.
+
 ---
 
 ## Deterministic Inventory and Claim Authority
@@ -270,7 +272,7 @@ The replacement ProcessHost receives a fresh host incarnation and five fresh chi
 
 The same hierarchical contract applies to a KubernetesPool Pod.
 
-The test force-deletes a distinct fully busy Pod after the child-runtime failure has already converged.
+The automatic test force-deletes a distinct fully busy Pod after the child-runtime failure has already converged. The external-manual variant arms the same exact Pod boundary but does not delete it; it waits until an operator force-deletes that exact Pod from another shell, observes the failed Pod UID disappear, and then resumes the same recovery path.
 
 With five runtimes per Pod:
 
@@ -291,10 +293,10 @@ The child runtime failure and the later Pod failure are separate incidents with 
 
 The combined scenario does not rely on timing luck.
 
-For a 3 × 5 pool with five submission waves:
+For any configured closure profile, all but the final full-capacity submission iteration exercise the child-failure workload and convergence. The final configured iteration is reserved for one distinct fully busy parent boundary.
 
 ```text
-waves 1-4 = 60 DAGs
+initial full-capacity iterations
     ↓
 kill one child runtime at >= 25 / 50 steps
     ↓
@@ -304,16 +306,16 @@ drain initial workload
     ↓
 wait exact warm topology and capacity
     ↓
-wave 5 = 15 DAGs
+final configured full-capacity iteration
     ↓
 select distinct boundary with 5 / 5 active runtimes
     ↓
-kill ProcessHost or Pod
+automatic kill OR external operator kill
     ↓
 recover exactly five runs
 ```
 
-No extra runs are added to make the failure easier to hit. The configured total remains 75 DAGs per cycle.
+No extra runs are added to make the failure easier to hit. The configured workload remains the proof workload.
 
 ---
 
@@ -325,8 +327,8 @@ Cycle two must start with the final topology produced by cycle one:
 
 ```text
 ColdStart = false
-ReusedBoundaryCount = 3
-ReusedRuntimeCount  = 15
+ReusedBoundaryIdentitySet = exact converged boundary set from cycle one
+ReusedRuntimeIdentitySet  = exact converged runtime set from cycle one
 CleanupSincePreviousCycle = false
 ```
 
@@ -357,6 +359,8 @@ Every completed scenario validates:
 
 ## Final Validation Matrix
 
+Automatic full-boundary failure:
+
 ```text
 gRPC + ProcessHostPool   PASS
 HTTP + ProcessHostPool   PASS
@@ -364,20 +368,18 @@ gRPC + KubernetesPool    PASS
 HTTP + KubernetesPool    PASS
 ```
 
-Each final scenario validates:
+Operator-triggered external full-boundary failure:
 
 ```text
-150 / 150 DAGs completed
-7500 logical steps
-2 child runtime crashes
-2 full-boundary crashes
-12 recovered runs
-150 replay proofs
-0 lost runs
-0 failed runs
-0 duplicate dispatch
-0 capacity violations
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
 ```
+
+Current closure profiles are intentionally non-uniform: gRPC ProcessHostPool uses 7 × 5 capacity with 20 submission iterations per cycle; gRPC KubernetesPool uses 5 × 5 capacity with 5 iterations; HTTP ProcessHostPool and HTTP KubernetesPool use 3 × 5 capacity with 5 iterations. All execute two warm cycles and the same child/full-boundary recovery contract.
+
+Across both trigger modes the current closure runs represent 3900 completed DAGs, 195000 logical steps, 16 child-runtime failures, 16 full-boundary failures, and 96 exact recovered runs. Eight full-boundary failures were performed externally by an operator after the test armed the exact target.
 
 See [Runtime Pool Production Validation](runtime-pool-production-validation.md).
 

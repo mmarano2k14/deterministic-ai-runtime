@@ -1,6 +1,6 @@
 # Runtime Pool Architecture
 
-**Status:** Implemented and end-to-end validated for ProcessHostPool and KubernetesPool over HTTP and gRPC. Historical Process and one-runtime-per-Pod Kubernetes hosting remain available as separate compatibility modes.
+**Status:** Implemented and end-to-end validated for ProcessHostPool and KubernetesPool over HTTP and gRPC, including automatic and operator-triggered external full-boundary failure. Historical Process and one-runtime-per-Pod Kubernetes hosting remain available as separate compatibility modes.
 
 The Runtime Pool architecture provides reusable warm execution capacity without collapsing a runtime process into the ProcessHost or Kubernetes Pod that happens to contain it.
 
@@ -259,6 +259,18 @@ The ProcessHostPool stable endpoint reuses the existing generated runtime comman
 
 KubernetesPool preserves the configured HTTP or gRPC provider semantics through the Pod/Gateway transport path. The Pod itself never becomes the command provider.
 
+For shared-Gateway exposure, the logical runtime target and the Gateway ingress routing value are intentionally distinct concepts. Initial runtimes normally publish a routing value equal to their `RuntimeInstanceId`. A dynamically created replacement inside an already-live Pod can instead reuse a safe same-Pod sibling Gateway route alias while retaining a fresh `RuntimeInstanceId`.
+
+```text
+Gateway routing header value
+    = ingress alias that reaches the correct Pod service
+
+Runtime command body RuntimeInstanceId
+    = exact logical child target
+```
+
+The in-Pod router resolves the exact child from the command body. Reusing a same-Pod Gateway alias therefore does not reuse execution identity and does not turn the Pod into the runtime authority.
+
 ---
 
 ## Forwarding Leases and Draining
@@ -339,7 +351,7 @@ The boundary identity never replaces the child execution identities in the run i
 
 Runtime Pools reuse converged capacity before creating replacement boundaries.
 
-A validated 3 × 5 topology means:
+One validated baseline 3 × 5 topology means:
 
 ```text
 3 ProcessHosts or Pods
@@ -350,6 +362,26 @@ A validated 3 × 5 topology means:
 Production validation submits full-capacity waves, injects failures while work is live, waits for exact recovery and convergence, then reuses the same warm pool for another cycle without intermediate cleanup.
 
 The transport router remains exact. Capacity selection and scale-out stay in the control plane.
+
+Validated closure topologies now include 3 × 5, 5 × 5, and 7 × 5 boundary/runtime configurations. The current gRPC closure runs use 5 Pods × 5 runtimes for KubernetesPool and 7 ProcessHosts × 5 runtimes for ProcessHostPool, while the HTTP closure runs retain 3 × 5.
+
+---
+
+## Durable Queue-First Placement
+
+Runtime placement can cross a queue-first handoff before a local `RunId` exists. When required placement is present, it is persisted with the durable shared-run record and restored by dispatch-time admission.
+
+```text
+QueueFirst submit with required placement
+    ↓
+shared run persists placement
+    ↓
+shared queue dispatcher restores placement
+    ↓
+exact runtime admission / dispatch
+```
+
+Recovery redispatch intentionally clears failed placement so a recovered shared run is not pinned back to a dead runtime or dead parent boundary. Placement is durable scheduling intent for the initial dispatch, not a permanent execution identity.
 
 ---
 
@@ -435,7 +467,7 @@ The exact configuration surface depends on the host composition, but the archite
 
 ## End-to-End Validation Matrix
 
-The same hierarchical failure contract is validated across:
+Automatic full-boundary failure:
 
 ```text
 gRPC + ProcessHostPool   PASS
@@ -444,40 +476,27 @@ gRPC + KubernetesPool    PASS
 HTTP + KubernetesPool    PASS
 ```
 
-Each final scenario uses:
+Operator-triggered external full-boundary failure:
 
 ```text
-3 failure boundaries
-5 runtimes per boundary
-15 active runtimes
-5 full-capacity waves per cycle
-75 DAGs per cycle
-2 warm cycles
-150 DAGs total
-50 logical steps per DAG
-7500 logical steps total
-2 child runtime crashes
-2 full-boundary crashes
-12 recovered runs
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
 ```
 
-Across all four final scenarios:
+Current closure profiles:
 
 ```text
-600 submitted DAGs
-600 completed DAGs
-30000 logical steps
-8 child runtime crashes
-8 full-boundary crashes
-48 recovered runs
-600 replay proofs
-0 lost runs
-0 failed runs
-0 duplicate dispatch
-0 configured-capacity violations
+gRPC ProcessHostPool   = 7 boundaries × 5 runtimes × 20 submission iterations × 2 cycles
+HTTP ProcessHostPool   = 3 boundaries × 5 runtimes × 5 submission iterations × 2 cycles
+gRPC KubernetesPool    = 5 boundaries × 5 runtimes × 5 submission iterations × 2 cycles
+HTTP KubernetesPool    = 3 boundaries × 5 runtimes × 5 submission iterations × 2 cycles
 ```
 
-See [Runtime Pool Production Validation](runtime-pool-production-validation.md) for the proof contract and evidence boundaries.
+Across one automatic matrix this is 1950 completed DAGs and 97500 logical steps. The external-manual matrix repeats the same workload profiles. Across both trigger modes the closure evidence is 3900 completed DAGs, 195000 logical steps, 16 child failures, 16 full-boundary failures, 96 exact recovered runs, and no correctness violation reported by the final scenario assertions.
+
+See [Runtime Pool Production Validation](runtime-pool-production-validation.md) for the proof contract, operator workflow, and evidence boundaries.
 
 ---
 

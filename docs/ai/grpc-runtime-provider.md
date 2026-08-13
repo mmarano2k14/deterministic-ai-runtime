@@ -332,6 +332,8 @@ The Runtime Host Manager owns host creation or attachment mechanics.
 
 In process mode, the runtime process owns registration and heartbeat. In Kubernetes mode, the strategy creates the `RuntimeInstanceOnly` Pod and Service, resolves a direct or shared-Gateway endpoint, waits for Kubernetes and gRPC command readiness, and then publishes registry/capacity metadata from the control plane. Both modes preserve `provider.name = grpc` and `transport.name = grpc`.
 
+Shared-Gateway dispatch uses descriptor metadata `gateway.routing.value` when present and falls back to the logical `RuntimeInstanceId` otherwise. A dynamic KubernetesPool replacement can therefore use a safe same-Pod Gateway ingress alias while the gRPC command body retains the replacement's fresh exact runtime identity.
+
 The runtime host still owns its local queue, workers, and DAG execution.
 
 See [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md) for lifecycle, readiness, Gateway, publication, and termination details.

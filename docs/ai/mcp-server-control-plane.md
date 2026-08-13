@@ -147,6 +147,30 @@ The RBAC layer is responsible for:
 - exposing the current execution context to the runtime adapter
 - allowing control-plane tools to remain adapter-level, not engine-level.
 
+### RBAC context lifecycle and concurrency semantics
+
+The RBAC runtime now distinguishes context lifecycle failure from real concurrency exhaustion. An acquire attempt has explicit result semantics:
+
+```text
+Acquired
+ContextNotFound
+LimitExceeded
+```
+
+This keeps HTTP status meaning precise:
+
+```text
+missing / expired access context
+    -> 403
+
+valid context at concurrency limit
+    -> 429
+```
+
+Redis context lifetime uses the configured `SessionIdleTimeout`. The in-flight counter uses `InFlightCounterTtl`, and `RefreshInFlightCounterTtlOnAcquire` controls whether a successful acquire refreshes that counter TTL. The context TTL and in-flight-counter TTL are intentionally separate concerns.
+
+Client-provided max-in-flight override is honored only when `AllowClientMaxInFlightOverride` is enabled. That switch is intended for controlled demo/test scenarios; when disabled, server-side concurrency policy remains authoritative.
+
 MCP tools should use capability checks for sensitive operations.
 
 Examples:

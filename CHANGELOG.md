@@ -6,6 +6,1467 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.8.3 - 2026-08-13 — Runtime Pool External Failure Proofs, Routing Hardening, and Final Scale Validation
+
+## Delivered objective
+
+The Runtime Pool production-validation phase was extended without replacing the existing hierarchical failure contract.
+
+This increment closes four remaining areas:
+
+- preservation of required QueueFirst placement until the real initial dispatch;
+- exact routing for dynamically replaced KubernetesPool child runtimes;
+- RBAC separation between expired/missing execution context and real concurrency exhaustion;
+- independent external/manual parent-boundary failure proofs across HTTP and gRPC for both `ProcessHostPool` and `KubernetesPool`.
+
+The existing automatic full-failure scenarios remain intact and green.
+
+The new external/manual variants reuse the same production scenario and recovery assertions. The only behavioral difference is the source of the full parent-boundary failure:
+
+```text
+automatic variant
+    → harness destroys the selected parent boundary
+
+external/manual variant
+    → harness arms one exact fully busy parent boundary
+    → operator destroys it outside the test
+    → runtime detects the disappearance
+    → the same recovery proof continues
+```
+
+No duplicate scenario implementation was introduced.
+
+---
+
+## Final validated Runtime Pool profiles
+
+The closing production matrix intentionally uses different scale profiles.
+
+```text
+gRPC ProcessHostPool
+    7 ProcessHosts
+    × 5 runtimes per ProcessHost
+    × 20 submission iterations per cycle
+    × 2 warm cycles
+
+HTTP ProcessHostPool
+    3 ProcessHosts
+    × 5 runtimes per ProcessHost
+    × 5 submission iterations per cycle
+    × 2 warm cycles
+
+gRPC KubernetesPool
+    5 Pods
+    × 5 runtimes per Pod
+    × 5 submission iterations per cycle
+    × 2 warm cycles
+
+HTTP KubernetesPool
+    3 Pods
+    × 5 runtimes per Pod
+    × 5 submission iterations per cycle
+    × 2 warm cycles
+```
+
+Every submitted DAG executes 50 logical steps.
+
+---
+
+## gRPC ProcessHostPool scale proof — `7 × 5 × 20 × 2`
+
+The largest final Runtime Pool scenario now validates:
+
+```text
+7 ProcessHosts
+× 5 runtimes per ProcessHost
+= 35 independently selectable runtime slots
+
+35 runtime slots
+× 20 submission iterations per cycle
+= 700 DAG executions per cycle
+
+700 DAGs
+× 2 warm-reuse cycles
+= 1,400 DAG executions per scenario
+
+1,400 DAGs
+× 50 logical steps
+= 70,000 logical steps per scenario
+```
+
+The automatic parent-failure variant is green.
+
+The external/manual parent-kill variant is also green.
+
+Each independent variant therefore proves:
+
+```text
+1,400 completed DAGs
+70,000 logical steps
+2 child-runtime failures
+2 complete ProcessHost failures
+12 exact recoveries
+```
+
+Across the two independent gRPC ProcessHostPool executions:
+
+```text
+2,800 completed DAGs
+140,000 logical steps
+4 child-runtime failures
+4 complete ProcessHost failures
+24 exact recoveries
+```
+
+The `2,800` DAG figure is an aggregate across two independent production runs, not one single test execution.
+
+---
+
+## QueueFirst durable required-placement preservation
+
+### Corrected problem
+
+A QueueFirst submission could carry an exact required runtime placement at admission time and then lose that placement before the real shared-queue dispatch.
+
+That could allow a later dispatch to select different capacity even though the original submission had already been bound to an exact runtime.
+
+### Correction
+
+The shared durable run record now preserves the typed placement through the QueueFirst handoff.
+
+The initial shared-queue dispatcher reuses that placement when performing the real dispatch.
+
+Recovery intentionally does **not** blindly preserve the original failed runtime placement.
+
+```text
+initial QueueFirst dispatch
+    → preserve exact required placement
+
+recovery redispatch after failed runtime
+    → clear dead placement
+    → allow safe replacement selection
+```
+
+### Result
+
+Initial placement remains deterministic without pinning recovery back to dead capacity.
+
+---
+
+## Dynamic KubernetesPool child routing
+
+### Corrected problem
+
+When one in-Pod runtime process was intentionally killed and replaced dynamically, the new child correctly received a new `RuntimeInstanceId`.
+
+However, transport routing still needed a stable way to reach the same Kubernetes Pod without:
+
+- reusing the dead runtime identity;
+- creating a new Kubernetes route object for every child replacement;
+- allowing the transport layer to select an arbitrary sibling.
+
+### Correction
+
+A dynamically created replacement runtime keeps its new execution-capacity identity while inheriting a safe externally published Gateway routing alias from a surviving sibling in the same:
+
+```text
+PoolId
++
+HostId / Pod
+```
+
+The routing contract is now explicitly separated:
+
+```text
+RuntimeInstanceId
+    = logical execution-capacity identity
+
+gateway.routing.value
+    = transport reachability identity
+```
+
+HTTP and gRPC providers honor the routing alias for transport while retaining the actual replacement `RuntimeInstanceId` in the command body.
+
+The in-Pod route registry still selects the exact target child.
+
+### Result
+
+A child can be replaced dynamically inside a surviving Pod without:
+
+- resurrecting the dead identity;
+- silently routing to a sibling;
+- requiring dynamic per-child Kubernetes route creation.
+
+---
+
+## RBAC execution-context and concurrency correction
+
+### Corrected problem
+
+Expired or missing execution contexts could surface as HTTP `429 Too Many Requests`, making an authorization/lifecycle failure look like a concurrency-capacity failure.
+
+The same area also contained mismatched context/counter TTL behavior and an ineffective demo max-in-flight override.
+
+### Correction
+
+Context acquisition now distinguishes:
+
+```text
+Acquired
+ContextNotFound
+LimitExceeded
+```
+
+The HTTP behavior is:
+
+```text
+missing / expired context
+    → 403 Forbidden
+
+valid context + real concurrency exhaustion
+    → 429 Too Many Requests
+```
+
+Context lifetime and in-flight counter lifetime are independently configured through their intended options.
+
+The implementation also respects configured in-flight counter TTL refresh behavior.
+
+When client max-in-flight override is explicitly enabled, the supplied override is honored instead of being silently clipped to the normal server value.
+
+### Production result
+
+The closing KubernetesPool production proof completed its admission phases with:
+
+```text
+TooManyRequestsRetryCount = 0
+```
+
+The previous stale-context false-429 loop was not observed.
+
+---
+
+## External/manual parent-boundary failure mode
+
+The final production classes now expose an additional manual/external test while reusing the same shared scenario implementation.
+
+Validated combinations:
+
+```text
+gRPC + ProcessHostPool      PASS
+HTTP + ProcessHostPool      PASS
+gRPC + KubernetesPool       PASS
+HTTP + KubernetesPool       PASS
+```
+
+The child-runtime failure remains automatic.
+
+Only the distinct, fully busy **parent boundary** is destroyed externally.
+
+This keeps the same hierarchical proof:
+
+```text
+child runtime failure
+    → exact child recovery
+    → parent survives
+    → sibling identities survive
+    → exact child replacement
+    → warm convergence
+    → distinct fully busy parent boundary armed
+    → external operator destroys parent boundary
+    → runtime detects disappearance
+    → exact full-boundary recovery
+    → warm reuse
+    → second cycle
+    → final cleanup only
+```
+
+---
+
+## External failure operator signal
+
+The manual variants do not depend on finding a line inside the main xUnit log stream.
+
+A dedicated signal file is written outside the test-runner output.
+
+For KubernetesPool:
+
+```powershell
+Get-Content "$env:TEMP\multiplexed-ai-manual-kubernetes-kill.txt" -Wait
+```
+
+For ProcessHostPool:
+
+```powershell
+Get-Content "$env:TEMP\multiplexed-ai-manual-processhost-kill.txt" -Wait
+```
+
+The watcher exposes:
+
+- current cycle;
+- exact target identity;
+- exact Pod name / UID or parent ProcessHost PID;
+- the command to execute;
+- `WAITING` and `OBSERVED` state transitions.
+
+The signal remains usable across both warm cycles.
+
+---
+
+## gRPC KubernetesPool external/manual proof
+
+A concrete closing external-failure run validated:
+
+```text
+MaximumConfiguredPodCount='5'
+RuntimeCountPerPod='5'
+MaximumRuntimeCapacity='25'
+
+ExecutionCycleCount='2'
+TotalSubmittedRunCount='250'
+TotalCompletedRunCount='250'
+TotalLogicalStepCount='12500'
+
+ForcedChildRuntimeKillCount='2'
+PodFailureTrigger='external-manual'
+ForcedPodDeletionCount='0'
+ExternalPodDeletionCount='2'
+
+RecoveredSharedRunCount='12'
+RecoveryForensicsProofCount='12'
+
+WarmPoolReusedBetweenCycles='true'
+IntermediateCleanupExecuted='false'
+
+DuplicateDispatchDetected='false'
+LostRunDetected='false'
+PodCapacityExceeded='false'
+RuntimeCapacityExceeded='false'
+
+RemainingPodCount='0'
+```
+
+The important external-failure distinction is:
+
+```text
+ForcedPodDeletionCount='0'
+ExternalPodDeletionCount='2'
+```
+
+Both full Pod failures were therefore observed after external operator deletion rather than injected by the test harness.
+
+The same full recovery, replay, ledger, trace, lifecycle, forensics, warm-reuse, and cleanup assertions remained green.
+
+---
+
+## Final automatic + external/manual validation matrix
+
+The automatic matrix is green:
+
+```text
+gRPC + ProcessHostPool      PASS
+HTTP + ProcessHostPool      PASS
+gRPC + KubernetesPool       PASS
+HTTP + KubernetesPool       PASS
+```
+
+The external/manual matrix is also green:
+
+```text
+gRPC + ProcessHostPool      PASS
+HTTP + ProcessHostPool      PASS
+gRPC + KubernetesPool       PASS
+HTTP + KubernetesPool       PASS
+```
+
+One pass of the four automatic scenarios represents:
+
+```text
+1,950 completed DAGs
+97,500 logical steps
+8 child-runtime failures
+8 complete parent-boundary failures
+48 exact recoveries
+```
+
+The four external/manual scenarios independently repeat the same validated profiles.
+
+Across both matrices:
+
+```text
+3,900 completed DAGs
+195,000 logical steps
+
+16 child-runtime failures
+16 complete parent-boundary failures
+96 exact recoveries
+```
+
+The full parent-boundary failures consist of:
+
+```text
+8 complete ProcessHost failures
+8 Kubernetes Pod failures
+```
+
+These are validation totals across independent production scenarios, not universal throughput claims.
+
+---
+
+## Final architectural decisions added by this increment
+
+- QueueFirst required placement remains durable until the real initial dispatch;
+- recovery does not repin work to failed runtime placement;
+- a replacement child receives a new `RuntimeInstanceId`;
+- execution identity and transport routing identity remain separate;
+- Gateway routing aliases may be reused within the same surviving Pod without reusing a dead runtime identity;
+- missing or expired RBAC execution context is not reported as concurrency exhaustion;
+- HTTP `403` and `429` represent distinct failure classes;
+- automatic and externally triggered parent failures use the same recovery contract;
+- an external failure proof must wait for disappearance of the exact armed incarnation;
+- manual intervention is signaled outside buffered xUnit output;
+- no intermediate cleanup occurs between warm cycles;
+- final deterministic cleanup remains mandatory.
+
+---
+
+# Closure status
+
+```text
+COMPLETED
+```
+
+The Runtime Pool failure-recovery phase is now closed with:
+
+```text
+automatic hierarchical failure proof
++
+external/manual infrastructure failure proof
++
+HTTP and gRPC
++
+ProcessHostPool and KubernetesPool
++
+warm reuse
++
+exact child and parent recovery
++
+replay / ledger / trace / lifecycle / forensics
++
+zero loss / zero duplicate dispatch / bounded capacity
+```
+
+The next architectural increment can build on this closed Runtime Pool foundation rather than modifying the validated failure model.
+
+---
+
+## 1.0.8.2 - 2026-08-09 — Runtime Pool Hierarchical Failure Recovery and Production Proofs
+
+## Delivered objective
+
+The Runtime Pool production proof was extended from bounded-capacity and single-boundary recovery into a complete hierarchical failure scenario covering both:
+
+- `ProcessHostPool`;
+- `KubernetesPool`;
+
+over both:
+
+- HTTP transport;
+- gRPC transport.
+
+The final proof now validates, in one reusable scenario contract:
+
+1. bounded warm capacity;
+2. a real child runtime process failure after durable DAG progress;
+3. exact child-work recovery;
+4. preservation of the parent failure boundary and healthy siblings;
+5. exact child membership replacement;
+6. warm-capacity reuse without intermediate cleanup;
+7. failure of one distinct fully busy parent boundary;
+8. exact recovery of the complete failed boundary membership;
+9. a second full warm cycle;
+10. replay, ledger, trace, lifecycle, and recovery-forensics evidence;
+11. deterministic cleanup only after the final cycle.
+
+---
+
+## Shared durable Runtime Pool failure authority
+
+### Delivered
+
+The existing Runtime Pool failure journal was promoted from an in-memory harness primitive into a durable shared MongoDB authority.
+
+Introduced and consolidated:
+
+- `IAiRuntimePoolFailureJournal`;
+- `MongoAiRuntimePoolFailureJournal`;
+- `AiRuntimePoolFailureJournalMongoOptions`;
+- `MongoAiRuntimePoolFailureDocument`;
+- `AiRuntimePoolFailureObservationNormalization`;
+- MongoDB and in-memory service-registration extensions.
+
+The journal remains the correctness authority for failure facts, while the existing Runtime Lifecycle Journal remains the append-only infrastructure-history and audit source.
+
+### Failure identity contract
+
+The same incident identity is preserved across the two durable views:
+
+```text
+FailureJournal.FailureId
+    ==
+LifecycleJournal.RuntimeFailureIncidentId
+```
+
+No second conceptual incident store was introduced.
+
+### Durable query support
+
+Failure facts can be queried exactly by:
+
+- `FailureId`;
+- `PoolId`;
+- `HostId`;
+- `RuntimeInstanceId`.
+
+The MongoDB journal uses immutable normalized observations and idempotent duplicate handling.
+
+### Indexed authority
+
+Indexes were added for:
+
+```text
+PoolId + ObservedAtUtc + FailureId
+HostId + ObservedAtUtc + FailureId
+RuntimeInstanceId + ObservedAtUtc + FailureId
+```
+
+---
+
+## Exact MongoDB authority binding
+
+### Corrected problem
+
+The explicit Runtime Pool failure-journal registration originally depended on the process-wide ambient `IMongoDatabase`.
+
+That was unsafe because snapshot, lifecycle, replay, or forensic registrations could already own a different ambient MongoDB database.
+
+In external ProcessHost scenarios this could produce:
+
+```text
+parent ProcessHost
+    → writes failure journal to database A
+
+control plane
+    → reads failure journal from database B
+```
+
+while both used the same collection name.
+
+The symptom was:
+
+```text
+Shared Runtime Pool failure journal did not expose an exact child failure
+ObservedFailureIds=''
+```
+
+### Correction
+
+The explicit MongoDB failure-journal registration now binds directly to its configured:
+
+```text
+ConnectionString
+DatabaseName
+CollectionName
+```
+
+instead of consuming the ambient `IMongoDatabase`.
+
+The ProcessHostPool scenario also propagates the exact failure-journal database configuration to every external parent ProcessHost.
+
+### Result
+
+A child failure observed inside an external ProcessHost becomes immediately visible to the control-plane recovery coordinator through the same durable MongoDB authority.
+
+---
+
+## Exact ProcessHostPool child recovery
+
+### Delivered
+
+The ProcessHostPool hierarchical scenario now proves a real child runtime crash independently from a parent ProcessHost crash.
+
+The child path:
+
+```text
+child runtime executes DAG
+→ reaches at least 25 / 50 completed steps
+→ exact OS child process is killed
+→ parent ProcessHost remains alive
+→ healthy sibling runtime identities remain alive
+→ parent publishes exact failure fact
+→ control plane reads the same durable FailureId
+→ exact recovery claim is acquired
+→ one failed run is resumed
+→ same ExecutionId is preserved
+→ replacement child runtime restores membership
+```
+
+### Recovery authority
+
+The test does not enable the generic execution reconciler.
+
+Recovery uses the existing Runtime Pool primitives:
+
+- exact assigned-work enumeration;
+- Runtime Pool recovery claim coordination;
+- claimed recovery execution;
+- durable failure authority.
+
+This avoids a competing generic reconciliation path.
+
+---
+
+## Deterministic hierarchical failure waves
+
+### Corrected problem
+
+The first combined child + parent scenario submitted all configured waves before the child recovery completed.
+
+By the time the scenario attempted to select a distinct fully busy parent boundary, the workload could already have drained completely.
+
+Observed symptom:
+
+```text
+MaximumActiveRuntimeCountOnOneHost='0'
+```
+
+### Correction
+
+The workload is now deterministically split without increasing the configured run count.
+
+For `(3 boundaries × 5 runtimes × 5 waves)`:
+
+```text
+waves 1-4
+    → 60 DAGs
+    → child runtime crash and exact recovery
+    → drain
+    → full warm-capacity convergence
+
+wave 5
+    → 15 DAGs
+    → reuse exact warm capacity
+    → select a distinct fully busy boundary
+    → crash boundary
+    → recover exact failed membership
+```
+
+Total remains:
+
+```text
+75 DAGs per cycle
+```
+
+The shared cycle runner also supports a starting iteration number so the deferred wave retains its real wave identity and does not reuse correlation identities.
+
+---
+
+## Exact current-failure suppression proof
+
+### Corrected problem
+
+The parent recovery proof originally queried every suppression historically associated with a host.
+
+After a previous child failure on the same host, a later parent failure could observe:
+
+```text
+5 suppressions from the current parent failure
++
+1 historical child suppression
+\=
+6
+```
+
+even though the current parent recovery itself correctly recovered exactly five runtimes.
+
+### Correction
+
+The proof now scopes suppression evidence by:
+
+```text
+current FailureId
++
+Scope = HostMembership
+```
+
+before validating the exact failed runtime membership.
+
+### Result
+
+Historical failure evidence remains durable and queryable, while each recovery proof evaluates only the suppressions belonging to the current incident.
+
+---
+
+## KubernetesPool child replacement capacity convergence
+
+### Corrected problem
+
+After an intentionally killed in-Pod child runtime was replaced, the bounded-capacity observer could temporarily see:
+
+```text
+16 runtime snapshots
+for a configured maximum of 15
+```
+
+The extra snapshot was the historical registry view of the intentionally failed child, not a valid sixteenth runtime capacity slot.
+
+### Correction
+
+The Kubernetes bounded-capacity observer now tracks the exact intentionally failed child `RuntimeInstanceId` and excludes that unsafe historical snapshot from active-capacity accounting.
+
+The existing physical replacement and safety behavior were not changed.
+
+### Result
+
+Capacity proof measures active valid capacity rather than transient historical registry visibility.
+
+---
+
+## Typed Kubernetes tenant ownership
+
+### Corrected problem
+
+The shared real-runtime crash helper previously validated tenant ownership through a runtime-ID naming convention.
+
+That was invalid for KubernetesPool replacement and secondary runtime identities such as:
+
+```text
+mcp-http-kubernetes-pool-...-runtime-2-...
+```
+
+even though the Runtime Registry contained the correct typed tenant identity.
+
+### Correction
+
+KubernetesPool ownership proof now resolves the exact runtime snapshot and validates:
+
+```text
+snapshot.TenantId == expected TenantId
+```
+
+### Result
+
+Tenant correctness is based on a first-class typed identity instead of a naming convention.
+
+No transport, DAG, recovery, or Kubernetes runtime behavior was changed.
+
+---
+
+## Final reusable production scenario contract
+
+Each final scenario uses:
+
+```text
+BoundaryCount = 3
+RuntimeCountPerBoundary = 5
+MaximumRuntimeCapacity = 15
+SubmissionIterationCountPerCycle = 5
+SubmittedRunCountPerCycle = 75
+ExecutionCycleCount = 2
+TotalSubmittedRunCount = 150
+LogicalStepsPerRun = 50
+TotalLogicalStepCount = 7500
+KillAfterCompletedStepCount = 25
+CleanupPolicy = after-final-cycle-only
+```
+
+Every cycle performs:
+
+```text
+60 initial DAGs
+→ exact child runtime crash
+→ 1 exact child recovery
+→ warm convergence
+→ 15 deferred DAGs
+→ distinct fully busy boundary crash
+→ 5 exact boundary recoveries
+→ 75 / 75 DAG completion
+→ replay + ledger + trace + lifecycle + forensics proof
+```
+
+Therefore each complete two-cycle scenario validates:
+
+```text
+150 submitted DAGs
+150 completed DAGs
+7500 logical steps
+2 child runtime crashes
+2 parent-boundary crashes
+12 recovered runs
+150 replay proofs
+0 lost runs
+0 failed runs
+0 duplicate dispatch
+0 logical-step duplication outside recovery
+0 configured-capacity violation
+```
+
+---
+
+## Final ProcessHostPool validation
+
+### gRPC ProcessHostPool
+
+Validated:
+
+```text
+3 ProcessHosts
+5 runtimes per ProcessHost
+15 active runtimes
+2 warm cycles
+150 / 150 DAGs completed
+7500 logical steps
+2 child runtime crashes
+2 parent ProcessHost crashes
+12 recovered runs
+150 replay proofs
+0 lost runs
+0 failed runs
+0 duplicate dispatch
+0 ProcessHost capacity overflow
+0 runtime capacity overflow
+```
+
+The scenario proves:
+
+- shared durable MongoDB child-failure authority;
+- exact `CandidateCount=1 / AcceptedCount=1` child recovery;
+- same `ExecutionId` before and after child recovery;
+- parent survival and sibling preservation;
+- exact child membership replacement;
+- distinct fully busy parent failure;
+- exact `CandidateCount=5 / AcceptedCount=5` parent recovery;
+- warm reuse across the second cycle.
+
+### HTTP ProcessHostPool
+
+Final validated result:
+
+```text
+ExecutionCycleCount='2'
+ProcessHostCount='3'
+RuntimeCountPerHost='5'
+TotalRuntimeCount='15'
+TotalSubmittedRunCount='150'
+TotalCompletedRunCount='150'
+TotalLogicalStepCount='7500'
+TotalReplayProofCount='150'
+ChildRuntimeCrashCount='2'
+ParentHostCrashCount='2'
+RecoveredRunCount='12'
+FinalParentProcessCountAlive='3'
+```
+
+Final safety proof:
+
+```text
+QueueDrained='true'
+ExactDispatchValidated='true'
+DagCompletionValidated='true'
+ReplayValidated='true'
+LedgerValidated='true'
+LogicalStepLedgerIdentityValidated='true'
+TraceValidated='true'
+ExactChildRuntimeRecoveryValidated='true'
+ChildRuntimeParentBoundarySurvived='true'
+ChildRuntimeSiblingIdentityPreserved='true'
+ExactParentHostRecoveryValidated='true'
+RecoveryForensicsValidated='true'
+
+DuplicateDispatchDetected='false'
+LostRunDetected='false'
+FailedRunDetected='false'
+ProcessHostCapacityExceeded='false'
+RuntimeCapacityExceeded='false'
+```
+
+Observed scenario duration before cleanup:
+
+```text
+00:10:43.9735672
+```
+
+---
+
+## Final KubernetesPool validation
+
+### gRPC KubernetesPool
+
+Validated over two warm cycles:
+
+```text
+3 Pods
+5 runtimes per Pod
+15 active runtimes
+150 / 150 DAGs completed
+7500 logical steps
+2 child runtime crashes
+2 Pod crashes
+12 recovered runs
+0 lost runs
+0 duplicate dispatch
+0 Pod-capacity overflow
+0 runtime-capacity overflow
+```
+
+The scenario proves:
+
+- exact in-Pod child-process kill after durable progress;
+- exact one-run recovery;
+- same `ExecutionId` across recovery;
+- parent Pod survival;
+- preservation of four healthy sibling runtimes;
+- exact child replacement;
+- deferred warm wave on reused capacity;
+- distinct fully busy Pod deletion;
+- exact five-run Pod recovery;
+- second cycle from warm capacity without intermediate cleanup.
+
+### HTTP KubernetesPool
+
+Final validated result:
+
+```text
+ExecutionCycleCount='2'
+MaximumConfiguredPodCount='3'
+RuntimeCountPerPod='5'
+MaximumRuntimeCapacity='15'
+TotalSubmittedRunCount='150'
+TotalCompletedRunCount='150'
+TotalLogicalStepCount='7500'
+ForcedChildRuntimeKillCount='2'
+ForcedPodDeletionCount='2'
+RecoveredSharedRunCount='12'
+RecoveryForensicsProofCount='12'
+FinalPhysicalPodCountBeforeCleanup='3'
+WarmPoolReusedBetweenCycles='true'
+IntermediateCleanupExecuted='false'
+DuplicateDispatchDetected='false'
+LostRunDetected='false'
+PodCapacityExceeded='false'
+RuntimeCapacityExceeded='false'
+```
+
+The second cycle explicitly starts with:
+
+```text
+ReusedPodCount='3'
+ReusedRuntimeCount='15'
+ColdStart='false'
+CleanupSincePreviousCycle='false'
+```
+
+Final deterministic cleanup completes with:
+
+```text
+RemainingPodCount='0'
+```
+
+Observed scenario duration:
+
+```text
+~20m33s
+```
+
+---
+
+# Final transport and boundary matrix
+
+The complete production matrix is now validated:
+
+```text
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
+```
+
+The same hierarchical correctness contract is therefore proven independently across both transport providers and both Runtime Pool failure-boundary models.
+
+---
+
+# Aggregate validated proof
+
+Across the four final two-cycle production scenarios:
+
+```text
+600 submitted DAGs
+600 completed DAGs
+30000 logical steps
+8 child runtime crashes
+8 parent-boundary crashes
+48 recovered runs
+600 replay proofs
+0 lost runs
+0 failed runs
+0 duplicate dispatch
+0 configured-capacity violations
+```
+
+Boundary crashes consist of:
+
+```text
+4 ProcessHost crashes
+4 Kubernetes Pod crashes
+```
+
+---
+
+# Final architectural decisions
+
+- a child runtime process is an execution-capacity identity, not its parent failure boundary;
+- a ProcessHost and a Kubernetes Pod are failure boundaries, not execution identities;
+- child failure and full-boundary failure are distinct recovery scopes;
+- failure facts are durable and shared through the Runtime Pool failure journal;
+- infrastructure history remains in the Runtime Lifecycle Journal;
+- recovery exclusivity remains owned by the existing Runtime Pool claim coordination;
+- correctness-critical identities remain typed and first-class;
+- tenant ownership is never inferred from a runtime-name convention;
+- historical failure evidence is retained rather than deleted to simplify a current proof;
+- active-capacity proofs exclude intentionally failed historical snapshots;
+- generic execution reconciliation remains disabled in the ProcessHostPool production proof to avoid competing recovery authorities;
+- HTTP and gRPC use the same correctness contract;
+- no intermediate cleanup is allowed between warm cycles.
+
+---
+
+# Closure status
+
+```text
+COMPLETED
+```
+
+The Runtime Pool hierarchical failure-recovery phase is now closed with the same end-to-end production proof passing across HTTP and gRPC for both ProcessHostPool and KubernetesPool.
+
+The validated path now demonstrates:
+
+```text
+bounded warm pool
+→ real child runtime failure after durable progress
+→ exact child recovery
+→ parent boundary and sibling preservation
+→ exact child replacement
+→ warm-capacity reuse
+→ distinct fully busy boundary failure
+→ exact full-boundary recovery
+→ second complete warm cycle
+→ replay + ledger + trace + lifecycle + forensics
+→ zero loss / zero duplicate / bounded capacity
+→ final deterministic cleanup
+```
+
+---
+
+## 1.0.8.1 - 2026-07-30  Durable Runtime Lifecycle Journal
+
+## Delivered objective
+
+The project replaces the harness's temporary in-memory history with a durable MongoDB journal covering host, Pod, runtime, and run-placement lifecycle events.
+
+The final model clearly separates:
+
+- the **Runtime Registry**, which is the source of current state;
+- the **Runtime Lifecycle Journal**, which is the durable source of infrastructure history;
+- the **Decision Ledger**, which records decisions;
+- **Recovery Forensics**, which provide detailed recovery evidence for each work item.
+
+The journal is append-only, remains queryable after cleanup, and is correlated through first-class identities.
+
+---
+
+## Lifecycle Journal foundation
+
+### Delivered
+
+- introduced `IAiRuntimeLifecycleJournal`;
+- added the append-only `AiRuntimeLifecycleEvent` model;
+- added durable MongoDB, in-memory test, and no-op implementations;
+- added the dedicated MongoDB collection `ai_runtime_lifecycle_events`;
+- added typed queries by:
+  - `ControlPlaneId`;
+  - `PoolId`;
+  - `HostId`;
+  - `KubernetesPodUid`;
+  - `RuntimeInstanceId`;
+  - `RuntimeFailureIncidentId`;
+  - `SharedRunId`;
+  - `ExecutionId`;
+  - `CorrelationId`;
+- preserved correctness-critical values as first-class properties;
+- restricted `Metadata` to diagnostic or provider-specific information.
+
+### Result
+
+The durable journal foundation is available without replacing the Runtime Registry, Decision Ledger, or Recovery Forensics.
+
+---
+
+## Creation, registration, and readiness
+
+### Delivered
+
+Durable journaling of creation transitions:
+
+```text
+host.creation.requested
+host.creation.started
+host.creation.succeeded
+host.creation.failed
+runtime.registered
+runtime.ready
+```
+
+### Covered modes
+
+```text
+Process
+ProcessPool
+Kubernetes
+KubernetesPool
+```
+
+### Guarantees
+
+- `CorrelationId` links the host request to the runtimes created from it;
+- `PoolId`, `HostId`, `KubernetesPodUid`, and `RuntimeInstanceId` remain typed identities;
+- no false `runtime.ready` event is emitted after failed creation;
+- legacy Kubernetes behavior remains unchanged.
+
+---
+
+## Failure, deletion, replacement, and placement events
+
+### Delivered
+
+Durable journaling of the following transitions:
+
+```text
+runtime.draining
+runtime.suppressed
+runtime.unhealthy
+runtime.stopped
+host.deletion.requested
+host.deleted
+host.disappeared
+runtime.replacement.requested
+runtime.replacement.registered
+work.assigned
+work.reassigned
+work.released
+```
+
+### Infrastructure incident identity
+
+Introduced `RuntimeFailureIncidentId` as the common identity linking:
+
+- the disappeared host or Pod;
+- suppressed or unsafe runtimes;
+- ledger decisions;
+- forensic records;
+- replacement runtimes;
+- released and reassigned work items.
+
+### Guarantees
+
+- runtimes from the same failed Pod share one incident identity;
+- no false `host.deleted` event is emitted when deletion has not been confirmed;
+- durable correlation is preserved through `LedgerEntryId`, `ForensicsId`, `CorrelationId`, and `CausationId`;
+- safe tenants remain absent from recovery events.
+
+---
+
+## Targeted compilation correction
+
+### Correction
+
+Removed the invalid access to:
+
+```text
+AiSharedQueueItem.CorrelationId
+```
+
+Correlation is now resolved from recovery metadata first, then from the durable dispatched run.
+
+### Scope
+
+- one source file changed;
+- no modification to the DAG engine or recovery engine.
+
+---
+
+## Durable projection and topology summary
+
+### Delivered
+
+- added `ProductionRuntimeLifecycleTopologyProjector`;
+- reconstructed runtime snapshots from lifecycle journal events;
+- reconstructed placements by `(TenantId, SharedRunId)`;
+- separated current topology from durable history;
+- resolved initial and final hosts, Pods, and runtimes;
+- propagated:
+  - `RuntimeFailureIncidentId`;
+  - `LedgerEntryId`;
+  - `ForensicsId`;
+- introduced `TopologySource`;
+- made the Lifecycle Journal the primary source when available;
+- retained the Runtime Registry only as a compatibility fallback.
+
+### Added metrics
+
+```text
+ObservedPodCount
+DeletedPodCount
+HistoricalRuntimeCount
+RunPlacementCount
+MovedRunCount
+StableRunCount
+UnknownInitialHostCount
+```
+
+### Added tests
+
+- projection of a deleted initial Pod;
+- reconstruction of three historical runtimes;
+- reconstruction of replacement runtimes;
+- moved impacted run;
+- stable safe run;
+- exclusion of an unrelated control plane;
+- asynchronous journal reads;
+- parallel aggregation.
+
+---
+
+## Durable P5 scenario wiring
+
+### Delivered
+
+- explicitly enabled the MongoDB lifecycle journal in the durable scenario;
+- resolved `IAiRuntimeLifecycleJournal` from `host.Services`;
+- passed the journal to the final topology summary;
+- propagated `Impacted` and `Safe` tenant roles;
+- added a strict assertion for:
+
+```text
+TopologySource='RuntimeLifecycleJournal'
+```
+
+### Result
+
+The P5 scenario can no longer pass by silently falling back to the Runtime Registry.
+
+---
+
+## Initial placement and recovery redispatch reconstruction
+
+### Delivered
+
+- journaled `work.assigned` on the direct dispatch path;
+- treated `work.released` as the authoritative previous placement during recovery;
+- reconstructed moved local-queued work;
+- added strict assertions for final topology metrics.
+
+### Corrected problem
+
+The initial durable projection reconstructed only 20 of 30 placements and incorrectly classified several recovered local-queued runs as stable.
+
+---
+
+## Runtime alias preservation
+
+### Delivered
+
+- preserved runtime aliases visible only through placement events;
+- distinguished journaled physical runtimes from runtime identities used by runs;
+- preserved runtime and host identity after a normal `work.released` event;
+- continued excluding releases associated with a `RuntimeFailureIncidentId`;
+- improved diagnostics for final metric assertions.
+
+### Result
+
+Completed safe runs retain a usable initial runtime identity even when the corresponding physical snapshot is no longer present in the current projection.
+
+---
+
+## Known runtime identity fallback
+
+### Delivered
+
+Corrected host resolution:
+
+```text
+Known RuntimeInstanceId + missing physical snapshot
+    => InitialHostKind='RuntimeHost'
+
+Missing RuntimeInstanceId
+    => InitialHostKind='Unknown'
+```
+
+### Result
+
+`UnknownInitialHostCount` now represents a genuinely missing identity rather than a missing physical snapshot.
+
+---
+
+## Incident-fact-based counters
+
+### Delivered
+
+- removed the fragile calculation based only on `HistoricalOnlyKubernetesPodCount`;
+- calculated `DeletedPodCount` from typed incident events;
+- calculated `HistoricalRuntimeCount` from runtimes associated with the deleted Pod;
+- supported reuse of the same `RuntimeInstanceId` after replacement.
+
+### Expected result per scenario
+
+```text
+DeletedPodCount='1'
+HistoricalRuntimeCount='3'
+```
+
+---
+
+## Causal history expansion
+
+### Delivered
+
+The summary now loads:
+
+```text
+ControlPlaneId events
+→ observed RuntimeFailureIncidentId values
+→ complete event history for each incident
+→ merge and deduplicate by EventId
+```
+
+### Guarantee
+
+Infrastructure events recorded under a separate lifecycle context can be reintegrated without mixing independent scenarios.
+
+---
+
+## Incident discovery from moved placement
+
+### Delivered
+
+Final resolution chain:
+
+```text
+moved placement
+→ InitialRuntimeInstanceId
+→ journal query by RuntimeInstanceId
+→ RuntimeFailureIncidentId
+→ complete incident query
+→ deleted PodUid and associated runtimes
+```
+
+### Result
+
+- `DeletedPodCount` is reconstructed from the durable journal;
+- `HistoricalRuntimeCount` is reconstructed even when infrastructure events use a different technical `ControlPlaneId`;
+- no metric is forced or derived from the number of scenarios;
+- no changes were made to the recovery engine, DAG engine, or Kubernetes behavior.
+
+---
+
+# Final validation
+
+## Validated scenario
+
+```text
+GrpcKubernetesRuntimePoolPodFailureP5ScenarioTests
+Grpc_KubernetesPool_P5_Should_Fully_Recover_After_Five_Independent_Pod_Deletions
+```
+
+## Functional result
+
+```text
+ExpectedScenarioCount='5'
+CapturedScenarioCount='5'
+MissingScenarioCount='0'
+
+DeletedPodCount='5'
+HistoricalRuntimeCount='15'
+RunPlacementCount='30'
+MovedRunCount='15'
+StableRunCount='15'
+UnknownInitialHostCount='0'
+```
+
+## Observed guarantees
+
+```text
+5/5 scenarios passed
+5 Pods physically deleted
+15 historical runtimes reconstructed
+30 placements reconstructed
+15 impacted runs moved
+15 safe runs remained stable
+0 unknown initial hosts
+0 cross-tenant leaks
+0 cross-tenant ledger leaks
+0 safe-tenant recovery leaks
+0 duplicate recoveries
+5 cleanups with RemainingPodCount='0'
+TopologySource='RuntimeLifecycleJournal'
+```
+
+---
+
+# Final decisions
+
+- the Lifecycle Journal is the durable source of infrastructure history;
+- the Runtime Registry remains the source of current state;
+- proof metrics no longer depend on in-memory harness state;
+- correctness identities remain first-class;
+- legacy Kubernetes behavior remains unchanged;
+- the journal was not physically merged with the ledger or forensic stores;
+- correlation is performed through durable identities.
+
+---
+
+# Retained watchpoint
+
+An intermittent issue involving an occasionally missing kill in the final summary was reported but was not reproduced during final validation.
+
+Follow-up rule:
+
+- do not modify the validated path without new evidence;
+- retain the complete log from any future failure;
+- capture the final summary and the following events for the affected scenario:
+
+```text
+KILL
+runtime marked unsafe
+runtime.unhealthy
+runtime.suppressed
+work.released
+work.reassigned
+RuntimeFailureIncidentId
+```
+
+Any future correction must target the demonstrated race precisely without weakening the P5 assertions.
+
+---
+
+# Closure status
+
+```text
+COMPLETED
+```
+
+The Durable Runtime Lifecycle Journal now represents the durable history of hosts, Pods, runtimes, incidents, and run placements, with a complete P5 proof after cleanup.
+
+---
+
 ## 1.0.8.2 - 2026-08-09 — Runtime Pool Hierarchical Failure Recovery and Production Proofs
 
 ## Delivered objective

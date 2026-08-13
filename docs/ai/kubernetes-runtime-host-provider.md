@@ -503,8 +503,22 @@ The Gateway manager can:
 Routing is selected by a stable runtime header, defaulting to:
 
 ```text
-x-ai-runtime-instance-id: <RuntimeInstanceId>
+x-ai-runtime-instance-id: <gateway.routing.value>
 ```
+
+For initial/bootstrap runtimes, `gateway.routing.value` normally equals the runtime's exact `RuntimeInstanceId`. Providers fall back to the logical runtime id when no explicit routing value is published.
+
+KubernetesPool dynamic child replacement adds one important case. A replacement created inside an already-live Pod receives a fresh `RuntimeInstanceId`, but it can reuse a safe sibling's existing Gateway route value because that route reaches the same stable Pod service. The provider sends the route alias in the Gateway header while the runtime command body retains the replacement's exact `RuntimeInstanceId`. The in-Pod command router then forwards to that exact child.
+
+```text
+Gateway header value
+    -> same-Pod ingress alias
+
+command RuntimeInstanceId
+    -> exact replacement child identity
+```
+
+This preserves execution identity, avoids creating new Gateway resources from inside the Pod, and keeps Pod identity as a failure boundary rather than an execution identity.
 
 Each route forwards to the target runtime Service and container port.
 
@@ -558,16 +572,18 @@ Route kind = GRPCRoute when Gateway mode is used
 
 gRPC command dispatch and provider-specific readiness remain in the gRPC provider and readiness path. The Pod builder configures Kestrel for HTTP/2.
 
-The same `RuntimeInstanceId` must remain visible through:
+The same logical `RuntimeInstanceId` must remain visible through:
 
 - admission decision;
 - scale-out request;
 - host start request;
 - Kubernetes labels/annotations;
-- transport routing header;
+- runtime command body;
 - registry/capacity descriptor;
 - local runtime queue;
 - recovery evidence.
+
+The transport routing header is allowed to carry the descriptor's `gateway.routing.value` instead of the logical runtime id. That distinction is transport routing metadata only and must not change the logical target identity.
 
 ---
 

@@ -1150,7 +1150,10 @@ It already provides:
 - atomic recovery claim;
 - active `LeaseId` generation;
 - stale-lease rejection;
-- claimed in-flight and local-queued recovery through existing services.
+- claimed in-flight and local-queued recovery through existing services;
+- durable queue-first placement through shared dispatch, with failed placement removed before recovery redispatch;
+- dynamic same-Pod Gateway routing aliases for fresh KubernetesPool replacement identities;
+- operator-triggered external ProcessHost and Pod failure gates that reuse the same production recovery scenario.
 
 Validated compatibility and production evidence:
 
@@ -1160,6 +1163,13 @@ Process gRPC P10 regression
 Kubernetes HTTP P5 historical-mode regression
 Kubernetes gRPC P5 historical-mode regression
 
+Automatic full-boundary failure:
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
+
+External-manual full-boundary failure:
 gRPC + ProcessHostPool   PASS
 HTTP + ProcessHostPool   PASS
 gRPC + KubernetesPool    PASS

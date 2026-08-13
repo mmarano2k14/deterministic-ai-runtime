@@ -191,7 +191,10 @@ Completed capabilities include:
 - targeted A1-to-A4 replacement;
 - first-class failure journaling and exact capacity suppression;
 - deterministic assigned-work inventory and claim authority;
-- claimed recovery through the existing ownership and transition services.
+- claimed recovery through the existing ownership and transition services;
+- operator-triggered external parent ProcessHost and Pod failure proof across HTTP and gRPC;
+- durable queue-first placement before initial dispatch with failed placement cleared for recovery;
+- dynamic KubernetesPool replacement routing that preserves fresh child identity while reusing a safe same-Pod Gateway ingress alias.
 
 Validated compatibility:
 
@@ -202,7 +205,7 @@ Kubernetes HTTP P5
 Kubernetes gRPC P5
 ```
 
-The historical Kubernetes mode remains one runtime per Pod. KubernetesPool, Pod-wide failure recovery, bounded hierarchical runtime/Pod capacity, and warm reuse are implemented and validated. Remaining roadmap work focuses on distributed multi-control-plane recovery ownership, Redis Cluster compatibility, multi-node scale, and managed-hosting operations.
+The historical Kubernetes mode remains one runtime per Pod. KubernetesPool, Pod-wide failure recovery, bounded hierarchical runtime/Pod capacity, warm reuse, and operator-triggered external full-boundary recovery are implemented and validated. The current closure profiles reach 7 × 5 capacity for gRPC ProcessHostPool and 5 × 5 for gRPC KubernetesPool, with 3 × 5 HTTP closure profiles. Remaining Runtime Pool roadmap work focuses on distributed multi-control-plane recovery ownership, Redis Cluster compatibility, multi-node scale, and managed-hosting operations.
 
 See [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md).
 

@@ -93,6 +93,8 @@ The current runtime is strongest in these areas:
 
 ### Final Hierarchical Runtime Pool Matrix
 
+Automatic full-boundary failure:
+
 ```text
 gRPC + ProcessHostPool   PASS
 HTTP + ProcessHostPool   PASS
@@ -100,7 +102,18 @@ gRPC + KubernetesPool    PASS
 HTTP + KubernetesPool    PASS
 ```
 
-Each final scenario validates 150 completed DAGs, 7,500 logical steps, two child-runtime crashes, two full-boundary crashes, 12 exact recoveries, 150 replay proofs, warm reuse across two cycles, and zero lost runs, failed runs, duplicate dispatch, or configured-capacity overflow. Across the four scenarios this totals 600 completed DAGs, 30,000 logical steps, 16 injected failures, and 48 recovered runs.
+Operator-triggered external full-boundary failure:
+
+```text
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
+```
+
+The current closure profiles intentionally differ by transport/host model. The largest is gRPC ProcessHostPool at `7 × 5 × 20 × 2`: 7 parent ProcessHosts, 5 independent runtimes each, 35 reusable runtime slots, 20 submission iterations per cycle, 700 DAGs per cycle, 1,400 DAGs / 70,000 logical steps per scenario, and 12 exact recoveries. Its automatic and operator-triggered external-parent variants are both green, giving 2,800 DAGs / 140,000 logical steps of combined evidence for this profile alone. gRPC KubernetesPool closes at 5 × 5; both HTTP variants close at 3 × 5. Every individual scenario performs two child failures, two distinct full-boundary failures, warm reuse across two cycles, and final cleanup only after cycle two.
+
+One automatic matrix completes 1,950 DAGs and 97,500 logical steps. The external-manual matrix repeats the same workload profiles. Across both modes this is 3,900 completed DAGs, 195,000 logical steps, 32 failure incidents (16 child and 16 full-boundary), 96 exact recoveries, and 3,900 replay proofs. Eight full-boundary failures are performed by an operator outside the test after an exact target is armed.
 
 See [`ai/runtime-pool-production-validation.md`](ai/runtime-pool-production-validation.md).
 

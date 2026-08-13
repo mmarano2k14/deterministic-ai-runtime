@@ -333,7 +333,7 @@ The detailed technical reference is:
 
 ## Phase 1E — Runtime Pool Architecture and Exact Failure Recovery
 
-Status: **Completed for ProcessHostPool and KubernetesPool correctness foundations**
+Status: **Completed for ProcessHostPool and KubernetesPool correctness foundations, including automatic and operator-triggered external full-boundary failure**
 
 Delivered:
 
@@ -352,7 +352,10 @@ Delivered:
 - atomic `ClaimId` recovery authority;
 - unique active `LeaseId` generations;
 - stale-lease rejection;
-- claimed recovery through existing ownership and transition services.
+- claimed recovery through existing ownership and transition services;
+- durable queue-first required placement through shared dispatch with failed placement cleared for recovery;
+- dynamic KubernetesPool replacement routing through a safe same-Pod Gateway alias while preserving a fresh child runtime identity;
+- operator-triggered external ProcessHost/Pod failure gates that reuse the same production recovery scenario.
 
 Validated regressions:
 
@@ -363,7 +366,7 @@ Kubernetes HTTP P5
 Kubernetes gRPC P5
 ```
 
-The Kubernetes P5 regression validates compatibility with the historical one-runtime-per-Pod mode. Separate HTTP/gRPC KubernetesPool production proofs validate multi-runtime Pods, hierarchical child/Pod recovery, warm reuse, and bounded capacity.
+The Kubernetes P5 regression validates compatibility with the historical one-runtime-per-Pod mode. Separate HTTP/gRPC KubernetesPool production proofs validate multi-runtime Pods, hierarchical child/Pod recovery, warm reuse, bounded capacity, and operator-triggered external Pod deletion. Equivalent external-manual parent-boundary proofs are also green for HTTP/gRPC ProcessHostPool.
 
 See:
 
@@ -506,9 +509,9 @@ Delivered capabilities:
 - HTTP and gRPC transport preservation;
 - child runtime kill and replacement while the Pod survives;
 - exact sibling identity preservation;
-- full distinct Pod deletion and replacement;
-- exact five-member Pod recovery in the validated topology;
-- bounded 3-Pod × 5-runtime capacity;
+- full distinct Pod deletion and replacement in both automatic and operator-triggered external modes;
+- exact five-member Pod recovery in the validated closure topologies;
+- bounded KubernetesPool capacity validated at 3 Pods × 5 runtimes over HTTP and 5 Pods × 5 runtimes over gRPC;
 - warm-runtime and existing-Pod reuse before replacement capacity;
 - two complete warm cycles without intermediate cleanup;
 - replay, ledger, lifecycle, trace, and forensics proof;
@@ -787,10 +790,10 @@ All roadmap work should respect these principles:
 | Exact assigned-work enumeration | Completed |
 | Deterministic recovery claim | Completed |
 | Claimed recovery transitions | Completed |
-| Real process-host final proof | Completed |
+| Real process-host final proof | Completed, including external-manual parent failure |
 | Existing Process/Kubernetes regression | Completed |
 | Kubernetes Runtime Pool Pod | Completed / validated over HTTP and gRPC |
-| Pod-wide failure proof | Completed / validated |
+| Pod-wide failure proof | Completed / validated, automatic and external-manual |
 | Bounded runtime/host hierarchical capacity selection | Completed / validated; multi-node expansion ongoing |
 | Redis Cluster compatibility | Planned |
 
@@ -801,8 +804,9 @@ All roadmap work should respect these principles:
 The current priorities are:
 
 ```text
+Child-DAG durable await / ExecuteChildDag foundation
+Multi-agent orchestration proof on top of the deterministic runtime
 Enterprise demo polish
-Runtime Pool production-proof documentation
 Recovery / replay / ledger / lifecycle / trace documentation
 Observability polish
 Replay and recovery controller/API design
@@ -811,20 +815,20 @@ Kubernetes deployment demo
 Articles and public positioning
 ```
 
-The next capacity-hardening priorities are:
+The next infrastructure-hardening priorities are:
 
 ```text
-Runtime Pool Manager design
-Warm runtime process reuse inside pool pods
+Durable multi-control-plane recovery ownership
+Redis Cluster compatibility and failover proof
+Multi-node Kubernetes / fault-domain validation
 Tenant-aware cell and catalog direction
-Bounded process-level scale-out
-Kubernetes runtime-pool continuity
+Cluster autoscaler and managed-hosting integration
 ```
 
 Phase 0 documentation restructure is complete as V1.
 
 The runtime foundations are already implemented and validated through distributed integration scenarios, MCP control-plane scenarios, HTTP process-host scenarios, replay/ledger/trace scenarios, and runtime crash recovery scenarios.
 
-The focus is now shifting toward operational polish, clearer API/controller surfaces, recovery and replay tooling, MLOps-oriented platform direction, Kubernetes continuity, and public positioning.
+The Runtime Pool correctness phase is now closed at the current proof boundary. The focus shifts to child-DAG durable await and multi-agent orchestration on top of that foundation, alongside operational polish, clearer API/controller surfaces, recovery and replay tooling, MLOps-oriented platform direction, broader Kubernetes operations, and public positioning.
 
 The dedicated long-term platform direction is documented in [`docs/road-to-mlops.md`](road-to-mlops.md).

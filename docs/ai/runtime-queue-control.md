@@ -197,6 +197,24 @@ No DAG state exists yet.
 
 A local `RunId` appears only after a shared queue pump or manual drain dispatches the shared run to a selected runtime instance.
 
+### Durable placement across queue-first handoff
+
+If queue-first submission carries required runtime placement, the placement must survive the durable shared-run handoff. The shared run persists the placement and the dispatcher restores it before dispatch-time admission.
+
+```text
+QueueFirst + required placement
+    ↓
+AiSharedRunRecord persists placement
+    ↓
+shared queue dispatcher restores placement
+    ↓
+exact runtime dispatch
+```
+
+Recovery redispatch is different. If the original placement points to failed runtime or host capacity, recovery clears that placement and reuses the durable `SharedRunId` so admission can select healthy replacement capacity.
+
+This is why placement is durable initial-dispatch intent without becoming a permanent recovery pin.
+
 Manual drain can be enabled without enabling the background pump.
 
 Recommended controlled-drain configuration:

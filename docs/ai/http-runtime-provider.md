@@ -594,7 +594,7 @@ control-plane registry/capacity publication
 normal HTTP dispatch
 ```
 
-Kubernetes remains the host provider; HTTP remains the command provider. Optional exposure uses a per-runtime endpoint or a shared Gateway API `HTTPRoute` selected by runtime instance id.
+Kubernetes remains the host provider; HTTP remains the command provider. Optional exposure uses a per-runtime endpoint or a shared Gateway API `HTTPRoute`. Gateway dispatch uses the descriptor `gateway.routing.value` when present and otherwise falls back to the logical `RuntimeInstanceId`. For a dynamically created KubernetesPool replacement, the routing value may be a safe same-Pod ingress alias while the command body still carries the replacement's exact runtime identity.
 
 See [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md).
 
