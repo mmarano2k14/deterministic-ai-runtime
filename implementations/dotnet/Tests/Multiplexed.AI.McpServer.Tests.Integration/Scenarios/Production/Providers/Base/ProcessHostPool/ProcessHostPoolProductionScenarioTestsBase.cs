@@ -41,6 +41,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private const int MaximumAdmissionAttemptCount = 8;
         private const int BoundaryFailureCrashCheckpointStateTtlMinutes = 30;
         private const int BoundaryFailureAdmissionBackpressureTimeoutMinutes = 5;
+        private const int ExternalBoundaryFailureWaitTimeoutMinutes = 15;
         private const string RequestedBy =
             "mcp-process-host-pool-production-proof";
         private const string Source =
@@ -134,13 +135,44 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 injectParentHostFailure: true);
         }
 
+        /// <summary>
+        /// Executes the same final hierarchical ProcessHostPool proof, but leaves the distinct
+        /// busy parent Process Host alive until an operator kills its exact process tree externally.
+        /// The test waits for that exact parent incarnation to exit before running the unchanged
+        /// suppression, replacement, recovery, warm-reuse, replay, ledger, and cleanup proof.
+        /// Keep the manual gate watcher open in a separate PowerShell window:
+        /// <code>Get-Content "$env:TEMP\multiplexed-ai-manual-processhost-kill.txt" -Wait</code>
+        /// </summary>
+        protected Task ExecuteFullFailureProductionScenarioAwaitExternalParentFailureAsync(
+            int maximumProcessHostCount,
+            int runtimeCountPerHost,
+            int submissionIterationCount,
+            int executionCycleCount)
+        {
+            var signalPath =
+                ManualExternalFailureGateSignal.PrepareProcessHostWatch();
+
+            this.output.WriteLine(
+                $"[{this.profile.LogPrefix} MANUAL EXTERNAL FAILURE WATCH] TargetKind='ProcessHost', PowerShellCommand='{ManualExternalFailureGateSignal.ProcessHostPowerShellWatchCommand}', SignalFile='{signalPath}', Instruction='Keep this watcher open for every cycle.'");
+
+            return this.ExecuteScenarioAsync(
+                maximumProcessHostCount,
+                runtimeCountPerHost,
+                submissionIterationCount,
+                executionCycleCount,
+                injectChildRuntimeFailure: true,
+                injectParentHostFailure: true,
+                waitForExternalParentHostFailure: true);
+        }
+
         private async Task ExecuteScenarioAsync(
             int maximumProcessHostCount,
             int runtimeCountPerHost,
             int submissionIterationCount,
             int executionCycleCount,
             bool injectChildRuntimeFailure,
-            bool injectParentHostFailure)
+            bool injectParentHostFailure,
+            bool waitForExternalParentHostFailure = false)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
                 maximumProcessHostCount);
@@ -150,6 +182,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 submissionIterationCount);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
                 executionCycleCount);
+
+            if (waitForExternalParentHostFailure &&
+                !injectParentHostFailure)
+            {
+                throw new ArgumentException(
+                    "External parent-host failure waiting requires parent-host failure injection to be enabled.",
+                    nameof(waitForExternalParentHostFailure));
+            }
 
             if (injectChildRuntimeFailure)
             {
@@ -231,7 +271,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 controlPlaneId,
                 poolId,
                 injectChildRuntimeFailure,
-                injectParentHostFailure);
+                injectParentHostFailure,
+                waitForExternalParentHostFailure);
 
             var scenarioStopwatch = Stopwatch.StartNew();
 
@@ -456,15 +497,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             : null,
                     title:
                         injectChildRuntimeFailure
-                            ? "FORCE-KILL ONE CHILD RUNTIME, THEN ONE DISTINCT BUSY PARENT HOST, RECOVER, AND DRAIN EVERY DAG"
+                            ? waitForExternalParentHostFailure
+                                ? "FORCE-KILL ONE CHILD RUNTIME, THEN WAIT FOR ONE DISTINCT BUSY PARENT HOST TO BE KILLED EXTERNALLY, RECOVER, AND DRAIN EVERY DAG"
+                                : "FORCE-KILL ONE CHILD RUNTIME, THEN ONE DISTINCT BUSY PARENT HOST, RECOVER, AND DRAIN EVERY DAG"
                             : injectParentHostFailure
-                                ? "FORCE-KILL ONE BUSY PARENT HOST, RECOVER, AND DRAIN EVERY DAG"
+                                ? waitForExternalParentHostFailure
+                                    ? "WAIT FOR ONE BUSY PARENT HOST TO BE KILLED EXTERNALLY, RECOVER, AND DRAIN EVERY DAG"
+                                    : "FORCE-KILL ONE BUSY PARENT HOST, RECOVER, AND DRAIN EVERY DAG"
                                 : "DRAIN EVERY DAG WITHOUT FAILURE INJECTION",
                     passTarget:
                         injectChildRuntimeFailure
-                            ? "Kill one exact child runtime after durable DAG progress while preserving its parent and siblings, recover that work once, then kill one distinct fully busy parent Process Host, replace its complete membership, and drain every DAG."
+                            ? waitForExternalParentHostFailure
+                                ? "Kill one exact child runtime after durable DAG progress while preserving its parent and siblings, recover that work once, then expose one distinct fully busy parent Process Host and wait for an operator to kill its exact process tree before running the unchanged recovery proof."
+                                : "Kill one exact child runtime after durable DAG progress while preserving its parent and siblings, recover that work once, then kill one distinct fully busy parent Process Host, replace its complete membership, and drain every DAG."
                             : injectParentHostFailure
-                                ? "Kill one parent Process Host only after its runtimes own active work, suppress that exact membership, start one fresh replacement parent, recover only impacted runs once, and complete all 50 DAG steps."
+                                ? waitForExternalParentHostFailure
+                                    ? "Expose one fully busy parent Process Host, wait for an operator to kill its exact process tree, then suppress that exact membership, start one fresh replacement parent, recover only impacted runs once, and complete all 50 DAG steps."
+                                    : "Kill one parent Process Host only after its runtimes own active work, suppress that exact membership, start one fresh replacement parent, recover only impacted runs once, and complete all 50 DAG steps."
                                 : "Use the full bounded ProcessHostPool capacity, preserve every parent and runtime identity, and complete every submitted DAG with exactly 50 logical steps.");
 
                 var drainStopwatch = Stopwatch.StartNew();
@@ -958,7 +1007,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     cycleNumber,
                                     $"mcp-{this.profile.ProviderName}-process-host-pool-cycle-{cycleNumber}",
                                     TimeSpan.FromMinutes(5),
-                                    boundaryFailureCrashGate)
+                                    boundaryFailureCrashGate,
+                                    waitForExternalParentHostFailure,
+                                    TimeSpan.FromMinutes(
+                                        ExternalBoundaryFailureWaitTimeoutMinutes))
                                 .ConfigureAwait(false);
                     }
                     finally
@@ -1617,7 +1669,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 cluster.Hosts.Count(host => host.IsRunning),
                 scenarioStopwatch.Elapsed,
                 injectChildRuntimeFailure,
-                injectParentHostFailure);
+                injectParentHostFailure,
+                waitForExternalParentHostFailure);
 
             if (finalProofStopwatch is null)
             {
@@ -1640,7 +1693,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 injectParentHostFailure);
 
             this.output.WriteLine(
-                $"[{this.profile.LogPrefix} FINAL PRODUCTION RESULT] ExecutionCycleCount='{executionCycleCount}', ProcessHostCount='{maximumProcessHostCount}', RuntimeCountPerHost='{runtimeCountPerHost}', TotalRuntimeCount='{totalRuntimeCount}', SubmissionIterationCountPerCycle='{submissionIterationCount}', TotalSubmittedRunCount='{totalSubmittedRunCount}', TotalCompletedRunCount='{totalCompletedRunCount}', TotalLogicalStepCount='{checked(totalSubmittedRunCount * StepCount)}', TotalReplayProofCount='{totalReplayProofCount}', ChildRuntimeCrashCount='{totalChildRuntimeCrashCount}', ParentHostCrashCount='{totalParentHostCrashCount}', RecoveredRunCount='{totalRecoveredRunCount}', FinalParentProcessCountAlive='{cluster.Hosts.Count(host => host.IsRunning)}', DurationBeforeCleanup='{scenarioStopwatch.Elapsed}', CleanupPolicy='after-final-cycle-only'.");
+                $"[{this.profile.LogPrefix} FINAL PRODUCTION RESULT] ExecutionCycleCount='{executionCycleCount}', ProcessHostCount='{maximumProcessHostCount}', RuntimeCountPerHost='{runtimeCountPerHost}', TotalRuntimeCount='{totalRuntimeCount}', SubmissionIterationCountPerCycle='{submissionIterationCount}', TotalSubmittedRunCount='{totalSubmittedRunCount}', TotalCompletedRunCount='{totalCompletedRunCount}', TotalLogicalStepCount='{checked(totalSubmittedRunCount * StepCount)}', TotalReplayProofCount='{totalReplayProofCount}', ChildRuntimeCrashCount='{totalChildRuntimeCrashCount}', ParentHostCrashCount='{totalParentHostCrashCount}', ParentHostFailureTrigger='{(injectParentHostFailure ? (waitForExternalParentHostFailure ? "external-manual" : "automatic") : "none")}', RecoveredRunCount='{totalRecoveredRunCount}', FinalParentProcessCountAlive='{cluster.Hosts.Count(host => host.IsRunning)}', DurationBeforeCleanup='{scenarioStopwatch.Elapsed}', CleanupPolicy='after-final-cycle-only'.");
         }
 
         private static void CaptureRuntimeTopologyHistory(
@@ -2243,7 +2296,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             int finalParentProcessCountAlive,
             TimeSpan scenarioDuration,
             bool injectChildRuntimeFailure,
-            bool injectParentHostFailure)
+            bool injectParentHostFailure,
+            bool waitForExternalParentHostFailure)
         {
             var recoveryInjected =
                 injectChildRuntimeFailure || injectParentHostFailure;
@@ -2275,6 +2329,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"ChildRuntimeCrashCount='{totalChildRuntimeCrashCount}'");
             this.output.WriteLine(
                 $"ParentHostFailureInjected='{injectParentHostFailure.ToString().ToLowerInvariant()}'");
+            this.output.WriteLine(
+                $"ParentHostFailureTrigger='{(injectParentHostFailure ? (waitForExternalParentHostFailure ? "external-manual" : "automatic") : "none")}'");
             this.output.WriteLine(
                 $"ParentHostCrashCount='{totalParentHostCrashCount}'");
             this.output.WriteLine(
@@ -3512,7 +3568,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string controlPlaneId,
             string poolId,
             bool injectChildRuntimeFailure,
-            bool injectParentHostFailure)
+            bool injectParentHostFailure,
+            bool waitForExternalParentHostFailure)
         {
             this.output.WriteLine(
                 $"# {this.profile.LogPrefix} PRODUCTION PROOF");
@@ -3579,6 +3636,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"  KillAfterCompletedStepCount='{(injectChildRuntimeFailure ? KillAfterCompletedStepCount : 0)}'");
             this.output.WriteLine(
                 $"  InjectParentHostFailure='{injectParentHostFailure}'");
+            this.output.WriteLine(
+                $"  ParentHostFailureTrigger='{(injectParentHostFailure ? (waitForExternalParentHostFailure ? "external-manual" : "automatic") : "none")}'");
             this.output.WriteLine(
                 "  TopologyContract='ProcessHostCount × RuntimeCountPerHost'");
             this.output.WriteLine(

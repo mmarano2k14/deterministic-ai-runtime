@@ -8,6 +8,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Reco
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Claims;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Execution;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base;
 using Xunit.Abstractions;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.ProcessHostPool
@@ -331,13 +332,61 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"Shared Runtime Pool failure journal did not expose an exact child failure within '{timeout}'. PoolId='{poolId}', HostId='{hostId}', RuntimeInstanceId='{runtimeInstanceId}', ObservedFailureIds='{string.Join(",", lastObservations.Select(failure => failure.FailureId))}'.");
         }
 
+        private async Task WaitForExternalParentHostFailureAsync(
+            ProcessHostPoolProductionFailureTarget target,
+            int cycleNumber,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(target);
+
+            var command =
+                OperatingSystem.IsWindows()
+                    ? $"taskkill /PID {target.Host.ProcessId} /T /F"
+                    : $"pkill -KILL -P {target.Host.ProcessId}; kill -KILL {target.Host.ProcessId}";
+
+            var signalPath =
+                ManualExternalFailureGateSignal.ArmProcessHost(
+                    cycleNumber,
+                    target.Host.HostId,
+                    target.Host.ProcessId,
+                    command);
+
+            this.output.WriteLine(
+                $"[{this.logPrefix} EXTERNAL PARENT HOST FAILURE ARMED] Cycle='{cycleNumber}', HostOrdinal='{target.Host.Ordinal}', HostId='{target.Host.HostId}', ParentProcessId='{target.Host.ProcessId}', RuntimeCount='{target.Members.Count}', ActiveRunCount='{target.ActiveRuns.Count}', PowerShellWatchCommand='{ManualExternalFailureGateSignal.ProcessHostPowerShellWatchCommand}', SignalFile='{signalPath}'.");
+            this.output.WriteLine(
+                $"[{this.logPrefix} WAITING-FOR-EXTERNAL-PARENT-HOST-KILL] Cycle='{cycleNumber}', Command='{command}', PowerShellWatchCommand='{ManualExternalFailureGateSignal.ProcessHostPowerShellWatchCommand}', Timeout='{timeout}', SignalFile='{signalPath}'.");
+
+            var deadline = DateTimeOffset.UtcNow.Add(timeout);
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                if (!target.Host.IsRunning)
+                {
+                    ManualExternalFailureGateSignal.MarkObserved(
+                        signalPath,
+                        $"HostId={target.Host.HostId};ProcessId={target.Host.ProcessId}");
+                    this.output.WriteLine(
+                        $"[{this.logPrefix} EXTERNAL PARENT HOST FAILURE OBSERVED] Cycle='{cycleNumber}', HostId='{target.Host.HostId}', ParentProcessId='{target.Host.ProcessId}', State='exited', SignalFile='{signalPath}'.");
+                    return;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(250))
+                    .ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                $"The externally selected parent Process Host was not killed within '{timeout}'. HostId='{target.Host.HostId}', ParentProcessId='{target.Host.ProcessId}', Command='{command}'.");
+        }
+
         public async Task<ProcessHostPoolProductionRecoveryProof> RecoverAsync(
             ProcessHostPoolProductionCluster cluster,
             ProcessHostPoolProductionFailureTarget target,
             int cycleNumber,
             string claimedBy,
             TimeSpan timeout,
-            ProductionCrashCheckpointGate? boundaryFailureCrashGate = null)
+            ProductionCrashCheckpointGate? boundaryFailureCrashGate = null,
+            bool waitForExternalParentHostFailure = false,
+            TimeSpan? externalFailureWaitTimeout = null)
         {
             ArgumentNullException.ThrowIfNull(cluster);
             ArgumentNullException.ThrowIfNull(target);
@@ -371,9 +420,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             try
             {
-                await cluster
-                    .CrashHostAsync(target.Host.HostId, timeout)
-                    .ConfigureAwait(false);
+                if (waitForExternalParentHostFailure)
+                {
+                    await this
+                        .WaitForExternalParentHostFailureAsync(
+                            target,
+                            cycleNumber,
+                            externalFailureWaitTimeout ?? timeout)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    await cluster
+                        .CrashHostAsync(target.Host.HostId, timeout)
+                        .ConfigureAwait(false);
+                }
             }
             finally
             {
@@ -408,7 +469,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             ExitCode = null,
                             ObservedAtUtc = observedAtUtc,
                             FailureMessage =
-                                "Forced busy parent Process Host termination in the multi-host Runtime Pool production proof."
+                                waitForExternalParentHostFailure
+                                    ? "Externally forced busy parent Process Host termination in the multi-host Runtime Pool production proof."
+                                    : "Forced busy parent Process Host termination in the multi-host Runtime Pool production proof."
                         })
                     .WaitAsync(timeout)
                     .ConfigureAwait(false);

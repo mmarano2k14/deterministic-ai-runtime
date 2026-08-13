@@ -26,6 +26,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definition
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Runners;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Scenarios;
@@ -51,6 +52,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private const int FinalScenarioKillAfterCompletedStepCount = 25;
         private const int BoundaryFailureCrashCheckpointStateTtlMinutes = 30;
         private const int BoundaryFailureAdmissionBackpressureTimeoutMinutes = 5;
+        private const int ExternalBoundaryFailureWaitTimeoutMinutes = 15;
 
         protected readonly ITestOutputHelper output;
         protected readonly IRuntimePoolCrashRecoveryScenarioRuntimeProfile profile;
@@ -189,6 +191,35 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 submissionIterationCount,
                 executionCycleCount,
                 injectChildRuntimeFailure: true);
+        }
+
+        /// <summary>
+        /// Executes the same final hierarchical KubernetesPool proof, but leaves the distinct
+        /// fully busy Pod alive until an operator force-deletes that exact Pod externally.
+        /// The test waits for the selected Pod UID to disappear before running the unchanged
+        /// suppression, replacement, recovery, warm-reuse, replay, ledger, and cleanup proof.
+        /// Keep the manual gate watcher open in a separate PowerShell window:
+        /// <code>Get-Content "$env:TEMP\multiplexed-ai-manual-kubernetes-kill.txt" -Wait</code>
+        /// </summary>
+        protected Task ExecuteFullFailureProductionScenarioAwaitExternalPodFailureAsync(
+            int maximumPodCount,
+            int runtimeCountPerPod,
+            int submissionIterationCount,
+            int executionCycleCount)
+        {
+            var signalPath =
+                ManualExternalFailureGateSignal.PrepareKubernetesWatch();
+
+            output.WriteLine(
+                $"[{profile.LogPrefix} MANUAL EXTERNAL FAILURE WATCH] TargetKind='KubernetesPod', PowerShellCommand='{ManualExternalFailureGateSignal.KubernetesPowerShellWatchCommand}', SignalFile='{signalPath}', Instruction='Keep this watcher open for every cycle.'");
+
+            return ExecuteReusableBoundedCapacityPodFailureProductionScenarioCoreAsync(
+                maximumPodCount,
+                runtimeCountPerPod,
+                submissionIterationCount,
+                executionCycleCount,
+                injectChildRuntimeFailure: true,
+                waitForExternalPodDeletion: true);
         }
 
         private async Task ExecuteBoundedCapacityScenarioAsync(
@@ -1617,7 +1648,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             int runtimeCountPerPod,
             int submissionIterationCount,
             int executionCycleCount,
-            bool injectChildRuntimeFailure)
+            bool injectChildRuntimeFailure,
+            bool waitForExternalPodDeletion = false)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumPodCount);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(runtimeCountPerPod);
@@ -1776,7 +1808,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"# {boundedCapacityProfile.LogPrefix} WARM REUSE PRODUCTION PROOF");
             output.WriteLine(
                 injectChildRuntimeFailure
-                    ? "Executive proof: one bounded Kubernetes Runtime Pool executes repeated production cycles, kills one exact in-Pod runtime after durable progress while its Pod and siblings survive, then force-deletes one distinct busy Pod, reuses the converged capacity, and cleans only after the final cycle."
+                    ? waitForExternalPodDeletion
+                        ? "Executive proof: one bounded Kubernetes Runtime Pool executes repeated production cycles, kills one exact in-Pod runtime after durable progress while its Pod and siblings survive, then exposes one distinct fully busy Pod and waits for an operator to force-delete it externally before recovery, warm reuse, and final cleanup."
+                        : "Executive proof: one bounded Kubernetes Runtime Pool executes repeated production cycles, kills one exact in-Pod runtime after durable progress while its Pod and siblings survive, then force-deletes one distinct busy Pod, reuses the converged capacity, and cleans only after the final cycle."
                     : "Executive proof: one bounded Kubernetes Runtime Pool executes repeated production cycles, survives one forced busy-Pod deletion per cycle, reuses the surviving and replacement Pods in the next cycle, and cleans physical capacity only after the final cycle.");
             output.WriteLine(string.Empty);
             output.WriteLine("Scenario contract:");
@@ -1785,7 +1819,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             output.WriteLine("  - [ON] No intermediate cycle invokes Runtime Pool cleanup.");
             output.WriteLine(
                 injectChildRuntimeFailure
-                    ? $"  - [ON] Every cycle kills one exact child runtime after at least {FinalScenarioKillAfterCompletedStepCount} completed steps, preserves its Pod and siblings, then force-deletes one distinct fully busy Pod."
+                    ? waitForExternalPodDeletion
+                        ? $"  - [ON] Every cycle kills one exact child runtime after at least {FinalScenarioKillAfterCompletedStepCount} completed steps, preserves its Pod and siblings, then waits for an operator to force-delete one distinct fully busy Pod."
+                        : $"  - [ON] Every cycle kills one exact child runtime after at least {FinalScenarioKillAfterCompletedStepCount} completed steps, preserves its Pod and siblings, then force-deletes one distinct fully busy Pod."
                     : "  - [ON] Every cycle force-deletes one fully busy Pod and recovers exactly its assigned work.");
             output.WriteLine("  - [ON] Every run completes 50 steps and passes replay, ledger, trace, and exact recovery-forensics proof.");
             output.WriteLine("  - [ON] Deterministic Pod cleanup executes once, after the final cycle.");
@@ -1804,6 +1840,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             output.WriteLine($"  PoolId='{poolId}'");
             output.WriteLine($"  InjectChildRuntimeFailure='{injectChildRuntimeFailure}'");
             output.WriteLine($"  KillAfterCompletedStepCount='{(injectChildRuntimeFailure ? FinalScenarioKillAfterCompletedStepCount : 0)}'");
+            output.WriteLine($"  PodFailureTrigger='{(waitForExternalPodDeletion ? "external-manual" : "automatic")}'");
             output.WriteLine("  CleanupPolicy='after-final-cycle-only'");
 
             try
@@ -1880,16 +1917,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 submissionHttpClient.Timeout =
                     TimeSpan.FromMinutes(15);
 
-                Task<McpTestClient> CreateFreshSubmissionMcpAsync()
-                {
-                    return McpRbacTestClientHelper
+                var submissionMcp =
+                    await McpRbacTestClientHelper
                         .CreateConfiguredClientAsync(
                             host,
                             submissionHttpClient,
                             boundedCapacityProfile.RequestedBy,
                             tenantId: tenant.TenantId,
-                            tenantGroupId: tenant.TenantGroupId);
-                }
+                            tenantGroupId: tenant.TenantGroupId)
+                        .ConfigureAwait(false);
 
                 await WaitForBoundedCapacityScaleOutWatcherReadyAsync(
                         host.Services,
@@ -1994,14 +2030,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             deferPodFailureWave
                                 ? submissionIterationCount - 1
                                 : submissionIterationCount;
-
-                        var submissionMcp =
-                            await CreateFreshSubmissionMcpAsync()
-                                .ConfigureAwait(false);
-
-                        output.WriteLine(
-                            $"[{boundedCapacityProfile.LogPrefix} MCP RBAC CONTEXT] " +
-                            $"Cycle='{cycleNumber}', Phase='initial-admission', State='fresh'.");
 
                         var admissionProof =
                             await RuntimePoolProductionCycleExecutor
@@ -2215,14 +2243,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     "State='initial-child-failure-workload-drained-capacity-reconverged', " +
                                     $"AvailableRuntimeCount='{podFailureStartMembership.RuntimeInstanceIds.Count}'.");
 
-                                submissionMcp =
-                                    await CreateFreshSubmissionMcpAsync()
-                                        .ConfigureAwait(false);
-
-                                output.WriteLine(
-                                    $"[{boundedCapacityProfile.LogPrefix} MCP RBAC CONTEXT] " +
-                                    $"Cycle='{cycleNumber}', Phase='boundary-filler-admission', State='fresh'.");
-
                                 var boundaryFailureFillerRunCount =
                                     checked(
                                         runsPerIteration -
@@ -2379,14 +2399,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     $"TargetRuntimeCount='{runtimeCountPerPod}', " +
                                     $"CompletedFillerRunCount='{boundaryFailureFillerRunCount}', " +
                                     $"TargetRunStartNumber='{boundaryFailureTargetRunStartNumber}'.");
-
-                                submissionMcp =
-                                    await CreateFreshSubmissionMcpAsync()
-                                        .ConfigureAwait(false);
-
-                                output.WriteLine(
-                                    $"[{boundedCapacityProfile.LogPrefix} MCP RBAC CONTEXT] " +
-                                    $"Cycle='{cycleNumber}', Phase='boundary-target-admission', State='fresh'.");
 
                                 podFailureCrashGate =
                                     await ProductionCrashCheckpointGate
@@ -2550,7 +2562,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                         excludedPodUids:
                                             excludedPodUids,
                                         boundaryFailureCrashGate:
-                                            podFailureCrashGate)
+                                            podFailureCrashGate,
+                                        waitForExternalPodDeletion:
+                                            waitForExternalPodDeletion,
+                                        externalFailureCycleNumber:
+                                            waitForExternalPodDeletion
+                                                ? cycleNumber
+                                                : null)
                                     .ConfigureAwait(false);
                         }
                         finally
@@ -3183,6 +3201,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         output.WriteLine($"FinalPodCount='{finalMembership.PodUids.Count}'");
                         output.WriteLine($"FinalRuntimeCount='{finalMembership.RuntimeInstanceIds.Count}'");
                         output.WriteLine($"ChildRuntimeFailureInjected='{injectChildRuntimeFailure}'");
+                        output.WriteLine($"PodFailureTrigger='{(waitForExternalPodDeletion ? "external-manual" : "automatic")}'");
                         output.WriteLine($"FailedChildRuntimeInstanceId='{childRuntimeFailureTarget?.Runtime.RuntimeInstanceId ?? string.Empty}'");
                         output.WriteLine($"ChildRuntimeParentPodUid='{childRuntimeFailureTarget?.Runtime.HostId ?? string.Empty}'");
                         output.WriteLine($"ChildRuntimeRecoveredSharedRunCount='{childRecoveredSharedRunIds.Count}'");
@@ -3313,7 +3332,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine($"ChildRuntimeFailureInjected='{injectChildRuntimeFailure}'");
                 output.WriteLine($"KillAfterCompletedStepCount='{(injectChildRuntimeFailure ? FinalScenarioKillAfterCompletedStepCount : 0)}'");
                 output.WriteLine($"ForcedChildRuntimeKillCount='{(injectChildRuntimeFailure ? executionCycleCount : 0)}'");
-                output.WriteLine($"ForcedPodDeletionCount='{executionCycleCount}'");
+                output.WriteLine($"PodFailureTrigger='{(waitForExternalPodDeletion ? "external-manual" : "automatic")}'");
+                output.WriteLine($"ForcedPodDeletionCount='{(waitForExternalPodDeletion ? 0 : executionCycleCount)}'");
+                output.WriteLine($"ExternalPodDeletionCount='{(waitForExternalPodDeletion ? executionCycleCount : 0)}'");
                 output.WriteLine($"RecoveredSharedRunCount='{expectedRecoveredRunCountPerCycle * executionCycleCount}'");
                 output.WriteLine($"RecoveryForensicsProofCount='{allRecoveryForensicsIds.Length}'");
                 output.WriteLine($"FinalPhysicalPodCountBeforeCleanup='{finalPhysicalPodCount}'");
@@ -3766,7 +3787,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 BoundedCapacityMachineLimitObservation observation,
                 TimeSpan timeout,
                 IReadOnlySet<string>? excludedPodUids = null,
-                ProductionCrashCheckpointGate? boundaryFailureCrashGate = null)
+                ProductionCrashCheckpointGate? boundaryFailureCrashGate = null,
+                bool waitForExternalPodDeletion = false,
+                int? externalFailureCycleNumber = null)
         {
             ArgumentNullException.ThrowIfNull(services);
             ArgumentNullException.ThrowIfNull(registry);
@@ -3877,23 +3900,49 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 primaryRuntime.HostId!,
                 failedRuntimeInstanceIds);
 
-            KubectlResult deleteResult;
-
             try
             {
-                deleteResult =
-                    await RunKubectlAsync(
-                            CancellationToken.None,
-                            "delete",
-                            "pod",
-                            primaryRuntime.KubernetesPodName!,
-                            "--namespace",
-                            primaryRuntime.KubernetesNamespace!,
-                            "--grace-period=0",
-                            "--force",
-                            "--wait=true",
-                            "--timeout=90s")
+                if (waitForExternalPodDeletion)
+                {
+                    if (!externalFailureCycleNumber.HasValue)
+                    {
+                        throw new InvalidOperationException(
+                            "An external Pod failure requires the active warm-reuse cycle number.");
+                    }
+
+                    await this
+                        .WaitForExternalPodDeletionAsync(
+                            primaryRuntime,
+                            externalFailureCycleNumber.Value,
+                            runtimeCountPerPod,
+                            TimeSpan.FromMinutes(
+                                ExternalBoundaryFailureWaitTimeoutMinutes))
                         .ConfigureAwait(false);
+                }
+                else
+                {
+                    var deleteResult =
+                        await RunKubectlAsync(
+                                CancellationToken.None,
+                                "delete",
+                                "pod",
+                                primaryRuntime.KubernetesPodName!,
+                                "--namespace",
+                                primaryRuntime.KubernetesNamespace!,
+                                "--grace-period=0",
+                                "--force",
+                                "--wait=true",
+                                "--timeout=90s")
+                            .ConfigureAwait(false);
+
+                    if (deleteResult.ExitCode != 0)
+                    {
+                        throw new InvalidOperationException(
+                            string.Concat(
+                                "The bounded-capacity Kubernetes Runtime Pool Pod could not be force-deleted. StandardError=",
+                                deleteResult.StandardError));
+                    }
+                }
             }
             finally
             {
@@ -3907,14 +3956,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         .WaitAsync(timeout)
                         .ConfigureAwait(false);
                 }
-            }
-
-            if (deleteResult.ExitCode != 0)
-            {
-                throw new InvalidOperationException(
-                    string.Concat(
-                        "The bounded-capacity Kubernetes Runtime Pool Pod could not be force-deleted. StandardError=",
-                        deleteResult.StandardError));
             }
 
             var failureId =
@@ -3937,7 +3978,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             ClaimedBy =
                                 string.Concat("mcp-", profile.ProviderName, "-kubernetes-runtime-pool-bounded-capacity-scenario"),
                             FailureMessage =
-                                "Forced busy Kubernetes Runtime Pool Pod deletion in the bounded-capacity recovery proof.",
+                                waitForExternalPodDeletion
+                                    ? "Externally forced busy Kubernetes Runtime Pool Pod deletion in the bounded-capacity recovery proof."
+                                    : "Forced busy Kubernetes Runtime Pool Pod deletion in the bounded-capacity recovery proof.",
                             HostStartTemplate =
                                 CreateBoundedCapacityPodRecoveryHostStartTemplate(
                                     primaryRuntime,
@@ -4132,6 +4175,92 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 recoveredSharedRunIds,
                 impactedExecutionIds,
                 recoveryForensicsIds);
+        }
+
+        private async Task WaitForExternalPodDeletionAsync(
+            AiRuntimeInstanceSnapshot primaryRuntime,
+            int cycleNumber,
+            int runtimeCountPerPod,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(primaryRuntime);
+
+            var podName =
+                !string.IsNullOrWhiteSpace(primaryRuntime.KubernetesPodName)
+                    ? primaryRuntime.KubernetesPodName!
+                    : throw new InvalidOperationException(
+                        "The external Pod failure target does not expose a Kubernetes Pod name.");
+            var namespaceName =
+                !string.IsNullOrWhiteSpace(primaryRuntime.KubernetesNamespace)
+                    ? primaryRuntime.KubernetesNamespace!
+                    : throw new InvalidOperationException(
+                        "The external Pod failure target does not expose a Kubernetes namespace.");
+            var expectedPodUid =
+                !string.IsNullOrWhiteSpace(primaryRuntime.HostId)
+                    ? primaryRuntime.HostId!
+                    : throw new InvalidOperationException(
+                        "The external Pod failure target does not expose its immutable Pod UID.");
+            var command =
+                $"kubectl delete pod {podName} --namespace {namespaceName} --grace-period=0 --force";
+
+            var signalPath =
+                ManualExternalFailureGateSignal.ArmKubernetesPod(
+                    cycleNumber,
+                    expectedPodUid,
+                    podName,
+                    namespaceName,
+                    command);
+
+            output.WriteLine(
+                $"[{profile.LogPrefix} EXTERNAL POD FAILURE ARMED] Cycle='{cycleNumber}', PodUid='{expectedPodUid}', PodName='{podName}', Namespace='{namespaceName}', RuntimeCount='{runtimeCountPerPod}', PowerShellWatchCommand='{ManualExternalFailureGateSignal.KubernetesPowerShellWatchCommand}', SignalFile='{signalPath}'.");
+            output.WriteLine(
+                $"[{profile.LogPrefix} WAITING-FOR-EXTERNAL-POD-DELETION] Cycle='{cycleNumber}', PodUid='{expectedPodUid}', PodName='{podName}', Command='{command}', PowerShellWatchCommand='{ManualExternalFailureGateSignal.KubernetesPowerShellWatchCommand}', Timeout='{timeout}', SignalFile='{signalPath}'.");
+
+            var deadline = DateTimeOffset.UtcNow.Add(timeout);
+            string? lastError = null;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                var result =
+                    await RunKubectlAsync(
+                            CancellationToken.None,
+                            "get",
+                            "pod",
+                            podName,
+                            "--namespace",
+                            namespaceName,
+                            "--ignore-not-found=true",
+                            "--output=jsonpath={.metadata.uid}")
+                        .ConfigureAwait(false);
+
+                if (result.ExitCode == 0)
+                {
+                    var observedPodUid = result.StandardOutput.Trim();
+
+                    if (string.IsNullOrWhiteSpace(observedPodUid) ||
+                        !StringComparer.Ordinal.Equals(
+                            observedPodUid,
+                            expectedPodUid))
+                    {
+                        ManualExternalFailureGateSignal.MarkObserved(
+                            signalPath,
+                            $"PodUid={expectedPodUid};PodName={podName}");
+                        output.WriteLine(
+                            $"[{profile.LogPrefix} EXTERNAL POD FAILURE OBSERVED] Cycle='{cycleNumber}', FailedPodUid='{expectedPodUid}', PodName='{podName}', ObservedPodUid='{observedPodUid}', State='exact-incarnation-gone', SignalFile='{signalPath}'.");
+                        return;
+                    }
+                }
+                else
+                {
+                    lastError = result.StandardError.Trim();
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(250))
+                    .ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                $"The externally selected Kubernetes Runtime Pool Pod was not deleted within '{timeout}'. PodUid='{expectedPodUid}', PodName='{podName}', Namespace='{namespaceName}', Command='{command}', LastKubectlError='{lastError}'.");
         }
 
         private static async Task<BoundedCapacityBusyPodFailureTarget>

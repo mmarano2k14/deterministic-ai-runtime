@@ -39,5 +39,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 submissionIterationCount,
                 executionCycleCount);
         }
+
+        /// <summary>
+        /// Keeps the same hierarchical proof but waits for an operator to externally kill the exact distinct busy parent Process Host.
+        /// Before starting the test, keep this PowerShell watcher open for both cycles:
+        /// <code>Get-Content "$env:TEMP\multiplexed-ai-manual-processhost-kill.txt" -Wait</code>
+        /// </summary>
+        [Theory]
+        [Trait("Category", "ManualExternalFailure")]
+        [InlineData(7, 5, 20, 2)]
+        public Task Grpc_ProcessHostPool_Should_Recover_Child_Runtime_Then_Wait_For_External_Distinct_Parent_Kill_And_Reuse_Warm_Capacity(
+            int maximumProcessHostCount,
+            int runtimeCountPerHost,
+            int submissionIterationCount,
+            int executionCycleCount)
+        {
+            return this.ExecuteFullFailureProductionScenarioAwaitExternalParentFailureAsync(
+                maximumProcessHostCount,
+                runtimeCountPerHost,
+                submissionIterationCount,
+                executionCycleCount);
+        }
     }
 }
