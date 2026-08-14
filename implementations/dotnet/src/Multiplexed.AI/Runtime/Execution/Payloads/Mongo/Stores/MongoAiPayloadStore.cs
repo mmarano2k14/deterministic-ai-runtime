@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Options;
 using MongoDB.Driver;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Stores;
 using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Documents;
@@ -25,7 +26,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
     /// - Payload documents must not expire before their related snapshots.
     /// - Missing payloads are treated as invalid replay/recovery state by the resolver.
     /// </summary>
-    public sealed class MongoAiPayloadStore : IAiPayloadStore
+    public sealed class MongoAiPayloadStore : IAiImmutablePayloadStore
     {
         private const string UnknownExecutionId = "unknown-execution";
         private const string MongoStorageKind = "mongo";
@@ -137,6 +138,91 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
 
                 throw;
             }
+        }
+
+        /// <inheritdoc />
+        public async Task<string> SaveImmutableAsync(
+            string key,
+            string content,
+            AiPayloadMetadata metadata,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(key);
+            ArgumentNullException.ThrowIfNull(content);
+            ArgumentNullException.ThrowIfNull(metadata);
+
+            var now = DateTime.UtcNow;
+            var document = new MongoAiPayloadDocument
+            {
+                Id = key,
+                Content = content,
+                SizeBytes = System.Text.Encoding.UTF8.GetByteCount(content),
+                ContentType = string.IsNullOrWhiteSpace(metadata.ContentType)
+                    ? "application/json"
+                    : metadata.ContentType,
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            };
+
+            try
+            {
+                await _collection.InsertOneAsync(
+                    document,
+                    cancellationToken: cancellationToken);
+
+                _runtimeMetrics?.Storage.RecordPayloadStored(
+                    metadata.ExecutionId ?? UnknownExecutionId,
+                    key,
+                    MongoStorageKind,
+                    document.SizeBytes);
+
+                return key;
+            }
+            catch (MongoException exception) when (IsDuplicateKey(exception))
+            {
+                var existing = await _collection
+                    .Find(item => item.Id == key)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                if (existing is not null &&
+                    string.Equals(existing.Content, content, StringComparison.Ordinal))
+                {
+                    return key;
+                }
+
+                throw new InvalidOperationException(
+                    $"Immutable payload key '{key}' already exists with different content.",
+                    exception);
+            }
+            catch (Exception ex)
+            {
+                _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
+                    metadata.ExecutionId ?? UnknownExecutionId,
+                    key,
+                    MongoStorageKind,
+                    ex);
+
+                throw;
+            }
+        }
+
+        private static bool IsDuplicateKey(MongoException exception)
+        {
+            if (exception is MongoWriteException writeException)
+            {
+                return writeException.WriteError?.Category == ServerErrorCategory.DuplicateKey ||
+                       writeException.WriteError?.Code == 11000 ||
+                       writeException.Message.Contains("E11000", StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (exception is MongoCommandException commandException)
+            {
+                return commandException.Code == 11000 ||
+                       string.Equals(commandException.CodeName, "DuplicateKey", StringComparison.OrdinalIgnoreCase) ||
+                       commandException.Message.Contains("E11000", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return exception.Message.Contains("E11000", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

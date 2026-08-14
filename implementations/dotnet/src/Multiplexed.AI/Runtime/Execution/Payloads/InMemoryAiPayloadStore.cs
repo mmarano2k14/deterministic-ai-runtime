@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Stores;
 
 namespace Multiplexed.AI.Runtime.Execution.Payloads
@@ -14,7 +15,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads
     /// - Data is lost when process restarts
     /// - Not suitable for production usage
     /// </summary>
-    public sealed class InMemoryAiPayloadStore : IAiPayloadStore
+    public sealed class InMemoryAiPayloadStore : IAiImmutablePayloadStore
     {
         private readonly ConcurrentDictionary<string, string> _store = new();
 
@@ -28,6 +29,32 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads
             var key = Guid.NewGuid().ToString("N");
             _store[key] = content;
             return Task.FromResult(key);
+        }
+
+        /// <inheritdoc />
+        public Task<string> SaveImmutableAsync(
+            string key,
+            string content,
+            AiPayloadMetadata metadata,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(key);
+            ArgumentNullException.ThrowIfNull(content);
+            ArgumentNullException.ThrowIfNull(metadata);
+
+            if (_store.TryAdd(key, content))
+            {
+                return Task.FromResult(key);
+            }
+
+            if (_store.TryGetValue(key, out var existing) &&
+                string.Equals(existing, content, StringComparison.Ordinal))
+            {
+                return Task.FromResult(key);
+            }
+
+            throw new InvalidOperationException(
+                $"Immutable payload key '{key}' already exists with different content.");
         }
 
         /// <summary>

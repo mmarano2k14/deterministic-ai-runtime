@@ -49,6 +49,11 @@
         /// Defines concurrency behavior for distributed step admission,
         /// throttling, and execution capacity decisions.
         /// </summary>
-        Concurrency = 7
+        Concurrency = 7,
+
+        /// <summary>
+        /// Defines authorization behavior for delegating execution from a parent step to a child DAG.
+        /// </summary>
+        Delegation = 8
     }
 }
