@@ -39,6 +39,15 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller
         public string? RequestedSharedRunId { get; set; }
 
         /// <summary>
+        /// Gets an optional submission-mode override for this request.
+        /// </summary>
+        /// <remarks>
+        /// This override is intended for narrow internal flows that must force the existing shared/global queue.
+        /// When omitted, the controller-wide <see cref="AiSharedRuntimeControllerOptions.SubmitMode"/> remains authoritative.
+        /// </remarks>
+        public AiSharedRuntimeSubmitMode? SubmitModeOverride { get; init; }
+
+        /// <summary>
         /// Optional tenant id used for future tenant-aware admission and routing policies.
         /// </summary>
         public string? TenantId { get; init; }

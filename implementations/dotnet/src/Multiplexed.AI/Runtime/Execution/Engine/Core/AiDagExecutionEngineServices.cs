@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.Execution.Cleanup;
 using Multiplexed.Abstractions.AI.Execution.Context;
 using Multiplexed.Abstractions.AI.Execution.Control;
 using Multiplexed.Abstractions.AI.Execution.Payloads;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Resolvers;
 using Multiplexed.Abstractions.AI.Execution.Persistence.Replay.Metadata;
 using Multiplexed.Abstractions.AI.Execution.Persistence.Snapshot;
 using Multiplexed.Abstractions.AI.Execution.Scheduling;
@@ -45,6 +46,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
             IOptions<AiEngineOptions> aiOptions,
             IAiRuntimeObservability observabilityService,
             IAiStepResultPayloadCompactor payloadCompactor,
+            IAiPayloadStoreResolver payloadStoreResolver,
             IAiExecutionStateReader stateReader,
             IAiExecutionStateWriter stateWriter,
             IAiExecutionStepResolver stepResolver,
@@ -68,6 +70,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
             CleanupService = cleanupService ?? throw new ArgumentNullException(nameof(cleanupService));
             AiOptions = aiOptions ?? throw new ArgumentNullException(nameof(aiOptions));
             PayloadCompactor = payloadCompactor ?? throw new ArgumentNullException(nameof(payloadCompactor));
+            PayloadStoreResolver = payloadStoreResolver ?? throw new ArgumentNullException(nameof(payloadStoreResolver));
             StateReader = stateReader ?? throw new ArgumentNullException(nameof(stateReader));
             StateWriter = stateWriter ?? throw new ArgumentNullException(nameof(stateWriter));
             StepResolver = stepResolver ?? throw new ArgumentNullException(nameof(stepResolver));
@@ -116,6 +119,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
 
         /// <inheritdoc />
         public IAiStepResultPayloadCompactor PayloadCompactor { get; }
+
+        /// <inheritdoc />
+        public IAiPayloadStoreResolver PayloadStoreResolver { get; }
 
         /// <inheritdoc />
         public IAiExecutionStateReader StateReader { get; }

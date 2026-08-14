@@ -3,6 +3,7 @@ using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Abstractions.AI.Retry;
 using Multiplexed.AI.Runtime.Execution;
+using Multiplexed.AI.Stores.Creation;
 using System.Collections.Concurrent;
 
 namespace Multiplexed.AI.Stores.Memory
@@ -13,10 +14,11 @@ namespace Multiplexed.AI.Stores.Memory
     /// This store is intended for resilience and temporary fallback scenarios.
     /// It is not a durable persistence mechanism.
     /// </summary>
-    public sealed class MemoryAiExecutionStore : IAiExecutionStore
+    public sealed class MemoryAiExecutionStore : IAiExecutionStore, IAiExecutionCreateIfAbsentStore
     {
         private readonly ConcurrentDictionary<string, AiExecutionRecord> _records = new(StringComparer.Ordinal);
         private readonly ConcurrentDictionary<string, AiExecutionState> _states = new(StringComparer.Ordinal);
+        private readonly object _createIfAbsentSync = new();
 
         /// <summary>
         /// Creates a new execution record and state in memory.
@@ -33,6 +35,41 @@ namespace Multiplexed.AI.Stores.Memory
             _states[state.ExecutionId] = CloneState(state);
 
             return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Attempts to create one exact execution record/state pair without replacing an existing execution.
+        /// </summary>
+        /// <param name="record">The execution record carrying the exact identifier.</param>
+        /// <param name="state">The execution state carrying the same exact identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when the pair was created; otherwise <c>false</c>.</returns>
+        public Task<bool> TryCreateIfAbsentAsync(
+            AiExecutionRecord record,
+            AiExecutionState state,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+            ArgumentNullException.ThrowIfNull(state);
+
+            if (!string.Equals(record.ExecutionId, state.ExecutionId, StringComparison.Ordinal))
+            {
+                throw new ArgumentException("Record and State must share the same ExecutionId.");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            lock (_createIfAbsentSync)
+            {
+                if (_records.ContainsKey(record.ExecutionId) || _states.ContainsKey(record.ExecutionId))
+                {
+                    return Task.FromResult(false);
+                }
+
+                _records[record.ExecutionId] = CloneRecord(record);
+                _states[state.ExecutionId] = CloneState(state);
+                return Task.FromResult(true);
+            }
         }
 
         /// <summary>
@@ -206,6 +243,7 @@ namespace Multiplexed.AI.Stores.Memory
             {
                 ExecutionId = source.ExecutionId,
                 PipelineName = source.PipelineName,
+                PipelineDefinitionSnapshot = CloneStoredPayload(source.PipelineDefinitionSnapshot),
                 ExecutionMode = source.ExecutionMode,
                 ContextKey = source.ContextKey,
                 CurrentStepIndex = source.CurrentStepIndex,
@@ -218,6 +256,29 @@ namespace Multiplexed.AI.Stores.Memory
                 UpdatedAtUtc = source.UpdatedAtUtc,
                 CurrentStep = source.CurrentStep,
                 ExecutionStepKey = source.ExecutionStepKey
+            };
+        }
+
+        /// <summary>
+        /// Creates a defensive copy of an optional stored payload descriptor.
+        /// </summary>
+        /// <param name="source">The source stored payload descriptor.</param>
+        /// <returns>The copied descriptor, or <c>null</c> when no payload is present.</returns>
+        private static AiStoredPayload? CloneStoredPayload(AiStoredPayload? source)
+        {
+            if (source is null)
+            {
+                return null;
+            }
+
+            return new AiStoredPayload
+            {
+                IsInline = source.IsInline,
+                InlineValue = source.InlineValue,
+                ArtifactId = source.ArtifactId,
+                ContentHash = source.ContentHash,
+                SizeBytes = source.SizeBytes,
+                ContentType = source.ContentType
             };
         }
 

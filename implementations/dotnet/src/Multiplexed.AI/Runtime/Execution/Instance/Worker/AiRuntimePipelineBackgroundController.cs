@@ -1371,14 +1371,24 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 _logger.Engine.LogInformation(
                     $"[AI PIPELINE CONTROLLER] Definition resolved. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', StepCount='{definition.Steps.Count}'.");
 
-                diagnosticPhase = "publish-definition";
+                if (request.PipelineDefinitionSnapshot is null)
+                {
+                    diagnosticPhase = "publish-definition";
 
-                await _definitionPublisher
-                    .PublishAsync(definition, cancellationToken)
-                    .ConfigureAwait(false);
+                    await _definitionPublisher
+                        .PublishAsync(definition, cancellationToken)
+                        .ConfigureAwait(false);
 
-                _logger.Engine.LogInformation(
-                    $"[AI PIPELINE CONTROLLER] Definition published. RunId='{handle.RunId}', Pipeline='{request.PipelineName}'.");
+                    _logger.Engine.LogInformation(
+                        $"[AI PIPELINE CONTROLLER] Definition published. RunId='{handle.RunId}', Pipeline='{request.PipelineName}'.");
+                }
+                else
+                {
+                    diagnosticPhase = "use-pinned-definition";
+
+                    _logger.Engine.LogInformation(
+                        $"[AI PIPELINE CONTROLLER] Immutable execution-bound definition retained without publishing as latest. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', DefinitionHash='{request.PipelineDefinitionSnapshot.ContentHash ?? string.Empty}'.");
+                }
 
                 diagnosticPhase = queuedRun.IsResume
                     ? "validate-recovery-resume"
@@ -1430,7 +1440,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 }
                 else
                 {
-                    created = await CreateExecutionAsync(request, cancellationToken)
+                    created = await CreateExecutionAsync(request, definition, cancellationToken)
                         .ConfigureAwait(false);
 
                     _logger.Engine.LogInformation(
@@ -2490,51 +2500,127 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         /// Creates a runtime execution for the specified pipeline run request.
         /// </summary>
         /// <param name="request">The pipeline run request.</param>
+        /// <param name="definition">The declarative pipeline definition already resolved for this run request.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The created execution record.</returns>
         private async Task<AiExecutionRecord> CreateExecutionAsync(
             AiRuntimePipelineRunRequest request,
+            AiPipelineDefinition definition,
             CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(definition);
             ArgumentException.ThrowIfNullOrWhiteSpace(request.PipelineName);
+
+            if (!string.Equals(request.PipelineName, definition.Name, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Resolved pipeline definition '{definition.Name}' does not match requested pipeline '{request.PipelineName}'.");
+            }
+
+            var hasRequestedExecutionId = !string.IsNullOrWhiteSpace(request.RequestedExecutionId);
+            if (hasRequestedExecutionId && request.PipelineDefinitionSnapshot is null)
+            {
+                throw new InvalidOperationException(
+                    "Preallocated execution creation requires an immutable pipeline definition snapshot.");
+            }
+
+            if (!hasRequestedExecutionId && request.PipelineDefinitionSnapshot is not null)
+            {
+                throw new InvalidOperationException(
+                    "An immutable pipeline definition snapshot may only be used with a preallocated execution identifier.");
+            }
 
             if (request.Input is null)
             {
-                return await _engine.CreateAsync(
-                    request.PipelineName,
+                return await CreateDagExecutionAsync(
+                    request,
+                    definition,
                     new Dictionary<string, object?>(),
                     cancellationToken).ConfigureAwait(false);
             }
 
             if (request.Input is string textInput)
             {
-                return await _engine.CreateAsync(
-                    request.PipelineName,
+                return await CreateDagExecutionAsync(
+                    request,
+                    definition,
                     textInput,
                     cancellationToken).ConfigureAwait(false);
             }
 
             if (request.Input is IDictionary<string, object?> stateInput)
             {
-                return await _engine.CreateAsync(
-                    request.PipelineName,
+                return await CreateDagExecutionAsync(
+                    request,
+                    definition,
                     stateInput,
                     cancellationToken).ConfigureAwait(false);
             }
 
             if (request.Input is IReadOnlyDictionary<string, object?> readonlyStateInput)
             {
-                return await _engine.CreateAsync(
-                    request.PipelineName,
+                return await CreateDagExecutionAsync(
+                    request,
+                    definition,
                     new Dictionary<string, object?>(readonlyStateInput, StringComparer.Ordinal),
                     cancellationToken).ConfigureAwait(false);
             }
 
-            return await _engine.CreateAsync(
-                request.PipelineName,
+            return await CreateDagExecutionAsync(
+                request,
+                definition,
                 ConvertObjectToStateInput(request.Input),
                 cancellationToken).ConfigureAwait(false);
+        }
+
+
+        /// <summary>
+        /// Creates a string-input DAG execution using either historical new-id creation or exact create-if-absent.
+        /// </summary>
+        /// <param name="request">The runtime run request.</param>
+        /// <param name="definition">The exact declarative definition.</param>
+        /// <param name="input">The string input.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The created or existing execution record.</returns>
+        private Task<AiExecutionRecord> CreateDagExecutionAsync(
+            AiRuntimePipelineRunRequest request,
+            AiPipelineDefinition definition,
+            string input,
+            CancellationToken cancellationToken)
+        {
+            return string.IsNullOrWhiteSpace(request.RequestedExecutionId)
+                ? _engine.CreateAsync(request.PipelineName, input, cancellationToken)
+                : _engine.CreateIfAbsentAsync(
+                    request.RequestedExecutionId,
+                    definition,
+                    request.PipelineDefinitionSnapshot!,
+                    input,
+                    cancellationToken);
+        }
+
+        /// <summary>
+        /// Creates a structured-input DAG execution using either historical new-id creation or exact create-if-absent.
+        /// </summary>
+        /// <param name="request">The runtime run request.</param>
+        /// <param name="definition">The exact declarative definition.</param>
+        /// <param name="input">The structured input.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The created or existing execution record.</returns>
+        private Task<AiExecutionRecord> CreateDagExecutionAsync(
+            AiRuntimePipelineRunRequest request,
+            AiPipelineDefinition definition,
+            IDictionary<string, object?> input,
+            CancellationToken cancellationToken)
+        {
+            return string.IsNullOrWhiteSpace(request.RequestedExecutionId)
+                ? _engine.CreateAsync(request.PipelineName, input, cancellationToken)
+                : _engine.CreateIfAbsentAsync(
+                    request.RequestedExecutionId,
+                    definition,
+                    request.PipelineDefinitionSnapshot!,
+                    input,
+                    cancellationToken);
         }
 
         /// <summary>

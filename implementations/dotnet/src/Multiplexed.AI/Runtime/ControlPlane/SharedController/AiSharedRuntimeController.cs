@@ -16,6 +16,7 @@ using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 {
@@ -418,8 +419,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            var queueFirst =
-                _options.SubmitMode == AiSharedRuntimeSubmitMode.QueueFirst;
+            var submitMode = request.SubmitModeOverride ?? _options.SubmitMode;
+            var queueFirst = submitMode == AiSharedRuntimeSubmitMode.QueueFirst;
+            var idempotentPreallocatedSubmission =
+                queueFirst &&
+                !string.IsNullOrWhiteSpace(request.RequestedSharedRunId) &&
+                !string.IsNullOrWhiteSpace(runRequest.RequestedExecutionId);
 
             var effectiveStatus = queueFirst
                 ? AiSharedRunStatus.QueuedGlobally
@@ -454,20 +459,47 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 Metadata = metadata
             };
 
-            var created = await _store
-                .CreateAsync(record, cancellationToken)
-                .ConfigureAwait(false);
+            AiSharedRunRecord created;
+            try
+            {
+                created = await _store
+                    .CreateAsync(record, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (InvalidOperationException exception) when (idempotentPreallocatedSubmission)
+            {
+                created = await _store
+                    .GetAsync(sharedRunId, cancellationToken)
+                    .ConfigureAwait(false)
+                    ?? throw new InvalidOperationException(
+                        $"Shared run '{sharedRunId}' reported a duplicate create, but the authoritative record could not be reloaded.",
+                        exception);
+
+                EnsureCompatiblePreallocatedSubmission(created, record);
+            }
 
             var current = created;
 
             if (queueFirst)
             {
-                await EnqueueGloballyAsync(
-                        created,
-                        admissionDecision,
-                        now,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                if (idempotentPreallocatedSubmission)
+                {
+                    await EnsureGloballyEnqueuedAsync(
+                            created,
+                            admissionDecision,
+                            now,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    await EnqueueGloballyAsync(
+                            created,
+                            admissionDecision,
+                            now,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
 
                 return new SharedRuntimeControllerOperationResult
                 {
@@ -1003,6 +1035,147 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         }
 
         /// <summary>
+        /// Ensures that an idempotent preallocated submission has one durable shared queue item.
+        /// </summary>
+        /// <param name="created">The authoritative shared run record.</param>
+        /// <param name="admissionDecision">The admission decision used to build a missing queue item.</param>
+        /// <param name="now">The original submission timestamp.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        private async Task EnsureGloballyEnqueuedAsync(
+            AiSharedRunRecord created,
+            AiRunAdmissionDecision admissionDecision,
+            DateTimeOffset now,
+            CancellationToken cancellationToken)
+        {
+            var existing = await _sharedQueue
+                .GetAsync(created.SharedRunId, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existing is not null)
+            {
+                EnsureCompatibleQueueItem(existing, created);
+                return;
+            }
+
+            try
+            {
+                await EnqueueGloballyAsync(
+                        created,
+                        admissionDecision,
+                        now,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (InvalidOperationException exception)
+            {
+                existing = await _sharedQueue
+                    .GetAsync(created.SharedRunId, cancellationToken)
+                    .ConfigureAwait(false)
+                    ?? throw new InvalidOperationException(
+                        $"Shared run '{created.SharedRunId}' reported a duplicate queue entry, but the authoritative queue item could not be reloaded.",
+                        exception);
+
+                EnsureCompatibleQueueItem(existing, created);
+            }
+        }
+
+        /// <summary>
+        /// Validates that a duplicate deterministic shared run submission represents the same physical request.
+        /// </summary>
+        /// <param name="existing">The authoritative previously persisted shared run.</param>
+        /// <param name="candidate">The duplicate candidate.</param>
+        private static void EnsureCompatiblePreallocatedSubmission(
+            AiSharedRunRecord existing,
+            AiSharedRunRecord candidate)
+        {
+            var existingExecutionId = existing.RunRequest.RequestedExecutionId;
+            var candidateExecutionId = candidate.RunRequest.RequestedExecutionId;
+
+            if (!string.Equals(existing.SharedRunId, candidate.SharedRunId, StringComparison.Ordinal) ||
+                !string.Equals(existingExecutionId, candidateExecutionId, StringComparison.Ordinal) ||
+                !string.Equals(existing.PipelineKey, candidate.PipelineKey, StringComparison.Ordinal) ||
+                !string.Equals(existing.RunRequest.PipelineName, candidate.RunRequest.PipelineName, StringComparison.Ordinal) ||
+                !MatchesPipelineDefinitionSnapshot(
+                    existing.RunRequest.PipelineDefinitionSnapshot,
+                    candidate.RunRequest.PipelineDefinitionSnapshot) ||
+                !string.Equals(existing.RunRequest.PipelineJson, candidate.RunRequest.PipelineJson, StringComparison.Ordinal) ||
+                !string.Equals(existing.ExecutionContextSnapshot.TenantId, candidate.ExecutionContextSnapshot.TenantId, StringComparison.Ordinal) ||
+                !string.Equals(existing.ExecutionContextSnapshot.TenantGroupId, candidate.ExecutionContextSnapshot.TenantGroupId, StringComparison.Ordinal) ||
+                !MatchesDeterministicMetadata(existing.Metadata, candidate.Metadata, "child.invocation.key") ||
+                !MatchesDeterministicMetadata(existing.Metadata, candidate.Metadata, "child.invocation.generation") ||
+                !MatchesDeterministicMetadata(existing.Metadata, candidate.Metadata, "child.definition.digest") ||
+                !MatchesDeterministicMetadata(existing.Metadata, candidate.Metadata, "child.input.digest"))
+            {
+                throw new InvalidOperationException(
+                    $"Shared run '{candidate.SharedRunId}' already exists with incompatible preallocated execution data.");
+            }
+        }
+
+        /// <summary>
+        /// Determines whether two optional immutable pipeline-definition descriptors represent the same content.
+        /// </summary>
+        /// <param name="existing">The authoritative persisted descriptor.</param>
+        /// <param name="candidate">The duplicate candidate descriptor.</param>
+        /// <returns><c>true</c> when both descriptors are absent or carry the same non-empty content hash.</returns>
+        private static bool MatchesPipelineDefinitionSnapshot(
+            AiStoredPayload? existing,
+            AiStoredPayload? candidate)
+        {
+            if (existing is null || candidate is null)
+            {
+                return existing is null && candidate is null;
+            }
+
+            return !string.IsNullOrWhiteSpace(existing.ContentHash) &&
+                   !string.IsNullOrWhiteSpace(candidate.ContentHash) &&
+                   string.Equals(existing.ContentHash, candidate.ContentHash, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Determines whether optional deterministic metadata is either absent from both requests or identical.
+        /// </summary>
+        /// <param name="existing">The authoritative persisted metadata.</param>
+        /// <param name="candidate">The duplicate candidate metadata.</param>
+        /// <param name="key">The deterministic metadata key to compare.</param>
+        /// <returns>
+        /// <c>true</c> when both requests omit the key or both provide the same value; otherwise <c>false</c>.
+        /// </returns>
+        private static bool MatchesDeterministicMetadata(
+            IReadOnlyDictionary<string, string> existing,
+            IReadOnlyDictionary<string, string> candidate,
+            string key)
+        {
+            var existingHasValue = existing.TryGetValue(key, out var existingValue);
+            var candidateHasValue = candidate.TryGetValue(key, out var candidateValue);
+
+            if (!existingHasValue || !candidateHasValue)
+            {
+                return existingHasValue == candidateHasValue;
+            }
+
+            return string.Equals(existingValue, candidateValue, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Validates that an existing queue item belongs to the same deterministic shared run.
+        /// </summary>
+        /// <param name="existing">The existing shared queue item.</param>
+        /// <param name="sharedRun">The authoritative shared run record.</param>
+        private static void EnsureCompatibleQueueItem(
+            AiSharedQueueItem existing,
+            AiSharedRunRecord sharedRun)
+        {
+            if (!string.Equals(existing.SharedRunId, sharedRun.SharedRunId, StringComparison.Ordinal) ||
+                !string.Equals(existing.PipelineKey, sharedRun.PipelineKey, StringComparison.Ordinal) ||
+                !string.Equals(existing.ExecutionContextSnapshot.TenantId, sharedRun.ExecutionContextSnapshot.TenantId, StringComparison.Ordinal) ||
+                !string.Equals(existing.ExecutionContextSnapshot.TenantGroupId, sharedRun.ExecutionContextSnapshot.TenantGroupId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Shared queue item '{sharedRun.SharedRunId}' is incompatible with the deterministic shared run record.");
+            }
+        }
+
+        /// <summary>
         /// Enqueues a shared run into the global shared queue.
         /// </summary>
         /// <param name="created">The created shared run record.</param>
@@ -1187,6 +1360,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             return new AiRuntimePipelineRunRequest
             {
                 PipelineName = request.PipelineName,
+                RequestedExecutionId = request.RequestedExecutionId,
+                PipelineDefinitionSnapshot = request.PipelineDefinitionSnapshot,
                 ExecutionContextSnapshot = executionContextSnapshot,
                 PipelineJson = request.PipelineJson,
                 PipelineJsonFilePath = request.PipelineJsonFilePath,

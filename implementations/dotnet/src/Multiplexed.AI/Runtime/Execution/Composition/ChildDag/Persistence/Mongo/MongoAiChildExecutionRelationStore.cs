@@ -7,6 +7,7 @@ using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Identity;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mongo.Documents;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots;
+using Multiplexed.AI.Runtime.Execution.Payloads.Serialization;
 
 namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mongo
 {
@@ -297,8 +298,8 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                         $"Immutable inline child relation snapshot '{propertyName}' must contain canonical serialized JSON text.");
                 }
 
-                var canonicalContent = AiChildDagCanonicalJson.Canonicalize(inlineContent);
-                var actualHash = AiChildDagCanonicalJson.ComputeSha256(canonicalContent);
+                var canonicalContent = AiCanonicalJson.Canonicalize(inlineContent);
+                var actualHash = AiCanonicalJson.ComputeSha256(canonicalContent);
                 if (!string.Equals(snapshot.ContentHash, actualHash, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
@@ -330,12 +331,12 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                    SnapshotEquals(existing.FrozenInvocationInput, candidate.FrozenInvocationInput) &&
                    SnapshotEquals(existing.DelegationPolicyBindingSnapshot, candidate.DelegationPolicyBindingSnapshot) &&
                    string.Equals(
-                       AiChildDagCanonicalJson.Serialize(existing.DelegatedExecutionContextSnapshot),
-                       AiChildDagCanonicalJson.Serialize(candidate.DelegatedExecutionContextSnapshot),
+                       AiCanonicalJson.Serialize(existing.DelegatedExecutionContextSnapshot),
+                       AiCanonicalJson.Serialize(candidate.DelegatedExecutionContextSnapshot),
                        StringComparison.Ordinal) &&
                    string.Equals(
-                       AiChildDagCanonicalJson.Serialize(existing.DelegatedMetadata),
-                       AiChildDagCanonicalJson.Serialize(candidate.DelegatedMetadata),
+                       AiCanonicalJson.Serialize(existing.DelegatedMetadata),
+                       AiCanonicalJson.Serialize(candidate.DelegatedMetadata),
                        StringComparison.Ordinal);
         }
 

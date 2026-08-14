@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.Execution.Cleanup;
 using Multiplexed.Abstractions.AI.Execution.Context;
 using Multiplexed.Abstractions.AI.Execution.Control;
 using Multiplexed.Abstractions.AI.Execution.Payloads;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Resolvers;
 using Multiplexed.Abstractions.AI.Execution.Persistence.Replay.Metadata;
 using Multiplexed.Abstractions.AI.Execution.Persistence.Snapshot;
 using Multiplexed.Abstractions.AI.Execution.Scheduling;
@@ -111,6 +112,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
         /// Gets the step result payload compactor.
         /// </summary>
         IAiStepResultPayloadCompactor PayloadCompactor { get; }
+
+        /// <summary>
+        /// Gets the configured execution payload store resolver used to load immutable execution-bound payloads.
+        /// </summary>
+        IAiPayloadStoreResolver PayloadStoreResolver { get; }
 
         /// <summary>
         /// Gets the execution state reader.

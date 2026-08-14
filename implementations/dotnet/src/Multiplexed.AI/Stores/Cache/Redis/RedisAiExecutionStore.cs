@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.AI.Stores.Creation;
 using StackExchange.Redis;
 
 namespace Multiplexed.AI.Stores.Cache.Redis
@@ -17,7 +18,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis
     /// - Prevent multiple workers from advancing the same execution step
     /// - Keep record/state updates strictly aligned
     /// </summary>
-    public sealed class RedisAiExecutionStore : IAiExecutionStore
+    public sealed class RedisAiExecutionStore : IAiExecutionStore, IAiExecutionCreateIfAbsentStore
     {
         private readonly IConnectionMultiplexer _multiplexer;
         private readonly IDatabase _database;
@@ -130,6 +131,46 @@ namespace Multiplexed.AI.Stores.Cache.Redis
 
             await _database.StringSetAsync(recordKey, recordPayload);
             await _database.StringSetAsync(stateKey, statePayload);
+        }
+
+        /// <summary>
+        /// Atomically creates one exact execution record/state pair when both Redis keys are absent.
+        /// </summary>
+        /// <param name="record">The execution record carrying the exact identifier.</param>
+        /// <param name="state">The execution state carrying the same exact identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when the pair was created; otherwise <c>false</c>.</returns>
+        public async Task<bool> TryCreateIfAbsentAsync(
+            AiExecutionRecord record,
+            AiExecutionState state,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+            ArgumentNullException.ThrowIfNull(state);
+
+            if (!string.Equals(record.ExecutionId, state.ExecutionId, StringComparison.Ordinal))
+            {
+                throw new ArgumentException("Record and State must share the same ExecutionId.");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var recordKey = _keyBuilder.GetExecutionRecordKey(record.ExecutionId);
+            var stateKey = _keyBuilder.GetExecutionStateKey(state.ExecutionId);
+            var transaction = _database.CreateTransaction();
+
+            transaction.AddCondition(Condition.KeyNotExists(recordKey));
+            transaction.AddCondition(Condition.KeyNotExists(stateKey));
+
+            _ = transaction.StringSetAsync(
+                recordKey,
+                JsonSerializer.Serialize(record, _jsonOptions));
+
+            _ = transaction.StringSetAsync(
+                stateKey,
+                JsonSerializer.Serialize(state, _jsonOptions));
+
+            return await transaction.ExecuteAsync().ConfigureAwait(false);
         }
 
         /// <summary>

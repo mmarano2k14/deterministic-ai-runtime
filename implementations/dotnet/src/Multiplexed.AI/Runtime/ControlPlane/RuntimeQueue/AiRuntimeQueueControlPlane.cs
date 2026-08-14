@@ -995,6 +995,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             return new AiRuntimePipelineRunRequest
             {
                 PipelineName = runRequest.PipelineName,
+                RequestedExecutionId = runRequest.RequestedExecutionId,
+                PipelineDefinitionSnapshot = runRequest.PipelineDefinitionSnapshot,
                 PipelineJson = runRequest.PipelineJson,
                 PipelineJsonFilePath = runRequest.PipelineJsonFilePath,
                 PipelineDefinition = runRequest.PipelineDefinition,

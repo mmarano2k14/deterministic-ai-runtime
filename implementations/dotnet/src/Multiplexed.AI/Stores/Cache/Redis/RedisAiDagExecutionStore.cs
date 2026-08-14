@@ -3,6 +3,7 @@ using Multiplexed.Abstractions.AI.Execution.Scheduling;
 using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Runtime.Execution.Engine.Models;
 using Multiplexed.AI.Runtime.Execution.Retention.Models;
+using Multiplexed.AI.Stores.Creation;
 using StackExchange.Redis;
 
 namespace Multiplexed.AI.Stores.Cache.Redis
@@ -23,7 +24,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis
     /// DAG execution uses step-level Redis coordination, Lua-backed atomic mutations,
     /// deterministic step indexes, and explicit lease expiration timestamps.
     /// </remarks>
-    public sealed class RedisAiDagExecutionStore : IAiDagExecutionStore
+    public sealed class RedisAiDagExecutionStore : IAiDagExecutionStore, IAiExecutionCreateIfAbsentStore
     {
         private readonly IRedisDagStoreServices _services;
         private readonly IConnectionMultiplexer _multiplexer;
@@ -53,6 +54,21 @@ namespace Multiplexed.AI.Stores.Cache.Redis
             CancellationToken cancellationToken = default)
         {
             await _services.StateWriter.CreateAsync(record, state, cancellationToken);
+        }
+
+        /// <summary>
+        /// Atomically creates one exact distributed DAG execution bundle when it is absent.
+        /// </summary>
+        /// <param name="record">The execution record carrying the exact identifier.</param>
+        /// <param name="state">The initial distributed DAG state.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when this caller created the execution; otherwise <c>false</c>.</returns>
+        public Task<bool> TryCreateIfAbsentAsync(
+            AiExecutionRecord record,
+            AiExecutionState state,
+            CancellationToken cancellationToken = default)
+        {
+            return _services.StateWriter.TryCreateIfAbsentAsync(record, state, cancellationToken);
         }
 
         /// <summary>

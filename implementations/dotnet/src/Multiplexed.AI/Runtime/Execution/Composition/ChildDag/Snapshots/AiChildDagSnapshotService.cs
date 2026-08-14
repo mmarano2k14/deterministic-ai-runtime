@@ -6,6 +6,8 @@ using Multiplexed.Abstractions.AI.Execution.Payloads.Resolvers;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Stores;
 using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.AI.Abstractions.AI.Policies;
+using Multiplexed.AI.Runtime.Execution.Payloads.Immutable;
+using Multiplexed.AI.Runtime.Execution.Payloads.Serialization;
 
 namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
 {
@@ -26,6 +28,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
         private const string ArtifactKeyPrefix = "immutable-sha256-";
 
         private readonly IAiPayloadStoreResolver payloadStoreResolver;
+        private readonly AiImmutableJsonPayloadReader immutableJsonPayloadReader;
         private readonly AiPayloadStoreOptions payloadOptions;
 
         /// <summary>
@@ -38,6 +41,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
             IOptions<AiPayloadStoreOptions> payloadOptions)
         {
             this.payloadStoreResolver = payloadStoreResolver ?? throw new ArgumentNullException(nameof(payloadStoreResolver));
+            this.immutableJsonPayloadReader = new AiImmutableJsonPayloadReader(this.payloadStoreResolver);
             ArgumentNullException.ThrowIfNull(payloadOptions);
             this.payloadOptions = payloadOptions.Value;
         }
@@ -82,7 +86,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
             var canonicalJson = await LoadAndVerifyAsync(snapshot, cancellationToken)
                 .ConfigureAwait(false);
 
-            var definition = AiChildDagCanonicalJson.Deserialize<AiPipelineDefinition>(canonicalJson);
+            var definition = AiCanonicalJson.Deserialize<AiPipelineDefinition>(canonicalJson);
             if (string.IsNullOrWhiteSpace(definition.Name))
             {
                 throw new InvalidOperationException(
@@ -171,7 +175,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
             var canonicalJson = await LoadAndVerifyAsync(snapshot, cancellationToken)
                 .ConfigureAwait(false);
 
-            return AiChildDagCanonicalJson.Deserialize<AiChildDelegationPolicyDefinition>(canonicalJson);
+            return AiCanonicalJson.Deserialize<AiChildDelegationPolicyDefinition>(canonicalJson);
         }
 
         /// <summary>
@@ -222,50 +226,11 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
         /// <exception cref="InvalidOperationException">
         /// Thrown when the snapshot is incomplete, missing, or its persisted content no longer matches its hash.
         /// </exception>
-        public async Task<string> LoadAndVerifyAsync(
+        public Task<string> LoadAndVerifyAsync(
             AiStoredPayload snapshot,
             CancellationToken cancellationToken = default)
         {
-            ArgumentNullException.ThrowIfNull(snapshot);
-
-            string content;
-            if (snapshot.IsInline)
-            {
-                if (snapshot.InlineValue is not string inlineContent)
-                {
-                    throw new InvalidOperationException(
-                        "Immutable inline child DAG snapshots must contain canonical serialized JSON text.");
-                }
-
-                content = inlineContent;
-            }
-            else
-            {
-                if (string.IsNullOrWhiteSpace(snapshot.ArtifactId))
-                {
-                    throw new InvalidOperationException(
-                        "Immutable artifact-backed child DAG snapshot is missing its artifact id.");
-                }
-
-                content = await this.payloadStoreResolver
-                    .Resolve()
-                    .LoadAsync(snapshot.ArtifactId, cancellationToken)
-                    .ConfigureAwait(false)
-                    ?? throw new InvalidOperationException(
-                        $"Immutable child DAG snapshot artifact '{snapshot.ArtifactId}' could not be resolved.");
-            }
-
-            var canonicalContent = AiChildDagCanonicalJson.Canonicalize(content);
-            var digest = AiChildDagCanonicalJson.ComputeSha256(canonicalContent);
-
-            if (string.IsNullOrWhiteSpace(snapshot.ContentHash) ||
-                !string.Equals(snapshot.ContentHash, digest, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    "Immutable child DAG snapshot content does not match its durable content hash.");
-            }
-
-            return canonicalContent;
+            return this.immutableJsonPayloadReader.LoadAndVerifyAsync(snapshot, cancellationToken);
         }
 
         /// <summary>
@@ -282,9 +247,9 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
             string parentExecutionId,
             CancellationToken cancellationToken)
         {
-            var canonicalJson = AiChildDagCanonicalJson.Serialize(value);
+            var canonicalJson = AiCanonicalJson.Serialize(value);
             var sizeBytes = Encoding.UTF8.GetByteCount(canonicalJson);
-            var digest = AiChildDagCanonicalJson.ComputeSha256(canonicalJson);
+            var digest = AiCanonicalJson.ComputeSha256(canonicalJson);
 
             if (sizeBytes <= Math.Max(0, this.payloadOptions.MaxInlineSizeBytes))
             {
@@ -323,7 +288,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
 
             if (persisted is null ||
                 !string.Equals(
-                    AiChildDagCanonicalJson.ComputeSha256(AiChildDagCanonicalJson.Canonicalize(persisted)),
+                    AiCanonicalJson.ComputeSha256(AiCanonicalJson.Canonicalize(persisted)),
                     digest,
                     StringComparison.OrdinalIgnoreCase))
             {

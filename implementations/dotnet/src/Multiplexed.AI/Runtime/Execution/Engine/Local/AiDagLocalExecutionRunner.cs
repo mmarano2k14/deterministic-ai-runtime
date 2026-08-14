@@ -120,8 +120,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Local
                 state,
                 cancellationToken);
 
-            var resolvedPipeline = await _engineServices.PipelineExecutor.PrepareAsync(
-                record.PipelineName!,
+            var resolvedPipeline = await AiExecutionBoundPipelineResolver.PrepareAsync(
+                _engineServices,
+                record,
                 cancellationToken);
 
             try

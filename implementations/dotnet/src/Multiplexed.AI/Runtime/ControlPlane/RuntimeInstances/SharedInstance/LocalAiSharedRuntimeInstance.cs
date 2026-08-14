@@ -302,6 +302,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
             return new AiRuntimePipelineRunRequest
             {
                 PipelineName = request.PipelineName,
+                RequestedExecutionId = request.RequestedExecutionId,
+                PipelineDefinitionSnapshot = request.PipelineDefinitionSnapshot,
                 ExecutionContextSnapshot = executionContextSnapshot,
                 PipelineJson = request.PipelineJson,
                 PipelineJsonFilePath = request.PipelineJsonFilePath,

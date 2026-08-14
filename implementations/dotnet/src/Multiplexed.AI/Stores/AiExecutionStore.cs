@@ -1,6 +1,7 @@
 ﻿using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.AI.Runtime.Execution;
 using Multiplexed.AI.Stores.Cache.Redis;
+using Multiplexed.AI.Stores.Creation;
 using Multiplexed.AI.Stores.Memory;
 
 namespace Multiplexed.AI.Stores
@@ -11,7 +12,7 @@ namespace Multiplexed.AI.Stores
     /// This store uses Redis as the primary persistence layer and
     /// memory as a fallback layer for resilience.
     /// </summary>
-    public sealed class AiExecutionStore : IAiExecutionStore
+    public sealed class AiExecutionStore : IAiExecutionStore, IAiExecutionCreateIfAbsentStore
     {
         private readonly RedisAiExecutionStore _primary;
         private readonly MemoryAiExecutionStore _fallback;
@@ -45,6 +46,38 @@ namespace Multiplexed.AI.Stores
             {
                 await _fallback.CreateAsync(record, state, cancellationToken);
             }
+        }
+
+        /// <summary>
+        /// Creates one exact execution identity through the durable primary store without fallback split-brain.
+        /// </summary>
+        /// <remarks>
+        /// Deterministic create-if-absent fails closed when Redis is unavailable. The memory fallback is mirrored
+        /// only after the primary atomic decision succeeds, because allowing fallback ownership would permit two
+        /// processes to create the same logical execution independently.
+        /// </remarks>
+        /// <param name="record">The execution record carrying the exact identifier.</param>
+        /// <param name="state">The execution state carrying the same exact identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when this caller created the execution; otherwise <c>false</c>.</returns>
+        public async Task<bool> TryCreateIfAbsentAsync(
+            AiExecutionRecord record,
+            AiExecutionState state,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+            ArgumentNullException.ThrowIfNull(state);
+
+            var created = await _primary
+                .TryCreateIfAbsentAsync(record, state, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (created)
+            {
+                await _fallback.CreateAsync(record, state, cancellationToken).ConfigureAwait(false);
+            }
+
+            return created;
         }
 
         /// <summary>

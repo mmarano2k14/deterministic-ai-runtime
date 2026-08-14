@@ -1,5 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 
 namespace Multiplexed.Abstractions.AI.Execution.Instance.Worker
 {
@@ -8,13 +9,13 @@ namespace Multiplexed.Abstractions.AI.Execution.Instance.Worker
     /// </summary>
     /// <remarks>
     /// <para>
-    /// One request represents one pipeline run. Each normal request creates one new
-    /// execution record and therefore one distinct execution identifier.
+    /// One request represents one pipeline run. Normal requests create a new execution identifier unless an
+    /// exact preallocated identifier is explicitly supplied through <see cref="RequestedExecutionId"/>.
     /// </para>
     /// <para>
-    /// Controlled recovery resume requests are the only supported exception. They
-    /// target an existing durable execution identifier through the runtime pipeline
-    /// background controller resume path.
+    /// Controlled recovery resume requests remain separate from preallocated creation. Recovery targets an existing
+    /// durable execution through the resume path, while <see cref="RequestedExecutionId"/> means create-if-absent
+    /// for a normal run that has not yet been created.
     /// </para>
     /// <para>
     /// A pipeline definition can be supplied as raw JSON, as a JSON file path, or as
@@ -34,6 +35,25 @@ namespace Multiplexed.Abstractions.AI.Execution.Instance.Worker
         /// Gets the pipeline name to execute.
         /// </summary>
         public required string PipelineName { get; init; }
+
+        /// <summary>
+        /// Gets the optional exact execution identifier to use for idempotent create-if-absent creation.
+        /// </summary>
+        /// <remarks>
+        /// This value does not request crash-recovery resume. When present on a normal run, the runtime creates the
+        /// execution under this identifier only when absent and converges on the existing execution on redelivery.
+        /// </remarks>
+        public string? RequestedExecutionId { get; init; }
+
+        /// <summary>
+        /// Gets the optional immutable declarative pipeline definition descriptor bound to a preallocated execution.
+        /// </summary>
+        /// <remarks>
+        /// This value is required when <see cref="RequestedExecutionId"/> is used for deterministic child execution
+        /// creation. The runtime persists the descriptor on the execution record and never republishes the frozen
+        /// definition as the mutable latest pipeline definition.
+        /// </remarks>
+        public AiStoredPayload? PipelineDefinitionSnapshot { get; init; }
 
         /// <summary>
         /// Gets the optional durable execution context snapshot associated with this run.

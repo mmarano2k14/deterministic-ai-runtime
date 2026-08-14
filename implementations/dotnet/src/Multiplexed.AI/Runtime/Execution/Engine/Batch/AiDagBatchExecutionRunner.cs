@@ -197,8 +197,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
 
             await loadContextAndSetAsync(record.ContextKey);
 
-            var resolvedPipeline = await _engineServices.PipelineExecutor.PrepareAsync(
-                record.PipelineName!,
+            var resolvedPipeline = await AiExecutionBoundPipelineResolver.PrepareAsync(
+                _engineServices,
+                record,
                 cancellationToken);
 
             if (resolvedPipeline is null)

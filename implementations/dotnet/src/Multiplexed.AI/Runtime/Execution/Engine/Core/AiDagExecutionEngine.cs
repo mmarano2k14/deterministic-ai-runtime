@@ -1,5 +1,7 @@
 ﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
+using Multiplexed.Abstractions.AI.Pipeline;
 
 namespace Multiplexed.AI.Runtime.Execution.Engine.Core
 {
@@ -61,6 +63,54 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
         {
             return _runtime.Creator.CreateAsync(
                 pipelineName,
+                input,
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Creates the exact preallocated DAG execution from the supplied declarative definition when absent.
+        /// </summary>
+        /// <param name="executionId">The exact preallocated execution identifier.</param>
+        /// <param name="definition">The exact declarative DAG definition to resolve.</param>
+        /// <param name="pipelineDefinitionSnapshot">The verified immutable descriptor bound to this execution.</param>
+        /// <param name="input">The string input payload.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The newly created or already existing authoritative execution record.</returns>
+        public Task<AiExecutionRecord> CreateIfAbsentAsync(
+            string executionId,
+            AiPipelineDefinition definition,
+            AiStoredPayload pipelineDefinitionSnapshot,
+            string input,
+            CancellationToken cancellationToken = default)
+        {
+            return _runtime.Creator.CreateIfAbsentAsync(
+                executionId,
+                definition,
+                pipelineDefinitionSnapshot,
+                input,
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Creates the exact preallocated DAG execution from the supplied declarative definition when absent.
+        /// </summary>
+        /// <param name="executionId">The exact preallocated execution identifier.</param>
+        /// <param name="definition">The exact declarative DAG definition to resolve.</param>
+        /// <param name="pipelineDefinitionSnapshot">The verified immutable descriptor bound to this execution.</param>
+        /// <param name="input">The structured input values to seed into execution state.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The newly created or already existing authoritative execution record.</returns>
+        public Task<AiExecutionRecord> CreateIfAbsentAsync(
+            string executionId,
+            AiPipelineDefinition definition,
+            AiStoredPayload pipelineDefinitionSnapshot,
+            IDictionary<string, object?> input,
+            CancellationToken cancellationToken = default)
+        {
+            return _runtime.Creator.CreateIfAbsentAsync(
+                executionId,
+                definition,
+                pipelineDefinitionSnapshot,
                 input,
                 cancellationToken);
         }

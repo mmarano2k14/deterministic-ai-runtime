@@ -1,7 +1,9 @@
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Delegation;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Resolvers;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Stores;
 using Multiplexed.Abstractions.AI.Pipeline;
@@ -92,6 +94,24 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Snaps
             Assert.Equal("analyze", Assert.Single(resolved.Steps).Name);
             Assert.True(resolved.Config.ContainsKey("market"));
             Assert.True(resolved.Config.ContainsKey("riskLimit"));
+        }
+
+        [Fact]
+        public async Task LoadDefinitionAsync_Should_Verify_Inline_Snapshot_After_Json_RoundTrip()
+        {
+            var service = CreateService(new InMemoryAiPayloadStore(), maxInlineSizeBytes: 64 * 1024);
+            var definition = CreateDefinition(new Dictionary<string, object?> { ["market"] = "gold" });
+            var snapshot = await service.FreezeDefinitionAsync(definition, "parent-1");
+            var serialized = JsonSerializer.Serialize(snapshot);
+            var roundTripped = JsonSerializer.Deserialize<AiStoredPayload>(serialized);
+
+            Assert.NotNull(roundTripped);
+            Assert.IsType<JsonElement>(roundTripped!.InlineValue);
+
+            var restored = await service.LoadDefinitionAsync(roundTripped);
+
+            Assert.Equal(definition.Name, restored.Name);
+            Assert.Equal(definition.Version, restored.Version);
         }
 
         [Fact]

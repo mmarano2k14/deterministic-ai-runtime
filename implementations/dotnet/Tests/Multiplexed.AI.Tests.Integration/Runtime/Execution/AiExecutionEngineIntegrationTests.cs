@@ -687,6 +687,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                 return Task.FromResult(resolved);
             }
 
+            public Task<ResolvedAiPipeline> PrepareAsync(
+                AiPipelineDefinition definition,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentNullException.ThrowIfNull(definition);
+
+                return PrepareAsync(definition.Name, cancellationToken);
+            }
+
             public async Task<PipelineExecutionResult> ExecuteNextAsync(
                 ResolvedAiPipeline pipeline,
                 AiExecutionContext context,

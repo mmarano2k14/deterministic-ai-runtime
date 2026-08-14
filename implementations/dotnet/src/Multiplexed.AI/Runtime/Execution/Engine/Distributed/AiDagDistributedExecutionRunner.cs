@@ -195,8 +195,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
 
             await loadContextAndSetAsync(record.ContextKey).ConfigureAwait(false);
 
-            var resolvedPipeline = await _engineServices.PipelineExecutor.PrepareAsync(
-                record.PipelineName!,
+            var resolvedPipeline = await AiExecutionBoundPipelineResolver.PrepareAsync(
+                _engineServices,
+                record,
                 cancellationToken).ConfigureAwait(false);
 
             if (resolvedPipeline is null)
