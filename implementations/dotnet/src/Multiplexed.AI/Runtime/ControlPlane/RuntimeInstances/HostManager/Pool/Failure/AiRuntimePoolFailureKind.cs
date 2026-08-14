@@ -13,6 +13,11 @@
         /// <summary>
         /// The child lifecycle adapter failed while observing or controlling the process.
         /// </summary>
-        LifecycleObserverFault = 1
+        LifecycleObserverFault = 1,
+
+        /// <summary>
+        /// A complete Kubernetes Runtime Pool Pod disappeared unexpectedly.
+        /// </summary>
+        UnexpectedPodDeletion = 2
     }
 }

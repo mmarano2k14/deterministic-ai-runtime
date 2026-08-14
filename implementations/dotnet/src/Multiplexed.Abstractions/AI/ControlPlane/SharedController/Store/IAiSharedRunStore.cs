@@ -168,7 +168,12 @@
         /// The updated shared run record, or <c>null</c> when the run is unknown or cannot be updated.
         /// </returns>
         /// <remarks>
-        /// Distributed implementations should perform this update atomically.
+        /// Distributed implementations must perform this update atomically.
+        ///
+        /// The first durable dispatch ownership is immutable. Once a run has a
+        /// dispatched runtime instance and local run id, a delayed or concurrent
+        /// dispatch attempt must return the existing record without replacing that
+        /// ownership.
         /// </remarks>
         Task<AiSharedRunRecord?> MarkDispatchedAsync(
             string sharedRunId,

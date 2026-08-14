@@ -1,4 +1,5 @@
 ﻿using ModelContextProtocol.Protocol;
+using System.Net;
 using Multiplexed.Abstractions.AI.ControlPlane.Execution;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
@@ -238,9 +239,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
         }
 
         public static async Task<IReadOnlyList<AiRuntimeQueueControlPlaneResult>> WaitForTerminalRuntimeRunStatusesAsync(
-    McpTestClient mcp,
-    IReadOnlyList<AiSharedRunRecord> dispatchedRuns,
-    TimeSpan timeout)
+            McpTestClient mcp,
+            IReadOnlyList<AiSharedRunRecord> dispatchedRuns,
+            TimeSpan timeout)
         {
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentNullException.ThrowIfNull(dispatchedRuns);
@@ -248,98 +249,308 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
             var deadline =
                 DateTimeOffset.UtcNow.Add(timeout);
 
-            IReadOnlyList<AiRuntimeQueueControlPlaneResult> lastStatuses =
-                Array.Empty<AiRuntimeQueueControlPlaneResult>();
+            /*
+             * A large bounded-capacity proof can validate hundreds of runtime runs.
+             * Querying every status in one unpaced burst makes the test observer
+             * compete with the system under test and can trigger legitimate MCP
+             * admission backpressure.
+             */
+            var minimumRequestInterval =
+                TimeSpan.FromMilliseconds(25);
 
-            var attempt =
-                0;
+            var terminalStatuses =
+                new AiRuntimeQueueControlPlaneResult?[
+                    dispatchedRuns.Count];
+
+            var lastStatuses =
+                new AiRuntimeQueueControlPlaneResult?[
+                    dispatchedRuns.Count];
+
+            var nextRequestAtUtc =
+                DateTimeOffset.MinValue;
+
+            var attempt = 0;
+            var tooManyRequestsRetryCount = 0;
 
             while (DateTimeOffset.UtcNow < deadline)
             {
                 attempt++;
 
-                var statuses =
-                    new List<AiRuntimeQueueControlPlaneResult>();
-
-                foreach (var run in dispatchedRuns)
+                for (var index = 0;
+                     index < dispatchedRuns.Count;
+                     index++)
                 {
-                    if (string.IsNullOrWhiteSpace(run.AssignedRuntimeInstanceId) ||
-                        string.IsNullOrWhiteSpace(run.LocalRunId))
+                    if (terminalStatuses[index] is not null)
                     {
-                        statuses.Add(
+                        continue;
+                    }
+
+                    var run =
+                        dispatchedRuns[index];
+
+                    if (string.IsNullOrWhiteSpace(
+                            run.AssignedRuntimeInstanceId) ||
+                        string.IsNullOrWhiteSpace(
+                            run.LocalRunId))
+                    {
+                        lastStatuses[index] =
                             new AiRuntimeQueueControlPlaneResult
                             {
-                                Operation = AiRuntimeQueueControlPlaneOperation.GetRunStatus,
+                                Operation =
+                                    AiRuntimeQueueControlPlaneOperation
+                                        .GetRunStatus,
                                 Success = false,
-                                RuntimeInstanceId = run.AssignedRuntimeInstanceId ?? string.Empty,
-                                RunId = run.LocalRunId ?? string.Empty,
+                                RuntimeInstanceId =
+                                    run.AssignedRuntimeInstanceId ??
+                                    string.Empty,
+                                RunId =
+                                    run.LocalRunId ??
+                                    string.Empty,
                                 ExecutionId = run.ExecutionId,
-                                FailureReason = "shared-run-runtime-binding-missing",
-                                Message = "Shared run does not expose both AssignedRuntimeInstanceId and LocalRunId."
-                            });
+                                FailureReason =
+                                    "shared-run-runtime-binding-missing",
+                                Message =
+                                    "Shared run does not expose both AssignedRuntimeInstanceId and LocalRunId."
+                            };
 
                         continue;
                     }
 
                     var status =
-                        await mcp.GetRuntimeQueueRunStatusAsync(
-                                new AiRuntimeQueueControlPlaneRequest
-                                {
-                                    Operation = AiRuntimeQueueControlPlaneOperation.GetRunStatus,
-                                    RuntimeInstanceId = run.AssignedRuntimeInstanceId,
-                                    RunId = run.LocalRunId,
-                                    IncludeRunState = true,
-                                    IncludeDiagnostics = true,
-                                    RequestedBy = "mcp-integration-test",
-                                    Source = "mcp-test"
-                                })
+                        await GetRuntimeRunStatusWithBackpressureAsync(
+                                mcp,
+                                run,
+                                deadline,
+                                minimumRequestInterval,
+                                () => nextRequestAtUtc,
+                                value => nextRequestAtUtc = value,
+                                () =>
+                                    Interlocked.Increment(
+                                        ref tooManyRequestsRetryCount))
                             .ConfigureAwait(false);
 
-                    statuses.Add(status);
+                    if (status is null)
+                    {
+                        break;
+                    }
+
+                    lastStatuses[index] = status;
+
+                    if (IsTerminal(status))
+                    {
+                        terminalStatuses[index] = status;
+                    }
                 }
 
-                lastStatuses =
-                    statuses;
+                var availableStatuses =
+                    lastStatuses
+                        .Where(status => status is not null)
+                        .Select(status => status!)
+                        .ToArray();
 
                 var terminalCount =
-                    statuses.Count(IsTerminal);
+                    terminalStatuses.Count(
+                        status => status is not null);
 
                 var successfulStatusCount =
-                    statuses.Count(status => status.Success);
+                    availableStatuses.Count(
+                        status => status.Success);
 
                 var nullRunStateCount =
-                    statuses.Count(status => status.RunState is null);
+                    availableStatuses.Count(
+                        status => status.RunState is null);
 
                 var statusBreakdown =
-                    BuildRuntimeQueueStatusBreakdown(statuses);
+                    BuildRuntimeQueueStatusBreakdown(
+                        availableStatuses);
 
                 Console.WriteLine(
-                    "[WAIT TERMINAL RUNTIME STATUSES] Attempt='{0}' Expected='{1}' Terminal='{2}' Success='{3}' NullRunState='{4}' StatusBreakdown='{5}' ElapsedRemainingMs='{6}' Details='{7}'",
+                    "[WAIT TERMINAL RUNTIME STATUSES] Attempt='{0}' Expected='{1}' Observed='{2}' Terminal='{3}' Success='{4}' NullRunState='{5}' TooManyRequestsRetryCount='{6}' StatusBreakdown='{7}' ElapsedRemainingMs='{8}' Details='{9}'",
                     attempt,
                     dispatchedRuns.Count,
+                    availableStatuses.Length,
                     terminalCount,
                     successfulStatusCount,
                     nullRunStateCount,
+                    Volatile.Read(
+                        ref tooManyRequestsRetryCount),
                     statusBreakdown,
-                    Math.Max(0, (long)(deadline - DateTimeOffset.UtcNow).TotalMilliseconds),
-                    FormatRuntimeQueueStatuses(statuses));
+                    Math.Max(
+                        0,
+                        (long)(
+                            deadline -
+                            DateTimeOffset.UtcNow)
+                            .TotalMilliseconds),
+                    FormatRuntimeQueueStatuses(
+                        availableStatuses));
 
-                if (statuses.All(IsTerminal))
+                if (terminalCount == dispatchedRuns.Count)
                 {
-                    return statuses;
+                    return terminalStatuses
+                        .Select(status => status!)
+                        .ToArray();
+                }
+
+                var remaining =
+                    deadline -
+                    DateTimeOffset.UtcNow;
+
+                if (remaining <= TimeSpan.Zero)
+                {
+                    break;
                 }
 
                 await Task
-                    .Delay(TimeSpan.FromMilliseconds(250))
+                    .Delay(
+                        remaining < TimeSpan.FromMilliseconds(250)
+                            ? remaining
+                            : TimeSpan.FromMilliseconds(250))
                     .ConfigureAwait(false);
             }
+
+            var finalStatuses =
+                lastStatuses
+                    .Where(status => status is not null)
+                    .Select(status => status!)
+                    .ToArray();
 
             throw new TimeoutException(
                 "Expected all runtime runs to reach terminal status within timeout. " +
                 $"ExpectedCount='{dispatchedRuns.Count}', " +
-                $"LastStatusBreakdown='{BuildRuntimeQueueStatusBreakdown(lastStatuses)}', " +
-                $"LastStatuses='{FormatRuntimeQueueStatuses(lastStatuses)}', " +
+                $"ObservedCount='{finalStatuses.Length}', " +
+                $"TerminalCount='{terminalStatuses.Count(status => status is not null)}', " +
+                $"TooManyRequestsRetryCount='{Volatile.Read(ref tooManyRequestsRetryCount)}', " +
+                $"LastStatusBreakdown='{BuildRuntimeQueueStatusBreakdown(finalStatuses)}', " +
+                $"LastStatuses='{FormatRuntimeQueueStatuses(finalStatuses)}', " +
                 $"DispatchedRuns='{FormatSharedRunsForRuntimeStatusWait(dispatchedRuns)}'.");
+        }
+
+        /// <summary>
+        /// Reads one runtime status while respecting transient MCP admission
+        /// backpressure.
+        /// </summary>
+        /// <remarks>
+        /// HTTP 429 is an expected admission-pressure signal during high-concurrency
+        /// production proofs. The wait remains bounded by the caller's existing
+        /// deadline; a transient retry-count threshold must not turn backpressure
+        /// into a false correctness failure.
+        /// </remarks>
+        private static async Task<AiRuntimeQueueControlPlaneResult?>
+            GetRuntimeRunStatusWithBackpressureAsync(
+                McpTestClient mcp,
+                AiSharedRunRecord run,
+                DateTimeOffset deadline,
+                TimeSpan minimumRequestInterval,
+                Func<DateTimeOffset> getNextRequestAtUtc,
+                Action<DateTimeOffset> setNextRequestAtUtc,
+                Action recordTooManyRequests)
+        {
+            var backpressureAttempt = 0;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                var requestDelay =
+                    getNextRequestAtUtc() -
+                    DateTimeOffset.UtcNow;
+
+                if (requestDelay > TimeSpan.Zero)
+                {
+                    var remainingBeforeRequest =
+                        deadline -
+                        DateTimeOffset.UtcNow;
+
+                    if (remainingBeforeRequest <= TimeSpan.Zero)
+                    {
+                        return null;
+                    }
+
+                    await Task
+                        .Delay(
+                            requestDelay < remainingBeforeRequest
+                                ? requestDelay
+                                : remainingBeforeRequest)
+                        .ConfigureAwait(false);
+                }
+
+                try
+                {
+                    var status =
+                        await mcp
+                            .GetRuntimeQueueRunStatusAsync(
+                                new AiRuntimeQueueControlPlaneRequest
+                                {
+                                    Operation =
+                                        AiRuntimeQueueControlPlaneOperation
+                                            .GetRunStatus,
+                                    RuntimeInstanceId =
+                                        run.AssignedRuntimeInstanceId,
+                                    RunId = run.LocalRunId,
+                                    IncludeRunState = true,
+                                    IncludeDiagnostics = true,
+                                    RequestedBy =
+                                        "mcp-integration-test",
+                                    Source = "mcp-test"
+                                })
+                            .ConfigureAwait(false);
+
+                    setNextRequestAtUtc(
+                        DateTimeOffset.UtcNow.Add(
+                            minimumRequestInterval));
+
+                    return status;
+                }
+                catch (HttpRequestException exception)
+                    when (exception.StatusCode ==
+                        HttpStatusCode.TooManyRequests)
+                {
+                    recordTooManyRequests();
+                    backpressureAttempt++;
+
+                    var exponentialDelayMs =
+                        Math.Min(
+                            2_000,
+                            100 *
+                            (1 <<
+                                Math.Min(
+                                    backpressureAttempt - 1,
+                                    4)));
+
+                    var backpressureDelay =
+                        TimeSpan.FromMilliseconds(
+                            exponentialDelayMs);
+
+                    var remaining =
+                        deadline -
+                        DateTimeOffset.UtcNow;
+
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        return null;
+                    }
+
+                    var effectiveDelay =
+                        backpressureDelay < remaining
+                            ? backpressureDelay
+                            : remaining;
+
+                    setNextRequestAtUtc(
+                        DateTimeOffset.UtcNow.Add(
+                            effectiveDelay));
+
+                    Console.WriteLine(
+                        "[WAIT TERMINAL RUNTIME STATUSES BACKPRESSURE] SharedRunId='{0}' RuntimeInstanceId='{1}' LocalRunId='{2}' RetryAttempt='{3}' DelayMs='{4}' RemainingMs='{5}'. Backpressure remains transient and bounded by the existing terminal-status deadline.",
+                        run.SharedRunId,
+                        run.AssignedRuntimeInstanceId,
+                        run.LocalRunId,
+                        backpressureAttempt,
+                        (long)effectiveDelay.TotalMilliseconds,
+                        Math.Max(
+                            0,
+                            (long)remaining.TotalMilliseconds));
+                }
+            }
+
+            return null;
         }
 
         public static async Task<AiRuntimeQueueControlPlaneResult> WaitForRuntimeRunExecutionIdAsync(
@@ -659,7 +870,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                     $"Execution='{status.ExecutionId ?? status.RunState?.ExecutionId}', " +
                     $"Success='{status.Success}', " +
                     $"Status='{status.RunState?.Status ?? "<null>"}', " +
-                    $"FailureReason='{status.FailureReason}', " +
+                    $"RunStateFailureReason='{status.RunState?.FailureReason}', " +
+                    $"ControlPlaneFailureReason='{status.FailureReason}', " +
                     $"Message='{status.Message}', " +
                     $"Diagnostics='{FormatDiagnostics(status.Diagnostics)}'"));
         }

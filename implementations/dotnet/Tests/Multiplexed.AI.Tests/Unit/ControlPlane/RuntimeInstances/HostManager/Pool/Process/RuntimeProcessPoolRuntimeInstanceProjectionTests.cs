@@ -20,6 +20,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             options.EnvironmentVariables["AiMcpHost__Mode"] = "wrong-mode";
             options.EnvironmentVariables["AiRuntimeInstanceRegistration__PoolId"] = "wrong-pool";
             options.EnvironmentVariables["AiRuntimeInstanceRegistration__HostId"] = "wrong-host";
+            options.EnvironmentVariables[
+                "AiRuntimeInstanceRegistration__Metadata__hostType"] =
+                "runtime-instance-kubernetes-pool";
+            options.EnvironmentVariables[
+                "AiRuntimeInstanceRegistration__Metadata__deployment"] =
+                "kubernetes-pool";
 
             var factory =
                 new AiRuntimeProcessPoolRuntimeInstanceStartPlanFactory(
@@ -37,13 +43,28 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             Assert.Equal("http://127.0.0.1:5931", plan.TransportEndpoint);
             Assert.Equal(plan.TransportEndpoint, plan.ReadinessRequest.TransportEndpoint);
             Assert.Equal(request.RuntimeInstanceId, plan.ReadinessRequest.RuntimeInstanceId);
+            Assert.True(plan.ReadinessRequest.RequireExactRuntimeInstanceId);
             Assert.True(plan.ReadinessRequest.RequireTransportEndpoint);
+            Assert.Equal(
+                "runtime-instance-kubernetes-pool",
+                environment[
+                    "AiRuntimeInstanceRegistration__Metadata__hostType"]);
+            Assert.Equal(
+                "kubernetes-pool",
+                environment[
+                    "AiRuntimeInstanceRegistration__Metadata__deployment"]);
             Assert.Equal(
                 "True",
                 environment["AiEngine__ControlPlane__EnableDiscovery"]);
             Assert.Equal(
                 "True",
                 environment["AiEngine__ControlPlane__RequireDiscovery"]);
+            Assert.Equal(
+                "false",
+                environment["AiRuntimeProcessPool__Enabled"]);
+            Assert.Equal(
+                "false",
+                environment["AiKubernetesRuntimePoolInPod__Enabled"]);
             Assert.DoesNotContain(
                 environment.Keys,
                 key => key.Contains("Metadata__pool", StringComparison.OrdinalIgnoreCase));
@@ -53,6 +74,51 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
 
             await plan.PortLease.DisposeAsync();
             Assert.True(portAllocator.LeaseReleased);
+        }
+
+        /// <summary>
+        /// Verifies that a child binds and is probed locally while publishing the stable parent
+        /// Runtime Pool router endpoint to remote control planes.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Separate_Local_Route_From_Published_Pool_Endpoint()
+        {
+            var portAllocator = new FakePortAllocator(6031);
+            var options = CreateOptions();
+            options.PublishedTransportEndpoint =
+                "http://127.0.0.1:7100/";
+
+            var factory =
+                new AiRuntimeProcessPoolRuntimeInstanceStartPlanFactory(
+                    options,
+                    portAllocator);
+
+            var plan =
+                await factory.CreateAsync(
+                    CreateRequest());
+
+            var environment =
+                plan.ProcessOptions.EnvironmentVariables;
+
+            Assert.Equal(
+                "http://127.0.0.1:6031",
+                plan.TransportEndpoint);
+            Assert.Equal(
+                plan.TransportEndpoint,
+                plan.ReadinessRequest.TransportEndpoint);
+            Assert.Equal(
+                "http://127.0.0.1:7100",
+                environment[
+                    "AiRuntimeInstanceRegistration__ProviderMetadata__transport.endpoint"]);
+            Assert.Equal(
+                "http://127.0.0.1:7100",
+                environment[
+                    "AiRuntimeInstanceRegistration__Metadata__transport.endpoint"]);
+            Assert.Equal(
+                "http://127.0.0.1:6031",
+                environment["ASPNETCORE_URLS"]);
+
+            await plan.PortLease.DisposeAsync();
         }
 
         /// <summary>

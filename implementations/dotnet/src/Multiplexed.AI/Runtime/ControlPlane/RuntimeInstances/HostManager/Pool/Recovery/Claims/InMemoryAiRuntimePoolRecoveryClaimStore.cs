@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -6,15 +6,20 @@ using System.Threading.Tasks;
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Claims
 {
     /// <summary>
-    /// Provides atomic in-memory recovery claims for the local process-host Runtime Pool.
+    /// Provides atomic in-memory recovery claims for exact runtime and membership failures.
     /// </summary>
     public sealed class InMemoryAiRuntimePoolRecoveryClaimStore :
-        IAiRuntimePoolRecoveryClaimStore
+        IAiRuntimePoolRecoveryClaimStore,
+        IAiRuntimePoolRecoveryMembershipClaimStore
     {
         private readonly object syncRoot = new();
 
-        private readonly Dictionary<string, ActiveClaim>
-            claimsByFailureId =
+        private readonly Dictionary<string, ActiveRuntimeClaim>
+            runtimeClaimsByFailureId =
+            new(StringComparer.Ordinal);
+
+        private readonly Dictionary<string, ActiveMembershipClaim>
+            membershipClaimsByFailureId =
             new(StringComparer.Ordinal);
 
         /// <inheritdoc />
@@ -23,19 +28,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 AiRuntimePoolRecoveryClaimRequest request,
                 CancellationToken cancellationToken = default)
         {
-            ValidateRequest(request);
+            ValidateRuntimeRequest(request);
             cancellationToken.ThrowIfCancellationRequested();
 
             var normalized =
-                Normalize(request);
+                NormalizeRuntimeRequest(request);
 
             lock (this.syncRoot)
             {
-                if (this.claimsByFailureId.TryGetValue(
+                if (this.membershipClaimsByFailureId.ContainsKey(
+                        normalized.FailureId))
+                {
+                    throw new AiRuntimePoolRecoveryClaimConflictException(
+                        normalized.FailureId);
+                }
+
+                if (this.runtimeClaimsByFailureId.TryGetValue(
                         normalized.FailureId,
                         out var existing))
                 {
-                    if (!HasSameAuthority(
+                    if (!HasSameRuntimeAuthority(
                             existing.Claim,
                             normalized))
                     {
@@ -70,22 +82,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         CandidateCount =
                             normalized.CandidateCount,
                         ClaimedBy = normalized.ClaimedBy,
-                        ClaimedAtUtc =
-                            DateTimeOffset.UtcNow
+                        ClaimedAtUtc = DateTimeOffset.UtcNow
                     };
 
-                var leaseId =
-                    string.Concat(
-                        "recovery-lease-",
-                        Guid.NewGuid().ToString("N"));
+                var leaseId = CreateLeaseId();
+                var releaseToken = CreateReleaseToken();
 
-                var releaseToken =
-                    Guid.NewGuid()
-                        .ToString("N");
-
-                this.claimsByFailureId.Add(
+                this.runtimeClaimsByFailureId.Add(
                     claim.FailureId,
-                    new ActiveClaim(
+                    new ActiveRuntimeClaim(
                         claim,
                         leaseId,
                         releaseToken));
@@ -98,7 +103,96 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                                 .Acquired,
                         Claim = claim,
                         Lease =
-                            new Lease(
+                            new RuntimeLease(
+                                this,
+                                claim,
+                                leaseId,
+                                releaseToken)
+                    });
+            }
+        }
+
+        /// <inheritdoc />
+        public Task<AiRuntimePoolRecoveryMembershipClaimAcquisition>
+            TryAcquireMembershipAsync(
+                AiRuntimePoolRecoveryMembershipClaimRequest request,
+                CancellationToken cancellationToken = default)
+        {
+            ValidateMembershipRequest(request);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var normalized =
+                NormalizeMembershipRequest(request);
+
+            lock (this.syncRoot)
+            {
+                if (this.runtimeClaimsByFailureId.ContainsKey(
+                        normalized.FailureId))
+                {
+                    throw new AiRuntimePoolRecoveryClaimConflictException(
+                        normalized.FailureId);
+                }
+
+                if (this.membershipClaimsByFailureId.TryGetValue(
+                        normalized.FailureId,
+                        out var existing))
+                {
+                    if (!HasSameMembershipAuthority(
+                            existing.Claim,
+                            normalized))
+                    {
+                        throw new AiRuntimePoolRecoveryClaimConflictException(
+                            normalized.FailureId);
+                    }
+
+                    return Task.FromResult(
+                        new AiRuntimePoolRecoveryMembershipClaimAcquisition
+                        {
+                            Status =
+                                AiRuntimePoolRecoveryClaimAcquisitionStatus
+                                    .AlreadyClaimed,
+                            Claim = existing.Claim
+                        });
+                }
+
+                var claim =
+                    new AiRuntimePoolRecoveryMembershipClaim
+                    {
+                        ClaimId =
+                            AiRuntimePoolRecoveryMembershipClaimIdentityFactory
+                                .CreateClaimId(normalized),
+                        FailureId = normalized.FailureId,
+                        PoolId = normalized.PoolId,
+                        HostId = normalized.HostId,
+                        MembershipFingerprint =
+                            normalized.MembershipFingerprint,
+                        MemberCount = normalized.MemberCount,
+                        InventoryFingerprint =
+                            normalized.InventoryFingerprint,
+                        CandidateCount = normalized.CandidateCount,
+                        ClaimedBy = normalized.ClaimedBy,
+                        ClaimedAtUtc = DateTimeOffset.UtcNow
+                    };
+
+                var leaseId = CreateLeaseId();
+                var releaseToken = CreateReleaseToken();
+
+                this.membershipClaimsByFailureId.Add(
+                    claim.FailureId,
+                    new ActiveMembershipClaim(
+                        claim,
+                        leaseId,
+                        releaseToken));
+
+                return Task.FromResult(
+                    new AiRuntimePoolRecoveryMembershipClaimAcquisition
+                    {
+                        Status =
+                            AiRuntimePoolRecoveryClaimAcquisitionStatus
+                                .Acquired,
+                        Claim = claim,
+                        Lease =
+                            new MembershipLease(
                                 this,
                                 claim,
                                 leaseId,
@@ -117,18 +211,40 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
             lock (this.syncRoot)
             {
-                if (!this.claimsByFailureId.TryGetValue(
+                if (!this.runtimeClaimsByFailureId.TryGetValue(
                         failureId.Trim(),
                         out var active))
                 {
                     return Task.FromResult<
-                        AiRuntimePoolRecoveryClaim?>(
-                        null);
+                        AiRuntimePoolRecoveryClaim?>(null);
                 }
 
                 return Task.FromResult<
-                    AiRuntimePoolRecoveryClaim?>(
-                    active.Claim);
+                    AiRuntimePoolRecoveryClaim?>(active.Claim);
+            }
+        }
+
+        /// <inheritdoc />
+        public Task<AiRuntimePoolRecoveryMembershipClaim?>
+            GetMembershipByFailureIdAsync(
+                string failureId,
+                CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(failureId);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            lock (this.syncRoot)
+            {
+                if (!this.membershipClaimsByFailureId.TryGetValue(
+                        failureId.Trim(),
+                        out var active))
+                {
+                    return Task.FromResult<
+                        AiRuntimePoolRecoveryMembershipClaim?>(null);
+                }
+
+                return Task.FromResult<
+                    AiRuntimePoolRecoveryMembershipClaim?>(active.Claim);
             }
         }
 
@@ -139,15 +255,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             string leaseId,
             CancellationToken cancellationToken = default)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(failureId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(claimId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(leaseId);
+            ValidateLeaseIdentity(
+                failureId,
+                claimId,
+                leaseId);
             cancellationToken.ThrowIfCancellationRequested();
 
             lock (this.syncRoot)
             {
                 var active =
-                    this.claimsByFailureId.TryGetValue(
+                    this.runtimeClaimsByFailureId.TryGetValue(
                         failureId.Trim(),
                         out var existing) &&
                     StringComparer.Ordinal.Equals(
@@ -161,11 +278,37 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             }
         }
 
-        /// <summary>
-        /// Releases one claim only when the private lease token and public lease incarnation still
-        /// own it.
-        /// </summary>
-        private ValueTask ReleaseAsync(
+        /// <inheritdoc />
+        public Task<bool> IsActiveMembershipLeaseAsync(
+            string failureId,
+            string claimId,
+            string leaseId,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateLeaseIdentity(
+                failureId,
+                claimId,
+                leaseId);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            lock (this.syncRoot)
+            {
+                var active =
+                    this.membershipClaimsByFailureId.TryGetValue(
+                        failureId.Trim(),
+                        out var existing) &&
+                    StringComparer.Ordinal.Equals(
+                        existing.Claim.ClaimId,
+                        claimId.Trim()) &&
+                    StringComparer.Ordinal.Equals(
+                        existing.LeaseId,
+                        leaseId.Trim());
+
+                return Task.FromResult(active);
+            }
+        }
+
+        private ValueTask ReleaseRuntimeAsync(
             string failureId,
             string claimId,
             string leaseId,
@@ -173,7 +316,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         {
             lock (this.syncRoot)
             {
-                if (this.claimsByFailureId.TryGetValue(
+                if (this.runtimeClaimsByFailureId.TryGetValue(
                         failureId,
                         out var existing) &&
                     StringComparer.Ordinal.Equals(
@@ -186,35 +329,54 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         existing.ReleaseToken,
                         releaseToken))
                 {
-                    this.claimsByFailureId.Remove(
-                        failureId);
+                    this.runtimeClaimsByFailureId.Remove(failureId);
                 }
             }
 
             return ValueTask.CompletedTask;
         }
 
-        /// <summary>
-        /// Validates one exact claim request.
-        /// </summary>
-        private static void ValidateRequest(
+        private ValueTask ReleaseMembershipAsync(
+            string failureId,
+            string claimId,
+            string leaseId,
+            string releaseToken)
+        {
+            lock (this.syncRoot)
+            {
+                if (this.membershipClaimsByFailureId.TryGetValue(
+                        failureId,
+                        out var existing) &&
+                    StringComparer.Ordinal.Equals(
+                        existing.Claim.ClaimId,
+                        claimId) &&
+                    StringComparer.Ordinal.Equals(
+                        existing.LeaseId,
+                        leaseId) &&
+                    StringComparer.Ordinal.Equals(
+                        existing.ReleaseToken,
+                        releaseToken))
+                {
+                    this.membershipClaimsByFailureId.Remove(failureId);
+                }
+            }
+
+            return ValueTask.CompletedTask;
+        }
+
+        private static void ValidateRuntimeRequest(
             AiRuntimePoolRecoveryClaimRequest request)
         {
             ArgumentNullException.ThrowIfNull(request);
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                request.FailureId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                request.PoolId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                request.HostId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(request.FailureId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(request.PoolId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(request.HostId);
             ArgumentException.ThrowIfNullOrWhiteSpace(
                 request.RuntimeInstanceId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                request.RouteId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(request.RouteId);
             ArgumentException.ThrowIfNullOrWhiteSpace(
                 request.InventoryFingerprint);
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                request.ClaimedBy);
+            ArgumentException.ThrowIfNullOrWhiteSpace(request.ClaimedBy);
 
             if (request.CandidateCount < 0)
             {
@@ -224,19 +386,54 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             }
         }
 
-        /// <summary>
-        /// Normalizes authoritative string values.
-        /// </summary>
-        private static AiRuntimePoolRecoveryClaimRequest Normalize(
-            AiRuntimePoolRecoveryClaimRequest request)
+        private static void ValidateMembershipRequest(
+            AiRuntimePoolRecoveryMembershipClaimRequest request)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentException.ThrowIfNullOrWhiteSpace(request.FailureId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(request.PoolId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(request.HostId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                request.MembershipFingerprint);
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                request.InventoryFingerprint);
+            ArgumentException.ThrowIfNullOrWhiteSpace(request.ClaimedBy);
+
+            if (request.MemberCount <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(request),
+                    "MemberCount must be greater than zero.");
+            }
+
+            if (request.CandidateCount < 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(request),
+                    "CandidateCount cannot be negative.");
+            }
+        }
+
+        private static void ValidateLeaseIdentity(
+            string failureId,
+            string claimId,
+            string leaseId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(failureId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(claimId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(leaseId);
+        }
+
+        private static AiRuntimePoolRecoveryClaimRequest
+            NormalizeRuntimeRequest(
+                AiRuntimePoolRecoveryClaimRequest request)
         {
             return request with
             {
                 FailureId = request.FailureId.Trim(),
                 PoolId = request.PoolId.Trim(),
                 HostId = request.HostId.Trim(),
-                RuntimeInstanceId =
-                    request.RuntimeInstanceId.Trim(),
+                RuntimeInstanceId = request.RuntimeInstanceId.Trim(),
                 RouteId = request.RouteId.Trim(),
                 InventoryFingerprint =
                     request.InventoryFingerprint.Trim()
@@ -245,10 +442,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             };
         }
 
-        /// <summary>
-        /// Determines whether an active claim has the exact requested authority.
-        /// </summary>
-        private static bool HasSameAuthority(
+        private static AiRuntimePoolRecoveryMembershipClaimRequest
+            NormalizeMembershipRequest(
+                AiRuntimePoolRecoveryMembershipClaimRequest request)
+        {
+            return request with
+            {
+                FailureId = request.FailureId.Trim(),
+                PoolId = request.PoolId.Trim(),
+                HostId = request.HostId.Trim(),
+                MembershipFingerprint =
+                    request.MembershipFingerprint.Trim()
+                        .ToLowerInvariant(),
+                InventoryFingerprint =
+                    request.InventoryFingerprint.Trim()
+                        .ToLowerInvariant(),
+                ClaimedBy = request.ClaimedBy.Trim()
+            };
+        }
+
+        private static bool HasSameRuntimeAuthority(
             AiRuntimePoolRecoveryClaim claim,
             AiRuntimePoolRecoveryClaimRequest request)
         {
@@ -271,32 +484,63 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 StringComparer.Ordinal.Equals(
                     claim.InventoryFingerprint,
                     request.InventoryFingerprint) &&
-                claim.CandidateCount ==
-                    request.CandidateCount;
+                claim.CandidateCount == request.CandidateCount;
         }
 
-        /// <summary>
-        /// Stores one active claim and its release authority.
-        /// </summary>
-        private sealed record ActiveClaim(
+        private static bool HasSameMembershipAuthority(
+            AiRuntimePoolRecoveryMembershipClaim claim,
+            AiRuntimePoolRecoveryMembershipClaimRequest request)
+        {
+            return
+                StringComparer.Ordinal.Equals(
+                    claim.FailureId,
+                    request.FailureId) &&
+                StringComparer.Ordinal.Equals(
+                    claim.PoolId,
+                    request.PoolId) &&
+                StringComparer.Ordinal.Equals(
+                    claim.HostId,
+                    request.HostId) &&
+                StringComparer.Ordinal.Equals(
+                    claim.MembershipFingerprint,
+                    request.MembershipFingerprint) &&
+                claim.MemberCount == request.MemberCount &&
+                StringComparer.Ordinal.Equals(
+                    claim.InventoryFingerprint,
+                    request.InventoryFingerprint) &&
+                claim.CandidateCount == request.CandidateCount;
+        }
+
+        private static string CreateLeaseId()
+        {
+            return string.Concat(
+                "recovery-lease-",
+                Guid.NewGuid().ToString("N"));
+        }
+
+        private static string CreateReleaseToken()
+        {
+            return Guid.NewGuid().ToString("N");
+        }
+
+        private sealed record ActiveRuntimeClaim(
             AiRuntimePoolRecoveryClaim Claim,
             string LeaseId,
             string ReleaseToken);
 
-        /// <summary>
-        /// Owns the private release token for one active claim.
-        /// </summary>
-        private sealed class Lease :
+        private sealed record ActiveMembershipClaim(
+            AiRuntimePoolRecoveryMembershipClaim Claim,
+            string LeaseId,
+            string ReleaseToken);
+
+        private sealed class RuntimeLease :
             IAiRuntimePoolRecoveryClaimLease
         {
             private readonly InMemoryAiRuntimePoolRecoveryClaimStore owner;
             private readonly string releaseToken;
             private int disposed;
 
-            /// <summary>
-            /// Initializes a new instance of the <see cref="Lease"/> class.
-            /// </summary>
-            public Lease(
+            public RuntimeLease(
                 InMemoryAiRuntimePoolRecoveryClaimStore owner,
                 AiRuntimePoolRecoveryClaim claim,
                 string leaseId,
@@ -308,17 +552,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 this.releaseToken = releaseToken;
             }
 
-            /// <inheritdoc />
             public AiRuntimePoolRecoveryClaim Claim { get; }
 
-            /// <inheritdoc />
             public string LeaseId { get; }
 
-            /// <inheritdoc />
             public bool IsReleased =>
                 Volatile.Read(ref this.disposed) != 0;
 
-            /// <inheritdoc />
             public ValueTask DisposeAsync()
             {
                 if (Interlocked.Exchange(
@@ -328,7 +568,50 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                     return ValueTask.CompletedTask;
                 }
 
-                return this.owner.ReleaseAsync(
+                return this.owner.ReleaseRuntimeAsync(
+                    this.Claim.FailureId,
+                    this.Claim.ClaimId,
+                    this.LeaseId,
+                    this.releaseToken);
+            }
+        }
+
+        private sealed class MembershipLease :
+            IAiRuntimePoolRecoveryMembershipClaimLease
+        {
+            private readonly InMemoryAiRuntimePoolRecoveryClaimStore owner;
+            private readonly string releaseToken;
+            private int disposed;
+
+            public MembershipLease(
+                InMemoryAiRuntimePoolRecoveryClaimStore owner,
+                AiRuntimePoolRecoveryMembershipClaim claim,
+                string leaseId,
+                string releaseToken)
+            {
+                this.owner = owner;
+                this.Claim = claim;
+                this.LeaseId = leaseId;
+                this.releaseToken = releaseToken;
+            }
+
+            public AiRuntimePoolRecoveryMembershipClaim Claim { get; }
+
+            public string LeaseId { get; }
+
+            public bool IsReleased =>
+                Volatile.Read(ref this.disposed) != 0;
+
+            public ValueTask DisposeAsync()
+            {
+                if (Interlocked.Exchange(
+                        ref this.disposed,
+                        1) != 0)
+                {
+                    return ValueTask.CompletedTask;
+                }
+
+                return this.owner.ReleaseMembershipAsync(
                     this.Claim.FailureId,
                     this.Claim.ClaimId,
                     this.LeaseId,

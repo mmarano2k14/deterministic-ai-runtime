@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -43,9 +44,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
     public sealed class AiRuntimeExecutionRecoveryReconciler : IAiRuntimeExecutionRecoveryReconciler
     {
         private const string RecoveryReconciliationOperation = "runtime-execution-recovery-reconcile";
+        private const string RecoveryForensicsIdMetadataKey =
+            "recovery.forensicsId";
+        private const string RecoveryModeMetadataKey =
+            "recovery.mode";
+        private const string RecoveryReasonMetadataKey =
+            "recovery.reason";
+        private const string RecoveryFailedRuntimeInstanceIdMetadataKey =
+            "recovery.failedRuntimeInstanceId";
+        private const string RecoveryFailedLocalRunIdMetadataKey =
+            "recovery.failedLocalRunId";
+        private const string RecoveryFailedExecutionIdMetadataKey =
+            "recovery.failedExecutionId";
+        private const string RecoveryModeResumeExistingExecution =
+            "resume-existing-execution";
+        private const string RecoveryModeRequeueLocalQueuedRun =
+            "requeue-local-queued-run";
         private const string RuntimeStatusNotIncludedReason = "runtime-status-not-included";
         private const string NoRecoverableRuntimeRunsReason = "no-recoverable-runtime-runs";
         private const string OrphanedRuntimeInstanceReason = "orphaned-runtime-instance";
+        private const string OrphanedRuntimeInstanceUnconfirmedReason =
+            "orphaned-runtime-instance-unconfirmed";
 
         private readonly IAiRuntimeInstanceRegistry runtimeInstanceRegistry;
         private readonly IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex;
@@ -54,6 +73,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
         private readonly IAiRuntimeRecoveryForensicsRecorder forensicsRecorder;
         private readonly IAiControlPlaneObserver observer;
         private readonly AiRuntimeExecutionRecoveryReconciliationOptions options;
+        private readonly ConcurrentDictionary<string, DateTimeOffset>
+            orphanedRuntimeInstanceFirstObservedAtUtc = new(StringComparer.Ordinal);
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiRuntimeExecutionRecoveryReconciler"/> class.
@@ -168,6 +189,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             this.forensicsRecorder = forensicsRecorder;
             this.observer = observer;
             this.options = options.Value;
+
+            if (this.options.OrphanedRuntimeInstanceConfirmationPeriod < TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(options),
+                    "Orphaned runtime instance confirmation period cannot be negative.");
+            }
         }
 
         /// <inheritdoc />
@@ -205,6 +233,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         .Select(runtimeInstance => runtimeInstance.RuntimeInstanceId)
                         .Where(runtimeInstanceId => !string.IsNullOrWhiteSpace(runtimeInstanceId))
                         .ToHashSet(StringComparer.Ordinal);
+
+                foreach (var knownRuntimeInstanceId in knownRuntimeInstanceIds)
+                {
+                    this.orphanedRuntimeInstanceFirstObservedAtUtc.TryRemove(
+                        knownRuntimeInstanceId,
+                        out _);
+                }
 
                 var scannedRuntimeInstanceCount = 0;
                 var ignoredRuntimeInstanceCount = 0;
@@ -295,6 +330,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                     .ListRecoverableAsync(cancellationToken)
                     .ConfigureAwait(false);
 
+                var orphanedRecoverableRuntimeInstanceIds =
+                    orphanedRecoverableRuns
+                        .Select(run => run.RuntimeInstanceId)
+                        .Where(runtimeInstanceId => !string.IsNullOrWhiteSpace(runtimeInstanceId))
+                        .ToHashSet(StringComparer.Ordinal);
+
+                foreach (var observedRuntimeInstanceId in
+                    this.orphanedRuntimeInstanceFirstObservedAtUtc.Keys)
+                {
+                    if (knownRuntimeInstanceIds.Contains(observedRuntimeInstanceId) ||
+                        !orphanedRecoverableRuntimeInstanceIds.Contains(observedRuntimeInstanceId))
+                    {
+                        this.orphanedRuntimeInstanceFirstObservedAtUtc.TryRemove(
+                            observedRuntimeInstanceId,
+                            out _);
+                    }
+                }
+
                 Console.WriteLine(
                     $"[EXECUTION RECOVERY ORPHANED SCAN] RecoverableCount='{orphanedRecoverableRuns.Count}', KnownRuntimeInstanceIds='{string.Join(",", knownRuntimeInstanceIds)}', Runs='{FormatIndexEntries(orphanedRecoverableRuns)}'.");
 
@@ -318,10 +371,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         continue;
                     }
 
+                    if (!this.IsOrphanedRuntimeInstanceConfirmed(
+                            orphanedRun.RuntimeInstanceId,
+                            out var firstObservedAtUtc,
+                            out var observedFor))
+                    {
+                        Console.WriteLine(
+                            $"[EXECUTION RECOVERY ORPHANED DEFER] LocalRunId='{orphanedRun.RunId}', ExecutionId='{orphanedRun.ExecutionId}', Status='{orphanedRun.Status}', RuntimeInstanceId='{orphanedRun.RuntimeInstanceId}', FirstObservedAtUtc='{firstObservedAtUtc:O}', ObservedFor='{observedFor}', RequiredConfirmationPeriod='{this.options.OrphanedRuntimeInstanceConfirmationPeriod}'.");
+
+                        decisions.Add(new AiRuntimeExecutionRecoveryDecision
+                        {
+                            RuntimeInstanceId = orphanedRun.RuntimeInstanceId,
+                            LocalRunId = orphanedRun.RunId,
+                            ExecutionId = orphanedRun.ExecutionId,
+                            TenantId = orphanedRun.ExecutionContextSnapshot?.TenantId,
+                            TenantGroupId = orphanedRun.ExecutionContextSnapshot?.TenantGroupId,
+                            Action = "defer-orphaned-runtime-instance",
+                            Reason = OrphanedRuntimeInstanceUnconfirmedReason,
+                            Changed = false
+                        });
+
+                        continue;
+                    }
+
                     discoveredUnfinishedRunCount++;
 
                     Console.WriteLine(
-                        $"[EXECUTION RECOVERY ORPHANED CANDIDATE] LocalRunId='{orphanedRun.RunId}', ExecutionId='{orphanedRun.ExecutionId}', Status='{orphanedRun.Status}', RuntimeInstanceId='{orphanedRun.RuntimeInstanceId}'.");
+                        $"[EXECUTION RECOVERY ORPHANED CANDIDATE] LocalRunId='{orphanedRun.RunId}', ExecutionId='{orphanedRun.ExecutionId}', Status='{orphanedRun.Status}', RuntimeInstanceId='{orphanedRun.RuntimeInstanceId}', FirstObservedAtUtc='{firstObservedAtUtc:O}', ObservedFor='{observedFor}', RequiredConfirmationPeriod='{this.options.OrphanedRuntimeInstanceConfirmationPeriod}'.");
 
                     var changed =
                         await this.ProcessRecoveryCandidateAsync(
@@ -403,6 +479,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
 
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Determines whether a runtime instance has remained continuously absent long enough
+        /// for orphan recovery to become authoritative.
+        /// </summary>
+        private bool IsOrphanedRuntimeInstanceConfirmed(
+            string runtimeInstanceId,
+            out DateTimeOffset firstObservedAtUtc,
+            out TimeSpan observedFor)
+        {
+            var now = DateTimeOffset.UtcNow;
+
+            firstObservedAtUtc =
+                this.orphanedRuntimeInstanceFirstObservedAtUtc.GetOrAdd(
+                    runtimeInstanceId,
+                    now);
+
+            observedFor = now - firstObservedAtUtc;
+
+            return observedFor >=
+                this.options.OrphanedRuntimeInstanceConfirmationPeriod;
         }
 
         /// <summary>
@@ -515,6 +613,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             Console.WriteLine(
                 $"[EXECUTION RECOVERY TRANSITION RESULT] RuntimeInstanceId='{runtimeInstanceId}', LocalRunId='{unfinishedRun.RunId}', ExecutionId='{unfinishedRun.ExecutionId}', IndexStatus='{unfinishedRun.Status}', Accepted='{transition.Accepted}', Changed='{transition.Changed}', Action='{transition.Action}', Reason='{transition.Reason}', SharedRunId='{transition.SharedRunId}'.");
 
+            if (transition.Accepted && transition.Changed)
+            {
+                await this.RecordRecoveryCandidateReconciliationSucceededAsync(
+                        runtimeInstanceId,
+                        unfinishedRun,
+                        ownership,
+                        transition,
+                        tenantId,
+                        tenantGroupId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             decisions.Add(new AiRuntimeExecutionRecoveryDecision
             {
                 RuntimeInstanceId = runtimeInstanceId,
@@ -530,6 +641,96 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             });
 
             return transition.Changed;
+        }
+
+        /// <summary>
+        /// Records one successful candidate transition with exact failed runtime and run
+        /// correlation so the durable ledger can retrieve the recovery evidence.
+        /// </summary>
+        private async Task RecordRecoveryCandidateReconciliationSucceededAsync(
+            string runtimeInstanceId,
+            AiRuntimeRunExecutionIndexEntry unfinishedRun,
+            AiSharedRunOwnershipResolutionResult ownership,
+            AiRuntimeExecutionRecoveryTransitionResult transition,
+            string? tenantId,
+            string? tenantGroupId,
+            CancellationToken cancellationToken)
+        {
+            var sharedRunId =
+                transition.SharedRunId ??
+                ownership.SharedRunId;
+
+            if (string.IsNullOrWhiteSpace(sharedRunId))
+            {
+                return;
+            }
+
+            var localQueued =
+                IsLocalQueuedRecoveryCandidate(unfinishedRun);
+
+            var forensicsId =
+                CreateForensicsId(
+                    unfinishedRun.ExecutionId,
+                    sharedRunId,
+                    unfinishedRun.RunId,
+                    localQueued);
+
+            try
+            {
+                await this.observer
+                    .RecordAsync(
+                        new AiControlPlaneEvent
+                        {
+                            EventType =
+                                AiControlPlaneEventType.OperationCompleted,
+                            Area = AiControlPlaneArea.Recovery,
+                            Operation = RecoveryReconciliationOperation,
+                            Outcome =
+                                AiControlPlaneOperationOutcome.Succeeded,
+                            Correlation =
+                                new AiRuntimeExecutionCorrelationContext
+                                {
+                                    CorrelationId = forensicsId,
+                                    RunId = sharedRunId,
+                                    ExecutionId = unfinishedRun.ExecutionId,
+                                    RuntimeInstanceId = runtimeInstanceId
+                                },
+                            Message =
+                                "Runtime execution recovery candidate transition completed successfully.",
+                            Properties =
+                                new Dictionary<string, object?>
+                                {
+                                    ["tenantId"] = tenantId,
+                                    ["tenant.id"] = tenantId,
+                                    ["tenantGroupId"] = tenantGroupId,
+                                    ["tenant.group.id"] = tenantGroupId,
+                                    ["sharedRunId"] = sharedRunId,
+                                    ["localRunId"] = unfinishedRun.RunId,
+                                    ["executionId"] = unfinishedRun.ExecutionId,
+                                    ["runtimeInstanceId"] = runtimeInstanceId,
+                                    [RecoveryForensicsIdMetadataKey] =
+                                        forensicsId,
+                                    [RecoveryModeMetadataKey] =
+                                        localQueued
+                                            ? RecoveryModeRequeueLocalQueuedRun
+                                            : RecoveryModeResumeExistingExecution,
+                                    [RecoveryReasonMetadataKey] =
+                                        transition.Reason,
+                                    [RecoveryFailedRuntimeInstanceIdMetadataKey] =
+                                        runtimeInstanceId,
+                                    [RecoveryFailedLocalRunIdMetadataKey] =
+                                        unfinishedRun.RunId,
+                                    [RecoveryFailedExecutionIdMetadataKey] =
+                                        unfinishedRun.ExecutionId
+                                }
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Control-plane observability must not break recovery reconciliation.
+            }
         }
 
         /// <summary>
@@ -776,10 +977,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             string sharedRunId,
             string localRunId)
         {
+            return CreateForensicsId(
+                executionId,
+                sharedRunId,
+                localRunId,
+                localQueued: false);
+        }
+
+        private static string CreateForensicsId(
+            string? executionId,
+            string sharedRunId,
+            string localRunId,
+            bool localQueued)
+        {
             return string.Join(
                 ":",
                 "runtime-recovery",
-                executionId,
+                localQueued
+                    ? "local-queued"
+                    : executionId,
                 sharedRunId,
                 localRunId);
         }

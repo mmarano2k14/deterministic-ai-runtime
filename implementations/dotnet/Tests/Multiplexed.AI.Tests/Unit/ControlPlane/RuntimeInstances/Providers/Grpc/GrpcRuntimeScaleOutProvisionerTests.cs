@@ -10,6 +10,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.ScaleOut;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Tests.Fixtures;
 using Xunit;
 
@@ -344,6 +345,210 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Grpc
         }
 
         /// <summary>
+        /// Verifies that gRPC KubernetesPool provisioning delegates physical Pod
+        /// creation to the canonical Pod creation executor.
+        /// </summary>
+        [Fact]
+        public async Task ProvisionAsync_Should_Delegate_KubernetesPool_To_PodCreation_Executor()
+        {
+            var registry = new FakeRuntimeInstanceRegistry();
+            var capacityStore = new FakeRuntimeInstanceCapacityStore();
+            var hostManager = new FakeRuntimeHostManager();
+            var podCreationExecutor =
+                new FakeRuntimePoolPodCreationExecutor
+                {
+                    Result =
+                        new AiRuntimePoolPodCreationResult
+                        {
+                            RequestId =
+                                "grpc-kubernetes-pool-executor-request-1",
+                            PoolId = "pool-executor",
+                            HostRequestId =
+                                "kubernetes-runtime-pool-pod-scale-out-test",
+                            PrimaryRuntimeInstanceId =
+                                "runtime-pool-executor-primary",
+                            PodUid = "pod-uid-executor",
+                            Status =
+                                AiRuntimePoolPodCreationStatus.Created,
+                            RuntimeInstanceIds =
+                                new[]
+                                {
+                                    "runtime-pool-executor-primary",
+                                    "runtime-pool-executor-secondary"
+                                }
+                        }
+                };
+
+            var options =
+                CreateOptions(
+                    AiGrpcRuntimeScaleOutModes.HostManager,
+                    requireReadiness: false);
+
+            options.HostCreationMode =
+                AiRuntimeHostCreationMode.KubernetesPool;
+            options.PoolId = "pool-executor";
+
+            var provisioner =
+                CreateProvisioner(
+                    registry,
+                    capacityStore,
+                    hostManager: hostManager,
+                    options: options,
+                    runtimePoolPodCreationExecutor:
+                        podCreationExecutor);
+
+            var result =
+                await provisioner.ProvisionAsync(
+                    CreateRequest(
+                        "grpc-kubernetes-pool-executor-request-1"));
+
+            Assert.True(result.Success);
+            Assert.False(result.Rejected);
+            Assert.Equal(1, podCreationExecutor.CallCount);
+            Assert.Empty(hostManager.StartRequests);
+            Assert.Equal(
+                "runtime-pool-executor-primary",
+                result.RuntimeInstanceId);
+            Assert.Equal(
+                AiRuntimePoolPodCreationStatus.Created.ToString(),
+                result.Metadata[
+                    "runtime.pool.podCreation.status"]);
+        }
+
+        /// <summary>
+        /// Verifies that Kubernetes Runtime Pool scale-out preserves an explicit
+        /// zero-capacity local queue instead of replacing it with the provider default.
+        /// </summary>
+        [Fact]
+        public async Task ProvisionAsync_Should_Preserve_Zero_LocalQueueCapacity_For_KubernetesPool()
+        {
+            var registry =
+                new FakeRuntimeInstanceRegistry();
+
+            var capacityStore =
+                new FakeRuntimeInstanceCapacityStore();
+
+            var hostManager =
+                CreateSuccessfulHostManager();
+
+            var tenantSettingsProvider =
+                new FakeTenantRuntimeSettingsProvider
+                {
+                    WorkerCountPerInstance = 1,
+                    MaxConcurrentRunsPerInstance = 1,
+                    LocalQueueCapacity = 0,
+                    RuntimeInstanceIdPrefix =
+                        RuntimeInstancePrefix
+                };
+
+            var options =
+                CreateOptions(
+                    AiGrpcRuntimeScaleOutModes.HostManager,
+                    requireReadiness: false);
+
+            options.HostCreationMode =
+                AiRuntimeHostCreationMode.KubernetesPool;
+            options.PoolId =
+                "pool-zero-local-queue";
+
+            var podCreationExecutor =
+                new FakeRuntimePoolPodCreationExecutor
+                {
+                    ExpectedPoolId =
+                        "pool-zero-local-queue",
+                    Result =
+                        new AiRuntimePoolPodCreationResult
+                        {
+                            RequestId =
+                                "grpc-kubernetes-pool-zero-queue-request-1",
+                            PoolId =
+                                "pool-zero-local-queue",
+                            HostRequestId =
+                                "zero-queue-host-request",
+                            PrimaryRuntimeInstanceId =
+                                "zero-queue-runtime",
+                            Status =
+                                AiRuntimePoolPodCreationStatus.Created,
+                            RuntimeInstanceIds =
+                                new[]
+                                {
+                                    "zero-queue-runtime"
+                                }
+                        }
+                };
+
+            var provisioner =
+                CreateProvisioner(
+                    registry,
+                    capacityStore,
+                    hostManager: hostManager,
+                    tenantSettingsProvider:
+                        tenantSettingsProvider,
+                    options: options,
+                    runtimePoolPodCreationExecutor:
+                        podCreationExecutor);
+
+            var request =
+                CreateRequest(
+                    "grpc-kubernetes-pool-zero-queue-request-1");
+
+            request.LocalQueueCapacity = 0;
+
+            var result =
+                await provisioner.ProvisionAsync(
+                    request);
+
+            Assert.True(result.Success);
+            Assert.Empty(hostManager.StartRequests);
+            Assert.Equal(1, podCreationExecutor.CallCount);
+            Assert.NotNull(podCreationExecutor.LastRequest);
+            Assert.Equal(
+                0,
+                podCreationExecutor.LastRequest!.LocalQueueCapacity);
+        }
+
+        /// <summary>
+        /// Verifies that KubernetesPool can never bypass the canonical Pod creation
+        /// executor through the direct host-manager path.
+        /// </summary>
+        [Fact]
+        public async Task ProvisionAsync_Should_Fail_When_KubernetesPool_PodCreationExecutor_Is_Missing()
+        {
+            var registry = new FakeRuntimeInstanceRegistry();
+            var capacityStore = new FakeRuntimeInstanceCapacityStore();
+            var hostManager = CreateSuccessfulHostManager();
+
+            var options =
+                CreateOptions(
+                    AiGrpcRuntimeScaleOutModes.HostManager,
+                    requireReadiness: false);
+
+            options.HostCreationMode =
+                AiRuntimeHostCreationMode.KubernetesPool;
+            options.PoolId =
+                "pool-missing-executor";
+
+            var provisioner =
+                CreateProvisioner(
+                    registry,
+                    capacityStore,
+                    hostManager: hostManager,
+                    options: options);
+
+            var exception =
+                await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => provisioner.ProvisionAsync(
+                        CreateRequest(
+                            "grpc-kubernetes-pool-missing-executor")));
+
+            Assert.Contains(
+                "IAiRuntimePoolPodCreationExecutor",
+                exception.Message,
+                StringComparison.Ordinal);
+            Assert.Empty(hostManager.StartRequests);
+        }
+
+        /// <summary>
         /// Creates a gRPC runtime scale-out provisioner for tests.
         /// </summary>
         private static AiGrpcRuntimeScaleOutProvisioner CreateProvisioner(
@@ -352,7 +557,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Grpc
             FakeRuntimeHostManager? hostManager = null,
             FakeRuntimeInstanceReadinessWaiter? readinessWaiter = null,
             FakeTenantRuntimeSettingsProvider? tenantSettingsProvider = null,
-            AiGrpcRuntimeScaleOutOptions? options = null)
+            AiGrpcRuntimeScaleOutOptions? options = null,
+            IAiRuntimePoolPodCreationExecutor?
+                runtimePoolPodCreationExecutor = null)
         {
             tenantSettingsProvider ??= new FakeTenantRuntimeSettingsProvider
             {
@@ -369,7 +576,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Grpc
                 readinessWaiter ?? new FakeRuntimeInstanceReadinessWaiter(),
                 tenantSettingsProvider,
                 Options.Create(options ?? CreateOptions(AiGrpcRuntimeScaleOutModes.MetadataOnly)),
-                NullLogger<AiGrpcRuntimeScaleOutProvisioner>.Instance);
+                NullLogger<AiGrpcRuntimeScaleOutProvisioner>.Instance,
+                runtimeHostProcessControl: null,
+                runtimePoolPodCreationExecutor:
+                    runtimePoolPodCreationExecutor);
         }
 
         /// <summary>
@@ -419,6 +629,46 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Providers.Grpc
                 IsolationMode = AiRuntimeInstanceIsolationMode.Dedicated,
                 ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create()
             };
+        }
+
+        private sealed class FakeRuntimePoolPodCreationExecutor :
+            IAiRuntimePoolPodCreationExecutor
+        {
+            public int CallCount { get; private set; }
+
+            public string ExpectedPoolId { get; init; } =
+                "pool-executor";
+
+            public AiRuntimeScaleOutProviderRequest?
+                LastRequest { get; private set; }
+
+            public AiRuntimeCapacitySelectionCandidate?
+                LastCandidate { get; private set; }
+
+            public required AiRuntimePoolPodCreationResult Result
+            {
+                get; init;
+            }
+
+            public Task<AiRuntimePoolPodCreationResult> ExecuteAsync(
+                AiRuntimeScaleOutProviderRequest request,
+                AiRuntimeCapacitySelectionCandidate candidate,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                this.CallCount++;
+                this.LastRequest = request;
+                this.LastCandidate = candidate;
+
+                Assert.Equal(
+                    AiRuntimeCapacitySelectionLevel.RuntimePoolPodCreation,
+                    candidate.Level);
+                Assert.Equal(
+                    this.ExpectedPoolId,
+                    candidate.PoolId);
+
+                return Task.FromResult(this.Result);
+            }
         }
 
         /// <summary>

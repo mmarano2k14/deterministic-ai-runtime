@@ -61,6 +61,54 @@
             """;
 
         /// <summary>
+        /// Atomically registers a queued runtime run only when its item key does not already exist.
+        /// </summary>
+        /// <remarks>
+        /// The key and argument contract is identical to <see cref="RegisterQueued"/>.
+        /// </remarks>
+        public const string TryRegisterQueued = """
+            local itemKey = KEYS[1]
+            local allIndexKey = KEYS[2]
+            local tenantAllIndexKey = nil
+
+            if #KEYS >= 3 then
+                tenantAllIndexKey = KEYS[3]
+            end
+
+            local runId = ARGV[1]
+            local score = tonumber(ARGV[2])
+            local expireSeconds = tonumber(ARGV[3])
+
+            if ((#ARGV - 3) % 2) ~= 0 then
+                return 'invalid-field-pairs'
+            end
+
+            if redis.call('EXISTS', itemKey) == 1 then
+                return 'existing'
+            end
+
+            for i = 4, #ARGV, 2 do
+                redis.call('HSET', itemKey, ARGV[i], ARGV[i + 1])
+            end
+
+            redis.call('ZADD', allIndexKey, score, runId)
+
+            if tenantAllIndexKey ~= nil and tenantAllIndexKey ~= '' then
+                redis.call('ZADD', tenantAllIndexKey, score, runId)
+            end
+
+            if expireSeconds ~= nil and expireSeconds > 0 then
+                redis.call('EXPIRE', itemKey, expireSeconds)
+
+                if tenantAllIndexKey ~= nil and tenantAllIndexKey ~= '' then
+                    redis.call('EXPIRE', tenantAllIndexKey, expireSeconds)
+                end
+            end
+
+            return 'registered'
+            """;
+
+        /// <summary>
         /// Atomically marks a runtime run as started.
         /// </summary>
         public const string MarkStarted = """

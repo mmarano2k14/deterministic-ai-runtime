@@ -638,7 +638,7 @@ Observability must not become a data leak.
 
 # Productization Roadmap
 
-## Step 1 — Standardize Telemetry Names
+## Milestone 1 — Standardize Telemetry Names
 
 Improve:
 
@@ -649,7 +649,7 @@ Improve:
 - provider event names;
 - lifecycle event names.
 
-## Step 2 — Strengthen Correlation
+## Milestone 2 — Strengthen Correlation
 
 Ensure consistent propagation of:
 
@@ -662,7 +662,7 @@ Ensure consistent propagation of:
 - provider/transport context;
 - tenant/project/pipeline direction.
 
-## Step 3 — Expose Diagnostics
+## Milestone 3 — Expose Diagnostics
 
 Improve:
 
@@ -674,7 +674,7 @@ Improve:
 - policy diagnostics;
 - retention diagnostics.
 
-## Step 4 — Add Dashboard Views
+## Milestone 4 — Add Dashboard Views
 
 Add views for:
 
@@ -688,7 +688,7 @@ Add views for:
 - policy decisions;
 - retention lifecycle activity.
 
-## Step 5 — Prepare External Exports
+## Milestone 5 — Prepare External Exports
 
 Prepare:
 

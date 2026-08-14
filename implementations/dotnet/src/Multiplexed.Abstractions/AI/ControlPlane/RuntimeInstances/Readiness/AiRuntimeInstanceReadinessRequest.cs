@@ -29,6 +29,17 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness
         public string RuntimeInstanceId { get; init; } = string.Empty;
 
         /// <summary>
+        /// Gets a value indicating whether readiness must resolve the exact requested runtime
+        /// instance identifier.
+        /// </summary>
+        /// <remarks>
+        /// Exact identity is required for process-pool children because a compatible sibling must
+        /// never satisfy readiness for a child that has not registered yet. Provider workflows
+        /// whose final runtime identity can legitimately differ may leave this value disabled.
+        /// </remarks>
+        public bool RequireExactRuntimeInstanceId { get; init; }
+
+        /// <summary>
         /// Gets the expected provider name.
         /// </summary>
         /// <example>local, http, grpc, kubernetes.</example>

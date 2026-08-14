@@ -32,6 +32,11 @@
         int RecoveredWorkRedispatchedCount)
     {
         /// <summary>
+        /// Gets a value indicating whether runtime-host creation evidence is required in this ledger window.
+        /// </summary>
+        public bool RuntimeHostCreationRequired { get; init; } = true;
+
+        /// <summary>
         /// Gets a value indicating whether process-host-specific creation evidence is required.
         /// </summary>
         public bool ProcessRuntimeHostRequired { get; init; } = true;
@@ -51,7 +56,7 @@
             this.ScaleOutRequestPersistedCount > 0 &&
             this.ScaleOutWatcherObservedCount > 0 &&
             this.ProviderSelectedCount > 0 &&
-            this.RuntimeHostCreatedCount > 0 &&
+            (!this.RuntimeHostCreationRequired || this.RuntimeHostCreatedCount > 0) &&
             (!this.ProcessRuntimeHostRequired || this.ProcessRuntimeHostStartedCount > 0) &&
             this.RuntimeCapacityVisibleCount > 0 &&
             this.RuntimeRegistryVisibleCount > 0 &&

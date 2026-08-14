@@ -346,6 +346,16 @@ namespace Multiplexed.AI.Runtime.Observability.Ledger.Mongo
                     new CreateIndexOptions
                     {
                         Name = "ix_policy_key"
+                    }),
+
+                new CreateIndexModel<MongoAiDecisionLedgerEntryDocument>(
+                    Builders<MongoAiDecisionLedgerEntryDocument>
+                        .IndexKeys
+                        .Ascending(document => document.Operation)
+                        .Ascending(document => document.TimestampUtc),
+                    new CreateIndexOptions
+                    {
+                        Name = "ix_operation_timestamp"
                     })
             };
 

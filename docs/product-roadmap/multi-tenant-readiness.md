@@ -778,7 +778,7 @@ The correct positioning is:
 
 The multi-tenant foundation should evolve carefully.
 
-## Step 1 — Document RBAC and Resource Scope Model
+## Milestone 1 — Document RBAC and Resource Scope Model
 
 Improve:
 
@@ -789,7 +789,7 @@ Improve:
 - execution context examples;
 - ledger examples.
 
-## Step 2 — Tenant/Project/Pipeline Metadata
+## Milestone 2 — Tenant/Project/Pipeline Metadata
 
 Add or expose:
 
@@ -801,7 +801,7 @@ Add or expose:
 - run context metadata;
 - dashboard filters direction.
 
-## Step 3 — Policy Integration
+## Milestone 3 — Policy Integration
 
 Improve:
 
@@ -813,7 +813,7 @@ Improve:
 - retention policies;
 - concurrency/throttling policies.
 
-## Step 4 — Tenant-Aware Replay, Ledger, and Observability
+## Milestone 4 — Tenant-Aware Replay, Ledger, and Observability
 
 Improve:
 
@@ -823,7 +823,7 @@ Improve:
 - tenant-aware audit reports;
 - tenant-aware retention views.
 
-## Step 5 — Runtime Capacity and Hosting Isolation
+## Milestone 5 — Runtime Capacity and Hosting Isolation
 
 Improve:
 
@@ -834,7 +834,7 @@ Improve:
 - dedicated cluster direction;
 - usage metering direction.
 
-## Step 6 — Security Hardening
+## Milestone 6 — Security Hardening
 
 Improve:
 

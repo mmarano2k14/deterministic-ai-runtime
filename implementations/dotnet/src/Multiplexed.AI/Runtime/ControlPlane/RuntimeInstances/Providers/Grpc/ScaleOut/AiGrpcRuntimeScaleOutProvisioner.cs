@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transp
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using System.Collections.Concurrent;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.ScaleOut
@@ -37,6 +38,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
         private readonly IAiRuntimeHostManager runtimeHostManager;
         private readonly IAiRuntimeHostProcessControl? runtimeHostProcessControl;
         private readonly IAiRuntimeInstanceReadinessWaiter readinessWaiter;
+        private readonly IAiRuntimePoolPodCreationExecutor?
+            runtimePoolPodCreationExecutor;
         private readonly IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider;
         private readonly AiGrpcRuntimeScaleOutOptions options;
         private readonly ILogger<AiGrpcRuntimeScaleOutProvisioner> logger;
@@ -55,6 +58,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
         /// Optional process-host lifecycle control used only to clean up a process host when provider-level readiness fails.
         /// Kubernetes and all non-process host creation modes are never affected by this dependency.
         /// </param>
+        /// <param name="runtimePoolPodCreationExecutor">
+        /// Optional canonical KubernetesPool Pod creation authority.
+        /// </param>
         public AiGrpcRuntimeScaleOutProvisioner(
             IAiRuntimeInstanceRegistry registry,
             IAiRuntimeInstanceCapacityStore capacityStore,
@@ -63,12 +69,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider,
             IOptions<AiGrpcRuntimeScaleOutOptions> options,
             ILogger<AiGrpcRuntimeScaleOutProvisioner> logger,
-            IAiRuntimeHostProcessControl? runtimeHostProcessControl = null)
+            IAiRuntimeHostProcessControl? runtimeHostProcessControl = null,
+            IAiRuntimePoolPodCreationExecutor?
+                runtimePoolPodCreationExecutor = null)
         {
             this.registry = registry ?? throw new ArgumentNullException(nameof(registry));
             this.capacityStore = capacityStore ?? throw new ArgumentNullException(nameof(capacityStore));
             this.runtimeHostManager = runtimeHostManager ?? throw new ArgumentNullException(nameof(runtimeHostManager));
             this.runtimeHostProcessControl = runtimeHostProcessControl;
+            this.runtimePoolPodCreationExecutor =
+                runtimePoolPodCreationExecutor;
             this.readinessWaiter = readinessWaiter ?? throw new ArgumentNullException(nameof(readinessWaiter));
             this.tenantRuntimeSettingsProvider = tenantRuntimeSettingsProvider ?? throw new ArgumentNullException(nameof(tenantRuntimeSettingsProvider));
             ArgumentNullException.ThrowIfNull(options);
@@ -99,6 +109,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             if (string.IsNullOrWhiteSpace(request.ControlPlaneId))
             {
                 return CreateRejectedResult(request, "grpc-runtime-scaleout-control-plane-id-missing", "gRPC runtime scale-out control-plane id is missing.");
+            }
+
+            if (IsHostManagerMode(options.Mode) &&
+                options.HostCreationMode ==
+                    AiRuntimeHostCreationMode.KubernetesPool &&
+                string.IsNullOrWhiteSpace(options.PoolId))
+            {
+                return CreateRejectedResult(
+                    request,
+                    "grpc-runtime-scaleout-kubernetes-pool-id-missing",
+                    "gRPC KubernetesPool scale-out requires a logical Runtime Pool identifier.");
             }
 
             var context =
@@ -205,6 +226,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             DateTimeOffset startedAtUtc,
             CancellationToken cancellationToken)
         {
+            if (options.HostCreationMode ==
+                AiRuntimeHostCreationMode.KubernetesPool)
+            {
+                if (this.runtimePoolPodCreationExecutor is null)
+                {
+                    throw new InvalidOperationException(
+                        "KubernetesPool gRPC scale-out requires the canonical IAiRuntimePoolPodCreationExecutor. Direct host-manager fallback is forbidden.");
+                }
+
+                return await this.ProvisionKubernetesPoolWithPodCreationExecutorAsync(
+                        request,
+                        context,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             if (!ShouldUseProcessHostStartupGate())
             {
                 return await ProvisionWithHostManagerCoreAsync(
@@ -286,6 +323,113 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
         }
 
         /// <summary>
+        /// Delegates KubernetesPool Pod creation to the canonical physical Pod
+        /// creation authority.
+        /// </summary>
+        private async Task<AiRuntimeScaleOutProviderResult>
+            ProvisionKubernetesPoolWithPodCreationExecutorAsync(
+                AiRuntimeScaleOutProviderRequest request,
+                AiRuntimeScaleOutProvisioningContext context,
+                CancellationToken cancellationToken)
+        {
+            var candidate =
+                new AiRuntimeCapacitySelectionCandidate
+                {
+                    Level =
+                        AiRuntimeCapacitySelectionLevel
+                            .RuntimePoolPodCreation,
+                    PoolId = options.PoolId?.Trim(),
+                    ProviderName = ProviderName,
+                    IsCompatible = true,
+                    IsAvailable = true,
+                    Reason =
+                        "grpc-kubernetes-runtime-pool-pod-creation"
+                };
+
+            var podCreation =
+                await this.runtimePoolPodCreationExecutor!
+                    .ExecuteAsync(
+                        request,
+                        candidate,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (podCreation.Status ==
+                AiRuntimePoolPodCreationStatus.Rejected)
+            {
+                return CreateRejectedResult(
+                    request,
+                    podCreation.FailureReason ??
+                        "kubernetes-runtime-pool-pod-create-rejected",
+                    "gRPC Kubernetes Runtime Pool Pod creation was rejected.");
+            }
+
+            var fulfilledRuntimeInstanceId =
+                podCreation.PrimaryRuntimeInstanceId;
+
+            var fulfilledTransportEndpoint =
+                podCreation.HostStartResult?.TransportEndpoint ??
+                context.Endpoint;
+
+            var metadata =
+                new Dictionary<string, string>(
+                    context.Metadata,
+                    StringComparer.OrdinalIgnoreCase);
+
+            CopyMetadata(
+                metadata,
+                podCreation.HostStartResult?.Metadata);
+
+            metadata["runtime.pool.podCreation.status"] =
+                podCreation.Status.ToString();
+            metadata["runtime.pool.podCreation.hostRequestId"] =
+                podCreation.HostRequestId;
+            metadata["runtime.pool.podCreation.podUid"] =
+                podCreation.PodUid ?? string.Empty;
+            metadata["runtime.pool.podCreation.runtimeCount"] =
+                podCreation.RuntimeInstanceIds.Count.ToString();
+
+            if (podCreation.ActivePodCount.HasValue)
+            {
+                metadata["runtime.pool.podCreation.activePodCount"] =
+                    podCreation.ActivePodCount.Value.ToString();
+            }
+
+            if (podCreation.ReservedPodCreationCount.HasValue)
+            {
+                metadata[
+                    "runtime.pool.podCreation.reservedPodCreationCount"] =
+                    podCreation.ReservedPodCreationCount.Value.ToString();
+            }
+
+            if (podCreation.MaximumPodCount.HasValue)
+            {
+                metadata["runtime.pool.podCreation.maximumPodCount"] =
+                    podCreation.MaximumPodCount.Value.ToString();
+            }
+
+            metadata[
+                AiRuntimeInstanceCommandTransportMetadataKeys
+                    .RuntimeInstanceId] =
+                fulfilledRuntimeInstanceId;
+            metadata[
+                AiRuntimeInstanceCommandTransportMetadataKeys
+                    .TransportEndpoint] =
+                fulfilledTransportEndpoint;
+
+            return CreateFulfilledResult(
+                request,
+                fulfilledRuntimeInstanceId,
+                string.Concat(
+                    "grpc-kubernetes-runtime-pool-",
+                    request.RequestId),
+                podCreation.IsCapacityAlreadySatisfied
+                    ? "The configured Kubernetes Runtime Pool Pod capacity was already active or reserved."
+                    : "The Kubernetes Runtime Pool Pod was created and converged through the canonical Pod creation executor.",
+                metadata);
+        }
+
+        /// <summary>
         /// Executes host-manager startup and readiness after any process-host startup gate has been acquired.
         /// </summary>
         private async Task<AiRuntimeScaleOutProviderResult> ProvisionWithHostManagerCoreAsync(
@@ -321,6 +465,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                         TransportName = AiGrpcRuntimeProviderConstants.TransportName,
                         TransportEndpoint = context.Endpoint,
                         HostCreationMode = options.HostCreationMode,
+                        PoolId =
+                            options.HostCreationMode ==
+                                AiRuntimeHostCreationMode.KubernetesPool
+                                ? options.PoolId?.Trim()
+                                : null,
                         TenantId = context.TenantId,
                         TenantGroupId = context.TenantGroupId,
                         IsolationMode = context.IsolationMode.ToString(),
@@ -419,6 +568,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                             TransportName = AiGrpcRuntimeProviderConstants.TransportName,
                             TransportEndpoint = fulfilledTransportEndpoint,
                             RequireTransportEndpoint = requireTransportEndpoint,
+                            RequireExactRuntimeInstanceId =
+                                ShouldRequireExactRuntimeInstanceId(),
                             Timeout = TimeSpan.FromSeconds(Math.Max(1, options.ReadinessTimeoutSeconds)),
                             PollInterval = TimeSpan.FromMilliseconds(Math.Max(1, options.ReadinessPollIntervalMilliseconds))
                         },
@@ -483,6 +634,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                 (DateTimeOffset.UtcNow - startedAtUtc).TotalMilliseconds);
 
             return CreateFulfilledResult(request, fulfilledRuntimeInstanceId, $"grpc-host-manager-scaleout-{request.RequestId}", "gRPC runtime scale-out request was fulfilled by the runtime host manager.", metadata);
+        }
+
+        /// <summary>
+        /// Determines whether readiness must resolve the exact requested runtime identity.
+        /// </summary>
+        /// <remarks>
+        /// Explicit Runtime Pool topologies require exact child identity. The host-creation fallback
+        /// preserves compatibility for existing KubernetesPool configurations that predate the
+        /// first-class topology option.
+        /// </remarks>
+        private bool ShouldRequireExactRuntimeInstanceId()
+        {
+            return options.CapacityTopologyMode is
+                       AiRuntimeCapacityTopologyMode.ProcessPool or
+                       AiRuntimeCapacityTopologyMode.KubernetesPool ||
+                   options.HostCreationMode ==
+                       AiRuntimeHostCreationMode.KubernetesPool;
         }
 
         /// <summary>
@@ -584,7 +752,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
                 return false;
             }
 
-            if (options.HostCreationMode == AiRuntimeHostCreationMode.Kubernetes)
+            if (options.HostCreationMode is
+                AiRuntimeHostCreationMode.Kubernetes or
+                AiRuntimeHostCreationMode.KubernetesPool)
             {
                 return false;
             }
@@ -611,7 +781,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             var runtimeInstanceIdPrefix = ResolveRuntimeInstanceIdPrefix(request, tenantSettings);
             var workerCount = ResolvePositiveOrDefault(tenantSettings.WorkerCountPerInstance, request.WorkerCountPerInstance, DefaultWorkerCountPerInstance);
             var maxConcurrentRuns = ResolvePositiveOrDefault(tenantSettings.MaxConcurrentRunsPerInstance, request.MaxConcurrentRunsPerInstance, DefaultMaxConcurrentRunsPerInstance);
-            var queueCapacity = ResolvePositiveOrDefault(tenantSettings.LocalQueueCapacity, request.LocalQueueCapacity, DefaultQueueCapacity);
+            var queueCapacity =
+                options.HostCreationMode ==
+                    AiRuntimeHostCreationMode.KubernetesPool
+                    ? ResolveNonNegativeOrDefault(
+                        tenantSettings.LocalQueueCapacity,
+                        request.LocalQueueCapacity,
+                        DefaultQueueCapacity)
+                    : ResolvePositiveOrDefault(
+                        tenantSettings.LocalQueueCapacity,
+                        request.LocalQueueCapacity,
+                        DefaultQueueCapacity);
             var maxRuntimeInstances = ResolvePositiveOrNullableDefault(tenantSettings.MaxRuntimeInstances, request.MaxRuntimeInstances);
 
             var runtimeInstanceId =
@@ -954,6 +1134,34 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
             }
 
             return fallback;
+        }
+
+        /// <summary>
+        /// Resolves the first non-negative integer value from tenant settings,
+        /// request, or hard default.
+        /// </summary>
+        /// <param name="tenantValue">The tenant settings value.</param>
+        /// <param name="requestValue">The request value.</param>
+        /// <param name="hardDefault">The hard default value.</param>
+        /// <returns>The resolved value.</returns>
+        private static int ResolveNonNegativeOrDefault(
+            int? tenantValue,
+            int? requestValue,
+            int hardDefault)
+        {
+            if (tenantValue.HasValue &&
+                tenantValue.Value >= 0)
+            {
+                return tenantValue.Value;
+            }
+
+            if (requestValue.HasValue &&
+                requestValue.Value >= 0)
+            {
+                return requestValue.Value;
+            }
+
+            return hardDefault;
         }
 
         /// <summary>

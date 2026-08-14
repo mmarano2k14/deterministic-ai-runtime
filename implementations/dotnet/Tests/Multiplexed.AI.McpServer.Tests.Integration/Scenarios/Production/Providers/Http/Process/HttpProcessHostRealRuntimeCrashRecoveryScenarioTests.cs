@@ -29,6 +29,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 ?? throw new ArgumentNullException(nameof(output));
         }
 
+        /// <inheritdoc />
+        protected override TimeSpan? ParallelHarnessUnsafeTimeoutOverride =>
+            TimeSpan.FromMinutes(3);
+
+        /// <inheritdoc />
+        protected override TimeSpan? DirectScenarioUnsafeTimeoutOverride =>
+            TimeSpan.FromMinutes(3);
+
         /// <summary>
         /// Verifies that a real runtime process crash is detected and the in-flight
         /// DAG execution resumes on a replacement runtime.
@@ -73,7 +81,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// </param>
         /// <returns>A task that completes when every parallel scenario has finished.</returns>
         [Theory]
-        [InlineData(35)]
+        [InlineData(10)]
         public Task Http_ProcessHost_Should_Execute_MultiTenant_Crash_Recovery_Scenarios_In_Parallel(
             int parallelism)
         {

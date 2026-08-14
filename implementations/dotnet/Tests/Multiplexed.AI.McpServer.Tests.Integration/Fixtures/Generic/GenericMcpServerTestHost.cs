@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
@@ -18,7 +19,10 @@ using Multiplexed.AI.McpServer.Tests.Integration.Auth;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Http;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 using System.Globalization;
 
@@ -42,6 +46,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         private const string LocalControlPlaneMode = "ControlPlaneWithLocalRuntimeInstances";
         private const string HttpScaleOutHostManagerMode = "HostManager";
         private const string UseCapturingLedgerRecorderSettingKey = "Tests:UseCapturingLedgerRecorder";
+        private const string UseMongoRuntimeLifecycleJournalSettingKey = "Tests:UseMongoRuntimeLifecycleJournal";
 
         /// <summary>
         /// The configuration settings used to start the test host.
@@ -191,6 +196,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 services.Configure<AiRuntimeProcessHostCreationOptions>(
                     testConfiguration.GetSection("AiRuntimeProcessHostCreation"));
 
+                RegisterKubernetesRuntimePoolTestOptions(
+                    services,
+                    testConfiguration);
+
                 if (ShouldUseCapturingLedgerRecorder(settings))
                 {
                     RegisterIntegrationLedgerProofServices(services);
@@ -198,6 +207,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                 else
                 {
                     services.AddAiControlPlaneRuntimeObservability();
+                }
+
+                if (ShouldUseMongoRuntimeLifecycleJournal(settings))
+                {
+                    services.RemoveAll<IAiRuntimeLifecycleJournal>();
+                    services.AddMongoAiRuntimeLifecycleJournal();
+                    Console.WriteLine(
+                        "[TEST MCP HOST] Durable Mongo runtime lifecycle journal registered.");
                 }
 
                 RegisterHostManagerModeTestServices(services);
@@ -234,11 +251,147 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
             });
         }
 
+        /// <summary>
+        /// Rebinds the exact Kubernetes Runtime Pool test settings after the application
+        /// has registered its production option bindings.
+        /// </summary>
+        /// <remarks>
+        /// Destructive Kubernetes scenarios must not silently fall back to an older
+        /// NodePort transport contract. Rebinding only the explicitly supplied sections
+        /// makes the effective test contract deterministic and fail-fast.
+        /// </remarks>
+        private void RegisterKubernetesRuntimePoolTestOptions(
+            IServiceCollection services,
+            IConfiguration testConfiguration)
+        {
+            var hasRuntimePoolSettings =
+                settings.Keys.Any(key =>
+                    key.StartsWith(
+                        "AiKubernetesRuntimePool:",
+                        StringComparison.OrdinalIgnoreCase)
+                    || key.StartsWith(
+                        "AiKubernetesRuntimePoolHost:",
+                        StringComparison.OrdinalIgnoreCase));
+
+            if (!hasRuntimePoolSettings)
+            {
+                return;
+            }
+
+            services.RemoveAll<
+                IConfigureOptions<AiKubernetesRuntimePoolOptions>>();
+            services.Configure<AiKubernetesRuntimePoolOptions>(
+                testConfiguration.GetSection("AiKubernetesRuntimePool"));
+
+            services.RemoveAll<
+                IConfigureOptions<AiKubernetesRuntimePoolHostOptions>>();
+            services.Configure<AiKubernetesRuntimePoolHostOptions>(
+                testConfiguration.GetSection("AiKubernetesRuntimePoolHost"));
+
+            services.RemoveAll<
+                IConfigureOptions<AiKubernetesRuntimeHostOptions>>();
+            services.Configure<AiKubernetesRuntimeHostOptions>(
+                testConfiguration.GetSection("AiKubernetesRuntimeHost"));
+
+            services.PostConfigure<AiKubernetesRuntimePoolOptions>(options =>
+            {
+                ValidateEffectiveSetting(
+                    "AiKubernetesRuntimePool:Enabled",
+                    options.Enabled.ToString());
+                ValidateEffectiveSetting(
+                    "AiKubernetesRuntimePool:PoolId",
+                    options.PoolId);
+                ValidateEffectiveSetting(
+                    "AiKubernetesRuntimePool:ProviderName",
+                    options.ProviderName);
+                ValidateEffectiveSetting(
+                    "AiKubernetesRuntimePool:TransportName",
+                    options.TransportName);
+
+                Console.WriteLine(
+                    $"[TEST MCP HOST] Kubernetes Runtime Pool effective options. Enabled='{options.Enabled}', PoolId='{options.PoolId}', ProviderName='{options.ProviderName}', TransportName='{options.TransportName}'.");
+            });
+
+            services.PostConfigure<AiKubernetesRuntimePoolHostOptions>(options =>
+            {
+                ValidateEffectiveSetting(
+                    "AiKubernetesRuntimePoolHost:ServiceType",
+                    options.ServiceType);
+                ValidateEffectiveSetting(
+                    "AiKubernetesRuntimePoolHost:UseGatewayTransportEndpoint",
+                    options.UseGatewayTransportEndpoint.ToString());
+
+                Console.WriteLine(
+                    $"[TEST MCP HOST] Kubernetes Runtime Pool host effective options. ServiceType='{options.ServiceType}', UseGatewayTransportEndpoint='{options.UseGatewayTransportEndpoint}', ClientMode='{options.ClientMode}'.");
+            });
+
+            services.PostConfigure<AiKubernetesRuntimeHostOptions>(options =>
+            {
+                ValidateEffectiveSetting(
+                    "AiKubernetesRuntimeHost:UseGatewayTransportEndpoint",
+                    options.UseGatewayTransportEndpoint.ToString());
+                ValidateEffectiveSetting(
+                    "AiKubernetesRuntimeHost:UsePortForwardTransportEndpoint",
+                    options.UsePortForwardTransportEndpoint.ToString());
+                ValidateEffectiveSetting(
+                    "AiKubernetesRuntimeHost:PublishNodePortTransportEndpoint",
+                    options.PublishNodePortTransportEndpoint.ToString());
+
+                Console.WriteLine(
+                    $"[TEST MCP HOST] Kubernetes Gateway effective options. UseGatewayTransportEndpoint='{options.UseGatewayTransportEndpoint}', UsePortForwardTransportEndpoint='{options.UsePortForwardTransportEndpoint}', PublishNodePortTransportEndpoint='{options.PublishNodePortTransportEndpoint}', GatewayName='{options.GatewayName}'.");
+            });
+
+            Console.WriteLine(
+                "[TEST MCP HOST] Kubernetes Runtime Pool options rebound from exact in-memory scenario settings.");
+        }
+
+        /// <summary>
+        /// Verifies that a strongly typed option retained the exact scenario setting.
+        /// </summary>
+        private void ValidateEffectiveSetting(
+            string key,
+            string actualValue)
+        {
+            if (!settings.TryGetValue(key, out var expectedValue)
+                || string.IsNullOrWhiteSpace(expectedValue))
+            {
+                return;
+            }
+
+            if (string.Equals(
+                    expectedValue,
+                    actualValue,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            throw new InvalidOperationException(
+                string.Concat(
+                    "Kubernetes Runtime Pool test option binding mismatch. Key='",
+                    key,
+                    "', Expected='",
+                    expectedValue,
+                    "', Actual='",
+                    actualValue,
+                    "'."));
+        }
+
         private static bool ShouldUseCapturingLedgerRecorder(
             IReadOnlyDictionary<string, string?> settings)
         {
             return !settings.TryGetValue(UseCapturingLedgerRecorderSettingKey, out var value) ||
                 bool.Parse(value ?? "true");
+        }
+
+        private static bool ShouldUseMongoRuntimeLifecycleJournal(
+            IReadOnlyDictionary<string, string?> settings)
+        {
+            return settings.TryGetValue(
+                    UseMongoRuntimeLifecycleJournalSettingKey,
+                    out var value) &&
+                bool.TryParse(value, out var enabled) &&
+                enabled;
         }
 
         /// <summary>

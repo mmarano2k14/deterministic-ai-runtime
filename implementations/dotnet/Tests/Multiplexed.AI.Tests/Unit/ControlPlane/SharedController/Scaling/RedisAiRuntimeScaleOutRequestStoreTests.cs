@@ -129,6 +129,65 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
+        /// Verifies that normal scale-out deduplication remains single-flight while
+        /// pending, but releases after successful fulfillment so a later saturated
+        /// admission cycle can request the next bounded capacity unit.
+        /// </summary>
+        [Fact]
+        public async Task CreateAsync_Should_Allow_Equivalent_Normal_Request_After_Fulfilled_Transition()
+        {
+            var first =
+                await this.GetStore()
+                    .CreateAsync(
+                        CreateRequest("request-1"))
+                    .ConfigureAwait(false);
+
+            Assert.True(
+                await this.GetStore()
+                    .MarkObservedAsync(
+                        first.RequestId,
+                        "scaler-test")
+                    .ConfigureAwait(false));
+
+            Assert.True(
+                await this.GetStore()
+                    .MarkFulfilledAsync(
+                        first.RequestId,
+                        "scaler-test",
+                        "runtime-1")
+                    .ConfigureAwait(false));
+
+            var second =
+                await this.GetStore()
+                    .CreateAsync(
+                        CreateRequest("request-2"))
+                    .ConfigureAwait(false);
+
+            Assert.Equal(
+                "request-2",
+                second.RequestId);
+
+            Assert.Equal(
+                AiRuntimeScaleOutRequestStatus.Pending,
+                second.Status);
+
+            var pending =
+                await this.GetStore()
+                    .ListPendingAsync(
+                        new AiRuntimeScaleOutRequestQuery
+                        {
+                            ControlPlaneId = "cp-test"
+                        })
+                    .ConfigureAwait(false);
+
+            var pendingRequest =
+                Assert.Single(pending);
+
+            Assert.Equal(
+                "request-2",
+                pendingRequest.RequestId);
+        }
+        /// <summary>
         /// Verifies that an observed recovery replacement remains single-flight after the normal Redis deduplication TTL.
         /// </summary>
         [Fact]

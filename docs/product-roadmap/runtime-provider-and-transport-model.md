@@ -96,7 +96,7 @@ Implemented guarantees:
 - suppression-aware routing;
 - compatibility with existing modes.
 
-The existing Kubernetes mode remains one runtime per Pod. Kubernetes Runtime Pool Pods are planned as a separate mode.
+The existing Kubernetes mode remains one runtime per Pod. KubernetesPool is a separate implemented mode with several independent runtime processes per Pod.
 
 See [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md).
 
@@ -551,7 +551,7 @@ Transport moves commands and responses safely.
 
 The runtime should preserve the same semantics regardless of transport.
 
-These should not change when moving from local to HTTP or future gRPC:
+These semantics remain invariant when moving between local, HTTP, and gRPC transports:
 
 - run identity;
 - execution identity;
@@ -569,30 +569,22 @@ This is the purpose of transport abstraction.
 
 ---
 
-# 9. Future gRPC Direction
+# 9. gRPC Transport
 
-gRPC can be a future transport direction.
+gRPC is implemented and validated as a first-class runtime transport.
 
-Potential advantages:
+Current use includes:
 
-- strongly typed contracts;
-- efficient service-to-service communication;
-- streaming support direction;
-- good fit for internal runtime communication;
-- clear API contracts;
-- Kubernetes-friendly service communication.
+- control-plane to runtime-instance command dispatch;
+- external process-host runtime execution;
+- ProcessHostPool exact child routing through the existing generated service contract;
+- Kubernetes-hosted runtime commands with HTTP/2 preservation;
+- KubernetesPool production validation;
+- crash recovery, replay, ledger, trace, and forensics scenarios.
 
-Potential use cases:
+The transport keeps the same runtime identities, admission rules, durable DAG semantics, and recovery ownership as HTTP.
 
-- control plane to runtime instance dispatch;
-- runtime instance status streaming;
-- worker diagnostics streaming;
-- cancellation propagation;
-- execution event streaming direction.
-
-gRPC should be treated as a future transport option, not a required dependency today.
-
-The architecture should allow it later.
+Future gRPC work is hardening rather than initial implementation, including provider-aware health/readiness, richer diagnostics, and broader managed-cluster operations.
 
 ---
 
@@ -879,7 +871,7 @@ Infrastructure must be tested under failure and concurrency.
 | Replay/audit integration | Foundation exists |
 | Observability integration | Foundation exists |
 | Transport abstraction beyond HTTP | Future extension direction |
-| gRPC transport | Future extension direction |
+| gRPC transport | Implemented / validated |
 | Message bus transport | Future extension direction |
 | Provider security hardening | Planned hardening direction |
 
@@ -900,16 +892,14 @@ Infrastructure must be tested under failure and concurrency.
 | Stable HTTP Runtime Pool router | Implemented |
 | Stable gRPC Runtime Pool router | Implemented |
 | Exact Runtime Pool failure recovery | Implemented |
-| Kubernetes Runtime Pool Pod | Planned |
+| Kubernetes Runtime Pool Pod | Implemented / validated |
 | Message-bus transport | Planned |
 
 ## Next Provider and Transport Work
 
-1. add the new Kubernetes Runtime Pool mode;
-2. map Pod UID to immutable `HostId`;
-3. support Pod-wide failure suppression;
-4. persist distributed route, failure, safety, and claim authority;
-5. add hierarchical capacity selection;
-6. validate Redis Cluster key-slot and failover behavior;
-7. continue transport diagnostics and gateway hardening.
+1. harden durable recovery-claim ownership for multiple control planes;
+2. validate Redis Cluster key-slot and failover behavior;
+3. expand KubernetesPool testing across multiple nodes and fault domains;
+4. continue transport diagnostics, Gateway hardening, and managed-hosting packaging;
+5. keep provider selection, scheduling, and recovery authority explicitly separated.
 

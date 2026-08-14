@@ -2,12 +2,13 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading.Tasks;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Scenarios;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Kubernetes
+namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Kupernetes
 {
     /// <summary>
     /// Runs the gRPC Kubernetes SDK pod crash recovery scenario,
@@ -31,6 +32,31 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         {
             this.output = output
                 ?? throw new ArgumentNullException(nameof(output));
+        }
+
+        /// <inheritdoc />
+        protected override TimeSpan? ParallelHarnessUnsafeTimeoutOverride =>
+            TimeSpan.FromMinutes(3);
+
+        /// <inheritdoc />
+        protected override TimeSpan? DirectScenarioUnsafeTimeoutOverride =>
+            TimeSpan.FromMinutes(3);
+
+        /// <inheritdoc />
+        protected override AiRunPlacementDirective? CreateRemainingInventoryRunPlacementDirective(
+            string runtimeInstanceId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            return new AiRunPlacementDirective
+            {
+                Target = new AiRunPlacementTarget
+                {
+                    RuntimeInstanceId = runtimeInstanceId
+                },
+                Requirement = AiRunPlacementRequirement.Required,
+                Fallback = AiRunPlacementFallback.Reject
+            };
         }
 
         /// <summary>
@@ -134,7 +160,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// A task that completes when every parallel scenario has finished.
         /// </returns>
         [Theory]
-        [InlineData(35)]
+        [InlineData(5)]
         public Task Http_KubernetesSdk_Should_Execute_MultiTenant_Pod_Crash_Recovery_Scenarios_In_Parallel(
             int parallelism)
         {

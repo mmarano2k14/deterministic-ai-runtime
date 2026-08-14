@@ -247,22 +247,22 @@ Recovery must not introduce randomness into logical outcomes.
 
 ## Recommended implementation order
 
-## Step 1 — Formalize the lease model
+## Milestone 1 — Formalize the lease model
 Clarify step ownership and timeout semantics.
 
-## Step 2 — Harden reclaim behavior
+## Milestone 2 — Harden reclaim behavior
 Ensure expired claims can be recovered safely and atomically.
 
-## Step 3 — Define crash-consistency rules
+## Milestone 3 — Define crash-consistency rules
 Document and verify behavior around critical interrupted transitions.
 
-## Step 4 — Couple recovery and convergence
+## Milestone 4 — Couple recovery and convergence
 Ensure the convergence evaluator understands valid future progress.
 
-## Step 5 — Harden terminal finalization
+## Milestone 5 — Harden terminal finalization
 Protect final persistence against collisions and premature closure.
 
-## Step 6 — Expand the distributed recovery test suite
+## Milestone 6 — Expand the distributed recovery test suite
 Validate correctness under multi-worker and crash scenarios.
 
 ---

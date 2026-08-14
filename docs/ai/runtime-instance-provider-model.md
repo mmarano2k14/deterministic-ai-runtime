@@ -1659,7 +1659,7 @@ Kubernetes
 Attach
 ```
 
-The future Kubernetes Runtime Pool will use a new mode rather than changing the meaning of the existing Kubernetes mode.
+KubernetesPool uses an explicit additive mode rather than changing the meaning of the existing Kubernetes mode.
 
 ---
 
@@ -2247,7 +2247,7 @@ Completed:
 
 Planned:
 
-- Kubernetes Runtime Pool Pod mode;
+- KubernetesPool Pod mode with multiple independent runtimes;
 - Pod UID `HostId`;
 - Pod-wide suppression;
 - distributed claim durability;
@@ -2265,7 +2265,7 @@ After the local, HTTP pooled, HTTP process-host, HTTP scale-out, and tenant-awar
 2. Mark stale, unhealthy, or circuit-open runtime endpoints as draining or unhealthy.
 3. Stop routing new work to unhealthy runtime instances.
 4. Request replacement capacity when needed.
-5. Finalize shared runtime pooling semantics.
+5. Continue productization of shared-capacity placement semantics.
 6. Add Hybrid shared fallback process-host validation after shared pooling is explicit.
 7. Complete status provider capability.
 8. Complete control provider capability.
@@ -2288,7 +2288,7 @@ The provider model is implemented for the validated local, HTTP dispatch, local 
 
 Current limitations include:
 
-- final shared runtime pooling semantics are not decided yet
+- shared-capacity placement policy remains an area for broader productization beyond the validated Runtime Pool correctness model
 - Shared mode currently validates Shared-mode propagation and execution, not a forced global shared runtime pool
 - Hybrid fallback to a shared process-host pool should be tested after shared pooling semantics are finalized
 - RuntimeInstanceHealthReconciler is not implemented yet
@@ -2413,7 +2413,7 @@ Validated behavior includes:
 
 This document describes the runtime instance provider model.
 
-Do not present Redis command queue dispatch, cluster autoscaling/HPA, global shared runtime pooling, production multi-control-plane leadership, or production dashboard features as completed capabilities until they are implemented and validated. Kubernetes runtime Pod lifecycle itself is implemented on the Kubernetes branch.
+Do not present Redis command queue dispatch, cluster autoscaling/HPA, production multi-control-plane leadership, Redis Cluster failover, or production dashboard features as completed capabilities until they are implemented and validated. Kubernetes runtime lifecycle and KubernetesPool hierarchical failure recovery are implemented and validated within the documented scope.
 
 Provider dispatch and provider scale-out must continue to preserve the runtime boundaries:
 

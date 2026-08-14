@@ -907,7 +907,7 @@ The dashboard should not expose sensitive prompts, model outputs, tool data, or 
 
 # Dashboard Productization Roadmap
 
-## Step 1 — Runtime Visibility Foundation
+## Milestone 1 — Runtime Visibility Foundation
 
 Build read-only views for:
 
@@ -919,7 +919,7 @@ Build read-only views for:
 - decision ledger;
 - replay reports.
 
-## Step 2 — Investigation and Diagnostics
+## Milestone 2 — Investigation and Diagnostics
 
 Add:
 
@@ -932,7 +932,7 @@ Add:
 - queue diagnostics;
 - runtime instance diagnostics.
 
-## Step 3 — MCP-Controlled Operations
+## Milestone 3 — MCP-Controlled Operations
 
 Add controlled actions:
 
@@ -943,7 +943,7 @@ Add controlled actions:
 - inspect ledger;
 - inspect diagnostics.
 
-## Step 4 — Observability Integration
+## Milestone 4 — Observability Integration
 
 Add:
 
@@ -955,7 +955,7 @@ Add:
 - runtime instance health;
 - external export links direction.
 
-## Step 5 — Retention and Audit Views
+## Milestone 5 — Retention and Audit Views
 
 Add:
 
@@ -966,7 +966,7 @@ Add:
 - audit report export direction;
 - replay after compaction visibility.
 
-## Step 6 — Enterprise and Multi-Tenant Readiness
+## Milestone 6 — Enterprise and Multi-Tenant Readiness
 
 Add:
 

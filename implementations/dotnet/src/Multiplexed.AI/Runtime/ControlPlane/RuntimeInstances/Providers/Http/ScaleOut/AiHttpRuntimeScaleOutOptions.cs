@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut
 {
@@ -11,6 +12,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         /// Gets or sets a value indicating whether HTTP runtime scale-out is enabled.
         /// </summary>
         public bool Enabled { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets the logical Runtime Pool identifier used by KubernetesPool host creation.
+        /// </summary>
+        /// <remarks>
+        /// This value is required only when <see cref="HostCreationMode"/> is
+        /// <see cref="AiRuntimeHostCreationMode.KubernetesPool"/>. Other host creation modes ignore it.
+        /// </remarks>
+        public string? PoolId { get; set; }
 
         /// <summary>
         /// Gets or sets the HTTP runtime scale-out mode.
@@ -76,6 +86,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         /// most one retry and two total process startup attempts.
         /// </remarks>
         public int ProcessHostStartupRetryCount { get; set; }
+
+        /// <summary>
+        /// Gets or sets the logical capacity topology used by HTTP scale-out.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="AiRuntimeCapacityTopologyMode.Unspecified"/> preserves historical configurations.
+        /// The topology describes capacity reuse and pooling, while <see cref="HostCreationMode"/>
+        /// continues to describe physical host materialization.
+        /// </remarks>
+        public AiRuntimeCapacityTopologyMode CapacityTopologyMode { get; set; } =
+            AiRuntimeCapacityTopologyMode.Unspecified;
 
         /// <summary>
         /// Gets or sets the physical host creation mode used when HTTP scale-out mode is HostManager.

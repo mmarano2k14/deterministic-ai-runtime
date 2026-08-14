@@ -61,10 +61,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         ":",
                         portLease.Port.ToString(CultureInfo.InvariantCulture));
 
+                var publishedEndpoint =
+                    string.IsNullOrWhiteSpace(
+                        this.options.PublishedTransportEndpoint)
+                        ? endpoint
+                        : this.options.PublishedTransportEndpoint
+                            .Trim()
+                            .TrimEnd('/');
+
                 var processOptions =
                     this.CreateProcessOptions(
                         request,
                         endpoint,
+                        publishedEndpoint,
                         portLease.Port);
 
                 return new AiRuntimeProcessPoolRuntimeInstanceStartPlan
@@ -77,6 +86,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         ControlPlaneId = this.options.ControlPlaneId,
                         ExecutionContextSnapshot = this.options.ExecutionContextSnapshot,
                         RuntimeInstanceId = request.RuntimeInstanceId,
+                        RequireExactRuntimeInstanceId = true,
                         ProviderName = this.options.ProviderName,
                         TransportName = this.options.TransportName,
                         RequireTransportEndpoint = true,
@@ -103,6 +113,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         private AiRuntimeProcessPoolChildProcessOptions CreateProcessOptions(
             AiRuntimeProcessPoolChildStartRequest request,
             string endpoint,
+            string publishedEndpoint,
             int port)
         {
             var environment =
@@ -114,6 +125,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 environment,
                 request,
                 endpoint,
+                publishedEndpoint,
                 port,
                 this.options);
 
@@ -147,6 +159,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             IDictionary<string, string> environment,
             AiRuntimeProcessPoolChildStartRequest request,
             string endpoint,
+            string publishedEndpoint,
             int port,
             AiRuntimeProcessPoolRuntimeInstanceOptions options)
         {
@@ -170,6 +183,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             environment["AiLocalRuntimeInstancePool__MaxConcurrentRunsPerInstance"] = "0";
             environment["AiLocalRuntimeInstancePool__LocalQueueCapacity"] = "0";
             environment["AiLocalRuntimeInstancePool__RuntimeInstanceIdPrefix"] = "disabled";
+
+            environment["AiRuntimeProcessPool__Enabled"] = "false";
+            environment["AiKubernetesRuntimePoolInPod__Enabled"] = "false";
 
             environment["AiEngine__ControlPlane__ControlPlaneId"] = options.ControlPlaneId;
             environment["AiEngine__ControlPlane__RedisDiscoveryKey"] =
@@ -225,7 +241,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             environment["AiRuntimeInstanceRegistration__ProviderMetadata__transport.name"] =
                 options.TransportName;
             environment["AiRuntimeInstanceRegistration__ProviderMetadata__transport.endpoint"] =
-                endpoint;
+                publishedEndpoint;
             environment["AiRuntimeInstanceRegistration__ProviderMetadata__runtime.instance.id"] =
                 request.RuntimeInstanceId;
 
@@ -233,13 +249,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 options.ProviderName;
             environment["AiRuntimeInstanceRegistration__Metadata__transport.name"] =
                 options.TransportName;
-            environment["AiRuntimeInstanceRegistration__Metadata__transport.endpoint"] = endpoint;
+            environment["AiRuntimeInstanceRegistration__Metadata__transport.endpoint"] =
+                publishedEndpoint;
             environment["AiRuntimeInstanceRegistration__Metadata__runtime.instance.id"] =
                 request.RuntimeInstanceId;
-            environment["AiRuntimeInstanceRegistration__Metadata__hostType"] =
-                "runtime-process-pool";
-            environment["AiRuntimeInstanceRegistration__Metadata__deployment"] =
-                "process-pool";
+            AddWhenMissing(
+                environment,
+                "AiRuntimeInstanceRegistration__Metadata__hostType",
+                "runtime-process-pool");
+            AddWhenMissing(
+                environment,
+                "AiRuntimeInstanceRegistration__Metadata__deployment",
+                "process-pool");
 
             environment[
                 string.Concat(
@@ -314,6 +335,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         }
 
         /// <summary>
+        /// Adds a default environment value without overwriting topology-specific authority.
+        /// </summary>
+        private static void AddWhenMissing(
+            IDictionary<string, string> environment,
+            string key,
+            string value)
+        {
+            if (!environment.ContainsKey(key))
+            {
+                environment[key] = value;
+            }
+        }
+
+        /// <summary>
         /// Copies mutable options so later caller mutation cannot alter launch correctness.
         /// </summary>
         private static AiRuntimeProcessPoolRuntimeInstanceOptions CopyOptions(
@@ -327,6 +362,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 BasePort = options.BasePort,
                 MaxPort = options.MaxPort,
                 EndpointHost = options.EndpointHost,
+                PublishedTransportEndpoint =
+                    options.PublishedTransportEndpoint,
                 ControlPlaneId = options.ControlPlaneId,
                 EnableControlPlaneDiscovery =
                     options.EnableControlPlaneDiscovery,

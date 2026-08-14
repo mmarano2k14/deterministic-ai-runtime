@@ -123,7 +123,13 @@ namespace Multiplexed.Rbac.Core.Runtime.DI
             services.AddSingleton(sp =>
             {
                 var mem = sp.GetRequiredService<IMemoryCache>();
-                return new MemoryContextStore(mem, ttl: TimeSpan.FromSeconds(20));
+                var runtimeOptions = sp
+                    .GetRequiredService<IOptions<ContextRuntimeOptions>>()
+                    .Value;
+
+                return new MemoryContextStore(
+                    mem,
+                    ttl: runtimeOptions.SessionIdleTimeout);
             });
 
             services.AddSingleton<IContextStore>(sp =>

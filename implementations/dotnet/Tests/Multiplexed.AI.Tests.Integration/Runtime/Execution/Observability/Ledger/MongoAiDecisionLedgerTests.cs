@@ -108,6 +108,59 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
         }
 
         /// <summary>
+        /// Verifies that operation-scoped ledger queries use the dedicated operation/timestamp index.
+        /// </summary>
+        [Fact]
+        public async Task QueryAsync_ByOperation_ShouldCreateOperationTimestampIndex()
+        {
+            var collectionSuffix = Guid.NewGuid().ToString("N");
+            var collectionName = $"ai_decision_ledger_entries_{collectionSuffix}";
+            var ledger = CreateLedger(collectionSuffix);
+            var timestampUtc = DateTimeOffset.UtcNow;
+
+            await ledger.AppendAsync(new AiDecisionLedgerEntry
+            {
+                EntryId = Guid.NewGuid().ToString("N"),
+                CorrelationContext = new AiRuntimeLedgerEventCorrelationContext
+                {
+                    ExecutionId = "execution-operation-index",
+                    Operation = "runtime-host-creation"
+                },
+                Category = AiDecisionLedgerCategory.Scaling,
+                EventType = "control.scaling.runtime-host-creation.succeeded",
+                Outcome = AiDecisionLedgerOutcome.Succeeded,
+                TimestampUtc = timestampUtc
+            });
+
+            var entries = await ledger.QueryAsync(new AiDecisionLedgerQuery
+            {
+                Operation = "runtime-host-creation",
+                TimestampFromUtc = timestampUtc.AddMinutes(-1),
+                TimestampToUtc = timestampUtc.AddMinutes(1)
+            });
+
+            entries.Should().ContainSingle();
+
+            var client = new MongoClient(ConnectionString);
+            var collection = client
+                .GetDatabase(DatabaseName)
+                .GetCollection<MongoDB.Bson.BsonDocument>(collectionName);
+
+            using var indexCursor = await collection.Indexes.ListAsync();
+            var indexes = await indexCursor.ToListAsync();
+            var operationTimestampIndex = indexes.Single(index =>
+                string.Equals(
+                    index["name"].AsString,
+                    "ix_operation_timestamp",
+                    StringComparison.Ordinal));
+
+            var indexKeys = operationTimestampIndex["key"].AsBsonDocument;
+
+            indexKeys["Operation"].AsInt32.Should().Be(1);
+            indexKeys["TimestampUtc"].AsInt32.Should().Be(1);
+        }
+
+        /// <summary>
         /// Verifies that MongoDB preserves the runtime correlation context.
         /// </summary>
         [Fact]

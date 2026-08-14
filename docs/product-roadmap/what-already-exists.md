@@ -1129,9 +1129,9 @@ This improves confidence before deploying to a real distributed environment.
 
 ---
 
-## Process-Host Runtime Pool and Exact Recovery
+## Runtime Pool Architecture and Exact Hierarchical Recovery
 
-The platform now includes an implemented process-host Runtime Pool foundation.
+The platform now includes implemented ProcessHostPool and KubernetesPool foundations with hierarchical child and full-boundary recovery.
 
 It already provides:
 
@@ -1150,20 +1150,38 @@ It already provides:
 - atomic recovery claim;
 - active `LeaseId` generation;
 - stale-lease rejection;
-- claimed in-flight and local-queued recovery through existing services.
+- claimed in-flight and local-queued recovery through existing services;
+- durable queue-first placement through shared dispatch, with failed placement removed before recovery redispatch;
+- dynamic same-Pod Gateway routing aliases for fresh KubernetesPool replacement identities;
+- operator-triggered external ProcessHost and Pod failure gates that reuse the same production recovery scenario.
 
-Validated compatibility:
+Validated compatibility and production evidence:
 
 ```text
-Process HTTP P10
-Process gRPC P10
-Kubernetes HTTP P5
-Kubernetes gRPC P5
+Process HTTP P10 regression
+Process gRPC P10 regression
+Kubernetes HTTP P5 historical-mode regression
+Kubernetes gRPC P5 historical-mode regression
+
+Automatic full-boundary failure:
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
+
+External-manual full-boundary failure:
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
 ```
 
-The existing Kubernetes mode remains one runtime per Pod. Kubernetes Runtime Pool Pods remain roadmap work.
+The historical Kubernetes mode remains one runtime per Pod. KubernetesPool is an additional explicit mode with several independent runtime processes per Pod, child-level replacement, full Pod failure recovery, warm reuse, and bounded capacity.
 
-See [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md).
+See:
+
+- [`../ai/runtime-pool-production-validation.md`](../ai/runtime-pool-production-validation.md)
+- [`runtime-pool-roadmap.md`](runtime-pool-roadmap.md).
 
 ---
 
@@ -1181,7 +1199,7 @@ The important concepts already align with Kubernetes-style deployment:
 - observability can show distributed execution;
 - shared controller direction can support scheduling decisions.
 
-This makes the platform naturally aligned with future Kubernetes demonstrations and production deployments.
+This foundation is now exercised by real Kubernetes host and KubernetesPool scenarios. Broader production packaging, multi-node operations, autoscaling integration, and managed deployment profiles remain separate operational work.
 
 ---
 

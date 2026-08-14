@@ -1,4 +1,5 @@
 ﻿using ModelContextProtocol.Protocol;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
@@ -25,6 +26,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <param name="requestedBy">The logical requester identifier.</param>
         /// <param name="source">The logical request source.</param>
         /// <param name="crashCheckpoint">The optional test-only durable crash checkpoint.</param>
+        /// <param name="placement">The optional typed placement directive for this admission attempt.</param>
         /// <returns>The submitted shared run identifier.</returns>
         public static async Task<string> SubmitOneRunAsync(
             McpTestClient mcp,
@@ -33,7 +35,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             string pipelineName,
             string requestedBy,
             string source,
-            McpTestCrashCheckpointDefinition? crashCheckpoint = null)
+            McpTestCrashCheckpointDefinition? crashCheckpoint = null,
+            AiRunPlacementDirective? placement = null)
         {
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentNullException.ThrowIfNull(tenant);
@@ -73,6 +76,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     Operation = AiSharedRuntimeControllerOperation.SubmitRun,
                     PipelineKey = pipelineName,
                     TenantId = tenant.TenantId,
+                    Placement = placement,
                     RequestedBy = requestedBy,
                     Source = source,
                     Metadata = metadata,

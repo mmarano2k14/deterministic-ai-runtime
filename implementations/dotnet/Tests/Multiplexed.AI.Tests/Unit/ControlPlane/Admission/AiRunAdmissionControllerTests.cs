@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -93,6 +94,105 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
 
         [Fact]
         public async Task AdmitAsync_Should_Ignore_Preferred_Instance_When_Not_Available()
+        {
+            var registry = new FakeRuntimeInstanceRegistry(
+                CreateInstance(
+                    "runtime-a",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: true,
+                    queuedRunCount: 0,
+                    runningRunCount: 0),
+                CreateInstance(
+                    "runtime-b",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: false,
+                    queuedRunCount: 8,
+                    runningRunCount: 2));
+
+            var controller = CreateController(registry);
+
+            var decision = await controller.AdmitAsync(
+                CreateRequest(preferredRuntimeInstanceId: "runtime-b"));
+
+            Assert.Equal(AiRunAdmissionDecisionType.AssignToInstance, decision.DecisionType);
+            Assert.Equal("runtime-a", decision.AssignedRuntimeInstanceId);
+        }
+
+        [Fact]
+        public async Task AdmitAsync_Should_Assign_To_Required_Runtime_Placement()
+        {
+            var registry = new FakeRuntimeInstanceRegistry(
+                CreateInstance(
+                    "runtime-a",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: true,
+                    queuedRunCount: 0,
+                    runningRunCount: 0),
+                CreateInstance(
+                    "runtime-b",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: true,
+                    queuedRunCount: 2,
+                    runningRunCount: 1));
+
+            var controller = CreateController(registry);
+
+            var decision = await controller.AdmitAsync(
+                CreateRequest(
+                    placement: new AiRunPlacementDirective
+                    {
+                        Target = new AiRunPlacementTarget
+                        {
+                            RuntimeInstanceId = "runtime-b"
+                        },
+                        Requirement = AiRunPlacementRequirement.Required,
+                        Fallback = AiRunPlacementFallback.Reject
+                    }));
+
+            Assert.Equal(AiRunAdmissionDecisionType.AssignToInstance, decision.DecisionType);
+            Assert.Equal("runtime-b", decision.AssignedRuntimeInstanceId);
+            Assert.Contains("Required runtime placement", decision.Reason);
+        }
+
+        [Fact]
+        public async Task AdmitAsync_Should_Reject_When_Required_Runtime_Placement_Is_Unavailable()
+        {
+            var registry = new FakeRuntimeInstanceRegistry(
+                CreateInstance(
+                    "runtime-a",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: true,
+                    queuedRunCount: 0,
+                    runningRunCount: 0),
+                CreateInstance(
+                    "runtime-b",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: false,
+                    queuedRunCount: 8,
+                    runningRunCount: 2));
+
+            var controller = CreateController(registry);
+
+            var decision = await controller.AdmitAsync(
+                CreateRequest(
+                    placement: new AiRunPlacementDirective
+                    {
+                        Target = new AiRunPlacementTarget
+                        {
+                            RuntimeInstanceId = "runtime-b"
+                        },
+                        Requirement = AiRunPlacementRequirement.Required,
+                        Fallback = AiRunPlacementFallback.Reject
+                    }));
+
+            Assert.Equal(AiRunAdmissionDecisionType.Reject, decision.DecisionType);
+            Assert.Null(decision.AssignedRuntimeInstanceId);
+            Assert.Contains("runtime-b", decision.Reason);
+            Assert.Contains("explicit rejection", decision.Reason);
+        }
+
+        [Fact]
+        public async Task AdmitAsync_Should_Preserve_Legacy_Preferred_Runtime_Fallback()
         {
             var registry = new FakeRuntimeInstanceRegistry(
                 CreateInstance(
@@ -428,6 +528,80 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
         }
 
         [Fact]
+        public async Task AdmitAsync_Should_Request_ScaleOut_When_Tenant_QueueLess_Policy_Has_No_Effective_Run_Slot()
+        {
+            var registry = new FakeRuntimeInstanceRegistry(
+                CreateInstance(
+                    "runtime-1",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: true,
+                    queuedRunCount: 0,
+                    runningRunCount: 1,
+                    queueCapacity: 100,
+                    availableRunSlots: 0));
+
+            var controller = CreateController(
+                registry,
+                new AiRunAdmissionOptions
+                {
+                    MaxInstanceCount = 3,
+                    EnableScaleOutRequest = true
+                },
+                tenantRuntimeSettingsProvider:
+                    new StaticTenantRuntimeSettingsProvider(
+                        localQueueCapacity: 0));
+
+            var decision =
+                await controller.AdmitAsync(
+                    CreateRequest());
+
+            Assert.Equal(
+                AiRunAdmissionDecisionType.RequestScaleOut,
+                decision.DecisionType);
+            Assert.True(decision.ShouldRequestScaleOut);
+            Assert.Equal(1, decision.CurrentInstanceCount);
+            Assert.Equal(3, decision.MaxInstanceCount);
+            Assert.Equal(0, decision.AvailableInstanceCount);
+        }
+
+        [Fact]
+        public async Task AdmitAsync_Should_Preserve_QueueFirst_Assignment_When_Tenant_Allows_Local_Queue()
+        {
+            var registry = new FakeRuntimeInstanceRegistry(
+                CreateInstance(
+                    "runtime-1",
+                    AiRuntimeInstanceStatus.Ready,
+                    canAcceptRun: true,
+                    queuedRunCount: 0,
+                    runningRunCount: 1,
+                    queueCapacity: 100,
+                    availableRunSlots: 0));
+
+            var controller = CreateController(
+                registry,
+                new AiRunAdmissionOptions
+                {
+                    MaxInstanceCount = 3,
+                    EnableScaleOutRequest = true
+                },
+                tenantRuntimeSettingsProvider:
+                    new StaticTenantRuntimeSettingsProvider(
+                        localQueueCapacity: 100));
+
+            var decision =
+                await controller.AdmitAsync(
+                    CreateRequest());
+
+            Assert.Equal(
+                AiRunAdmissionDecisionType.AssignToInstance,
+                decision.DecisionType);
+            Assert.Equal(
+                "runtime-1",
+                decision.AssignedRuntimeInstanceId);
+            Assert.Equal(1, decision.AvailableInstanceCount);
+        }
+
+        [Fact]
         public async Task AdmitAsync_Should_Throw_When_Request_Is_Null()
         {
             var registry = new FakeRuntimeInstanceRegistry();
@@ -440,7 +614,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
         private static AiRunAdmissionController CreateController(
             IAiRuntimeInstanceRegistry registry,
             AiRunAdmissionOptions? options = null,
-            IAiRuntimeAdmissionReservationStore? reservationStore = null)
+            IAiRuntimeAdmissionReservationStore? reservationStore = null,
+            IAiTenantRuntimeSettingsProvider? tenantRuntimeSettingsProvider = null)
         {
             var capacityStore =
                 new InMemoryAiRuntimeInstanceCapacityStore();
@@ -463,7 +638,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
                 registry,
                 reservationStore ?? new InMemoryAiRuntimeAdmissionReservationStore(),
                 capacityStore,
-                new HardcodedAiTenantRuntimeSettingsProvider(),
+                tenantRuntimeSettingsProvider ??
+                    new HardcodedAiTenantRuntimeSettingsProvider(),
                 Options.Create(options ?? new AiRunAdmissionOptions()),
                 NullLogger<AiRunAdmissionController>.Instance);
         }
@@ -505,11 +681,13 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
 
         private static AiRunAdmissionRequest CreateRequest(
             string? preferredRuntimeInstanceId = null,
-            string? tenantId = null)
+            string? tenantId = null,
+            AiRunPlacementDirective? placement = null)
         {
             return new AiRunAdmissionRequest
             {
                 PreferredRuntimeInstanceId = preferredRuntimeInstanceId,
+                Placement = placement,
                 TenantId = tenantId,
                 RunRequest = new AiRuntimePipelineRunRequest
                 {
@@ -526,7 +704,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
             int runningRunCount,
             bool? isQueuePaused = null,
             string? tenantId = null,
-            string? tenantGroupId = null)
+            string? tenantGroupId = null,
+            int? queueCapacity = 8,
+            int? availableRunSlots = null)
         {
             var now =
                 DateTimeOffset.UtcNow;
@@ -549,9 +729,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
                 RunningRunCount = runningRunCount,
                 ActiveRunCount = queuedRunCount + runningRunCount,
 
-                QueueCapacity = 8,
+                QueueCapacity = queueCapacity,
                 MaxConcurrentRuns = 2,
-                AvailableRunSlots = canAcceptRun ? 1 : 0,
+                AvailableRunSlots =
+                    availableRunSlots ??
+                    (canAcceptRun ? 1 : 0),
 
                 IsQueuePaused = queuePaused,
                 CanAcceptRun = canAcceptRun,
@@ -581,6 +763,42 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Admission
             }
 
             return metadata;
+        }
+
+        private sealed class StaticTenantRuntimeSettingsProvider :
+            IAiTenantRuntimeSettingsProvider
+        {
+            private readonly int? _localQueueCapacity;
+
+            public StaticTenantRuntimeSettingsProvider(
+                int? localQueueCapacity)
+            {
+                _localQueueCapacity =
+                    localQueueCapacity;
+            }
+
+            public AiTenantRuntimeSettings GetSettings(
+                string? tenantId,
+                string? tenantGroupId)
+            {
+                return new AiTenantRuntimeSettings
+                {
+                    TenantId =
+                        string.IsNullOrWhiteSpace(tenantId)
+                            ? "tenant-test"
+                            : tenantId,
+                    TenantGroupId = tenantGroupId,
+                    IsolationMode =
+                        AiRuntimeInstanceIsolationMode.Shared,
+                    PreferDedicatedCapacity = false,
+                    AllowSharedFallback = true,
+                    MaxRuntimeInstances = 3,
+                    WorkerCountPerInstance = 1,
+                    MaxConcurrentRunsPerInstance = 1,
+                    LocalQueueCapacity = _localQueueCapacity,
+                    RuntimeInstanceIdPrefix = "runtime"
+                };
+            }
         }
 
         private sealed class FakeRuntimeInstanceRegistry :

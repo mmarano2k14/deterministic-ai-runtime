@@ -44,6 +44,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         public string EndpointHost { get; set; } = "127.0.0.1";
 
         /// <summary>
+        /// Gets or sets the optional stable Runtime Pool endpoint published by every child
+        /// registration.
+        /// </summary>
+        /// <remarks>
+        /// The child process still binds and is probed through its exact allocated local endpoint.
+        /// When this value is supplied, remote control planes dispatch through the stable parent
+        /// Runtime Pool router instead of addressing the child process directly.
+        /// </remarks>
+        public string? PublishedTransportEndpoint { get; set; }
+
+        /// <summary>
         /// Gets or sets the logical control-plane identifier discovered by every child runtime.
         /// </summary>
         public string ControlPlaneId { get; set; } = string.Empty;

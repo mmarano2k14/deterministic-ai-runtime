@@ -37,6 +37,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     CreateRequest("request-1"))
                 .ConfigureAwait(false);
 
+            var requeueService =
+                new TestScaleOutFulfilledRunRequeueService();
+
             var watcher =
                 new AiRuntimeScaleOutRequestWatcherHostedService(
                     store,
@@ -47,7 +50,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                                 Succeed = true,
                                 RuntimeInstanceIdPrefix = "simulated-runtime"
                             }))),
-                    new TestScaleOutFulfilledRunRequeueService(),
+                    requeueService,
                     new StaticAiControlPlaneIdResolver("cp-test"),
                     Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
                     {
@@ -74,6 +77,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
             Assert.Equal("watcher-test", loaded.FulfilledBy);
             Assert.False(string.IsNullOrWhiteSpace(loaded.FulfilledRuntimeInstanceId));
             Assert.StartsWith("simulated-runtime-", loaded.FulfilledRuntimeInstanceId, StringComparison.Ordinal);
+            Assert.Equal(1, requeueService.CallCount);
 
             var pending =
                 await store
@@ -85,6 +89,78 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                     .ConfigureAwait(false);
 
             Assert.Empty(pending);
+        }
+
+        /// <summary>
+        /// Verifies that a shared-queue redispatch replacement is not requeued a
+        /// second time after provider fulfillment.
+        /// </summary>
+        [Fact]
+        public async Task ProcessCycleAsync_Should_Not_Requeue_SharedQueue_Redispatch_Replacement_Twice()
+        {
+            var store =
+                CreateStore();
+
+            var request =
+                CreateRequest(
+                    requestId:
+                        "request-shared-queue-replacement-1",
+                    sharedRunId:
+                        "shared-run-replacement-1");
+
+            request.Metadata["scaleout.intent"] =
+                "shared-queue-redispatch-replacement";
+
+            await store
+                .CreateAsync(request)
+                .ConfigureAwait(false);
+
+            var requeueService =
+                new TestScaleOutFulfilledRunRequeueService();
+
+            var watcher =
+                new AiRuntimeScaleOutRequestWatcherHostedService(
+                    store,
+                    new TestScaleOutProviderSelector(
+                        new SimulatedAiRuntimeScaleOutProvider(
+                            Options.Create(
+                                new SimulatedAiRuntimeScaleOutProviderOptions
+                                {
+                                    Succeed = true,
+                                    RuntimeInstanceIdPrefix =
+                                        "simulated-runtime"
+                                }))),
+                    requeueService,
+                    new StaticAiControlPlaneIdResolver("cp-test"),
+                    Options.Create(
+                        new AiRuntimeScaleOutRequestWatcherOptions
+                        {
+                            Enabled = true,
+                            ControlPlaneId = "cp-test",
+                            WatcherId = "watcher-test",
+                            Interval = TimeSpan.FromSeconds(1),
+                            MaxRequestsPerCycle = 10,
+                            RejectOnProviderFailure = true
+                        }));
+
+            await watcher
+                .ProcessCycleAsync()
+                .ConfigureAwait(false);
+
+            var loaded =
+                await store
+                    .GetAsync(
+                        "request-shared-queue-replacement-1")
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(loaded);
+            Assert.Equal(
+                AiRuntimeScaleOutRequestStatus.Fulfilled,
+                loaded!.Status);
+            Assert.Equal(0, requeueService.CallCount);
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    loaded.FulfilledRuntimeInstanceId));
         }
 
         /// <summary>

@@ -1,6 +1,6 @@
 # Runtime Discovery, Registry, and Capacity
 
-Status: Implemented foundation / validated for MCP, Redis registry and capacity, local and provider scale-out, historical HTTP/gRPC Process and Kubernetes modes, opt-in process-host Runtime Pools, exact route registration, forwarding leases, targeted child replacement, first-class failure journaling, exact capacity suppression, deterministic recovery claims, and tenant-aware runtime isolation.
+Status: Implemented foundation / validated for MCP, Redis registry and capacity, local and provider scale-out, historical HTTP/gRPC Process and Kubernetes modes, ProcessHostPool and KubernetesPool membership, exact route registration, durable failure authority, exact capacity suppression, bounded warm reuse, hierarchical failure recovery, and tenant-aware runtime isolation.
 
 This document describes the runtime discovery, registry, and capacity model used by the Deterministic AI Runtime control plane.
 
@@ -1379,7 +1379,7 @@ MCP visibility must still respect tenant visibility rules when a tenant context 
 
 ## Validated Evidence
 
-The current implementation has been validated through MCP, Redis, local runtime pool, tenant-aware local scale-out, HTTP pooled runtime provider scenarios, HTTP process-host recovery scenarios, and gRPC process-host recovery scenarios.
+The current implementation has been validated through MCP, Redis, local runtime pools, tenant-aware scale-out, HTTP/gRPC ProcessHostPool scenarios, HTTP/gRPC KubernetesPool scenarios, exact child and full-boundary recovery, durable failure evidence, and bounded warm-capacity reuse.
 
 Tenant isolation evidence:
 
@@ -1623,6 +1623,6 @@ These are intentionally separate from the current validated discovery, registry,
 
 This document describes the runtime discovery, registry, capacity, tenant visibility, unsafe runtime visibility, and crash recovery capacity foundation.
 
-Do not present cluster autoscaling/HPA, Redis command queue dispatch, production dashboard features, database-backed tenant settings, or production multi-control-plane leader election as completed capabilities until they are implemented and validated. Kubernetes Runtime Host Manager Pod/Service lifecycle and control-plane publication are implemented on the Kubernetes branch.
+Do not present cluster autoscaling/HPA, Redis command queue dispatch, production dashboard features, database-backed tenant settings, or production multi-control-plane leader election as completed capabilities until they are implemented and validated. Kubernetes Runtime Host Manager Pod/Service lifecycle, control-plane publication, and bounded KubernetesPool runtime membership are implemented and validated within the documented scope.
 
 The gRPC runtime provider and gRPC process-host crash recovery path are now implemented and validated. Provider-aware gRPC readiness hardening remains a future improvement.

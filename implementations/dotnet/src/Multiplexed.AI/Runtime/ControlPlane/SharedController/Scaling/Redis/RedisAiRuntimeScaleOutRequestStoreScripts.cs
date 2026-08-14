@@ -84,13 +84,13 @@
         /// Keys:
         /// - KEYS[1] = request hash key.
         /// - KEYS[2] = pending requests sorted-set index key.
-        /// - KEYS[3] = recovery replacement deduplication key.
+        /// - KEYS[3] = scale-out deduplication key.
         ///
         /// Arguments:
         /// - ARGV[1] = target status.
         /// - ARGV[2] = transition timestamp field name.
         /// - ARGV[3] = transition timestamp.
-        /// - ARGV[4] = release recovery deduplication flag.
+        /// - ARGV[4] = release deduplication flag.
         /// - ARGV[5...] = additional hash field pairs.
         /// </remarks>
         public const string Transition = """
@@ -101,7 +101,7 @@
             local targetStatus = ARGV[1]
             local timestampField = ARGV[2]
             local timestampValue = ARGV[3]
-            local releaseRecoveryDeduplication = ARGV[4]
+            local releaseDeduplication = ARGV[4]
 
             if redis.call('EXISTS', requestKey) == 0 then
                 return 'missing'
@@ -136,7 +136,7 @@
                 end
             end
 
-            if releaseRecoveryDeduplication == '1' and
+            if releaseDeduplication == '1' and
                (targetStatus == 'Fulfilled' or targetStatus == 'Rejected' or targetStatus == 'Expired' or targetStatus == 'Cancelled') and
                requestId ~= false and requestId ~= nil and requestId ~= '' then
                 local deduplicatedRequestId = redis.call('GET', dedupKey)

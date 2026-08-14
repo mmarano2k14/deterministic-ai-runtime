@@ -196,7 +196,7 @@ Tenant C safe runtime not killed -> zero recovered work, zero recovery forensics
 
 ## Stable HTTP Runtime Pool Endpoint
 
-The opt-in process-host Runtime Pool exposes one stable HTTP command endpoint:
+ProcessHostPool exposes one stable HTTP command endpoint for exact child routing:
 
 ```text
 POST /runtime-pool/commands
@@ -594,7 +594,7 @@ control-plane registry/capacity publication
 normal HTTP dispatch
 ```
 
-Kubernetes remains the host provider; HTTP remains the command provider. Optional exposure uses a per-runtime endpoint or a shared Gateway API `HTTPRoute` selected by runtime instance id.
+Kubernetes remains the host provider; HTTP remains the command provider. Optional exposure uses a per-runtime endpoint or a shared Gateway API `HTTPRoute`. Gateway dispatch uses the descriptor `gateway.routing.value` when present and otherwise falls back to the logical `RuntimeInstanceId`. For a dynamically created KubernetesPool replacement, the routing value may be a safe same-Pod ingress alias while the command body still carries the replacement's exact runtime identity.
 
 See [Kubernetes Runtime Host Provider](kubernetes-runtime-host-provider.md).
 
@@ -1017,7 +1017,7 @@ The HTTP provider process-host path is validated for scale-out, dispatch, tenant
 
 Current limitations:
 
-- final shared runtime pooling semantics are not decided yet;
+- broader global shared-capacity product policy remains outside the transport provider;
 - Shared mode currently validates shared-mode propagation and execution, not a forced global shared runtime pool;
 - Hybrid fallback to a shared process-host pool should be tested after shared pooling semantics are finalized;
 - provider endpoint health signals remain separate from runtime instance health reconciliation;
@@ -1034,7 +1034,7 @@ These limitations are intentional boundaries.
 Recommended next steps:
 
 ```text
-1. Finalize shared runtime pooling semantics.
+1. Continue productizing shared-capacity placement policy without moving scheduling into the HTTP transport.
 2. Add Hybrid shared fallback process-host validation after shared pooling is explicit.
 3. Continue hardening provider-specific readiness over Kubernetes Gateway implementations.
 4. Extend HTTP-specific Kubernetes Pod crash recovery matrices alongside the validated gRPC Kubernetes proof.

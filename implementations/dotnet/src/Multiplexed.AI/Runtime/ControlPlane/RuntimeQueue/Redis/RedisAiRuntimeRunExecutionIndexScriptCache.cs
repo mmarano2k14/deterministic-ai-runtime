@@ -20,6 +20,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         private readonly SemaphoreSlim _loadLock = new(1, 1);
 
         private byte[]? _registerQueuedSha;
+        private byte[]? _tryRegisterQueuedSha;
         private byte[]? _markStartedSha;
         private byte[]? _markCompletedSha;
         private byte[]? _markFailedSha;
@@ -47,6 +48,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 database,
                 ScriptKind.RegisterQueued,
                 RedisAiRuntimeRunExecutionIndexScripts.RegisterQueued,
+                keys,
+                values);
+        }
+
+        /// <summary>
+        /// Executes the atomic try-register-queued script.
+        /// </summary>
+        public Task<RedisResult> ExecuteTryRegisterQueuedAsync(
+            IDatabase database,
+            RedisKey[] keys,
+            RedisValue[] values)
+        {
+            return ExecuteAsync(
+                database,
+                ScriptKind.TryRegisterQueued,
+                RedisAiRuntimeRunExecutionIndexScripts.TryRegisterQueued,
                 keys,
                 values);
         }
@@ -243,6 +260,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             return kind switch
             {
                 ScriptKind.RegisterQueued => _registerQueuedSha,
+                ScriptKind.TryRegisterQueued => _tryRegisterQueuedSha,
                 ScriptKind.MarkStarted => _markStartedSha,
                 ScriptKind.MarkCompleted => _markCompletedSha,
                 ScriptKind.MarkFailed => _markFailedSha,
@@ -259,6 +277,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             {
                 case ScriptKind.RegisterQueued:
                     _registerQueuedSha = sha;
+                    break;
+
+                case ScriptKind.TryRegisterQueued:
+                    _tryRegisterQueuedSha = sha;
                     break;
 
                 case ScriptKind.MarkStarted:
@@ -282,10 +304,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         private enum ScriptKind
         {
             RegisterQueued = 0,
-            MarkStarted = 1,
-            MarkCompleted = 2,
-            MarkFailed = 3,
-            MarkCancelled = 4
+            TryRegisterQueued = 1,
+            MarkStarted = 2,
+            MarkCompleted = 3,
+            MarkFailed = 4,
+            MarkCancelled = 5
         }
     }
 }

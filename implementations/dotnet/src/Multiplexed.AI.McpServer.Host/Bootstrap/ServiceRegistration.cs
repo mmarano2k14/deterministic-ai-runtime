@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
@@ -452,6 +452,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     services.AddAiKubernetesRuntimeHostProvider(
                         configuration);
 
+                    services.AddAiKubernetesRuntimePoolHostProvider(
+                        configuration);
+
                     LogHostedServiceRegistrations(
                         services,
                         $"[CONTROL PLANE {transportName}][AFTER AddAiHttpRuntimeInstanceProvider]");
@@ -459,12 +462,19 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     LogHostedServiceRegistrations(
                         services,
                         $"[CONTROL PLANE {transportName}][AFTER AddAiKubernetesRuntimeHostProvider]");
+
+                    LogHostedServiceRegistrations(
+                        services,
+                        $"[CONTROL PLANE {transportName}][AFTER AddAiKubernetesRuntimePoolHostProvider]");
                     break;
 
                 case AiMcpHostMode.ControlPlaneWithGrpcRuntimeInstances:
                     services.AddAiGrpcRuntimeInstanceScaleOutProvider();
 
                     services.AddAiKubernetesRuntimeHostProvider(
+                        configuration);
+
+                    services.AddAiKubernetesRuntimePoolHostProvider(
                         configuration);
 
                     LogHostedServiceRegistrations(
@@ -474,6 +484,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     LogHostedServiceRegistrations(
                         services,
                         $"[CONTROL PLANE {transportName}][AFTER AddAiKubernetesRuntimeHostProvider]");
+
+                    LogHostedServiceRegistrations(
+                        services,
+                        $"[CONTROL PLANE {transportName}][AFTER AddAiKubernetesRuntimePoolHostProvider]");
                     break;
 
                 default:

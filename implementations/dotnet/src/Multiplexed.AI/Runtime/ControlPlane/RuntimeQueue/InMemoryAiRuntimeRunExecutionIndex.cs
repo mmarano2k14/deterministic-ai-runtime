@@ -87,6 +87,39 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
         }
 
         /// <inheritdoc />
+        public Task<bool> TryRegisterQueuedAsync(
+            AiRuntimeRunExecutionIndexEntry entry,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(entry);
+            ArgumentException.ThrowIfNullOrWhiteSpace(entry.RunId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var now = DateTimeOffset.UtcNow;
+
+            var registered = _entries.TryAdd(
+                entry.RunId,
+                new AiRuntimeRunExecutionIndexEntry
+                {
+                    RunId = entry.RunId,
+                    ExecutionId = entry.ExecutionId,
+                    RuntimeInstanceId = entry.RuntimeInstanceId,
+                    Status = string.IsNullOrWhiteSpace(entry.Status) ? StatusQueued : entry.Status,
+                    FailureReason = entry.FailureReason,
+                    CreatedAtUtc = entry.CreatedAtUtc == default ? now : entry.CreatedAtUtc,
+                    StartedAtUtc = entry.StartedAtUtc,
+                    CompletedAtUtc = entry.CompletedAtUtc,
+                    ExecutionContextSnapshot =
+                        entry.ExecutionContextSnapshot ??
+                        TryResolveSnapshot(),
+                    Metadata = entry.Metadata
+                });
+
+            return Task.FromResult(registered);
+        }
+
+        /// <inheritdoc />
         public Task MarkStartedAsync(
             string runId,
             string executionId,

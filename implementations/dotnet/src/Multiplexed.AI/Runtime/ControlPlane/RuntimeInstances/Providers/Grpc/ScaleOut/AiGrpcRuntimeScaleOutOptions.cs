@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.ScaleOut
 {
@@ -11,6 +12,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
         /// Gets or sets a value indicating whether gRPC runtime scale-out is enabled.
         /// </summary>
         public bool Enabled { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets the logical Runtime Pool identifier used by KubernetesPool host creation.
+        /// </summary>
+        /// <remarks>
+        /// This value is required only when <see cref="HostCreationMode"/> is
+        /// <see cref="AiRuntimeHostCreationMode.KubernetesPool"/>. Other host creation modes ignore it.
+        /// </remarks>
+        public string? PoolId { get; set; }
 
         /// <summary>
         /// Gets or sets the gRPC runtime scale-out mode.
@@ -70,8 +80,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
         public string ProcessHostStartupConcurrencyKey { get; set; } = "grpc-process-host-startup";
 
         /// <summary>
+        /// Gets or sets the logical capacity topology used by gRPC scale-out.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="AiRuntimeCapacityTopologyMode.Unspecified"/> preserves historical configurations.
+        /// The topology describes capacity reuse and pooling, while <see cref="HostCreationMode"/>
+        /// continues to describe physical host materialization.
+        /// </remarks>
+        public AiRuntimeCapacityTopologyMode CapacityTopologyMode { get; set; } =
+            AiRuntimeCapacityTopologyMode.Unspecified;
+
+        /// <summary>
         /// Gets or sets the physical host creation mode used when gRPC scale-out mode is HostManager.
         /// </summary>
-        public AiRuntimeHostCreationMode HostCreationMode { get; set; } = AiRuntimeHostCreationMode.Fixture;
+        public AiRuntimeHostCreationMode HostCreationMode { get; set; } =
+            AiRuntimeHostCreationMode.Fixture;
     }
 }

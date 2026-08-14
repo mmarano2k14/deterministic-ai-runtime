@@ -400,6 +400,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 0,
                 (long)(completedAtUtcFinal - startedAtUtc).TotalMilliseconds);
 
+            var acceptedRuntimeInstanceId =
+                string.IsNullOrWhiteSpace(instanceResult.RuntimeInstanceId)
+                    ? request.RuntimeInstanceId
+                    : instanceResult.RuntimeInstanceId;
+
             var resultMetadata = MergeResultMetadata(
                 dispatchMetadata,
                 instanceResult.Metadata,
@@ -413,6 +418,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 await this.RecordRemoteRecoveryDispatchForensicsAsync(
                         request,
                         resultMetadata,
+                        acceptedRuntimeInstanceId,
                         instanceResult.LocalRunId,
                         instanceResult.ExecutionId,
                         cancellationToken)
@@ -423,7 +429,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             {
                 Success = instanceResult.Success,
                 SharedRunId = instanceResult.SharedRunId ?? request.SharedRun.SharedRunId,
-                RuntimeInstanceId = request.RuntimeInstanceId,
+                RuntimeInstanceId = acceptedRuntimeInstanceId,
                 LocalRunId = instanceResult.LocalRunId,
                 ExecutionId = instanceResult.ExecutionId,
                 ClaimToken = instanceResult.ClaimToken ?? request.ClaimToken,
@@ -486,7 +492,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                     ["tenantId"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
                     ["tenantGroupId"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId
                 },
-                cancellationToken);
+                cancellationToken,
+                result.RuntimeInstanceId);
         }
 
         /// <summary>
@@ -501,6 +508,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
         /// <param name="durationMs">The optional duration in milliseconds.</param>
         /// <param name="properties">The optional event properties.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <param name="acceptedRuntimeInstanceId">The canonical runtime instance that accepted the run, when known.</param>
         /// <returns>A task that completes when the control-plane event has been recorded.</returns>
         private async Task RecordRemoteDispatchEventAsync(
             AiControlPlaneEventType eventType,
@@ -511,8 +519,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             string? failureReason,
             long? durationMs,
             IReadOnlyDictionary<string, object?>? properties,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            string? acceptedRuntimeInstanceId = null)
         {
+            var effectiveRuntimeInstanceId =
+                string.IsNullOrWhiteSpace(acceptedRuntimeInstanceId)
+                    ? request.RuntimeInstanceId
+                    : acceptedRuntimeInstanceId;
+
             try
             {
                 await this.observer.RecordAsync(
@@ -531,7 +545,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                                     : request.CorrelationId,
                                 RunId = request.SharedRun.SharedRunId,
                                 ExecutionId = executionId,
-                                RuntimeInstanceId = request.RuntimeInstanceId,
+                                RuntimeInstanceId = effectiveRuntimeInstanceId,
                                 PipelineKey = request.SharedRun.ExecutionContextSnapshot.ContextKey
                             },
                             Properties = MergeEventProperties(
@@ -541,7 +555,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                                     ["sharedRunId"] = request.SharedRun.SharedRunId,
                                     ["localRunId"] = localRunId,
                                     ["executionId"] = executionId,
-                                    ["runtimeInstanceId"] = request.RuntimeInstanceId,
+                                    ["runtimeInstanceId"] = effectiveRuntimeInstanceId,
                                     ["tenantId"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
                                     ["tenantGroupId"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
                                     ["claimToken"] = request.ClaimToken
@@ -589,6 +603,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
         /// </summary>
         /// <param name="request">The shared run dispatch request.</param>
         /// <param name="metadata">The merged operation metadata.</param>
+        /// <param name="runtimeInstanceId">The runtime instance that owns the canonical accepted local run.</param>
         /// <param name="localRunId">The replacement local run identifier.</param>
         /// <param name="executionId">The durable execution identifier.</param>
         /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -596,6 +611,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
         private async Task RecordRemoteRecoveryDispatchForensicsAsync(
             AiSharedRunDispatchRequest request,
             IReadOnlyDictionary<string, string> metadata,
+            string runtimeInstanceId,
             string? localRunId,
             string? executionId,
             CancellationToken cancellationToken)
@@ -627,7 +643,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                             ":",
                             forensicsId,
                             AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered,
-                            request.RuntimeInstanceId,
+                            runtimeInstanceId,
                             localRunId),
                         ForensicsId = forensicsId,
                         TimestampUtc = DateTimeOffset.UtcNow,
@@ -637,10 +653,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                         ExecutionId = durableExecutionId,
                         SharedRunId = request.SharedRun.SharedRunId,
                         LocalRunId = localRunId,
-                        RuntimeInstanceId = request.RuntimeInstanceId,
+                        RuntimeInstanceId = runtimeInstanceId,
                         Metadata = CreateRecoveryDispatchEventMetadata(
                             request,
                             metadata,
+                            runtimeInstanceId,
                             localRunId,
                             durableExecutionId,
                             failedLocalRunId)
@@ -657,7 +674,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                             ":",
                             forensicsId,
                             AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded,
-                            request.RuntimeInstanceId,
+                            runtimeInstanceId,
                             localRunId),
                         ForensicsId = forensicsId,
                         TimestampUtc = DateTimeOffset.UtcNow,
@@ -667,10 +684,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                         ExecutionId = durableExecutionId,
                         SharedRunId = request.SharedRun.SharedRunId,
                         LocalRunId = localRunId,
-                        RuntimeInstanceId = request.RuntimeInstanceId,
+                        RuntimeInstanceId = runtimeInstanceId,
                         Metadata = CreateRecoveryDispatchEventMetadata(
                             request,
                             metadata,
+                            runtimeInstanceId,
                             localRunId,
                             durableExecutionId,
                             failedLocalRunId)
@@ -684,6 +702,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
         /// </summary>
         /// <param name="request">The shared run dispatch request.</param>
         /// <param name="metadata">The merged operation metadata.</param>
+        /// <param name="runtimeInstanceId">The runtime instance that owns the canonical accepted local run.</param>
         /// <param name="localRunId">The replacement local run identifier.</param>
         /// <param name="executionId">The durable execution identifier.</param>
         /// <param name="failedLocalRunId">The failed local run identifier.</param>
@@ -691,6 +710,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
         private static IReadOnlyDictionary<string, string> CreateRecoveryDispatchEventMetadata(
             AiSharedRunDispatchRequest request,
             IReadOnlyDictionary<string, string> metadata,
+            string runtimeInstanceId,
             string localRunId,
             string? executionId,
             string? failedLocalRunId)
@@ -699,7 +719,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             {
                 ["tenant.id"] = request.SharedRun.ExecutionContextSnapshot.TenantId ?? string.Empty,
                 ["tenant.group.id"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId ?? string.Empty,
-                ["replacement.runtimeInstanceId"] = request.RuntimeInstanceId,
+                ["replacement.runtimeInstanceId"] = runtimeInstanceId,
                 ["replacement.localRunId"] = localRunId,
                 ["replacement.executionId"] = executionId ?? string.Empty,
                 ["failed.runtimeInstanceId"] = ResolveMetadataValue(metadata, RecoveryFailedRuntimeInstanceIdMetadataKey),

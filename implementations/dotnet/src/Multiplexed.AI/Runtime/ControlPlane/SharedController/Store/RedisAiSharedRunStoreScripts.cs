@@ -145,6 +145,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
             local status = redis.call('HGET', runKey, 'status')
 
+            if status == 'Dispatched' then
+                return 'already-dispatched'
+            end
+
             if status == 'Completed' or status == 'Failed' or status == 'Cancelled' then
                 return 'terminal'
             end

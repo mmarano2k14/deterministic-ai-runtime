@@ -1,203 +1,162 @@
 # Runtime Pool Failure Recovery
 
-**Status:** Implemented and validated for the opt-in process-host Runtime Pool. The current recovery coordination stores are local to one pool host. Durable distributed coordination for Kubernetes Runtime Pool Pods and multiple control planes remains roadmap work.
+**Status:** Implemented and end-to-end validated for child-runtime and full-boundary failure in ProcessHostPool and KubernetesPool over HTTP and gRPC, including both scenario-triggered and operator-triggered external full-boundary failure.
 
-This document describes how one exact failed runtime instance is converted into one exact, claimed recovery operation without contaminating sibling capacity.
+This document describes how one exact failure fact becomes one exact recovery operation while preserving durable DAG identity, sibling safety, bounded capacity, and historical evidence.
 
 ---
 
 ## Executive Summary
 
-The recovery chain is:
+Child runtime failure:
 
 ```text
-A1 process exits unexpectedly
+runtime process fails
     ↓
-FailureId records exact A1 failure
+immutable durable FailureId
     ↓
-A1 capacity is suppressed
+exact runtime marked unsafe
     ↓
-A1 route is removed
+exact assigned work enumerated
     ↓
-A4 replacement starts
+one recovery claim acquired
     ↓
-A1 assigned work is enumerated
+in-flight execution resumes same ExecutionId
     ↓
-one deterministic recovery claim is acquired
-    ↓
-in-flight work resumes the same ExecutionId
-local-queued work redispatches from SharedRunId
-    ↓
-claim remains held until explicit release
+replacement child restores membership
 ```
 
-The safety set is exact:
+Full boundary failure:
 
 ```text
-unsafe = { A1 }
-safe   = { A2, A3, A4 }
+ProcessHost or Pod fails
+    ↓
+exact HostId / PodUid membership captured
+    ↓
+all runtimes from failed boundary suppressed
+    ↓
+other boundaries stay selectable
+    ↓
+replacement boundary created
+    ↓
+only failed membership work recovered
 ```
+
+The router never performs sibling fallback and the failure boundary never replaces the child runtime identities.
 
 ---
 
 ## Recovery Identities
 
-The recovery model uses explicit immutable identities.
-
 | Identity | Purpose |
 |---|---|
-| `FailureId` | One immutable failure observation. |
+| `FailureId` | Immutable failure observation and incident correlation. |
 | `PoolId` | Logical pool authority. |
-| `HostId` | Host-incarnation authority. |
-| `RuntimeInstanceId` | Exact failed capacity. |
-| `RouteId` | Exact failed transport-route incarnation. |
-| `ClaimId` | Deterministic claim over exact failure authority and inventory. |
-| `LeaseId` | Unique active acquisition generation. |
-| `LocalRunId` | Runtime-local assigned work identity. |
-| `ExecutionId` | Existing durable DAG execution identity, when started. |
-| `SharedRunId` | Durable shared-run identity used for redispatch. |
+| `HostId` | Exact parent host or Pod incarnation. |
+| `RuntimeInstanceId` | Exact runtime execution capacity. |
+| `RouteId` | Exact route incarnation when the topology uses route registration. |
+| `ClaimId` | Deterministic recovery-claim identity. |
+| `LeaseId` | Active claim acquisition generation. |
+| `LocalRunId` | Runtime-local assigned-work identity. |
+| `ExecutionId` | Durable DAG execution identity. |
+| `SharedRunId` | Durable shared-run identity used for redispatch and ownership. |
+| `TenantId` / `TenantGroupId` | Typed tenant isolation boundary. |
 
-Metadata is not parsed to determine failure or recovery authority.
+Metadata is never parsed to determine recovery authority.
 
 ---
 
-## Failure Observation
+## Durable Failure Observation
 
-An unexpected child exit creates an `AiRuntimePoolFailureObservation`.
+Unexpected failure is recorded through the Runtime Pool Failure Journal.
 
-The observation contains:
+A runtime-instance observation preserves:
 
 ```text
 FailureId
-FailureScope
-FailureKind
+Scope = RuntimeInstance
 PoolId
 HostId
 RuntimeInstanceId
 RouteId
-ExitCode
 ObservedAtUtc
-FailureMessage
 ```
 
-The current process-host scope is:
+A complete host-boundary failure uses host-membership scope and identifies the exact failed membership of one ProcessHost or Kubernetes Pod incarnation.
 
-```text
-FailureScope = RuntimeInstance
-```
+The durable MongoDB implementation allows the process that observes failure and the control plane that coordinates recovery to share the same authority.
 
-Host-wide failure scope is reserved for future Kubernetes Pod failure handling.
-
-Requested shutdown does not create a failure observation.
+See [Runtime Pool Failure Authority](runtime-pool-failure-authority.md).
 
 ---
 
 ## Lifecycle Ordering
 
-The ordering is deliberate:
+For a child failure, the ordering preserves identity before route and capacity mutation:
 
 ```text
 record failure
     before
-suppress capacity
+mark exact capacity unsafe
     before
-remove route
+remove / suppress exact route
     before
-publish completion to pool manager
+publish child completion
     before
-start replacement
+create replacement child
 ```
 
-This preserves the exact failed route and runtime identity before the route disappears and before replacement capacity can be created.
-
-A failure-observer error does not skip route cleanup. It is surfaced as a lifecycle fault.
+For a full boundary failure, exact failed membership is captured before replacement membership can be confused with the failed host incarnation.
 
 ---
 
-## Failure Journal
+## Current State, Failure Facts, and History
 
-The process-host implementation uses a thread-safe in-memory failure journal.
+Recovery reads several distinct authorities:
 
-It supports:
+```text
+Runtime Registry
+    -> current state
 
-- idempotent recording of the same immutable failure;
-- conflict detection when one `FailureId` is rebound;
-- lookup by `FailureId`;
-- lookup by `HostId`;
-- lookup by `RuntimeInstanceId`.
+Runtime Pool Failure Journal
+    -> immutable failure fact
 
-A1 failure lookup cannot return A2 or A3 observations.
+Runtime Lifecycle Journal
+    -> append-only host/runtime/placement history
+
+Runtime Run/Execution Index
+    -> exact assigned work
+
+Recovery Claim Store
+    -> mutation exclusivity
+```
+
+One store is not used as an accidental substitute for another.
 
 ---
 
 ## Exact Capacity Suppression
 
-The failure observer projects runtime-instance failures into immutable capacity suppression.
-
-A suppression contains:
+Child failure suppresses only the exact failed runtime identity.
 
 ```text
-FailureId
-PoolId
-HostId
-RuntimeInstanceId
-RouteId
-SuppressedAtUtc
+unsafe = { failed runtime }
+safe   = { siblings + valid replacement capacity }
 ```
 
-There is deliberately no unsuppress operation for the same immutable `RuntimeInstanceId`.
+A full host-boundary failure suppresses the exact membership of that host incarnation while leaving other ProcessHosts or Pods selectable.
 
-Replacement capacity receives a new runtime identity and therefore starts safe.
-
----
-
-## Routing Safety
-
-HTTP and gRPC routing check suppression:
-
-1. before route-lease acquisition;
-2. after route-lease acquisition.
-
-The second check closes the race where the runtime becomes unsafe between lookup and transport invocation.
-
-Suppressed capacity returns:
-
-```text
-runtime-pool-capacity-suppressed
-```
-
-The router never falls back to a sibling.
+Historical failure evidence remains durable. Current recovery scopes suppression evidence by the current `FailureId` and failure scope rather than counting every historical suppression ever associated with the host.
 
 ---
 
 ## Assigned-Work Enumeration
 
-Recovery reuses the existing durable runtime-run index:
+Recovery reuses the durable runtime-run execution index rather than creating a competing work inventory.
 
-```text
-IAiRuntimeRunExecutionIndex
-    .ListRecoverableByRuntimeInstanceAsync(RuntimeInstanceId)
-```
+The enumerator validates failure and safety authority before accepting a candidate.
 
-A second work index is not introduced.
-
-Enumeration is allowed only when the failure observation and capacity suppression agree on:
-
-```text
-FailureId
-PoolId
-HostId
-RuntimeInstanceId
-RouteId
-```
-
-A sibling entry returned for A1 is rejected as a runtime-boundary violation.
-
----
-
-## Candidate Model
-
-Each candidate preserves first-class identity:
+Candidate identity includes:
 
 ```text
 FailureId
@@ -207,282 +166,247 @@ RuntimeInstanceId
 RouteId
 LocalRunId
 ExecutionId
-Status
+SharedRunId
 TenantId
 TenantGroupId
-SharedRunId
 WorkKind
-CreatedAtUtc
+Status
 ```
 
-Candidates are ordered deterministically:
-
-```text
-1. InFlight
-2. LocalQueued
-3. OtherRecoverable
-```
-
-Then by timestamp and `LocalRunId`.
+A candidate escaping the failed runtime or failed membership boundary is rejected.
 
 ---
 
 ## In-Flight Recovery
 
-An in-flight candidate has a durable `ExecutionId`.
+An in-flight run already has a durable `ExecutionId`.
+
+Recovery must preserve it:
 
 ```text
-RuntimeInstanceId = A1
-LocalRunId        = local-a1-flight
-ExecutionId       = execution-a1
+ExecutionIdBefore == ExecutionIdAfter
 ```
 
-Recovery must preserve that `ExecutionId`.
+The existing DAG recovery transition remains responsible for resume metadata, step-claim convergence, run-index mutation, and recovery evidence.
 
-The claimed executor resolves existing shared-run ownership and delegates to the existing recovery transition service with `DryRun = false`.
-
-The transition boundary remains responsible for durable pause/requeue/resume metadata, DAG step-claim recovery, index mutation, and recovery evidence.
+The final production proofs kill a runtime after at least 25 of 50 steps and verify the same execution continues after recovery.
 
 ---
 
 ## Local-Queued Recovery
 
-A local-queued candidate has:
+Local runtime queues are not durable truth.
+
+When a queued item has not yet started a DAG execution, recovery redispatches from durable shared-run identity:
 
 ```text
 SharedRunId present
 ExecutionId absent
 ```
 
-The local queue is not durable truth. If the process dies, the local queue disappears.
+The same contract prevents a vanished local queue from becoming a lost run.
 
-Recovery redispatches from durable shared-run state.
-
-A local-queued candidate carrying an `ExecutionId`, or missing `SharedRunId`, is rejected before mutation.
+If the original queue-first shared run carried required placement, recovery redispatch does not keep placement that points at failed capacity. The durable `SharedRunId` remains authoritative, but failed runtime/host placement is cleared so admission can select valid replacement capacity.
 
 ---
 
-## Other Recoverable States
+## Deterministic Inventory and Claim Authority
 
-`OtherRecoverable` candidates do not trigger an implicit mutation.
+Before mutation authority is granted, recoverable work is normalized and fingerprinted from first-class identity.
 
-They receive a deterministic no-mutation result:
-
-```text
-unsupported-recovery-candidate-kind
-```
-
-This avoids inventing recovery behavior for a state that has not been explicitly defined.
-
----
-
-## Deterministic Inventory Fingerprint
-
-Before mutation authority is granted, the inventory is fingerprinted with SHA-256.
-
-The fingerprint covers ordered first-class candidate identity:
-
-```text
-LocalRunId
-ExecutionId
-Status
-TenantId
-TenantGroupId
-SharedRunId
-WorkKind
-CreatedAtUtc
-```
-
-Diagnostic metadata is excluded.
-
-Changing candidate identity or order changes the fingerprint.
-
----
-
-## Atomic Recovery Claim
-
-The claim contains:
-
-```text
-ClaimId
-FailureId
-PoolId
-HostId
-RuntimeInstanceId
-RouteId
-InventoryFingerprint
-CandidateCount
-ClaimedBy
-ClaimedAtUtc
-```
-
-`ClaimId` is deterministic for the exact authority and inventory.
-
-Concurrent acquisition semantics are:
-
-```text
-20 coordinators
-    -> 1 Acquired
-    -> 19 AlreadyClaimed
-```
-
-Only the acquired result contains a lease.
-
----
-
-## Lease Incarnation and Stale-Lease Protection
-
-Every acquisition receives a unique `LeaseId`.
-
-```text
-same deterministic ClaimId
-new acquisition
-    -> new LeaseId
-```
-
-The claim store verifies that the supplied `LeaseId` still owns the active claim.
-
-This prevents a released lease from authorizing transitions after another coordinator reacquires the same deterministic claim.
-
-The private release token is not exposed.
-
----
-
-## Claimed Recovery Executor
-
-The executor accepts only an `Acquired` claim with an active lease.
-
-Before every candidate it validates:
-
-- claim status;
-- lease presence;
-- lease not released;
-- active lease generation;
-- claim/inventory authority;
-- inventory fingerprint;
-- candidate boundary.
-
-It then resolves ownership and validates:
-
-- `RuntimeInstanceId`;
-- `LocalRunId`;
-- `ExecutionId`;
-- `SharedRunId`;
-- `TenantId`;
-- `TenantGroupId`.
-
-The existing transition result is also checked for identity escape.
-
----
-
-## Claim Release Semantics
-
-The executor does not release the claim.
-
-```text
-execute transitions
-    ↓
-return deterministic outcomes
-    ↓
-caller durably observes completion
-    ↓
-caller releases lease
-```
-
-If a transition throws, the claim remains active.
-
-This prevents another coordinator from silently starting a second recovery attempt while the first attempt has an unresolved outcome.
-
----
-
-## Exact Failure and Recovery Boundary
-
-The complete exact boundary is:
+A deterministic claim binds failure authority to the exact inventory.
 
 ```text
 failure authority
-    = FailureId + PoolId + HostId + RuntimeInstanceId + RouteId
-
-work authority
-    = failure authority
-      + LocalRunId
-      + ExecutionId or SharedRunId
-      + tenant identity
-
-mutation authority
-    = work authority
-      + InventoryFingerprint
-      + active ClaimId
-      + active LeaseId
+    + inventory fingerprint
+    + candidate count
+    -> ClaimId
 ```
 
-A mismatch at any layer rejects the operation.
+Each acquisition has an active `LeaseId`. Stale lease generations cannot authorize transitions after a newer acquisition owns the claim.
+
+The validated production scenarios exercise the exact Runtime Pool claim and recovery executor path. A fully distributed multi-control-plane durable claim/completion protocol remains separate future hardening.
 
 ---
 
-## Real Process-Host Proof
+## Exact Child Recovery
 
-The final infrastructure proof uses:
+The final child recovery proof requires:
 
-- three real external `RuntimeInstanceOnly` child processes;
-- a real operating-system kill of A1;
-- real pool lifecycle and A4 replacement;
-- real failure journaling;
-- real capacity suppression;
-- real route removal;
-- real assigned-work enumeration;
-- real claim arbitration;
-- real claimed-recovery executor.
+```text
+CandidateCount = 1
+AcceptedCount  = 1
+RejectedCount  = 0
+RecoveredRunCount = 1
+```
 
-The transition interfaces are provided by a deterministic fixture-owned adapter so the test can inspect every exact ownership and mutation request without duplicating a full DAG workload inside this infrastructure-specific scenario.
+It also requires:
 
-The broader runtime suite separately validates real DAG resume, local-queued redispatch, replay, ledger, trace, forensics, and tenant isolation under process loss.
+- same `ExecutionId` across in-flight recovery;
+- parent ProcessHost or Pod survives;
+- healthy sibling identities remain unchanged;
+- child membership returns to the configured bound;
+- one forensic record exists for the affected run.
 
 ---
 
-## Validated Assertions
+## Exact Parent ProcessHost Recovery
 
-The implementation validates:
+A distinct fully busy ProcessHost is selected only after warm capacity has reconverged.
 
-- exactly one A1 failure;
-- exactly one A1 suppression;
-- no A2/A3/A4 suppression;
-- A2/A3 `RouteId` preservation;
-- fresh A4 runtime and route identity;
-- A1-only assigned-work enumeration;
-- deterministic candidate order;
-- one claim winner under concurrency;
-- denied coordinators receive no lease;
-- same `ExecutionId` for in-flight recovery;
-- exact `SharedRunId` for local-queued redispatch;
-- no sibling ownership or transition escape;
-- claim remains active after execution;
-- explicit, idempotent release;
-- stale lease rejection after reacquisition.
+With five runtimes per ProcessHost:
+
+```text
+FailedRuntimeCount = 5
+CandidateCount     = 5
+AcceptedCount      = 5
+RejectedCount      = 0
+RecoveredRunCount  = 5
+```
+
+The replacement ProcessHost receives a fresh host incarnation and five fresh child runtime identities.
+
+---
+
+## Exact Kubernetes Pod Recovery
+
+The same hierarchical contract applies to a KubernetesPool Pod.
+
+The automatic test force-deletes a distinct fully busy Pod after the child-runtime failure has already converged. The external-manual variant arms the same exact Pod boundary but does not delete it; it waits until an operator force-deletes that exact Pod from another shell, observes the failed Pod UID disappear, and then resumes the same recovery path.
+
+With five runtimes per Pod:
+
+```text
+failed Pod membership = 5 runtimes
+recovered work         = 5 runs
+surviving Pod count    = 2
+replacement Pod count  = 1
+final active Pods      = 3
+final active runtimes  = 15
+```
+
+The child runtime failure and the later Pod failure are separate incidents with separate recovery scope.
+
+---
+
+## Deterministic Failure Waves
+
+The combined scenario does not rely on timing luck.
+
+For any configured closure profile, all but the final full-capacity submission iteration exercise the child-failure workload and convergence. The final configured iteration is reserved for one distinct fully busy parent boundary.
+
+```text
+initial full-capacity iterations
+    ↓
+kill one child runtime at >= 25 / 50 steps
+    ↓
+recover exactly one run
+    ↓
+drain initial workload
+    ↓
+wait exact warm topology and capacity
+    ↓
+final configured full-capacity iteration
+    ↓
+select distinct boundary with 5 / 5 active runtimes
+    ↓
+automatic kill OR external operator kill
+    ↓
+recover exactly five runs
+```
+
+No extra runs are added to make the failure easier to hit. The configured workload remains the proof workload.
+
+---
+
+## Warm-Reuse Proof
+
+The scenario executes two complete cycles with no intermediate cleanup.
+
+Cycle two must start with the final topology produced by cycle one:
+
+```text
+ColdStart = false
+ReusedBoundaryIdentitySet = exact converged boundary set from cycle one
+ReusedRuntimeIdentitySet  = exact converged runtime set from cycle one
+CleanupSincePreviousCycle = false
+```
+
+This proves the recovery mechanism does not merely work on a fresh pool; the repaired topology remains reusable production capacity.
+
+---
+
+## Replay, Ledger, Trace, Lifecycle, and Forensics
+
+Recovery is not considered correct merely because all runs eventually finish.
+
+Every completed scenario validates:
+
+- exact dispatch;
+- DAG completion;
+- deterministic replay;
+- execution ledger;
+- logical-step ledger identity;
+- trace evidence;
+- runtime lifecycle history;
+- recovery forensics;
+- no duplicate dispatch;
+- no lost run;
+- no failed run;
+- no configured capacity overflow.
+
+---
+
+## Final Validation Matrix
+
+Automatic full-boundary failure:
+
+```text
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
+```
+
+Operator-triggered external full-boundary failure:
+
+```text
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
+```
+
+Current closure profiles are intentionally non-uniform: gRPC ProcessHostPool uses 7 × 5 capacity with 20 submission iterations per cycle; gRPC KubernetesPool uses 5 × 5 capacity with 5 iterations; HTTP ProcessHostPool and HTTP KubernetesPool use 3 × 5 capacity with 5 iterations. All execute two warm cycles and the same child/full-boundary recovery contract.
+
+Across both trigger modes the current closure runs represent 3900 completed DAGs, 195000 logical steps, 16 child-runtime failures, 16 full-boundary failures, and 96 exact recovered runs. Eight full-boundary failures were performed externally by an operator after the test armed the exact target.
+
+See [Runtime Pool Production Validation](runtime-pool-production-validation.md).
 
 ---
 
 ## Current Boundaries
 
-The current process-host recovery coordination is local to one pool host.
+The validated implementation already provides shared durable failure facts and durable lifecycle history.
 
-The following remain roadmap work:
+The main remaining distributed-systems hardening boundaries are:
 
-- durable distributed failure journal;
-- durable distributed capacity-safety registry;
-- durable distributed recovery claim store;
-- multi-control-plane claim ownership;
-- host-wide suppression by Kubernetes Pod UID;
-- recovery after complete pool-host loss;
-- Redis Cluster key-slot and failover validation.
+- durable multi-control-plane recovery-claim ownership and completion semantics;
+- Redis Cluster key-slot and failover validation;
+- broader multi-node cluster stress and autoscaling integration;
+- managed-hosting control-plane leadership and operational packaging.
+
+These are future scale and deployment concerns, not missing evidence for the current single-control-plane Runtime Pool correctness contract.
 
 ---
 
 ## Related Documents
 
 - [Runtime Pool Architecture](runtime-pool-architecture.md)
-- [Provider-Agnostic Process-Host Recovery](provider-agnostic-process-host-recovery.md)
+- [Runtime Pool Identity Model](runtime-pool-identity-model.md)
+- [Runtime Pool Failure Authority](runtime-pool-failure-authority.md)
+- [Runtime Pool Production Validation](runtime-pool-production-validation.md)
+- [Durable Runtime Lifecycle Journal](runtime-lifecycle-journal.md)
 - [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
-- [Runtime Discovery, Registry, and Capacity](runtime-discovery-registry-capacity.md)
+- [Runtime Recovery Forensics](runtime-recovery-forensics.md)
 - [Testing Strategy](testing-strategy.md)
-- [Runtime Pool Product Roadmap](../product-roadmap/runtime-pool-roadmap.md)

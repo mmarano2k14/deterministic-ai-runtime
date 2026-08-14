@@ -4620,7 +4620,7 @@ This pipeline is executed as a DAG.
 
 ---
 
-#### Step 1: Parallel Retrieval
+#### Milestone 1: Parallel Retrieval
 
 The following steps have no dependencies:
 
@@ -4636,7 +4636,7 @@ Each step retrieves data from a different data source:
 
 ---
 
-#### Step 2: Merge
+#### Milestone 2: Merge
 
 Once both retrieval steps are completed, the `merge` step becomes eligible.
 
@@ -4648,7 +4648,7 @@ This step:
 
 ---
 
-#### Step 3: Compose
+#### Milestone 3: Compose
 
 After `merge` completes, the `compose` step becomes eligible.
 

@@ -829,7 +829,7 @@ The correct positioning is:
 
 The Replay and Audit Layer should evolve through productization steps.
 
-## Step 1 — Strengthen Replay Reports
+## Milestone 1 — Strengthen Replay Reports
 
 Improve:
 
@@ -842,7 +842,7 @@ Improve:
 - trace correlation;
 - retention status.
 
-## Step 2 — Expose Replay Through APIs and MCP
+## Milestone 2 — Expose Replay Through APIs and MCP
 
 Improve:
 
@@ -853,7 +853,7 @@ Improve:
 - replay issue inspection;
 - replay metadata access.
 
-## Step 3 — Add Dashboard Views
+## Milestone 3 — Add Dashboard Views
 
 Add:
 
@@ -865,7 +865,7 @@ Add:
 - retention/compaction view;
 - audit report export direction.
 
-## Step 4 — Improve Retention-Aware Replay
+## Milestone 4 — Improve Retention-Aware Replay
 
 Improve:
 
@@ -876,7 +876,7 @@ Improve:
 - replay after compaction;
 - replay after retention policy application.
 
-## Step 5 — Harden Security and Access Control
+## Milestone 5 — Harden Security and Access Control
 
 Improve:
 

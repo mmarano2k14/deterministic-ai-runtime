@@ -867,19 +867,19 @@ Suppose the prompt output looks wrong.
 
 The correct debugging path should be:
 
-### Step 1
+### Milestone 1
 Inspect `rag.retrieval` output:
 - did providers return the right knowledge?
 - were items normalized correctly?
 - was ordering stable?
 
-### Step 2
+### Milestone 2
 Inspect `rag.compose` output:
 - which fragments were created?
 - which items were filtered out?
 - did compact/expert strategy behave correctly?
 
-### Step 3
+### Milestone 3
 Inspect `ai.prompt` input:
 - what exact context was sent?
 - were fragments included or not?

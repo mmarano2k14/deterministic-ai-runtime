@@ -166,7 +166,7 @@ namespace Multiplexed.AI.Tests.Fixtures
     /// final infrastructure proof while recording every exact request.
     /// </summary>
     public sealed class RuntimePoolClaimedRecoveryEndToEndState :
-        IAiRuntimeRunExecutionIndex,
+        RuntimeRunExecutionIndexTestFixture,
         IAiSharedRunOwnershipResolver,
         IAiRuntimeExecutionRecoveryTransitionService
     {
@@ -228,7 +228,7 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
-        public Task RegisterQueuedAsync(
+        public override Task RegisterQueuedAsync(
             AiRuntimeRunExecutionIndexEntry entry,
             CancellationToken cancellationToken = default)
         {
@@ -237,7 +237,7 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
-        public Task MarkStartedAsync(
+        public override Task MarkStartedAsync(
             string runId,
             string executionId,
             CancellationToken cancellationToken = default)
@@ -247,7 +247,7 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
-        public Task MarkCompletedAsync(
+        public override Task MarkCompletedAsync(
             string runId,
             string executionId,
             CancellationToken cancellationToken = default)
@@ -257,7 +257,7 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
-        public Task MarkFailedAsync(
+        public override Task MarkFailedAsync(
             string runId,
             string? executionId,
             string failureReason,
@@ -268,7 +268,7 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
-        public Task MarkCancelledAsync(
+        public override Task MarkCancelledAsync(
             string runId,
             string? executionId,
             string? reason,
@@ -279,7 +279,7 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
-        public Task<bool> MarkRequeuedForRecoveryAsync(
+        public override Task<bool> MarkRequeuedForRecoveryAsync(
             string runId,
             string executionId,
             string reason,
@@ -290,7 +290,7 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
-        public Task<AiRuntimeRunExecutionIndexEntry?> GetAsync(
+        public override Task<AiRuntimeRunExecutionIndexEntry?> GetAsync(
             string runId,
             CancellationToken cancellationToken = default)
         {
@@ -309,7 +309,7 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
-        public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
+        public override Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
             ListUnfinishedByRuntimeInstanceAsync(
                 string runtimeInstanceId,
                 CancellationToken cancellationToken = default)
@@ -320,7 +320,7 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
-        public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
+        public override Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
             ListUnfinishedAsync(
                 CancellationToken cancellationToken = default)
         {
@@ -333,7 +333,7 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
-        public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
+        public override Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
             ListRecoverableByRuntimeInstanceAsync(
                 string runtimeInstanceId,
                 CancellationToken cancellationToken = default)
@@ -344,7 +344,7 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
-        public Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
+        public override Task<IReadOnlyList<AiRuntimeRunExecutionIndexEntry>>
             ListRecoverableAsync(
                 CancellationToken cancellationToken = default)
         {

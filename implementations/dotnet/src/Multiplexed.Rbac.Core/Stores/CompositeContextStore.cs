@@ -43,14 +43,24 @@ namespace Multiplexed.Rbac.Core.Stores
         }
 
         public async Task<bool> TryAcquireInFlightAsync(string key, int maxInFlight)
+            => await AcquireInFlightAsync(key, maxInFlight).ConfigureAwait(false)
+               == InFlightAcquireResult.Acquired;
+
+        public async Task<InFlightAcquireResult> AcquireInFlightAsync(
+            string key,
+            int maxInFlight)
         {
             try
             {
-                return await _primary.TryAcquireInFlightAsync(key, maxInFlight);
+                return await _primary
+                    .AcquireInFlightAsync(key, maxInFlight)
+                    .ConfigureAwait(false);
             }
             catch
             {
-                return await _fallback.TryAcquireInFlightAsync(key, maxInFlight);
+                return await _fallback
+                    .AcquireInFlightAsync(key, maxInFlight)
+                    .ConfigureAwait(false);
             }
         }
 

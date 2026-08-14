@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transp
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Http;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
@@ -63,6 +64,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         /// The runtime descriptor metadata key that can override the Gateway routing header name.
         /// </summary>
         private const string GatewayRoutingHeaderNameMetadataKey = "gateway.routing.header";
+
+        /// <summary>
+        /// The runtime descriptor metadata key that can override the Gateway routing header value.
+        /// </summary>
+        private const string GatewayRoutingValueMetadataKey = "gateway.routing.value";
 
         /// <summary>
         /// The HTTP client used to send runtime instance commands.
@@ -720,6 +726,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     ResolveGatewayRoutingHeaderName(
                         request);
 
+                var routingHeaderValue =
+                    ResolveGatewayRoutingHeaderValue(
+                        request);
+
                 using var message =
                     new HttpRequestMessage(
                         HttpMethod.Post,
@@ -731,18 +741,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 
                 if (!message.Headers.TryAddWithoutValidation(
                         routingHeaderName,
-                        request.RuntimeInstanceId))
+                        routingHeaderValue))
                 {
                     throw new InvalidOperationException(
                         $"The HTTP runtime routing header '{routingHeaderName}' could not be added for runtime instance '{request.RuntimeInstanceId}'.");
                 }
 
                 logger.LogInformation(
-                    "HTTP RUNTIME COMMAND ROUTING HEADER RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName}",
+                    "HTTP RUNTIME COMMAND ROUTING HEADER RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName} RoutingHeaderValue={RoutingHeaderValue}",
                     request.RuntimeInstanceId,
                     request.Operation,
                     endpoint,
-                    routingHeaderName);
+                    routingHeaderName,
+                    routingHeaderValue);
 
                 using var response =
                     await httpClient
@@ -991,6 +1002,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             return string.IsNullOrWhiteSpace(configuredHeaderName)
                 ? DefaultGatewayRoutingHeaderName
                 : configuredHeaderName.Trim();
+        }
+
+        /// <summary>
+        /// Resolves the Gateway routing value independently from the logical target runtime id.
+        /// Dynamic Kubernetes Pool replacement runtimes can intentionally reuse a surviving
+        /// sibling route to reach the same Pod service while the command body preserves the new
+        /// exact RuntimeInstanceId for in-Pod child routing.
+        /// </summary>
+        private static string ResolveGatewayRoutingHeaderValue(
+            AiRuntimeInstanceCommandRequest request)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                request.RuntimeInstanceId);
+
+            var configuredRoutingValue =
+                GetMetadataValue(
+                    request.Descriptor?.Metadata,
+                    GatewayRoutingValueMetadataKey) ??
+                GetMetadataValue(
+                    request.Metadata,
+                    GatewayRoutingValueMetadataKey);
+
+            return string.IsNullOrWhiteSpace(configuredRoutingValue)
+                ? request.RuntimeInstanceId
+                : configuredRoutingValue.Trim();
         }
 
         /// <summary>
@@ -1312,12 +1349,73 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     $"Runtime instance HTTP endpoint '{endpointText}' is not a valid absolute URI.");
             }
 
+            var commandEndpointPath =
+                UsesRuntimePoolCommandEndpoint(descriptor)
+                    ? AiRuntimePoolHttpCommandEndpointRouteBuilderExtensions
+                        .DefaultCommandEndpointPath
+                    : DefaultCommandEndpointPath;
+
             var commandEndpoint =
                 new Uri(
-                    baseEndpoint.ToString().TrimEnd('/') + DefaultCommandEndpointPath);
+                    baseEndpoint.ToString().TrimEnd('/') +
+                    commandEndpointPath);
 
             return HttpCommandEndpointResolution.Succeeded(
                 commandEndpoint);
+        }
+
+        /// <summary>
+        /// Determines whether the descriptor represents one exact member behind a stable Runtime Pool endpoint.
+        /// </summary>
+        /// <param name="descriptor">The runtime instance capacity descriptor.</param>
+        /// <returns>
+        /// <see langword="true" /> when commands must be sent through the stable Runtime Pool router;
+        /// otherwise, <see langword="false" />.
+        /// </returns>
+        private static bool UsesRuntimePoolCommandEndpoint(
+            AiRuntimeInstanceCapacityDescriptor descriptor)
+        {
+            ArgumentNullException.ThrowIfNull(descriptor);
+
+            if (!string.IsNullOrWhiteSpace(descriptor.PoolId) ||
+                !string.IsNullOrWhiteSpace(
+                    GetMetadataValue(
+                        descriptor.Metadata,
+                        "runtime.pool.id")))
+            {
+                return true;
+            }
+
+            var hostCreationMode =
+                GetMetadataValue(
+                    descriptor.Metadata,
+                    "host.creation.mode");
+
+            if (string.Equals(
+                    hostCreationMode,
+                    "KubernetesPool",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    hostCreationMode,
+                    "ProcessPool",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var hostType =
+                GetMetadataValue(
+                    descriptor.Metadata,
+                    "hostType");
+
+            return string.Equals(
+                       hostType,
+                       "runtime-instance-kubernetes-pool",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       hostType,
+                       "runtime-instance-process-pool",
+                       StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

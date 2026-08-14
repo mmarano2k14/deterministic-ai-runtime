@@ -7,6 +7,7 @@ using Multiplexed.Realtime.Context;
 using Multiplexed.Realtime.Dispatching;
 using Multiplexed.Realtime.Events;
 using Multiplexed.Realtime.Events.Abstractions;
+using Multiplexed.Realtime.Events.Runtime;
 using Multiplexed.Realtime.Handlers;
 using Multiplexed.Realtime.Transports;
 using Multiplexed.Realtime.Transports.Null;
@@ -75,6 +76,11 @@ public static class RealtimeServiceCollectionExtensions
             : new[] { typeof(IRuntimeEvent).Assembly };
 
         RegisterRealtimeReducers(services, resolvedAssemblies);
+
+        services.TryAddEnumerable(
+            ServiceDescriptor.Scoped<
+                IRuntimeEventHandler<RuntimeLogEvent>,
+                SystemLogRuntimeEventHandler>());
 
         return services;
     }

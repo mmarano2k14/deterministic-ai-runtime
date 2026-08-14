@@ -831,7 +831,7 @@ Users should be able to audit:
 
 The MCP Control Interface should continue improving through staged productization.
 
-## Step 1 — Document Current MCP Tools
+## Milestone 1 — Document Current MCP Tools
 
 Improve:
 
@@ -843,7 +843,7 @@ Improve:
 - error behavior;
 - diagnostics behavior.
 
-## Step 2 — Strengthen Runtime Control Tools
+## Milestone 2 — Strengthen Runtime Control Tools
 
 Improve:
 
@@ -857,7 +857,7 @@ Improve:
 - runtime instance inspection;
 - diagnostics.
 
-## Step 3 — Strengthen Replay / Ledger / Observability Tools
+## Milestone 3 — Strengthen Replay / Ledger / Observability Tools
 
 Improve:
 
@@ -869,11 +869,11 @@ Improve:
 - retention/compaction inspection;
 - observability summaries.
 
-## Step 4 — Align MCP With Dashboard
+## Milestone 4 — Align MCP With Dashboard
 
 Prepare MCP operations and response models so dashboard views can align with the same runtime concepts.
 
-## Step 5 — Harden Security and Access Control
+## Milestone 5 — Harden Security and Access Control
 
 Improve:
 

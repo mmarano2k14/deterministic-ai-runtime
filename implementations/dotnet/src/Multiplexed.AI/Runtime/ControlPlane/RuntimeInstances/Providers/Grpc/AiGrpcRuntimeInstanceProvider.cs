@@ -44,6 +44,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
         IAiRuntimeInstanceControlPlaneContext
     {
         private const string GatewayRoutingHeaderMetadataKey = "gateway.routing.header";
+        private const string GatewayRoutingValueMetadataKey = "gateway.routing.value";
         private const string DefaultGatewayRoutingHeaderName = "x-ai-runtime-instance-id";
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
         private readonly ILogger<AiGrpcRuntimeInstanceProvider> logger;
@@ -591,17 +592,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
                     ResolveGatewayRoutingHeaderName(
                         request.Descriptor?.Metadata);
 
+                var routingHeaderValue =
+                    ResolveGatewayRoutingHeaderValue(
+                        request.Descriptor?.Metadata,
+                        request.RuntimeInstanceId);
+
                 var routingHeaders =
                     CreateGatewayRoutingHeaders(
                         routingHeaderName,
-                        request.RuntimeInstanceId);
+                        routingHeaderValue);
 
                 logger.LogInformation(
-                    "GRPC COMMAND ROUTING METADATA RESOLVED RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName}",
+                    "GRPC COMMAND ROUTING METADATA RESOLVED RuntimeInstanceId={RuntimeInstanceId} Operation={Operation} Endpoint={Endpoint} RoutingHeaderName={RoutingHeaderName} RoutingHeaderValue={RoutingHeaderValue}",
                     request.RuntimeInstanceId,
                     request.Operation,
                     endpoint,
-                    routingHeaderName);
+                    routingHeaderName,
+                    routingHeaderValue);
 
                 var grpcResponse =
                     await client.ExecuteCommandAsync(
@@ -1012,23 +1019,45 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
         }
 
         /// <summary>
+        /// Resolves the Gateway routing value independently from the logical target runtime id.
+        /// Dynamic Kubernetes Pool replacement runtimes can intentionally reuse a surviving
+        /// sibling route to reach the same Pod service while the command body preserves the new
+        /// exact RuntimeInstanceId for in-Pod child routing.
+        /// </summary>
+        private static string ResolveGatewayRoutingHeaderValue(
+            IReadOnlyDictionary<string, string>? metadata,
+            string runtimeInstanceId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+
+            var configuredRoutingValue =
+                GetMetadataValue(
+                    metadata,
+                    GatewayRoutingValueMetadataKey);
+
+            return string.IsNullOrWhiteSpace(configuredRoutingValue)
+                ? runtimeInstanceId
+                : configuredRoutingValue.Trim();
+        }
+
+        /// <summary>
         /// Creates the gRPC routing metadata sent to the Kubernetes Gateway.
         /// </summary>
         /// <param name="routingHeaderName">The routing metadata header name.</param>
-        /// <param name="runtimeInstanceId">The runtime instance id used as the routing value.</param>
+        /// <param name="routingHeaderValue">The exact Gateway routing value.</param>
         /// <returns>The gRPC call metadata.</returns>
         private static Metadata CreateGatewayRoutingHeaders(
             string routingHeaderName,
-            string runtimeInstanceId)
+            string routingHeaderValue)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(routingHeaderName);
-            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(routingHeaderValue);
 
             return new Metadata
             {
                 {
                     routingHeaderName,
-                    runtimeInstanceId
+                    routingHeaderValue
                 }
             };
         }

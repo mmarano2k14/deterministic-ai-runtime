@@ -31,6 +31,17 @@
         public bool StopCycleOnDispatchFailure { get; init; }
 
         /// <summary>
+        /// Maximum time a successful queue-less dispatch keeps its temporary
+        /// admission reservation while waiting for a newer runtime heartbeat.
+        /// </summary>
+        /// <remarks>
+        /// A value of zero disables the handoff guard. The guard applies only
+        /// when tenant policy explicitly sets <c>LocalQueueCapacity</c> to zero.
+        /// </remarks>
+        public TimeSpan QueueLessDispatchReservationHandoffTimeout { get; init; } =
+            TimeSpan.FromSeconds(10);
+
+        /// <summary>
         /// Optional worker id used by the pump.
         /// </summary>
         public string? WorkerId { get; init; }

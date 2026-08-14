@@ -29,6 +29,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             ArgumentException.ThrowIfNullOrWhiteSpace(options.TransportName);
             ArgumentNullException.ThrowIfNull(options.ExecutionContextSnapshot);
 
+            if (!string.IsNullOrWhiteSpace(options.PublishedTransportEndpoint)
+                && (!Uri.TryCreate(
+                        options.PublishedTransportEndpoint.Trim(),
+                        UriKind.Absolute,
+                        out var publishedEndpoint)
+                    || (publishedEndpoint.Scheme != Uri.UriSchemeHttp
+                        && publishedEndpoint.Scheme != Uri.UriSchemeHttps)))
+            {
+                throw new ArgumentException(
+                    "PublishedTransportEndpoint must be an absolute HTTP or HTTPS endpoint when supplied.",
+                    nameof(options));
+            }
+
             if (options.BasePort <= 0 || options.BasePort > 65535)
             {
                 throw new ArgumentException(
@@ -45,10 +58,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
             if (options.WorkerCountPerInstance <= 0 ||
                 options.MaxConcurrentRunsPerInstance <= 0 ||
-                options.LocalQueueCapacity <= 0)
+                options.LocalQueueCapacity < 0)
             {
                 throw new ArgumentException(
-                    "Worker count, concurrent run count, and queue capacity must be greater than zero.",
+                    "Worker count and concurrent run count must be greater than zero; queue capacity must be zero or greater.",
                     nameof(options));
             }
 

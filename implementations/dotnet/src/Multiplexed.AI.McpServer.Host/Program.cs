@@ -38,6 +38,14 @@ namespace Multiplexed.AI.McpServer.Host
                 builder.Services,
                 builder.Configuration);
 
+            Bootstrap.KubernetesRuntimePoolBootstrapRegistration.Configure(
+                builder.Services,
+                builder.Configuration);
+
+            Bootstrap.ProcessRuntimePoolBootstrapRegistration.Configure(
+                builder.Services,
+                builder.Configuration);
+
             var app = builder.Build();
 
             Bootstrap.ApplicationConfiguration.Configure(app);

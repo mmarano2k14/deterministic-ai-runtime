@@ -837,6 +837,70 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         }
 
         /// <summary>
+        /// Reads a compact durable step-progress signature for the supplied running DAG executions.
+        /// </summary>
+        /// <param name="dagStore">The durable DAG execution store.</param>
+        /// <param name="executionIds">The running execution identifiers to inspect.</param>
+        /// <returns>A deterministic signature containing completed and running step counts per execution.</returns>
+        public static async Task<string> ReadDurableDagProgressSignatureAsync(
+            IAiDagExecutionStore dagStore,
+            IReadOnlyCollection<string> executionIds)
+        {
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentNullException.ThrowIfNull(executionIds);
+
+            var orderedExecutionIds =
+                executionIds
+                    .Where(executionId => !string.IsNullOrWhiteSpace(executionId))
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(
+                        executionId => executionId,
+                        StringComparer.Ordinal)
+                    .ToArray();
+
+            if (orderedExecutionIds.Length == 0)
+            {
+                return "(none)";
+            }
+
+            var progressEntries =
+                await Task.WhenAll(
+                        orderedExecutionIds.Select(
+                            async executionId =>
+                            {
+                                var state =
+                                    await dagStore
+                                        .GetStateAsync(executionId)
+                                        .ConfigureAwait(false);
+
+                                if (state is null)
+                                {
+                                    return $"{executionId}:(missing)";
+                                }
+
+                                var completedStepCount =
+                                    state.Steps.Values.Count(
+                                        step =>
+                                            step.Status ==
+                                            AiStepExecutionStatus.Completed);
+
+                                var runningStepCount =
+                                    state.Steps.Values.Count(
+                                        step =>
+                                            step.Status ==
+                                            AiStepExecutionStatus.Running);
+
+                                return
+                                    $"{executionId}:{completedStepCount}:{runningStepCount}";
+                            }))
+                    .ConfigureAwait(false);
+
+            return string.Join(
+                "|",
+                progressEntries);
+        }
+
+        /// <summary>
         /// Waits until a shared run has a real runtime execution identifier assigned.
         /// </summary>
         /// <param name="sharedRunStore">The shared run store.</param>

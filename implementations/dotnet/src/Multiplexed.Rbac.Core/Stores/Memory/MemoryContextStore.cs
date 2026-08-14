@@ -63,13 +63,26 @@ namespace Multiplexed.Rbac.Core.Stores.Memory
                     : null);
         }
 
-        public Task<bool> TryAcquireInFlightAsync(string key, int maxInFlight)
+        public async Task<bool> TryAcquireInFlightAsync(string key, int maxInFlight)
+            => await AcquireInFlightAsync(key, maxInFlight).ConfigureAwait(false)
+               == InFlightAcquireResult.Acquired;
+
+        public Task<InFlightAcquireResult> AcquireInFlightAsync(
+            string key,
+            int maxInFlight)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(key);
 
+            if (!_cache.TryGetValue(
+                    key,
+                    out Core.ExecutionContext.ExecutionContext? _))
+            {
+                return Task.FromResult(InFlightAcquireResult.ContextNotFound);
+            }
+
             if (maxInFlight <= 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(maxInFlight), "maxInFlight must be greater than zero.");
+                return Task.FromResult(InFlightAcquireResult.Acquired);
             }
 
             while (true)
@@ -78,17 +91,17 @@ namespace Multiplexed.Rbac.Core.Stores.Memory
 
                 if (current >= maxInFlight)
                 {
-                    return Task.FromResult(false);
+                    return Task.FromResult(InFlightAcquireResult.LimitExceeded);
                 }
 
                 if (_inFlight.TryUpdate(key, current + 1, current))
                 {
-                    return Task.FromResult(true);
+                    return Task.FromResult(InFlightAcquireResult.Acquired);
                 }
 
                 if (current == 0 && _inFlight.TryAdd(key, 1))
                 {
-                    return Task.FromResult(true);
+                    return Task.FromResult(InFlightAcquireResult.Acquired);
                 }
             }
         }

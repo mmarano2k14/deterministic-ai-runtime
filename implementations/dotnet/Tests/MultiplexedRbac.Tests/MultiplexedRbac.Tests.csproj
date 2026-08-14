@@ -19,6 +19,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
+	  <FrameworkReference Include="Microsoft.AspNetCore.App" />
 	  <ProjectReference Include="..\..\src\Multiplexed.Rbac.Core\Multiplexed.Rbac.Core.csproj" />
 	</ItemGroup>
 

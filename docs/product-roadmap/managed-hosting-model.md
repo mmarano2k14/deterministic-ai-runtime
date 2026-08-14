@@ -171,7 +171,7 @@ This model supports:
 
 A customer or tenant is not permanently mapped to one process.
 
-The existing Kubernetes mode remains one runtime per Pod. A future Kubernetes Runtime Pool mode will place several independently registered runtimes inside one Pod and use the Pod UID as the immutable `HostId`.
+The existing Kubernetes mode remains one runtime per Pod. The additive KubernetesPool mode places several independently registered runtime processes inside one Pod and uses the Pod UID as the physical failure-boundary identity correlated with the immutable host incarnation.
 
 Commercial packaging can eventually meter:
 

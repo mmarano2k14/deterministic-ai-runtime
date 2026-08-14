@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork
@@ -29,9 +29,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         public required string RuntimeInstanceId { get; init; }
 
         /// <summary>
-        /// Gets the exact failed route incarnation.
+        /// Gets the exact failed route incarnation for route-scoped authority.
         /// </summary>
-        public required string RouteId { get; init; }
+        public string? RouteId { get; init; }
 
         /// <summary>
         /// Gets when the inventory was enumerated.

@@ -17,6 +17,7 @@ using Multiplexed.AI.Runtime.AI.Providers.Llm.OpenAI.DI;
 using Multiplexed.AI.Runtime.AI.Rag.DI;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Failure;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata;
 using Multiplexed.AI.Runtime.Execution.Retention.Policies;
@@ -126,8 +127,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 .AddAiPromptRuntime(typeof(AiRuntimeAssemblyMarker).Assembly)
                 .AddOpenAiPromptProvider(openAiOptions =>
                 {
-                    openAiOptions.ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
-                        ?? throw new InvalidOperationException("OPENAI_API_KEY is required.");
+                    openAiOptions.ApiKey =
+                        configuration["OpenAI:ApiKey"]
+                        ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+                        ?? throw new InvalidOperationException(
+                            "OpenAI:ApiKey or OPENAI_API_KEY is required.");
                 });
 
             services.AddSingleton<McpRuntimeExecutionContextAccessor>();
@@ -157,6 +161,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 configuration);
 
             ConfigureRuntimeRecoveryForensics(
+                services,
+                configuration);
+
+            ConfigureRuntimePoolFailureJournal(
                 services,
                 configuration);
         }
@@ -373,6 +381,49 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 {
                     options.ConnectionString = connectionString;
                     options.DatabaseName = databaseName;
+                    options.CollectionName = collectionName;
+                    options.EnsureIndexes = true;
+                });
+        }
+
+        /// <summary>
+        /// Configures the authoritative runtime-pool failure journal. The in-memory journal
+        /// remains the default; Mongo is opt-in so existing hosting modes retain their current
+        /// composition unless explicitly configured.
+        /// </summary>
+        private static void ConfigureRuntimePoolFailureJournal(
+            IServiceCollection services,
+            IConfiguration configuration)
+        {
+            var provider =
+                configuration["AiRuntimePoolFailureJournal:Provider"]
+                ?? "inmemory";
+
+            if (!string.Equals(provider, "mongo", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(provider, "mongodb", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var connectionString =
+                configuration.GetConnectionString("Mongo")
+                ?? configuration["Mongo:ConnectionString"]
+                ?? "mongodb://localhost:27017";
+
+            var databaseName =
+                configuration["AiRuntimePoolFailureJournal:Mongo:DatabaseName"]
+                ?? configuration["Mongo:DatabaseName"]
+                ?? "multiplexed-ai";
+
+            var collectionName =
+                configuration["AiRuntimePoolFailureJournal:Mongo:CollectionName"]
+                ?? "ai_runtime_pool_failures";
+
+            services.AddMongoAiRuntimePoolFailureJournal(
+                connectionString,
+                databaseName,
+                options =>
+                {
                     options.CollectionName = collectionName;
                     options.EnsureIndexes = true;
                 });

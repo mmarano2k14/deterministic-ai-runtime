@@ -78,6 +78,54 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
         }
 
         /// <summary>
+        /// Verifies that first-writer queued registration preserves the original runtime owner.
+        /// </summary>
+        [Fact]
+        public async Task TryRegisterQueuedAsync_Should_Accept_Only_First_Runtime_Owner()
+        {
+            var index = new InMemoryAiRuntimeRunExecutionIndex();
+
+            var first = await index.TryRegisterQueuedAsync(
+                new AiRuntimeRunExecutionIndexEntry
+                {
+                    RunId = "deterministic-recovery-run",
+                    ExecutionId = "execution-1",
+                    RuntimeInstanceId = "runtime-winner",
+                    Status = "queued",
+                    CreatedAtUtc = DateTimeOffset.UtcNow,
+                    ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["recovery.owner.id"] = "runtime-recovery:execution-1:shared-run-1:failed-run-1"
+                    }
+                });
+
+            var second = await index.TryRegisterQueuedAsync(
+                new AiRuntimeRunExecutionIndexEntry
+                {
+                    RunId = "deterministic-recovery-run",
+                    ExecutionId = "execution-1",
+                    RuntimeInstanceId = "runtime-loser",
+                    Status = "queued",
+                    CreatedAtUtc = DateTimeOffset.UtcNow.AddSeconds(1),
+                    ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["recovery.owner.id"] = "runtime-recovery:execution-1:shared-run-1:failed-run-1"
+                    }
+                });
+
+            var entry = await index.GetAsync(
+                "deterministic-recovery-run");
+
+            Assert.True(first);
+            Assert.False(second);
+            Assert.NotNull(entry);
+            Assert.Equal("runtime-winner", entry!.RuntimeInstanceId);
+            Assert.Equal("execution-1", entry.ExecutionId);
+        }
+
+        /// <summary>
         /// Verifies that a running runtime run can be marked as requeued for recovery.
         /// </summary>
         [Fact]

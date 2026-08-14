@@ -56,7 +56,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
 
             var descriptor = new AiRuntimeInstanceCapacityDescriptor
             {
-                RuntimeInstanceId = "runtime-replacement-1",
+                RuntimeInstanceId = "runtime-retry-target-1",
                 TenantId = "tenant-1",
                 TenantGroupId = "tenant-group-1",
                 Status = AiRuntimeInstanceStatus.Ready,
@@ -88,7 +88,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             await registry.RegisterAsync(
                     new AiRuntimeInstanceRegistration
                     {
-                        RuntimeInstanceId = "runtime-replacement-1",
+                        RuntimeInstanceId = "runtime-retry-target-1",
                         TenantId = "tenant-1",
                         TenantGroupId = "tenant-group-1",
                         HostName = "localhost",
@@ -120,7 +120,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                     new AiSharedRunDispatchRequest
                     {
                         SharedRun = sharedRun,
-                        RuntimeInstanceId = "runtime-replacement-1",
+                        RuntimeInstanceId = "runtime-retry-target-1",
                         ClaimToken = "claim-token-1",
                         CorrelationId = "correlation-1",
                         RequestedBy = "test",
@@ -133,6 +133,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             Assert.True(result.Success);
             Assert.Equal("shared-run-1", result.SharedRunId);
             Assert.Equal("runtime-replacement-1", result.RuntimeInstanceId);
+            Assert.Equal("runtime-retry-target-1", descriptor.RuntimeInstanceId);
             Assert.Equal("local-run-replacement-1", result.LocalRunId);
             Assert.Equal("execution-1", result.ExecutionId);
             Assert.Equal(1, provider.DispatchCalls);

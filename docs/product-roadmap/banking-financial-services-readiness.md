@@ -760,7 +760,7 @@ The architecture supports this direction because of provider-based hosting, runt
 
 ## Productization Roadmap
 
-## Step 1 — Document Policy and RBAC Foundations
+## Milestone 1 — Document Policy and RBAC Foundations
 
 Improve:
 
@@ -771,7 +771,7 @@ Improve:
 - context-driven execution examples;
 - banking-oriented policy examples.
 
-## Step 2 — Expose Policy Decisions
+## Milestone 2 — Expose Policy Decisions
 
 Improve:
 
@@ -781,7 +781,7 @@ Improve:
 - dashboard policy views;
 - denied/throttled decision summaries.
 
-## Step 3 — Strengthen Replay and Audit Reports
+## Milestone 3 — Strengthen Replay and Audit Reports
 
 Improve:
 
@@ -792,7 +792,7 @@ Improve:
 - retention-aware replay;
 - audit report export direction.
 
-## Step 4 — Harden Sensitive Data Handling
+## Milestone 4 — Harden Sensitive Data Handling
 
 Improve:
 
@@ -803,7 +803,7 @@ Improve:
 - access-controlled replay;
 - access-controlled ledger views.
 
-## Step 5 — Add Country and Sector Policy Profiles
+## Milestone 5 — Add Country and Sector Policy Profiles
 
 Add direction for:
 
@@ -814,7 +814,7 @@ Add direction for:
 - data residency direction;
 - provider/model restriction profiles.
 
-## Step 6 — Prepare Enterprise Deployment Patterns
+## Milestone 6 — Prepare Enterprise Deployment Patterns
 
 Improve:
 

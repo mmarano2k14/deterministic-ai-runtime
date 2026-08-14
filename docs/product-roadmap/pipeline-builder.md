@@ -987,7 +987,7 @@ This staged approach keeps the roadmap realistic.
 
 # Productization Roadmap
 
-## Step 1 — Define Pipeline Schema
+## Milestone 1 — Define Pipeline Schema
 
 Create a stable definition model for:
 
@@ -1002,7 +1002,7 @@ Create a stable definition model for:
 - retention profile direction;
 - metadata.
 
-## Step 2 — Add Validation
+## Milestone 2 — Add Validation
 
 Add validation for:
 
@@ -1014,7 +1014,7 @@ Add validation for:
 - unsupported patterns;
 - tenant/project context direction.
 
-## Step 3 — Build Visual DAG Editor
+## Milestone 3 — Build Visual DAG Editor
 
 Add:
 
@@ -1026,7 +1026,7 @@ Add:
 - execution button;
 - test-run flow.
 
-## Step 4 — Connect to Runtime
+## Milestone 4 — Connect to Runtime
 
 Add:
 
@@ -1037,7 +1037,7 @@ Add:
 - open replay report;
 - open decision ledger timeline.
 
-## Step 5 — Add Governance Configuration
+## Milestone 5 — Add Governance Configuration
 
 Add:
 
@@ -1047,7 +1047,7 @@ Add:
 - provider/model access direction;
 - retention profile direction.
 
-## Step 6 — Add Versioning and Templates
+## Milestone 6 — Add Versioning and Templates
 
 Add:
 
@@ -1058,7 +1058,7 @@ Add:
 - reusable templates;
 - reusable step blocks.
 
-## Step 7 — Add Enterprise Hardening
+## Milestone 7 — Add Enterprise Hardening
 
 Add:
 

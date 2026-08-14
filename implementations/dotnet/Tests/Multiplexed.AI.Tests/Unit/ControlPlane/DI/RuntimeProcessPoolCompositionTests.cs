@@ -1,8 +1,12 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Tests.Fixtures;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
 {
@@ -46,6 +50,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
                 IAiRuntimeInstanceReadinessWaiter,
                 FakeReadinessWaiter>();
 
+            services.AddSingleton<
+                IAiSharedRunOwnershipResolver,
+                FakeSharedRunOwnershipResolver>();
+
+            services.AddSingleton<
+                IAiRuntimeExecutionRecoveryTransitionService,
+                FakeRecoveryTransitionService>();
+
             services.AddAiRuntimeProcessPool(
                 CreatePoolOptions(),
                 CreateRuntimeInstanceOptions());
@@ -69,7 +81,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             var hostedServices =
                 serviceProvider.GetServices<IHostedService>().ToArray();
 
+            var processCreationExecutor =
+                serviceProvider.GetRequiredService<
+                    IAiRuntimePoolProcessCreationExecutor>();
+
             Assert.Equal("pool-shared-01", manager.Identity.PoolId);
+            Assert.NotNull(processCreationExecutor);
             Assert.IsType<
                 RuntimeInstanceOnlyAiRuntimeProcessPoolChildFactory>(
                     childFactory);
@@ -196,6 +213,30 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
                         TransportName = request.TransportName,
                         TransportEndpoint = request.TransportEndpoint
                     });
+            }
+        }
+
+        private sealed class FakeSharedRunOwnershipResolver :
+            IAiSharedRunOwnershipResolver
+        {
+            public Task<AiSharedRunOwnershipResolutionResult> ResolveAsync(
+                AiSharedRunOwnershipResolutionRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException(
+                    "Composition-only dependency.");
+            }
+        }
+
+        private sealed class FakeRecoveryTransitionService :
+            IAiRuntimeExecutionRecoveryTransitionService
+        {
+            public Task<AiRuntimeExecutionRecoveryTransitionResult> ApplyAsync(
+                AiRuntimeExecutionRecoveryTransitionRequest request,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException(
+                    "Composition-only dependency.");
             }
         }
     }
