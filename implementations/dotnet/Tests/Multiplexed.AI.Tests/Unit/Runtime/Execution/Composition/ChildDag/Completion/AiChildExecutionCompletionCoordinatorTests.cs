@@ -1,3 +1,4 @@
+using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Completion;
 using Multiplexed.AI.Stores.Memory;
@@ -40,6 +41,33 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Compl
             Assert.Null(first.ParentResumedAtUtc);
             Assert.Equal(first.ChildResult.ContentHash, second!.ChildResult!.ContentHash);
             Assert.Equal(first.CompletedAtUtc, second.CompletedAtUtc);
+        }
+
+        [Fact]
+        public async Task CompleteIfTerminalAsync_Should_Persist_Failed_Child_As_Authoritative_Terminal_Outcome()
+        {
+            var executionStore = new MemoryAiExecutionStore();
+            await executionStore.CreateAsync(
+                ChildDagCompositionTestData.CreateChildRecord(AiExecutionStatus.Failed),
+                ChildDagCompositionTestData.CreateChildState("policy-denied"));
+
+            var relation = ChildDagCompositionTestData.CreateRelation(AiChildExecutionRelationStatus.Waiting);
+            var relationStore = new InMemoryAiChildExecutionRelationStore(relation);
+            var coordinator = new AiChildExecutionCompletionCoordinator(
+                relationStore,
+                new TestAiDagExecutionEngineServices(executionStore),
+                ChildDagCompositionTestData.CreateSnapshotService());
+
+            var completed = await coordinator.CompleteIfTerminalAsync(ChildDagCompositionTestData.ChildExecutionId);
+            var duplicate = await coordinator.CompleteIfTerminalAsync(ChildDagCompositionTestData.ChildExecutionId);
+
+            Assert.NotNull(completed);
+            Assert.Equal(AiChildExecutionRelationStatus.Completed, completed!.Status);
+            Assert.Equal(AiChildContinuationStatus.Pending, completed.ContinuationStatus);
+            Assert.Equal("Child execution failed.", completed.ChildFailureReason);
+            Assert.NotNull(completed.ChildResult);
+            Assert.Equal(completed.ChildResult!.ContentHash, duplicate!.ChildResult!.ContentHash);
+            Assert.Equal(completed.ChildFailureReason, duplicate.ChildFailureReason);
         }
 
         [Fact]

@@ -4,11 +4,13 @@ using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Delegation;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Identity;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Resolvers;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Stores;
 using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.AI.Abstractions.AI.Policies;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Allocation;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Generation;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Identity;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mongo;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots;
@@ -141,6 +143,59 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Alloc
             var persisted = await this.relationStore.GetAsync(relation.ToInvocationIdentity());
             Assert.NotNull(persisted);
             Assert.Null(persisted!.ChildExecutionId);
+        }
+
+        [Fact]
+        public async Task Explicit_New_Generation_Should_Allocate_Exactly_One_New_ChildExecutionId()
+        {
+            var generationZero = await CreateApprovedRelationAsync();
+            var allocatedZero = await this.allocator.AllocateAsync(generationZero.ToInvocationIdentity());
+
+            allocatedZero.Status = AiChildExecutionRelationStatus.Completed;
+            allocatedZero.ChildResult = AiStoredPayload.Inline(
+                "{}",
+                contentType: "application/json",
+                contentHash: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a");
+            allocatedZero.ChildFailureReason = "child execution failed";
+            allocatedZero.CompletedAtUtc = DateTimeOffset.UtcNow;
+            allocatedZero.ContinuationStatus = AiChildContinuationStatus.Resumed;
+            allocatedZero.ParentContinuationScheduledAtUtc = DateTimeOffset.UtcNow.AddSeconds(-1);
+            allocatedZero.ParentContinuationScheduledStepVersion = 10;
+            allocatedZero.ParentResumedAtUtc = DateTimeOffset.UtcNow;
+
+            Assert.True(await this.relationStore.TryReplaceAsync(
+                allocatedZero,
+                AiChildExecutionRelationStatus.ChildAllocated));
+
+            var generationCoordinator = new AiChildInvocationGenerationCoordinator(this.relationStore);
+            var generationOne = await generationCoordinator.PrepareNextGenerationAsync(
+                allocatedZero.ToInvocationIdentity(),
+                "explicit child retry");
+
+            generationOne.DelegationPolicyDecisionSnapshot = await this.snapshotService
+                .FreezeDelegationPolicyDecisionAsync(
+                    approved: true,
+                    reason: "approved retry generation",
+                    results: new[] { AiPolicyResult.Success("approved retry generation") },
+                    generationOne.ParentExecutionId);
+            generationOne.DelegationEvaluatedAtUtc = DateTimeOffset.UtcNow;
+            generationOne.Status = AiChildExecutionRelationStatus.DelegationApproved;
+
+            Assert.True(await this.relationStore.TryReplaceAsync(
+                generationOne,
+                AiChildExecutionRelationStatus.DelegationPolicyPending));
+
+            var results = await Task.WhenAll(
+                Enumerable.Range(0, 8)
+                    .Select(_ => this.allocator.AllocateAsync(generationOne.ToInvocationIdentity())));
+
+            var allocatedOne = await this.relationStore.GetAsync(generationOne.ToInvocationIdentity());
+            Assert.NotNull(allocatedOne);
+            Assert.Equal(1, allocatedOne!.InvocationGeneration);
+            Assert.Equal(AiChildExecutionRelationStatus.ChildAllocated, allocatedOne.Status);
+            Assert.False(string.IsNullOrWhiteSpace(allocatedOne.ChildExecutionId));
+            Assert.NotEqual(allocatedZero.ChildExecutionId, allocatedOne.ChildExecutionId);
+            Assert.All(results, result => Assert.Equal(allocatedOne.ChildExecutionId, result.ChildExecutionId));
         }
 
         [Fact]

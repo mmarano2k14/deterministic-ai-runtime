@@ -198,6 +198,13 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Dispa
             {
                 throw new NotSupportedException();
             }
+
+            public Task<bool> TryCommitNextInvocationGenerationAsync(
+                AiChildExecutionRelation relation,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
         }
 
         private sealed class CapturingSharedRuntimeController : IAiSharedRuntimeController

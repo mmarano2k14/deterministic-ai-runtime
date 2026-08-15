@@ -8,6 +8,7 @@ using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Identity;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots;
 using Multiplexed.AI.Runtime.Execution.Payloads;
+using Multiplexed.AI.Runtime.Execution.State;
 
 namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Support
 {
@@ -24,7 +25,9 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
         public static AiChildExecutionRelation CreateRelation(
             AiChildExecutionRelationStatus status,
             AiChildContinuationStatus continuationStatus = AiChildContinuationStatus.None,
-            DateTimeOffset? childAllocatedAtUtc = null)
+            DateTimeOffset? childAllocatedAtUtc = null,
+            int invocationGeneration = 0,
+            string? childFailureReason = null)
         {
             var identity = new Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Identity.AiChildInvocationIdentity
             {
@@ -34,7 +37,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
                 ChildDagId = "child-analysis",
                 ChildDagDefinitionVersion = "v1",
                 CanonicalLogicalInvocationKey = "portfolio-42|MSFT|analysis",
-                InvocationGeneration = 0
+                InvocationGeneration = invocationGeneration
             };
             var hasAllocatedChild = status is AiChildExecutionRelationStatus.ChildAllocated
                 or AiChildExecutionRelationStatus.Waiting
@@ -74,6 +77,9 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
                 ChildResult = isCompleted
                     ? Snapshot()
                     : null,
+                ChildFailureReason = isCompleted
+                    ? childFailureReason
+                    : null,
                 ParentContinuationScheduledAtUtc = continuationStatus is AiChildContinuationStatus.Scheduled or AiChildContinuationStatus.Resumed
                     ? DateTimeOffset.UtcNow.AddSeconds(-30)
                     : null,
@@ -82,6 +88,12 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
                     : null,
                 ParentResumedAtUtc = continuationStatus == AiChildContinuationStatus.Resumed
                     ? DateTimeOffset.UtcNow.AddSeconds(-10)
+                    : null,
+                ParentContinuationSuppressedAtUtc = continuationStatus == AiChildContinuationStatus.Suppressed
+                    ? DateTimeOffset.UtcNow.AddSeconds(-10)
+                    : null,
+                ParentContinuationSuppressionReason = continuationStatus == AiChildContinuationStatus.Suppressed
+                    ? "Parent execution is terminal."
                     : null
             };
         }
@@ -155,6 +167,25 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
             };
         }
 
+        /// <summary>
+        /// Creates a minimal execution context for child-composition unit tests that need normal state helpers.
+        /// </summary>
+        /// <param name="record">The durable execution record.</param>
+        /// <param name="state">The mutable execution state.</param>
+        /// <returns>An execution context backed by the shared inline-only test payload resolver.</returns>
+        public static AiExecutionContext CreateExecutionContext(
+            AiExecutionRecord record,
+            AiExecutionState state)
+        {
+            return new AiExecutionContext(
+                record,
+                state,
+                EmptyServiceProvider.Instance,
+                new DefaultAiExecutionStateReader(InlinePayloadResolver.Instance),
+                new DefaultAiExecutionStateWriter(),
+                CancellationToken.None);
+        }
+
         public static AiChildDagSnapshotService CreateSnapshotService()
         {
             var store = new InMemoryAiPayloadStore();
@@ -193,6 +224,26 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
                 Namespaces = [],
                 TtlSeconds = 300
             };
+        }
+
+        private sealed class EmptyServiceProvider : IServiceProvider
+        {
+            public static EmptyServiceProvider Instance { get; } = new();
+
+            public object? GetService(Type serviceType) => null;
+        }
+
+        private sealed class InlinePayloadResolver : IAiExecutionPayloadResolver
+        {
+            public static InlinePayloadResolver Instance { get; } = new();
+
+            public Task<object?> ResolveAsync(
+                AiStoredPayload payload,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(payload.InlineValue);
+            }
         }
 
         private sealed class FixedPayloadStoreResolver : IAiPayloadStoreResolver

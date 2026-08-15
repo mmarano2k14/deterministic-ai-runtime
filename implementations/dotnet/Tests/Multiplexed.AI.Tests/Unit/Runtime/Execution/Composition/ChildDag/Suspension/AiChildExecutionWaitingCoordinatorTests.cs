@@ -205,6 +205,13 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suspe
                 }
             }
 
+            public Task<bool> TryCommitNextInvocationGenerationAsync(
+                AiChildExecutionRelation replacement,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
             private static AiChildExecutionRelation Clone(
                 AiChildExecutionRelation source)
             {
@@ -220,6 +227,9 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suspe
                     ChildInvocationKey = source.ChildInvocationKey,
                     InvocationGeneration = source.InvocationGeneration,
                     FrozenInvocationInput = source.FrozenInvocationInput,
+                    NextInvocationGeneration = source.NextInvocationGeneration,
+                    NextInvocationGenerationDecidedAtUtc = source.NextInvocationGenerationDecidedAtUtc,
+                    NextInvocationGenerationDecisionReason = source.NextInvocationGenerationDecisionReason,
                     DelegatedExecutionContextSnapshot = source.DelegatedExecutionContextSnapshot,
                     DelegatedMetadata = source.DelegatedMetadata,
                     DelegationPolicyBindingSnapshot = source.DelegationPolicyBindingSnapshot,
@@ -236,7 +246,9 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suspe
                     CompletedAtUtc = source.CompletedAtUtc,
                     ParentContinuationScheduledAtUtc = source.ParentContinuationScheduledAtUtc,
                     ParentContinuationScheduledStepVersion = source.ParentContinuationScheduledStepVersion,
-                    ParentResumedAtUtc = source.ParentResumedAtUtc
+                    ParentResumedAtUtc = source.ParentResumedAtUtc,
+                    ParentContinuationSuppressedAtUtc = source.ParentContinuationSuppressedAtUtc,
+                    ParentContinuationSuppressionReason = source.ParentContinuationSuppressionReason
                 };
             }
         }

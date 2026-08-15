@@ -17,7 +17,7 @@ using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Identity;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mongo;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots;
 using Multiplexed.AI.Runtime.Execution.Payloads;
-using Multiplexed.AI.Runtime.Execution.State;
+using Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Support;
 
 namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Delegation
 {
@@ -277,13 +277,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Deleg
                 StepKey = "delegate-child",
                 Step = new NoOpStep()
             };
-            var executionContext = new AiExecutionContext(
-                record,
-                state,
-                new EmptyServiceProvider(),
-                new DefaultAiExecutionStateReader(new InlinePayloadResolver()),
-                new DefaultAiExecutionStateWriter(),
-                CancellationToken.None);
+            var executionContext = ChildDagCompositionTestData.CreateExecutionContext(record, state);
 
             return new AiStepExecutionContext(executionContext, resolvedStep);
         }
@@ -429,19 +423,5 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Deleg
             }
         }
 
-        private sealed class EmptyServiceProvider : IServiceProvider
-        {
-            public object? GetService(Type serviceType) => null;
-        }
-
-        private sealed class InlinePayloadResolver : IAiExecutionPayloadResolver
-        {
-            public Task<object?> ResolveAsync(
-                AiStoredPayload payload,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(payload.InlineValue);
-            }
-        }
     }
 }

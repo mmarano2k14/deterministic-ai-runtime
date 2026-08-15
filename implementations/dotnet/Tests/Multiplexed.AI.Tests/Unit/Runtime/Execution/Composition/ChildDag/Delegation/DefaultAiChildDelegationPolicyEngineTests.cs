@@ -2,7 +2,6 @@ using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Delegation;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
-using Multiplexed.Abstractions.AI.Execution.Payloads.Resolvers;
 using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
@@ -14,9 +13,9 @@ using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Abstractions.AI.Policies;
 using Multiplexed.AI.Runtime.AI.Policies;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Delegation;
-using Multiplexed.AI.Runtime.Execution.State;
 using Multiplexed.AI.Runtime.Observability.Metrics.Policy;
 using Multiplexed.AI.Runtime.Observability.Tracing;
+using Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Support;
 
 namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Delegation
 {
@@ -167,13 +166,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Deleg
                     }
             };
 
-            var executionContext = new AiExecutionContext(
-                record,
-                state,
-                new EmptyServiceProvider(),
-                new DefaultAiExecutionStateReader(new InlinePayloadResolver()),
-                new DefaultAiExecutionStateWriter(),
-                CancellationToken.None);
+            var executionContext = ChildDagCompositionTestData.CreateExecutionContext(record, state);
 
             return new AiStepExecutionContext(executionContext, resolvedStep);
         }
@@ -233,20 +226,6 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Deleg
             }
         }
 
-        private sealed class EmptyServiceProvider : IServiceProvider
-        {
-            public object? GetService(Type serviceType) => null;
-        }
-
-        private sealed class InlinePayloadResolver : IAiExecutionPayloadResolver
-        {
-            public Task<object?> ResolveAsync(
-                AiStoredPayload payload,
-                CancellationToken cancellationToken = default)
-            {
-                return Task.FromResult(payload.InlineValue);
-            }
-        }
 
         private sealed class TestRuntimeObservability : IAiRuntimeObservability
         {

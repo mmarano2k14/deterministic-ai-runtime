@@ -99,5 +99,18 @@ namespace Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations.P
             AiChildExecutionRelation relation,
             AiChildContinuationStatus expectedContinuationStatus,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Atomically commits the explicit next-generation retry decision for one terminal relation.
+        /// </summary>
+        /// <param name="relation">The complete relation containing the next-generation decision.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>
+        /// <see langword="true"/> when this caller commits the decision; otherwise <see langword="false"/> when
+        /// another caller already committed the durable generation advance.
+        /// </returns>
+        Task<bool> TryCommitNextInvocationGenerationAsync(
+            AiChildExecutionRelation relation,
+            CancellationToken cancellationToken = default);
     }
 }

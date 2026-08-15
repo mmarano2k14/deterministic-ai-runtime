@@ -23,6 +23,11 @@ namespace Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations
         /// <summary>
         /// The parent has durably demonstrated progress after the scheduled continuation.
         /// </summary>
-        Resumed = 3
+        Resumed = 3,
+
+        /// <summary>
+        /// The continuation was durably suppressed because the parent became terminal before it could be consumed.
+        /// </summary>
+        Suppressed = 4
     }
 }

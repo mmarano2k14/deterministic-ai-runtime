@@ -66,14 +66,24 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
                     $"Parent continuation requires an authoritative completed child relation. CurrentStatus='{relation.Status}'.");
             }
 
-            if (relation.ContinuationStatus == AiChildContinuationStatus.Resumed)
+            if (relation.ContinuationStatus is AiChildContinuationStatus.Resumed or AiChildContinuationStatus.Suppressed)
             {
                 return relation;
             }
 
             if (relation.ContinuationStatus == AiChildContinuationStatus.Pending)
             {
-                var (_, parentStateAtScheduling) = await LoadParentAsync(relation, cancellationToken).ConfigureAwait(false);
+                var (parentRecordAtScheduling, parentStateAtScheduling) = await LoadParentAsync(relation, cancellationToken).ConfigureAwait(false);
+                if (parentRecordAtScheduling.IsTerminal)
+                {
+                    return await SuppressContinuationAsync(
+                            relation,
+                            parentRecordAtScheduling,
+                            AiChildContinuationStatus.Pending,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
                 if (!parentStateAtScheduling.Steps.TryGetValue(relation.ParentCallSiteId, out var parentStepAtScheduling))
                 {
                     throw new InvalidOperationException(
@@ -102,7 +112,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
                 }
             }
 
-            if (relation.ContinuationStatus == AiChildContinuationStatus.Resumed)
+            if (relation.ContinuationStatus is AiChildContinuationStatus.Resumed or AiChildContinuationStatus.Suppressed)
             {
                 return relation;
             }
@@ -147,8 +157,8 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
             {
                 // A continuation can finish the whole parent before the poller observes the intermediate Ready/Running
                 // states. Completed/Failed parent + terminal call-site + monotonic step-version progress therefore proves
-                // that the scheduled continuation was durably consumed. Cancellation remains deferred to the explicit
-                // terminal/orphan semantics because it can occur independently of continuation consumption.
+                // that the scheduled continuation was durably consumed. Any other terminal parent state suppresses the
+                // continuation permanently so the durable poller cannot enqueue work for a parent that can no longer run.
                 if (parentRecord.Status is AiExecutionStatus.Completed or AiExecutionStatus.Failed &&
                     step.Status is AiStepExecutionStatus.Completed or AiStepExecutionStatus.Failed &&
                     HasDurableParentProgressAfterScheduling(relation, step))
@@ -156,7 +166,12 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
                     return await MarkResumedAsync(relation, cancellationToken).ConfigureAwait(false);
                 }
 
-                return relation;
+                return await SuppressContinuationAsync(
+                        relation,
+                        parentRecord,
+                        AiChildContinuationStatus.Scheduled,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             if (step.Status == AiStepExecutionStatus.WaitingForExternal)
@@ -248,6 +263,65 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
                 .ConfigureAwait(false);
 
             return true;
+        }
+
+        /// <summary>
+        /// Durably suppresses a continuation when the parent execution is already terminal.
+        /// </summary>
+        /// <param name="relation">The completed child relation.</param>
+        /// <param name="parentRecord">The authoritative terminal parent record.</param>
+        /// <param name="expectedContinuationStatus">The continuation status expected by the compare-and-swap.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The authoritative suppressed or otherwise converged relation.</returns>
+        private async Task<AiChildExecutionRelation> SuppressContinuationAsync(
+            AiChildExecutionRelation relation,
+            AiExecutionRecord parentRecord,
+            AiChildContinuationStatus expectedContinuationStatus,
+            CancellationToken cancellationToken)
+        {
+            if (!parentRecord.IsTerminal)
+            {
+                throw new InvalidOperationException(
+                    $"Parent execution '{parentRecord.ExecutionId}' must be terminal before child continuation can be suppressed.");
+            }
+
+            relation.ContinuationStatus = AiChildContinuationStatus.Suppressed;
+            relation.ParentContinuationSuppressedAtUtc = DateTimeOffset.UtcNow;
+            relation.ParentContinuationSuppressionReason =
+                $"Parent execution reached terminal status '{parentRecord.Status}' before child continuation could be consumed.";
+            relation.ParentResumedAtUtc = null;
+
+            var committed = await this.relationStore
+                .TryReplaceContinuationAsync(
+                    relation,
+                    expectedContinuationStatus,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (committed)
+            {
+                return relation;
+            }
+
+            var winner = await this.relationStore
+                .GetAsync(relation.ToInvocationIdentity(), cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    "Parent continuation suppression CAS lost and the authoritative relation could not be reloaded.");
+
+            if (winner.ContinuationStatus is AiChildContinuationStatus.Suppressed or AiChildContinuationStatus.Resumed)
+            {
+                return winner;
+            }
+
+            if (winner.ContinuationStatus == AiChildContinuationStatus.Scheduled &&
+                expectedContinuationStatus == AiChildContinuationStatus.Pending)
+            {
+                return await ReconcileScheduledAsync(winner, cancellationToken).ConfigureAwait(false);
+            }
+
+            throw new InvalidOperationException(
+                $"Parent continuation suppression CAS lost to incompatible status '{winner.ContinuationStatus}'.");
         }
 
         /// <summary>

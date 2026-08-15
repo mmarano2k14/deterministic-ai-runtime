@@ -3,6 +3,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Generation;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Identity;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mongo;
 
@@ -148,6 +149,82 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Persi
         }
 
         [Fact]
+        public async Task TryCommitNextInvocationGenerationAsync_Should_Allow_Only_One_Durable_Retry_Decision_Winner()
+        {
+            var retryable = await CreatePersistedRetryableFailedRelationAsync();
+            var first = CreateRelation(
+                status: AiChildExecutionRelationStatus.Completed,
+                continuationStatus: AiChildContinuationStatus.Resumed,
+                childFailureReason: "child execution failed",
+                nextInvocationGeneration: 1,
+                nextInvocationGenerationDecidedAtUtc: DateTimeOffset.Parse("2026-08-15T00:07:00Z"),
+                nextInvocationGenerationDecisionReason: "explicit retry");
+            var second = CreateRelation(
+                status: AiChildExecutionRelationStatus.Completed,
+                continuationStatus: AiChildContinuationStatus.Resumed,
+                childFailureReason: "child execution failed",
+                nextInvocationGeneration: 1,
+                nextInvocationGenerationDecidedAtUtc: DateTimeOffset.Parse("2026-08-15T00:07:00Z"),
+                nextInvocationGenerationDecisionReason: "explicit retry");
+
+            var attempts = await Task.WhenAll(
+                this.store.TryCommitNextInvocationGenerationAsync(first),
+                this.store.TryCommitNextInvocationGenerationAsync(second));
+
+            Assert.Equal(1, attempts.Count(result => result));
+            Assert.Equal(1, attempts.Count(result => !result));
+
+            var persisted = await this.store.GetAsync(retryable.ToInvocationIdentity());
+            Assert.NotNull(persisted);
+            Assert.Equal(1, persisted!.NextInvocationGeneration);
+            Assert.Equal("explicit retry", persisted.NextInvocationGenerationDecisionReason);
+        }
+
+        [Fact]
+        public async Task Generation_Coordinator_Should_Recreate_Next_Relation_After_Durable_Decision_Crash_Window()
+        {
+            var retryable = await CreatePersistedRetryableFailedRelationAsync();
+            retryable.NextInvocationGeneration = 1;
+            retryable.NextInvocationGenerationDecidedAtUtc = DateTimeOffset.Parse("2026-08-15T00:07:00Z");
+            retryable.NextInvocationGenerationDecisionReason = "durable retry decision";
+            Assert.True(await this.store.TryCommitNextInvocationGenerationAsync(retryable));
+
+            // Simulates process loss after the generation decision was committed but before generation 1 existed.
+            var coordinatorAfterRecovery = new AiChildInvocationGenerationCoordinator(this.store);
+            var next = await coordinatorAfterRecovery.PrepareNextGenerationAsync(
+                retryable.ToInvocationIdentity(),
+                "recovery re-drive");
+
+            Assert.Equal(1, next.InvocationGeneration);
+            Assert.Equal(AiChildExecutionRelationStatus.DelegationPolicyPending, next.Status);
+            Assert.Null(next.ChildExecutionId);
+            Assert.Equal(
+                next.ChildInvocationKey,
+                (await this.store.GetAsync(next.ToInvocationIdentity()))!.ChildInvocationKey);
+        }
+
+        [Fact]
+        public async Task TryReplaceContinuationAsync_Should_Exclude_Suppressed_Terminal_Parent_From_Reconciliation()
+        {
+            await CreatePersistedCompletedRelationAsync();
+            var suppressed = CreateRelation(
+                status: AiChildExecutionRelationStatus.Completed,
+                continuationStatus: AiChildContinuationStatus.Suppressed,
+                parentContinuationSuppressedAtUtc: DateTimeOffset.Parse("2026-08-15T00:05:30Z"),
+                parentContinuationSuppressionReason: "parent cancelled");
+
+            Assert.True(await this.store.TryReplaceContinuationAsync(
+                suppressed,
+                AiChildContinuationStatus.Pending));
+
+            var persisted = await this.store.GetAsync(suppressed.ToInvocationIdentity());
+            Assert.NotNull(persisted);
+            Assert.Equal(AiChildContinuationStatus.Suppressed, persisted!.ContinuationStatus);
+            Assert.Equal("parent cancelled", persisted.ParentContinuationSuppressionReason);
+            Assert.Empty(await this.store.ListContinuationCandidatesAsync(10));
+        }
+
+        [Fact]
         public async Task GetOrCreateAsync_Should_Create_Typed_Unique_Index_Without_Hash_Uniqueness()
         {
             await this.store.GetOrCreateAsync(CreateRelation());
@@ -192,12 +269,60 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Persi
             return completed;
         }
 
+        private async Task<AiChildExecutionRelation> CreatePersistedRetryableFailedRelationAsync()
+        {
+            var initial = CreateRelation();
+            await this.store.GetOrCreateAsync(initial);
+
+            var approved = CreateRelation(status: AiChildExecutionRelationStatus.DelegationApproved);
+            Assert.True(await this.store.TryReplaceAsync(
+                approved,
+                AiChildExecutionRelationStatus.DelegationPolicyPending));
+
+            var allocated = CreateRelation(status: AiChildExecutionRelationStatus.ChildAllocated);
+            Assert.True(await this.store.TryReplaceAsync(
+                allocated,
+                AiChildExecutionRelationStatus.DelegationApproved));
+
+            var completed = CreateRelation(
+                status: AiChildExecutionRelationStatus.Completed,
+                continuationStatus: AiChildContinuationStatus.Pending,
+                childFailureReason: "child execution failed");
+            Assert.True(await this.store.TryReplaceAsync(
+                completed,
+                AiChildExecutionRelationStatus.ChildAllocated));
+
+            var scheduled = CreateRelation(
+                status: AiChildExecutionRelationStatus.Completed,
+                continuationStatus: AiChildContinuationStatus.Scheduled,
+                childFailureReason: "child execution failed");
+            Assert.True(await this.store.TryReplaceContinuationAsync(
+                scheduled,
+                AiChildContinuationStatus.Pending));
+
+            var resumed = CreateRelation(
+                status: AiChildExecutionRelationStatus.Completed,
+                continuationStatus: AiChildContinuationStatus.Resumed,
+                childFailureReason: "child execution failed");
+            Assert.True(await this.store.TryReplaceContinuationAsync(
+                resumed,
+                AiChildContinuationStatus.Scheduled));
+
+            return resumed;
+        }
+
         private static AiChildExecutionRelation CreateRelation(
             AiStoredPayload? frozenInput = null,
             AiChildExecutionRelationStatus status = AiChildExecutionRelationStatus.DelegationPolicyPending,
             AiChildContinuationStatus continuationStatus = AiChildContinuationStatus.Pending,
             DateTimeOffset? parentContinuationScheduledAtUtc = null,
-            DateTimeOffset? parentResumedAtUtc = null)
+            DateTimeOffset? parentResumedAtUtc = null,
+            string? childFailureReason = null,
+            int? nextInvocationGeneration = null,
+            DateTimeOffset? nextInvocationGenerationDecidedAtUtc = null,
+            string? nextInvocationGenerationDecisionReason = null,
+            DateTimeOffset? parentContinuationSuppressedAtUtc = null,
+            string? parentContinuationSuppressionReason = null)
         {
             var identity = new Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Identity.AiChildInvocationIdentity
             {
@@ -224,6 +349,9 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Persi
                 CanonicalLogicalInvocationKey = identity.CanonicalLogicalInvocationKey,
                 ChildInvocationKey = AiChildInvocationKeyFactory.Create(identity),
                 InvocationGeneration = identity.InvocationGeneration,
+                NextInvocationGeneration = nextInvocationGeneration,
+                NextInvocationGenerationDecidedAtUtc = nextInvocationGenerationDecidedAtUtc,
+                NextInvocationGenerationDecisionReason = nextInvocationGenerationDecisionReason,
                 FrozenInvocationInput = frozenInput ?? AiStoredPayload.Inline(
                     "{\"request\":\"analyze\"}",
                     contentType: "application/json",
@@ -258,6 +386,9 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Persi
                         contentType: "application/json",
                         contentHash: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a")
                     : null,
+                ChildFailureReason = status == AiChildExecutionRelationStatus.Completed
+                    ? childFailureReason
+                    : null,
                 CompletedAtUtc = status == AiChildExecutionRelationStatus.Completed
                     ? DateTimeOffset.Parse("2026-08-14T00:04:00Z")
                     : null,
@@ -275,6 +406,14 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Persi
                 ParentResumedAtUtc = status == AiChildExecutionRelationStatus.Completed &&
                     continuationStatus == AiChildContinuationStatus.Resumed
                         ? parentResumedAtUtc ?? DateTimeOffset.Parse("2026-08-14T00:06:00Z")
+                        : null,
+                ParentContinuationSuppressedAtUtc = status == AiChildExecutionRelationStatus.Completed &&
+                    continuationStatus == AiChildContinuationStatus.Suppressed
+                        ? parentContinuationSuppressedAtUtc ?? DateTimeOffset.Parse("2026-08-14T00:06:00Z")
+                        : null,
+                ParentContinuationSuppressionReason = status == AiChildExecutionRelationStatus.Completed &&
+                    continuationStatus == AiChildContinuationStatus.Suppressed
+                        ? parentContinuationSuppressionReason ?? "parent terminal"
                         : null,
                 DelegationEvaluatedAtUtc = status == AiChildExecutionRelationStatus.DelegationPolicyPending
                     ? null

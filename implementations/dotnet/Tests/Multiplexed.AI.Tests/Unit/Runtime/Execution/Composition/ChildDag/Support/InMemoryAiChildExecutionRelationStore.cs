@@ -219,6 +219,44 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
             }
         }
 
+        /// <inheritdoc />
+        public Task<bool> TryCommitNextInvocationGenerationAsync(
+            AiChildExecutionRelation relation,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(relation);
+            cancellationToken.ThrowIfCancellationRequested();
+            var key = GetIdentityKey(relation.ToInvocationIdentity());
+
+            lock (this.gate)
+            {
+                if (!this.relations.TryGetValue(key, out var existing) ||
+                    existing.Status != relation.Status ||
+                    existing.ContinuationStatus != relation.ContinuationStatus ||
+                    existing.NextInvocationGeneration is not null)
+                {
+                    return Task.FromResult(false);
+                }
+
+                this.relations[key] = Clone(relation);
+                return Task.FromResult(true);
+            }
+        }
+
+        /// <summary>
+        /// Gets the number of authoritative relations held by this test store.
+        /// </summary>
+        public int Count
+        {
+            get
+            {
+                lock (this.gate)
+                {
+                    return this.relations.Count;
+                }
+            }
+        }
+
         private static string GetIdentityKey(AiChildInvocationIdentity identity)
         {
             return AiChildInvocationKeyFactory.Create(identity);

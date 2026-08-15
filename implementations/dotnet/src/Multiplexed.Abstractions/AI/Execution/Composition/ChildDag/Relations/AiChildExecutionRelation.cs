@@ -123,6 +123,26 @@ namespace Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations
             AiChildExecutionRelationStatus.DelegationPolicyPending;
 
         /// <summary>
+        /// Gets or sets the next invocation generation durably authorized by an explicit retry decision.
+        /// </summary>
+        /// <remarks>
+        /// A value is written only after the current generation has reached a retryable terminal outcome and the
+        /// parent continuation has durably resumed from that outcome. Persisting this value before the next relation is created closes
+        /// the crash window between an explicit retry decision and creation of the next-generation relation.
+        /// </remarks>
+        public int? NextInvocationGeneration { get; set; }
+
+        /// <summary>
+        /// Gets or sets the UTC timestamp at which the explicit next-generation retry decision was committed.
+        /// </summary>
+        public DateTimeOffset? NextInvocationGenerationDecidedAtUtc { get; set; }
+
+        /// <summary>
+        /// Gets or sets the durable reason associated with the explicit next-generation retry decision.
+        /// </summary>
+        public string? NextInvocationGenerationDecisionReason { get; set; }
+
+        /// <summary>
         /// Gets or sets the exact child execution identifier allocated after durable delegation approval.
         /// </summary>
         public string? ChildExecutionId { get; set; }
@@ -189,6 +209,16 @@ namespace Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations
         /// Gets or sets the UTC timestamp at which the parent durably demonstrated resumed progress.
         /// </summary>
         public DateTimeOffset? ParentResumedAtUtc { get; set; }
+
+        /// <summary>
+        /// Gets or sets the UTC timestamp at which continuation was durably suppressed for a terminal parent.
+        /// </summary>
+        public DateTimeOffset? ParentContinuationSuppressedAtUtc { get; set; }
+
+        /// <summary>
+        /// Gets or sets the durable reason why parent continuation was suppressed.
+        /// </summary>
+        public string? ParentContinuationSuppressionReason { get; set; }
 
         /// <summary>
         /// Creates the authoritative typed invocation identity represented by this relation.

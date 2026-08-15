@@ -1,14 +1,17 @@
 using System.Text;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Identity;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Delegation;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Resolvers;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Stores;
 using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.AI.Abstractions.AI.Policies;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Identity;
 using Multiplexed.AI.Runtime.Execution.Payloads.Immutable;
 using Multiplexed.AI.Runtime.Execution.Payloads.Serialization;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 
 namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
 {
@@ -27,7 +30,9 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
         private const string DelegationPolicyBindingPayloadKind = "child-dag-delegation-policy-binding";
         private const string DelegationPolicyDecisionPayloadKind = "child-dag-delegation-policy-decision";
         private const string ChildResultPayloadKind = "child-dag-result";
+        private const string InvocationPreparationPayloadKind = "child-dag-invocation-preparation";
         private const string ArtifactKeyPrefix = "immutable-sha256-";
+        private const string InvocationPreparationKeyPrefix = "child-invocation-preparation-";
 
         private readonly IAiPayloadStoreResolver payloadStoreResolver;
         private readonly AiImmutableJsonPayloadReader immutableJsonPayloadReader;
@@ -252,6 +257,171 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
                 ChildResultPayloadKind,
                 childExecutionId,
                 cancellationToken);
+        }
+
+        /// <summary>
+        /// Persists the complete immutable pre-relation preparation for one child invocation generation.
+        /// </summary>
+        /// <param name="identity">The authoritative typed child invocation identity.</param>
+        /// <param name="frozenDefinition">The already frozen declarative child DAG definition.</param>
+        /// <param name="frozenInvocationInput">The already frozen invocation input.</param>
+        /// <param name="executionContextSnapshot">The durable delegated execution context.</param>
+        /// <param name="delegatedMetadata">Adapter-neutral metadata delegated to the child run.</param>
+        /// <param name="delegationPolicyBindingSnapshot">The already frozen delegation policy binding.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The exact immutable preparation manifest persisted for the typed invocation.</returns>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when the configured payload store cannot provide immutable exact-key writes or when an existing
+        /// preparation under the same deterministic identity key contains conflicting content.
+        /// </exception>
+        public async Task<AiChildInvocationPreparationSnapshot> FreezeInvocationPreparationAsync(
+            AiChildInvocationIdentity identity,
+            AiStoredPayload frozenDefinition,
+            AiStoredPayload frozenInvocationInput,
+            ExecutionContextSnapshot executionContextSnapshot,
+            IReadOnlyDictionary<string, string> delegatedMetadata,
+            AiStoredPayload delegationPolicyBindingSnapshot,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(identity);
+            ArgumentNullException.ThrowIfNull(frozenDefinition);
+            ArgumentNullException.ThrowIfNull(frozenInvocationInput);
+            ArgumentNullException.ThrowIfNull(executionContextSnapshot);
+            ArgumentNullException.ThrowIfNull(delegatedMetadata);
+            ArgumentNullException.ThrowIfNull(delegationPolicyBindingSnapshot);
+
+            var childInvocationKey = AiChildInvocationKeyFactory.Create(identity);
+            var preparation = new AiChildInvocationPreparationSnapshot
+            {
+                Identity = identity,
+                ChildInvocationKey = childInvocationKey,
+                FrozenChildDagDefinition = frozenDefinition,
+                FrozenInvocationInput = frozenInvocationInput,
+                DelegatedExecutionContextSnapshot = executionContextSnapshot,
+                DelegatedMetadata = new Dictionary<string, string>(delegatedMetadata, StringComparer.Ordinal),
+                DelegationPolicyBindingSnapshot = delegationPolicyBindingSnapshot
+            };
+            var canonicalJson = AiCanonicalJson.Serialize(preparation);
+            var key = CreateInvocationPreparationKey(childInvocationKey);
+            var payloadStore = this.payloadStoreResolver.Resolve();
+
+            if (payloadStore is not IAiImmutablePayloadStore immutablePayloadStore)
+            {
+                throw new InvalidOperationException(
+                    $"Configured payload store '{payloadStore.GetType().Name}' does not support immutable exact-key writes required by child DAG preparation recovery.");
+            }
+
+            await immutablePayloadStore
+                .SaveImmutableAsync(
+                    key,
+                    canonicalJson,
+                    new AiPayloadMetadata
+                    {
+                        Kind = InvocationPreparationPayloadKind,
+                        ExecutionId = identity.ParentExecutionId,
+                        StepName = identity.ParentCallSiteId,
+                        ContentType = JsonContentType,
+                        Reason = "deterministic-child-dag-pre-relation-preparation"
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            var persisted = await payloadStore
+                .LoadAsync(key, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (persisted is null ||
+                !string.Equals(
+                    AiCanonicalJson.Canonicalize(persisted),
+                    canonicalJson,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Child DAG invocation preparation '{key}' was not durably verified after persistence.");
+            }
+
+            return preparation;
+        }
+
+        /// <summary>
+        /// Loads a previously persisted pre-relation preparation for one exact typed child invocation identity.
+        /// </summary>
+        /// <param name="identity">The typed invocation identity used to derive the deterministic preparation key.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The verified preparation when present; otherwise <see langword="null"/>.</returns>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when the persisted preparation does not match the requested typed identity or contains invalid
+        /// immutable snapshot references.
+        /// </exception>
+        public async Task<AiChildInvocationPreparationSnapshot?> TryLoadInvocationPreparationAsync(
+            AiChildInvocationIdentity identity,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(identity);
+
+            var childInvocationKey = AiChildInvocationKeyFactory.Create(identity);
+            var key = CreateInvocationPreparationKey(childInvocationKey);
+            var payloadStore = this.payloadStoreResolver.Resolve();
+            var persisted = await payloadStore
+                .LoadAsync(key, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (persisted is null)
+            {
+                return null;
+            }
+
+            var canonicalJson = AiCanonicalJson.Canonicalize(persisted);
+            var preparation = AiCanonicalJson.Deserialize<AiChildInvocationPreparationSnapshot>(canonicalJson);
+            EnsurePreparationMatches(identity, childInvocationKey, preparation);
+
+            await LoadDefinitionAsync(preparation.FrozenChildDagDefinition, cancellationToken).ConfigureAwait(false);
+            await LoadAndVerifyAsync(preparation.FrozenInvocationInput, cancellationToken).ConfigureAwait(false);
+            await LoadDelegationPolicyBindingAsync(preparation.DelegationPolicyBindingSnapshot, cancellationToken).ConfigureAwait(false);
+
+            return preparation;
+        }
+
+        /// <summary>
+        /// Creates the deterministic pre-relation preparation payload key for one logical child invocation generation.
+        /// </summary>
+        /// <param name="childInvocationKey">The deterministic child invocation key.</param>
+        /// <returns>The exact immutable payload-store key.</returns>
+        private static string CreateInvocationPreparationKey(string childInvocationKey)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(childInvocationKey);
+            return string.Concat(InvocationPreparationKeyPrefix, childInvocationKey);
+        }
+
+        /// <summary>
+        /// Validates that a persisted preparation is an exact match for the requested typed invocation identity.
+        /// </summary>
+        /// <param name="identity">The requested typed identity.</param>
+        /// <param name="childInvocationKey">The deterministic key derived from the requested identity.</param>
+        /// <param name="preparation">The persisted preparation to validate.</param>
+        private static void EnsurePreparationMatches(
+            AiChildInvocationIdentity identity,
+            string childInvocationKey,
+            AiChildInvocationPreparationSnapshot preparation)
+        {
+            ArgumentNullException.ThrowIfNull(preparation);
+
+            if (!Equals(preparation.Identity, identity) ||
+                !string.Equals(preparation.ChildInvocationKey, childInvocationKey, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Persisted child DAG invocation preparation '{childInvocationKey}' does not match the requested typed identity.");
+            }
+
+            if (preparation.DelegatedExecutionContextSnapshot is null ||
+                !string.Equals(
+                    preparation.DelegatedExecutionContextSnapshot.TenantId,
+                    identity.TenantId,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Persisted child DAG invocation preparation '{childInvocationKey}' does not preserve the authoritative tenant context.");
+            }
         }
 
         /// <summary>

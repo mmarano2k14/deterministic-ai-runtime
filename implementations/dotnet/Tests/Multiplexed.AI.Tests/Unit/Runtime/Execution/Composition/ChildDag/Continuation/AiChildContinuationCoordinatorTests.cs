@@ -1,5 +1,6 @@
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Completion;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation;
 using Multiplexed.AI.Stores.Memory;
 using Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Support;
@@ -144,6 +145,122 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Conti
             Assert.Equal(AiChildContinuationStatus.Resumed, resumed.ContinuationStatus);
             Assert.NotNull(resumed.ParentResumedAtUtc);
             Assert.Empty(controller.Requests);
+        }
+
+        [Fact]
+        public async Task Terminal_Parent_Should_Allow_Child_To_Finish_Durably_But_Suppress_Continuation()
+        {
+            var executionStore = new MemoryAiExecutionStore();
+            await executionStore.CreateAsync(
+                ChildDagCompositionTestData.CreateParentRecord(AiExecutionStatus.Cancelled),
+                ChildDagCompositionTestData.CreateParentState(AiStepExecutionStatus.WaitingForExternal));
+            await executionStore.CreateAsync(
+                ChildDagCompositionTestData.CreateChildRecord(AiExecutionStatus.Completed),
+                ChildDagCompositionTestData.CreateChildState("orphan-result"));
+
+            var relation = ChildDagCompositionTestData.CreateRelation(AiChildExecutionRelationStatus.Waiting);
+            var relationStore = new InMemoryAiChildExecutionRelationStore(relation);
+            var engineServices = new TestAiDagExecutionEngineServices(executionStore);
+            var completionCoordinator = new AiChildExecutionCompletionCoordinator(
+                relationStore,
+                engineServices,
+                ChildDagCompositionTestData.CreateSnapshotService());
+            var controller = new CapturingSharedRuntimeController();
+            var continuationCoordinator = new AiChildContinuationCoordinator(
+                relationStore,
+                engineServices,
+                new AiChildContinuationScheduler(controller));
+
+            var completed = await completionCoordinator.CompleteIfTerminalAsync(
+                ChildDagCompositionTestData.ChildExecutionId);
+            Assert.NotNull(completed);
+            Assert.Equal(AiChildExecutionRelationStatus.Completed, completed!.Status);
+            Assert.Equal(AiChildContinuationStatus.Pending, completed.ContinuationStatus);
+            Assert.NotNull(completed.ChildResult);
+
+            var suppressed = await continuationCoordinator.EnqueueContinuationAsync(
+                completed.ToInvocationIdentity());
+
+            Assert.Equal(AiChildContinuationStatus.Suppressed, suppressed.ContinuationStatus);
+            Assert.NotNull(suppressed.ChildResult);
+            Assert.NotNull(suppressed.ParentContinuationSuppressedAtUtc);
+            Assert.Empty(controller.Requests);
+        }
+
+        [Fact]
+        public async Task EnqueueContinuationAsync_Should_Suppress_Pending_Continuation_When_Parent_Is_Cancelled()
+        {
+            var executionStore = new MemoryAiExecutionStore();
+            await executionStore.CreateAsync(
+                ChildDagCompositionTestData.CreateParentRecord(AiExecutionStatus.Cancelled),
+                ChildDagCompositionTestData.CreateParentState(AiStepExecutionStatus.WaitingForExternal));
+
+            var relation = ChildDagCompositionTestData.CreateRelation(
+                AiChildExecutionRelationStatus.Completed,
+                AiChildContinuationStatus.Pending);
+            var relationStore = new InMemoryAiChildExecutionRelationStore(relation);
+            var controller = new CapturingSharedRuntimeController();
+            var coordinator = CreateCoordinator(executionStore, relationStore, controller);
+
+            var suppressed = await coordinator.EnqueueContinuationAsync(relation.ToInvocationIdentity());
+
+            Assert.Equal(AiChildContinuationStatus.Suppressed, suppressed.ContinuationStatus);
+            Assert.NotNull(suppressed.ParentContinuationSuppressedAtUtc);
+            Assert.Contains("Cancelled", suppressed.ParentContinuationSuppressionReason!, StringComparison.Ordinal);
+            Assert.Null(suppressed.ParentResumedAtUtc);
+            Assert.Empty(controller.Requests);
+            Assert.Empty(await relationStore.ListContinuationCandidatesAsync(10));
+        }
+
+        [Fact]
+        public async Task ReconcileScheduledAsync_Should_Suppress_When_Parent_Became_Terminal_Without_Continuation_Progress()
+        {
+            var executionStore = new MemoryAiExecutionStore();
+            var relation = ChildDagCompositionTestData.CreateRelation(
+                AiChildExecutionRelationStatus.Completed,
+                AiChildContinuationStatus.Scheduled);
+            await executionStore.CreateAsync(
+                ChildDagCompositionTestData.CreateParentRecord(AiExecutionStatus.Failed),
+                ChildDagCompositionTestData.CreateParentState(
+                    AiStepExecutionStatus.WaitingForExternal,
+                    version: relation.ParentContinuationScheduledStepVersion!.Value));
+            var relationStore = new InMemoryAiChildExecutionRelationStore(relation);
+            var controller = new CapturingSharedRuntimeController();
+            var coordinator = CreateCoordinator(executionStore, relationStore, controller);
+
+            var suppressed = await coordinator.ReconcileScheduledAsync(relation);
+
+            Assert.Equal(AiChildContinuationStatus.Suppressed, suppressed.ContinuationStatus);
+            Assert.NotNull(suppressed.ParentContinuationSuppressedAtUtc);
+            Assert.Contains("Failed", suppressed.ParentContinuationSuppressionReason!, StringComparison.Ordinal);
+            Assert.NotNull(suppressed.ParentContinuationScheduledAtUtc);
+            Assert.NotNull(suppressed.ParentContinuationScheduledStepVersion);
+            Assert.Null(suppressed.ParentResumedAtUtc);
+            Assert.Empty(controller.Requests);
+        }
+
+        [Fact]
+        public async Task EnqueueContinuationAsync_Should_Treat_Failed_Child_As_Normal_Terminal_Outcome_For_Live_Parent()
+        {
+            var executionStore = new MemoryAiExecutionStore();
+            await executionStore.CreateAsync(
+                ChildDagCompositionTestData.CreateParentRecord(AiExecutionStatus.Waiting),
+                ChildDagCompositionTestData.CreateParentState(AiStepExecutionStatus.WaitingForExternal));
+
+            var relation = ChildDagCompositionTestData.CreateRelation(
+                AiChildExecutionRelationStatus.Completed,
+                AiChildContinuationStatus.Pending,
+                childFailureReason: "child internal policy denied execution");
+            var relationStore = new InMemoryAiChildExecutionRelationStore(relation);
+            var controller = new CapturingSharedRuntimeController();
+            var coordinator = CreateCoordinator(executionStore, relationStore, controller);
+
+            var scheduled = await coordinator.EnqueueContinuationAsync(relation.ToInvocationIdentity());
+
+            Assert.Equal(AiChildContinuationStatus.Scheduled, scheduled.ContinuationStatus);
+            Assert.Equal("child internal policy denied execution", scheduled.ChildFailureReason);
+            Assert.Null(scheduled.ParentContinuationSuppressedAtUtc);
+            Assert.Single(controller.Requests);
         }
 
         private static AiChildContinuationCoordinator CreateCoordinator(

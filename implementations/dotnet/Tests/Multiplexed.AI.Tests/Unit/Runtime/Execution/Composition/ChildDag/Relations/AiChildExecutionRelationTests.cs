@@ -25,6 +25,11 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Relat
             Assert.Null(relation.ChildExecutionId);
             Assert.Null(relation.ChildResult);
             Assert.Null(relation.ChildFailureReason);
+            Assert.Null(relation.NextInvocationGeneration);
+            Assert.Null(relation.NextInvocationGenerationDecidedAtUtc);
+            Assert.Null(relation.NextInvocationGenerationDecisionReason);
+            Assert.Null(relation.ParentContinuationSuppressedAtUtc);
+            Assert.Null(relation.ParentContinuationSuppressionReason);
         }
 
         /// <summary>

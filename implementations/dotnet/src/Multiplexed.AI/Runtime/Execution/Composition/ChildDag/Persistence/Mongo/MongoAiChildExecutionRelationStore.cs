@@ -288,6 +288,44 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             return result.ModifiedCount == 1;
         }
 
+        /// <inheritdoc />
+        public async Task<bool> TryCommitNextInvocationGenerationAsync(
+            AiChildExecutionRelation relation,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(relation);
+            ValidateDurableRelation(relation);
+
+            if (!relation.NextInvocationGeneration.HasValue)
+            {
+                throw new ArgumentException(
+                    "Next-generation compare-and-swap requires a durable next invocation generation decision.",
+                    nameof(relation));
+            }
+
+            await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
+
+            var filters = Builders<MongoAiChildExecutionRelationDocument>.Filter;
+            var filter = filters.And(
+                BuildIdentityFilter(relation.ToInvocationIdentity()),
+                filters.Eq(item => item.Relation.Status, relation.Status),
+                filters.Eq(item => item.Relation.ContinuationStatus, relation.ContinuationStatus),
+                filters.Eq(item => item.Relation.NextInvocationGeneration, null));
+
+            var update = Builders<MongoAiChildExecutionRelationDocument>.Update
+                .Set(item => item.Relation, relation);
+
+            var result = await this.collection
+                .UpdateOneAsync(
+                    filter,
+                    update,
+                    new UpdateOptions { IsUpsert = false },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return result.ModifiedCount == 1;
+        }
+
         /// <summary>
         /// Builds the MongoDB filter for the authoritative typed invocation identity tuple.
         /// </summary>
@@ -324,10 +362,15 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             if (relation.ContinuationStatus != AiChildContinuationStatus.None ||
                 relation.ChildExecutionId is not null ||
                 relation.ChildResult is not null ||
-                relation.ChildFailureReason is not null)
+                relation.ChildFailureReason is not null ||
+                relation.NextInvocationGeneration is not null ||
+                relation.NextInvocationGenerationDecidedAtUtc is not null ||
+                relation.NextInvocationGenerationDecisionReason is not null ||
+                relation.ParentContinuationSuppressedAtUtc is not null ||
+                relation.ParentContinuationSuppressionReason is not null)
             {
                 throw new InvalidOperationException(
-                    "A newly created child execution relation cannot contain child allocation, child outcome, or continuation state.");
+                    "A newly created child execution relation cannot contain child allocation, child outcome, continuation, or next-generation decision state.");
             }
         }
 
@@ -353,6 +396,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             ValidateDelegationDecisionState(relation);
             ValidateChildAllocationState(relation);
             ValidateCompletionAndContinuationState(relation);
+            ValidateNextInvocationGenerationState(relation);
 
             if (relation.CreatedAtUtc == default)
             {
@@ -449,7 +493,9 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                     relation.ContinuationStatus != AiChildContinuationStatus.None ||
                     relation.ParentContinuationScheduledAtUtc is not null ||
                     relation.ParentContinuationScheduledStepVersion is not null ||
-                    relation.ParentResumedAtUtc is not null)
+                    relation.ParentResumedAtUtc is not null ||
+                    relation.ParentContinuationSuppressedAtUtc is not null ||
+                    relation.ParentContinuationSuppressionReason is not null)
                 {
                     throw new InvalidOperationException(
                         "A non-completed child relation cannot contain authoritative child outcome or parent continuation state.");
@@ -471,7 +517,9 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                 case AiChildContinuationStatus.Pending:
                     if (relation.ParentContinuationScheduledAtUtc is not null ||
                         relation.ParentContinuationScheduledStepVersion is not null ||
-                        relation.ParentResumedAtUtc is not null)
+                        relation.ParentResumedAtUtc is not null ||
+                        relation.ParentContinuationSuppressedAtUtc is not null ||
+                        relation.ParentContinuationSuppressionReason is not null)
                     {
                         throw new InvalidOperationException(
                             "A pending child continuation cannot contain scheduled or resumed timestamps.");
@@ -483,7 +531,9 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                     if (relation.ParentContinuationScheduledAtUtc is null ||
                         relation.ParentContinuationScheduledStepVersion is null ||
                         relation.ParentContinuationScheduledStepVersion < 0 ||
-                        relation.ParentResumedAtUtc is not null)
+                        relation.ParentResumedAtUtc is not null ||
+                        relation.ParentContinuationSuppressedAtUtc is not null ||
+                        relation.ParentContinuationSuppressionReason is not null)
                     {
                         throw new InvalidOperationException(
                             "A scheduled child continuation requires a scheduling timestamp, a non-negative scheduling step version, and no resumed timestamp.");
@@ -495,17 +545,89 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                     if (relation.ParentContinuationScheduledAtUtc is null ||
                         relation.ParentContinuationScheduledStepVersion is null ||
                         relation.ParentContinuationScheduledStepVersion < 0 ||
-                        relation.ParentResumedAtUtc is null)
+                        relation.ParentResumedAtUtc is null ||
+                        relation.ParentContinuationSuppressedAtUtc is not null ||
+                        relation.ParentContinuationSuppressionReason is not null)
                     {
                         throw new InvalidOperationException(
-                            "A resumed child continuation requires a scheduling timestamp, a non-negative scheduling step version, and a resumed timestamp.");
+                            "A resumed child continuation requires a scheduling timestamp, a non-negative scheduling step version, a resumed timestamp, and no suppression state.");
+                    }
+
+                    break;
+
+                case AiChildContinuationStatus.Suppressed:
+                    if (relation.ParentResumedAtUtc is not null ||
+                        relation.ParentContinuationSuppressedAtUtc is null ||
+                        string.IsNullOrWhiteSpace(relation.ParentContinuationSuppressionReason))
+                    {
+                        throw new InvalidOperationException(
+                            "A suppressed child continuation requires a suppression timestamp and reason and cannot contain a resumed timestamp.");
+                    }
+
+                    if ((relation.ParentContinuationScheduledAtUtc is null) !=
+                        (relation.ParentContinuationScheduledStepVersion is null))
+                    {
+                        throw new InvalidOperationException(
+                            "A suppressed continuation must preserve either both scheduling fields or neither scheduling field.");
+                    }
+
+                    if (relation.ParentContinuationScheduledStepVersion.HasValue &&
+                        relation.ParentContinuationScheduledStepVersion.Value < 0)
+                    {
+                        throw new InvalidOperationException(
+                            "A suppressed continuation cannot preserve a negative scheduling step version.");
                     }
 
                     break;
 
                 default:
                     throw new InvalidOperationException(
-                        "A completed child relation must enter Pending, Scheduled, or Resumed continuation state.");
+                        "A completed child relation must enter Pending, Scheduled, Resumed, or Suppressed continuation state.");
+            }
+        }
+
+        /// <summary>
+        /// Validates the explicit next-generation retry decision carried by a terminal relation.
+        /// </summary>
+        /// <param name="relation">The relation to validate.</param>
+        private static void ValidateNextInvocationGenerationState(AiChildExecutionRelation relation)
+        {
+            if (!relation.NextInvocationGeneration.HasValue)
+            {
+                if (relation.NextInvocationGenerationDecidedAtUtc is not null ||
+                    relation.NextInvocationGenerationDecisionReason is not null)
+                {
+                    throw new InvalidOperationException(
+                        "A child relation without a next invocation generation cannot contain generation decision metadata.");
+                }
+
+                return;
+            }
+
+            if (relation.InvocationGeneration == int.MaxValue ||
+                relation.NextInvocationGeneration.Value != relation.InvocationGeneration + 1)
+            {
+                throw new InvalidOperationException(
+                    "A durable child retry decision must advance exactly one invocation generation.");
+            }
+
+            if (relation.NextInvocationGenerationDecidedAtUtc is null ||
+                string.IsNullOrWhiteSpace(relation.NextInvocationGenerationDecisionReason))
+            {
+                throw new InvalidOperationException(
+                    "A durable next-generation retry decision requires a timestamp and reason.");
+            }
+
+            var deniedDelegation = relation.Status == AiChildExecutionRelationStatus.DelegationDenied;
+            var failedCompletedChild =
+                relation.Status == AiChildExecutionRelationStatus.Completed &&
+                !string.IsNullOrWhiteSpace(relation.ChildFailureReason) &&
+                relation.ContinuationStatus == AiChildContinuationStatus.Resumed;
+
+            if (!deniedDelegation && !failedCompletedChild)
+            {
+                throw new InvalidOperationException(
+                    "A next invocation generation may be committed only after durable delegation denial or after the parent resumed from a failed child outcome.");
             }
         }
 
