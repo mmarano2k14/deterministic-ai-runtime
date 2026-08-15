@@ -187,6 +187,66 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         }
 
         /// <summary>
+        /// Verifies that Redis atomically parks an owned running step without consuming retry or recovery budget.
+        /// </summary>
+        [RedisFact]
+        public async Task TryParkStepAsync_Should_Commit_WaitingForExternal_And_Clear_Claim_Without_Counters()
+        {
+            await using var host = await CreateHostAsync("dag-parallel-basic.json");
+            var created = await host.Engine.CreateAsync("dag-parallel-basic", "Marco");
+
+            try
+            {
+                var dagStore = host.ServiceProvider.GetRequiredService<IAiDagExecutionStore>();
+                var claimed = await dagStore.TryClaimNextReadyStepAsync(
+                    created.ExecutionId,
+                    "park-worker");
+
+                Assert.NotNull(claimed);
+
+                var claimedState = await dagStore.GetStateAsync(created.ExecutionId);
+                Assert.NotNull(claimedState);
+                var before = claimedState!.Steps[claimed!.StepName];
+                Assert.Equal(AiStepExecutionStatus.Running, before.Status);
+
+                var retryCount = before.RetryState?.RetryCount ?? 0;
+                var recoveryCount = before.RecoveryCount;
+
+                var parked = await dagStore.TryParkStepAsync(
+                    created.ExecutionId,
+                    claimed.StepName,
+                    claimed.ClaimToken);
+
+                Assert.True(parked);
+
+                var parkedState = await dagStore.GetStateAsync(created.ExecutionId);
+                Assert.NotNull(parkedState);
+                var step = parkedState!.Steps[claimed.StepName];
+
+                Assert.Equal(AiStepExecutionStatus.WaitingForExternal, step.Status);
+                Assert.Null(step.ClaimedBy);
+                Assert.Null(step.ClaimToken);
+                Assert.Null(step.ClaimedAtUtc);
+                Assert.Null(step.LeaseExpiresAtUtc);
+                Assert.Equal(retryCount, step.RetryState?.RetryCount ?? 0);
+                Assert.Equal(recoveryCount, step.RecoveryCount);
+                Assert.Null(step.CompletedAtUtc);
+                Assert.False(step.IsTerminal);
+
+                var duplicatePark = await dagStore.TryParkStepAsync(
+                    created.ExecutionId,
+                    claimed.StepName,
+                    claimed.ClaimToken);
+
+                Assert.False(duplicatePark);
+            }
+            finally
+            {
+                await CleanupDagExecutionAsync(created.ExecutionId);
+            }
+        }
+
+        /// <summary>
         /// Verifies that ExecuteNext executes the root step first.
         /// </summary>
         [RedisFact]

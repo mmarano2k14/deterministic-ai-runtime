@@ -14,13 +14,14 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
     /// <para>
     /// This group coordinates multiple runtime instance workers against the same
     /// existing execution identifier. It starts all supplied workers, returns the first
-    /// terminal execution record, and cancels the remaining workers.
+    /// terminal or durably waiting execution record, and cancels the remaining workers.
     /// </para>
     /// <para>
     /// Before returning a terminal result, the group gives the worker that observed
     /// terminal execution one final non-cancelled execution pass. This allows terminal
     /// lifecycle work such as finalization, cleanup coordination, retention completion,
-    /// and snapshot persistence to complete before the group returns.
+    /// and snapshot persistence to complete before the group returns. A durable waiting
+    /// result is non-terminal and therefore bypasses terminal finalization.
     /// </para>
     /// <para>
     /// The group does not create executions, does not select pipelines, and must not be
@@ -95,7 +96,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
         /// <summary>
         /// Runs the supplied workers against the same existing execution identifier
-        /// and returns the first fully finalized terminal result observed by any worker.
+        /// and returns the first terminal or durably waiting result observed by any worker.
         /// </summary>
         /// <param name="executionId">
         /// The existing execution identifier to advance. This identifier must belong
@@ -108,7 +109,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         /// The cancellation token.
         /// </param>
         /// <returns>
-        /// The finalized terminal execution record observed by the winning worker.
+        /// The terminal or durably waiting execution record observed by the winning worker.
         /// </returns>
         private async Task<AiExecutionRecord> RunWorkerGroupInternalAsync(
             string executionId,
@@ -160,10 +161,23 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
                         return finalized;
                     }
+
+                    if (result.Status == AiExecutionStatus.Waiting)
+                    {
+                        _logger.Engine.LogInformation(
+                            $"[AI WORKER GROUP] Durable execution suspension observed. ExecutionId='{executionId}'.");
+
+                        await linkedCancellation.CancelAsync().ConfigureAwait(false);
+
+                        await ObserveRemainingWorkersAsync(
+                            workerTasks.Select(item => item.Task).ToList()).ConfigureAwait(false);
+
+                        return result;
+                    }
                 }
 
                 throw new InvalidOperationException(
-                    $"Runtime instance worker group completed without observing a terminal execution. ExecutionId='{executionId}'.");
+                    $"Runtime instance worker group completed without observing a terminal or durably waiting execution. ExecutionId='{executionId}'.");
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

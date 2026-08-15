@@ -591,6 +591,15 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             }
 
             /// <inheritdoc />
+            public Task<bool> TryParkStepAsync(
+                string executionId,
+                string stepName,
+                string claimToken,
+                CancellationToken cancellationToken = default)
+            {
+                return Task.FromResult(true);
+            }
+
             public Task<bool> TryFailStepAsync(
                 string executionId,
                 string stepName,

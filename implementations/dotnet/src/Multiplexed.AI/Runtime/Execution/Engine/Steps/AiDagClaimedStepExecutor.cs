@@ -167,9 +167,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 stepContext,
                                 cancellationToken).ConfigureAwait(false);
 
-                            await _services.PayloadCompactor.CompactAsync(
-                                result,
-                                cancellationToken).ConfigureAwait(false);
+                            if (result.EffectiveOutcome != AiStepExecutionOutcome.Park)
+                            {
+                                await _services.PayloadCompactor.CompactAsync(
+                                    result,
+                                    cancellationToken).ConfigureAwait(false);
+                            }
 
                             return result;
                         }).ConfigureAwait(false);
@@ -184,15 +187,24 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             claimedStep.ClaimToken,
                             concurrencyContext,
                             AiDecisionLedgerCategory.Step,
-                            result.Success
-                                ? AiDecisionLedgerEvents.Step.Completed
-                                : AiDecisionLedgerEvents.Step.Failed,
-                            result.Success
-                                ? AiDecisionLedgerOutcome.Completed
-                                : AiDecisionLedgerOutcome.Failed,
-                            result.Success
-                                ? "Step execution completed."
-                                : result.Error ?? "Step execution failed.",
+                            result.EffectiveOutcome switch
+                            {
+                                AiStepExecutionOutcome.Park => AiDecisionLedgerEvents.Step.Parked,
+                                AiStepExecutionOutcome.Complete => AiDecisionLedgerEvents.Step.Completed,
+                                _ => AiDecisionLedgerEvents.Step.Failed
+                            },
+                            result.EffectiveOutcome switch
+                            {
+                                AiStepExecutionOutcome.Park => AiDecisionLedgerOutcome.Applied,
+                                AiStepExecutionOutcome.Complete => AiDecisionLedgerOutcome.Completed,
+                                _ => AiDecisionLedgerOutcome.Failed
+                            },
+                            result.EffectiveOutcome switch
+                            {
+                                AiStepExecutionOutcome.Park => "Step execution requested durable external suspension.",
+                                AiStepExecutionOutcome.Complete => "Step execution completed.",
+                                _ => result.Error ?? "Step execution failed."
+                            },
                             new Dictionary<string, string>
                             {
                                 ["pipeline.name"] = resolvedPipeline.Name ?? string.Empty,

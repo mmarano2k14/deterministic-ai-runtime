@@ -62,6 +62,7 @@ namespace Multiplexed.Abstractions.AI.Execution
         /// Typical lifecycle:
         /// None -> Ready -> Running -> Completed
         ///                      -> WaitingForRetry -> Ready -> Running
+        ///                      -> WaitingForExternal
         ///                      -> Failed
         /// </summary>
         public AiStepExecutionStatus Status { get; set; } = AiStepExecutionStatus.None;
@@ -626,6 +627,34 @@ namespace Multiplexed.Abstractions.AI.Execution
         }
 
         /// <summary>
+        /// Parks the currently running step while it waits for an external durable condition.
+        /// </summary>
+        /// <remarks>
+        /// This transition is a normal voluntary suspension, not a retry or infrastructure
+        /// recovery. It clears the current distributed claim while preserving retry counters,
+        /// recovery count, terminal timestamps, result, and failure state.
+        /// </remarks>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when the step is not currently <see cref="AiStepExecutionStatus.Running"/>.
+        /// </exception>
+        public void MarkWaitingForExternal()
+        {
+            if (Status != AiStepExecutionStatus.Running)
+            {
+                throw new InvalidOperationException(
+                    $"Step '{StepName}' cannot enter WaitingForExternal from status '{Status}'.");
+            }
+
+            Status = AiStepExecutionStatus.WaitingForExternal;
+            ClaimedBy = null;
+            ClaimToken = null;
+            ClaimedAtUtc = null;
+            LeaseExpiresAtUtc = null;
+            UpdatedAtUtc = DateTime.UtcNow;
+            Version++;
+        }
+
+        /// <summary>
         /// Requeues a timed-out running step back to Ready.
         /// </summary>
         public void MarkRequeuedAfterTimeout()
@@ -738,6 +767,12 @@ namespace Multiplexed.Abstractions.AI.Execution
 
         [JsonIgnore]
         public bool IsWaitingForRetry => Status == AiStepExecutionStatus.WaitingForRetry;
+
+        /// <summary>
+        /// Gets a value indicating whether the step is durably suspended on an external condition.
+        /// </summary>
+        [JsonIgnore]
+        public bool IsWaitingForExternal => Status == AiStepExecutionStatus.WaitingForExternal;
 
         [JsonIgnore]
         public bool IsTerminal =>

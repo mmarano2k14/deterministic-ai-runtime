@@ -202,6 +202,9 @@ namespace Multiplexed.AI.Runtime.Execution.Convergence
                 step.RetryState.NextRetryAtUtc.HasValue &&
                 step.RetryState.NextRetryAtUtc.Value > utcNow);
 
+            var hasExternalWait = stepStates.Any(step =>
+                step.Status == AiStepExecutionStatus.WaitingForExternal);
+
             var hasRecoverableExpiredRunning = stepStates.Any(step =>
                 step.Status == AiStepExecutionStatus.Running &&
                 IsExpiredLease(step, utcNow));
@@ -237,6 +240,7 @@ namespace Multiplexed.AI.Runtime.Execution.Convergence
             }
 
             var canStillProgress =
+                hasExternalWait ||
                 hasFutureRetry ||
                 hasRecoverableExpiredRunning ||
                 hasRecoverablePendingWork;
@@ -311,6 +315,11 @@ namespace Multiplexed.AI.Runtime.Execution.Convergence
                 }
 
                 if (dependencyStep.Status == AiStepExecutionStatus.WaitingForRetry)
+                {
+                    continue;
+                }
+
+                if (dependencyStep.Status == AiStepExecutionStatus.WaitingForExternal)
                 {
                     continue;
                 }

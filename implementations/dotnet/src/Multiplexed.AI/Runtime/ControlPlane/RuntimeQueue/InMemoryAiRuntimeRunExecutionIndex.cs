@@ -26,6 +26,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
     {
         private const string StatusQueued = "queued";
         private const string StatusRunning = "running";
+        private const string StatusWaiting = "waiting";
         private const string StatusCompleted = "completed";
         private const string StatusFailed = "failed";
         private const string StatusCancelled = "cancelled";
@@ -157,6 +158,57 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                         existing.ExecutionContextSnapshot ??
                         TryResolveSnapshot(),
                     Metadata = existing.Metadata
+                });
+
+            return Task.CompletedTask;
+        }
+
+        /// <inheritdoc />
+        public Task MarkWaitingAsync(
+            string runId,
+            string executionId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var now = DateTimeOffset.UtcNow;
+
+            _entries.AddOrUpdate(
+                runId,
+                _ => new AiRuntimeRunExecutionIndexEntry
+                {
+                    RunId = runId,
+                    ExecutionId = executionId,
+                    Status = StatusWaiting,
+                    CreatedAtUtc = now,
+                    StartedAtUtc = now,
+                    ExecutionContextSnapshot = TryResolveSnapshot()
+                },
+                (_, existing) =>
+                {
+                    if (IsTerminal(existing))
+                    {
+                        return existing;
+                    }
+
+                    return new AiRuntimeRunExecutionIndexEntry
+                    {
+                        RunId = existing.RunId,
+                        ExecutionId = executionId,
+                        RuntimeInstanceId = existing.RuntimeInstanceId,
+                        Status = StatusWaiting,
+                        FailureReason = null,
+                        CreatedAtUtc = existing.CreatedAtUtc,
+                        StartedAtUtc = existing.StartedAtUtc ?? now,
+                        CompletedAtUtc = null,
+                        ExecutionContextSnapshot =
+                            existing.ExecutionContextSnapshot ??
+                            TryResolveSnapshot(),
+                        Metadata = existing.Metadata
+                    };
                 });
 
             return Task.CompletedTask;
@@ -464,6 +516,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
         {
             if (string.Equals(existing.Status, StatusCompleted, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(existing.Status, StatusFailed, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(existing.Status, StatusWaiting, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(existing.Status, StatusCancelled, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(existing.Status, StatusRequeuedForRecovery, StringComparison.OrdinalIgnoreCase))
             {
@@ -489,7 +542,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
         private static bool IsUnfinished(
             AiRuntimeRunExecutionIndexEntry entry)
         {
-            return !IsTerminal(entry);
+            return !IsTerminal(entry) &&
+                   !string.Equals(entry.Status, StatusWaiting, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -501,6 +555,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             AiRuntimeRunExecutionIndexEntry entry)
         {
             return !string.Equals(entry.Status, StatusCompleted, StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(entry.Status, StatusWaiting, StringComparison.OrdinalIgnoreCase) &&
                    !string.Equals(entry.Status, StatusCancelled, StringComparison.OrdinalIgnoreCase) &&
                    !string.Equals(entry.Status, StatusRequeuedForRecovery, StringComparison.OrdinalIgnoreCase);
         }

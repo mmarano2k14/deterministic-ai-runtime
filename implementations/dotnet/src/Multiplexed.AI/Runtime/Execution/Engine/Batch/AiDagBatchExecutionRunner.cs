@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Scheduling;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.Abstractions.AI.Pipeline;
+using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Runtime.AI.Concurrency;
 using Multiplexed.AI.Runtime.Execution.Convergence;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
@@ -23,7 +24,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
     /// This runner coordinates distributed batch execution for DAG-based AI pipelines.
     /// It loads the execution record, resolves the pipeline, claims a bounded number of
     /// ready DAG steps, executes them with bounded local parallelism, persists their
-    /// completion or failure transitions, and evaluates deterministic convergence.
+    /// completion, external-wait parking, or failure transitions, and evaluates deterministic convergence.
     /// </para>
     ///
     /// <para>
@@ -338,13 +339,34 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
                 var claimedStep = item.ClaimedStep;
                 var result = item.Result;
 
+                var shouldPark =
+                    result.EffectiveOutcome == AiStepExecutionOutcome.Park;
+
                 var shouldComplete =
+                    result.EffectiveOutcome == AiStepExecutionOutcome.Complete &&
                     result.Success &&
                     string.IsNullOrWhiteSpace(result.Error);
 
                 try
                 {
-                    if (shouldComplete)
+                    if (shouldPark)
+                    {
+                        var parked = await _engineServices.DagStore.TryParkStepAsync(
+                            executionId,
+                            claimedStep.StepName,
+                            claimedStep.ClaimToken,
+                            cancellationToken);
+
+                        if (!parked)
+                        {
+                            throw new InvalidOperationException(
+                                $"Failed to park claimed step '{claimedStep.StepName}' for execution '{executionId}'.");
+                        }
+
+                        _engineServices.Logger.Engine.LogInformation(
+                            $"[AI DAG BATCH] Step parked for external wait. ExecutionId='{executionId}', StepName='{claimedStep.StepName}'.");
+                    }
+                    else if (shouldComplete)
                     {
                         var completed = await _engineServices.DagStore.TryCompleteStepAsync(
                             executionId,

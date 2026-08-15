@@ -111,6 +111,18 @@ namespace Multiplexed.Abstractions.AI.Execution.Instance.Worker
         }
 
         /// <summary>
+        /// Marks the controller run as paused because its durable execution is waiting externally.
+        /// </summary>
+        /// <remarks>
+        /// Paused is non-terminal. The current processing attempt has returned its runtime
+        /// capacity, while the durable execution remains eligible for a future continuation.
+        /// </remarks>
+        public void MarkPaused()
+        {
+            Status = AiRuntimeWorkerRunStatus.Paused;
+        }
+
+        /// <summary>
         /// Marks the run as completed.
         /// </summary>
         public void MarkCompleted()
@@ -135,7 +147,8 @@ namespace Multiplexed.Abstractions.AI.Execution.Instance.Worker
         }
 
         /// <summary>
-        /// Gets the task completed when the submitted pipeline run reaches a terminal state.
+        /// Gets the task completed when the current controller processing attempt reaches
+        /// a terminal state or returns after durable suspension.
         /// </summary>
         public Task<AiExecutionRecord> Completion { get; }
 

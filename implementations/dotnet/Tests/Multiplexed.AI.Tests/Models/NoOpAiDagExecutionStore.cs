@@ -85,6 +85,15 @@ namespace Multiplexed.AI.Tests.Fakes
             return Task.FromResult(true);
         }
 
+        public Task<bool> TryParkStepAsync(
+            string executionId,
+            string stepName,
+            string claimToken,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(true);
+        }
+
         public Task<bool> TryFailStepAsync(
             string executionId,
             string stepName,

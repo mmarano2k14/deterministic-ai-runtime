@@ -70,6 +70,22 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Marks a runtime run as durably waiting after its execution voluntarily releases runtime capacity.
+        /// </summary>
+        /// <remarks>
+        /// Waiting is non-terminal, but it must not be reported as active runtime-owned work or selected by
+        /// runtime crash recovery. A future durable continuation is responsible for re-enqueueing the execution.
+        /// </remarks>
+        /// <param name="runId">The local runtime run identifier.</param>
+        /// <param name="executionId">The durable DAG execution identifier.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        /// <returns>A task that completes when the waiting state has been recorded.</returns>
+        Task MarkWaitingAsync(
+            string runId,
+            string executionId,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Marks a runtime run as completed and records the durable DAG execution identifier.
         /// </summary>
         /// <param name="runId">The local runtime run identifier.</param>
@@ -160,8 +176,8 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue
         /// to the current tenant context.
         /// </returns>
         /// <remarks>
-        /// Terminal entries such as completed, failed, cancelled, and requeued-for-recovery runs
-        /// must not be returned.
+        /// Terminal entries such as completed, failed, cancelled, and requeued-for-recovery runs,
+        /// as well as durably waiting runs that have released runtime ownership, must not be returned.
         ///
         /// Implementations must preserve tenant isolation when a tenant-scoped execution context
         /// is active.
@@ -182,8 +198,8 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue
         /// in-flight executions assigned to runtime instances that are no longer present
         /// in the runtime instance registry.
         ///
-        /// Terminal entries such as completed, failed, cancelled, and requeued-for-recovery runs
-        /// must not be returned.
+        /// Terminal entries such as completed, failed, cancelled, and requeued-for-recovery runs,
+        /// as well as durably waiting runs that have released runtime ownership, must not be returned.
         ///
         /// Implementations must preserve tenant isolation when a tenant-scoped execution context
         /// is active.
@@ -206,7 +222,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue
         /// Recoverable entries include unfinished entries and entries already marked as failed
         /// when they are still assigned to an unavailable runtime instance.
         ///
-        /// Completed, cancelled, and already requeued-for-recovery entries must not be returned.
+        /// Completed, cancelled, durably waiting, and already requeued-for-recovery entries must not be returned.
         ///
         /// Implementations must preserve tenant isolation when a tenant-scoped execution context
         /// is active.
@@ -228,7 +244,7 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue
         /// Recoverable entries include unfinished entries and entries already marked as failed
         /// when their runtime instance is no longer present in the runtime instance registry.
         ///
-        /// Completed, cancelled, and already requeued-for-recovery entries must not be returned.
+        /// Completed, cancelled, durably waiting, and already requeued-for-recovery entries must not be returned.
         ///
         /// Implementations must preserve tenant isolation when a tenant-scoped execution context
         /// is active.

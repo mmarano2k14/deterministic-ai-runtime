@@ -51,6 +51,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         private const string StatusRunning =
             "running";
 
+        private const string StatusWaiting =
+            "waiting";
+
         private const string StatusCompleted =
             "completed";
 
@@ -69,6 +72,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         };
 
         private const string MutationIgnoredRequeuedForRecovery = "ignored-requeued-for-recovery";
+        private const string MutationIgnoredTerminal = "ignored-terminal";
 
         private readonly IDatabase _database;
         private readonly RedisAiRuntimeRunExecutionIndexOptions _options;
@@ -303,6 +307,65 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 "started",
                 "start");
         }
+        /// <inheritdoc />
+        public async Task MarkWaitingAsync(
+            string runId,
+            string executionId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var controlPlaneId =
+                await ResolveControlPlaneIdAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (!await CanMutateAsync(
+                    controlPlaneId,
+                    runId,
+                    cancellationToken)
+                .ConfigureAwait(false))
+            {
+                return;
+            }
+
+            var result = await _scripts
+                .ExecuteMarkWaitingAsync(
+                    _database,
+                    new RedisKey[]
+                    {
+                        BuildItemKey(controlPlaneId, runId)
+                    },
+                    new RedisValue[]
+                    {
+                        executionId,
+                        FormatDate(DateTimeOffset.UtcNow)
+                    })
+                .ConfigureAwait(false);
+
+            var status = result.ToString();
+
+            if (string.Equals(
+                    status,
+                    MutationIgnoredRequeuedForRecovery,
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    status,
+                    MutationIgnoredTerminal,
+                    StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            EnsureMutationResult(
+                result,
+                runId,
+                StatusWaiting,
+                "wait");
+        }
+
         /// <inheritdoc />
         public async Task MarkCompletedAsync(
             string runId,
@@ -976,6 +1039,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             AiRuntimeRunExecutionIndexEntry entry)
         {
             return !string.Equals(entry.Status, StatusCompleted, StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(entry.Status, StatusWaiting, StringComparison.OrdinalIgnoreCase) &&
                    !string.Equals(entry.Status, StatusCancelled, StringComparison.OrdinalIgnoreCase) &&
                    !string.Equals(entry.Status, StatusRequeuedForRecovery, StringComparison.OrdinalIgnoreCase);
         }
@@ -1248,7 +1312,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         private static bool IsUnfinished(
             AiRuntimeRunExecutionIndexEntry entry)
         {
-            return !IsTerminal(entry);
+            return !IsTerminal(entry) &&
+                   !string.Equals(entry.Status, StatusWaiting, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

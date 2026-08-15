@@ -40,5 +40,15 @@
         /// its retry window becomes due.
         /// </summary>
         WaitingForRetry = 5,
+
+        /// <summary>
+        /// The step is durably suspended while waiting for an external condition.
+        /// </summary>
+        /// <remarks>
+        /// This state is neither a retry nor a failure. A step in this state is incomplete,
+        /// must not be claimed by normal DAG scheduling, and must be made eligible again only
+        /// by an explicit durable continuation transition.
+        /// </remarks>
+        WaitingForExternal = 6,
     }
 }

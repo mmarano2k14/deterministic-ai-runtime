@@ -63,6 +63,7 @@ namespace Multiplexed.AI.Tests.Runtime.Execution
         [InlineData(AiStepExecutionStatus.None)]
         [InlineData(AiStepExecutionStatus.Ready)]
         [InlineData(AiStepExecutionStatus.WaitingForRetry)]
+        [InlineData(AiStepExecutionStatus.WaitingForExternal)]
         [InlineData(AiStepExecutionStatus.Completed)]
         [InlineData(AiStepExecutionStatus.Failed)]
         public void MarkCompleted_Should_Throw_When_Step_Is_Not_Running(AiStepExecutionStatus invalidStatus)
@@ -82,6 +83,7 @@ namespace Multiplexed.AI.Tests.Runtime.Execution
         [Theory]
         [InlineData(AiStepExecutionStatus.None)]
         [InlineData(AiStepExecutionStatus.Ready)]
+        [InlineData(AiStepExecutionStatus.WaitingForExternal)]
         [InlineData(AiStepExecutionStatus.Completed)]
         [InlineData(AiStepExecutionStatus.Failed)]
         public void MarkFailed_Should_Throw_When_Step_Is_Not_Running_Or_WaitingForRetry(AiStepExecutionStatus invalidStatus)
@@ -102,6 +104,7 @@ namespace Multiplexed.AI.Tests.Runtime.Execution
         [InlineData(AiStepExecutionStatus.None)]
         [InlineData(AiStepExecutionStatus.Ready)]
         [InlineData(AiStepExecutionStatus.WaitingForRetry)]
+        [InlineData(AiStepExecutionStatus.WaitingForExternal)]
         [InlineData(AiStepExecutionStatus.Completed)]
         [InlineData(AiStepExecutionStatus.Failed)]
         public void MarkWaitingForRetry_Should_Throw_When_Step_Is_Not_Running(AiStepExecutionStatus invalidStatus)
@@ -136,12 +139,71 @@ namespace Multiplexed.AI.Tests.Runtime.Execution
         }
 
         /// <summary>
+        /// Ensures voluntary external suspension clears claim ownership without consuming retry or recovery budget.
+        /// </summary>
+        [Fact]
+        public void MarkWaitingForExternal_Should_Clear_Claim_Without_Changing_Retry_Recovery_Or_Terminal_State()
+        {
+            var step = CreateRunningStep();
+            step.RetryState = new AiStepRetryState
+            {
+                RetryCount = 2,
+                NextRetryAtUtc = DateTime.UtcNow.AddMinutes(1)
+            };
+            step.RecoveryCount = 3;
+            var retryCount = step.RetryState.RetryCount;
+            var nextRetryAtUtc = step.RetryState.NextRetryAtUtc;
+
+            step.MarkWaitingForExternal();
+
+            Assert.Equal(AiStepExecutionStatus.WaitingForExternal, step.Status);
+            Assert.True(step.IsWaitingForExternal);
+            Assert.Null(step.ClaimedBy);
+            Assert.Null(step.ClaimToken);
+            Assert.Null(step.ClaimedAtUtc);
+            Assert.Null(step.LeaseExpiresAtUtc);
+            Assert.Equal(retryCount, step.RetryState.RetryCount);
+            Assert.Equal(nextRetryAtUtc, step.RetryState.NextRetryAtUtc);
+            Assert.Equal(3, step.RecoveryCount);
+            Assert.Null(step.CompletedAtUtc);
+            Assert.Null(step.Duration);
+            Assert.False(step.IsTerminal);
+            Assert.False(step.IsSchedulable);
+        }
+
+        /// <summary>
+        /// Ensures voluntary external suspension is only legal from Running.
+        /// </summary>
+        [Theory]
+        [InlineData(AiStepExecutionStatus.None)]
+        [InlineData(AiStepExecutionStatus.Ready)]
+        [InlineData(AiStepExecutionStatus.WaitingForRetry)]
+        [InlineData(AiStepExecutionStatus.WaitingForExternal)]
+        [InlineData(AiStepExecutionStatus.Completed)]
+        [InlineData(AiStepExecutionStatus.Failed)]
+        public void MarkWaitingForExternal_Should_Throw_When_Step_Is_Not_Running(
+            AiStepExecutionStatus invalidStatus)
+        {
+            var step = CreateStep();
+            step.Status = invalidStatus;
+
+            var exception = Assert.Throws<InvalidOperationException>(
+                step.MarkWaitingForExternal);
+
+            Assert.Contains(
+                "WaitingForExternal",
+                exception.Message,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// Ensures timeout recovery is only legal from Running.
         /// </summary>
         [Theory]
         [InlineData(AiStepExecutionStatus.None)]
         [InlineData(AiStepExecutionStatus.Ready)]
         [InlineData(AiStepExecutionStatus.WaitingForRetry)]
+        [InlineData(AiStepExecutionStatus.WaitingForExternal)]
         [InlineData(AiStepExecutionStatus.Completed)]
         [InlineData(AiStepExecutionStatus.Failed)]
         public void MarkRequeuedAfterTimeout_Should_Throw_When_Step_Is_Not_Running(AiStepExecutionStatus invalidStatus)

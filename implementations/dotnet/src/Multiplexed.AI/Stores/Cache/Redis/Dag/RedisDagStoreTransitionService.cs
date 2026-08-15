@@ -12,7 +12,7 @@ using System.Text.Json;
 namespace Multiplexed.AI.Stores.Cache.Redis.Dag
 {
     /// <summary>
-    /// Handles Redis DAG step transition operations such as completion, failure, and execution finalization.
+    /// Handles Redis DAG step transition operations such as completion, parking, failure, and execution finalization.
     /// </summary>
     /// <remarks>
     /// This service owns transition-related Redis Lua execution paths.
@@ -22,6 +22,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
     {
         private readonly IRedisDagStoreServices _services;
         private LoadedLuaScript _completeLoadedScript;
+        private LoadedLuaScript _parkLoadedScript;
         private LoadedLuaScript _failLoadedScript;
         private LoadedLuaScript _finalizeLoadedScript;
         private LoadedLuaScript _retentionPatchLoadedScript;
@@ -37,6 +38,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             _services = services;
 
             _completeLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.CompletePreparedScript);
+            _parkLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.ParkPreparedScript);
             _failLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.FailPreparedScript);
             _finalizeLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.FinalizeScript);
             _retentionPatchLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.RetentionPatchPreparedScript);
@@ -104,6 +106,40 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                         resultJson,
                         inlinePayloadSizeBytes)
                     .ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// Parks a claimed step atomically while preserving normal retry and recovery accounting.
+        /// </summary>
+        /// <param name="executionId">The unique execution identifier.</param>
+        /// <param name="stepName">The step name to park.</param>
+        /// <param name="claimToken">The claim token that owns the running step.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when the park transition was accepted; otherwise <c>false</c>.</returns>
+        public async Task<bool> TryParkStepAsync(
+            string executionId,
+            string stepName,
+            string claimToken,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(stepName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(claimToken);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var stepKey = _services.KeyBuilder.GetDagStepKey(executionId, stepName);
+            var nowUnix = RedisDagStoreHelper.NowMs();
+
+            try
+            {
+                return await ExecuteParkAsync(stepKey, claimToken, nowUnix).ConfigureAwait(false);
+            }
+            catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
+            {
+                _parkLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.ParkPreparedScript);
+                return await ExecuteParkAsync(stepKey, claimToken, nowUnix).ConfigureAwait(false);
             }
         }
 
@@ -393,6 +429,30 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                     nowUnix = (RedisValue)nowUnix,
                     resultJson = (RedisValue)resultJson,
                     inlinePayloadSizeBytes = (RedisValue)inlinePayloadSizeBytes
+                });
+
+            return (int)result! == 1;
+        }
+
+        /// <summary>
+        /// Executes the prepared step park Lua script.
+        /// </summary>
+        /// <param name="stepKey">The Redis key of the step to park.</param>
+        /// <param name="claimToken">The claim token that owns the running step.</param>
+        /// <param name="nowUnix">The current UTC timestamp expressed in Unix milliseconds.</param>
+        /// <returns><c>true</c> when the park mutation succeeded; otherwise <c>false</c>.</returns>
+        private async Task<bool> ExecuteParkAsync(
+            string stepKey,
+            string claimToken,
+            long nowUnix)
+        {
+            var result = await _parkLoadedScript.EvaluateAsync(
+                _services.Database,
+                new
+                {
+                    stepKey = (RedisKey)stepKey,
+                    claimToken = (RedisValue)claimToken,
+                    nowUnix = (RedisValue)nowUnix
                 });
 
             return (int)result! == 1;

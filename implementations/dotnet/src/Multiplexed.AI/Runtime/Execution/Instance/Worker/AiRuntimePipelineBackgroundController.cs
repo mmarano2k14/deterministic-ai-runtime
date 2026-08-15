@@ -1556,6 +1556,17 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                                     cancellationToken)
                                 .ConfigureAwait(false);
                         }
+                        else if (final.Status == AiExecutionStatus.Waiting)
+                        {
+                            await RecordRecoveryForensicsEventAsync(
+                                    queuedRun,
+                                    AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCompleted,
+                                    "waiting",
+                                    "execution-recovery-converged-to-durable-waiting-state",
+                                    created.ExecutionId,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                        }
                         else
                         {
                             await RecordRecoveryForensicsEventAsync(
@@ -1569,7 +1580,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         }
                     }
 
-                    diagnosticPhase = "apply-terminal-status";
+                    diagnosticPhase = "apply-run-status";
 
                     if (final.Status == AiExecutionStatus.Completed)
                     {
@@ -1594,6 +1605,17 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                                 cancellationToken)
                             .ConfigureAwait(false);
                     }
+                    else if (final.Status == AiExecutionStatus.Waiting)
+                    {
+                        handle.MarkPaused();
+
+                        await _runExecutionIndex
+                            .MarkWaitingAsync(
+                                handle.RunId,
+                                created.ExecutionId,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                     else
                     {
                         handle.MarkFailed();
@@ -1607,28 +1629,52 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             .ConfigureAwait(false);
                     }
 
-                    diagnosticPhase = "record-terminal-ledger";
+                    if (final.IsTerminal)
+                    {
+                        diagnosticPhase = "record-terminal-ledger";
 
-                    await RecordRunTerminalLedgerAsync(
-                            handle.RunId,
-                            request.PipelineName,
-                            created.ExecutionId,
-                            final,
-                            cancellationToken)
-                        .ConfigureAwait(false);
+                        await RecordRunTerminalLedgerAsync(
+                                handle.RunId,
+                                request.PipelineName,
+                                created.ExecutionId,
+                                final,
+                                cancellationToken)
+                            .ConfigureAwait(false);
 
-                    diagnosticPhase = "invoke-run-finalized-hook";
+                        diagnosticPhase = "invoke-run-finalized-hook";
 
-                    await InvokeRunFinalizedAsync(
-                            queuedRun,
-                            final,
-                            cancellationToken)
-                        .ConfigureAwait(false);
+                        await InvokeRunFinalizedAsync(
+                                queuedRun,
+                                final,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    else if (final.Status == AiExecutionStatus.Waiting)
+                    {
+                        diagnosticPhase = "record-suspension-ledger";
+
+                        await RecordRunLedgerAsync(
+                                handle.RunId,
+                                request.PipelineName,
+                                AiDecisionLedgerEvents.Run.Suspended,
+                                AiDecisionLedgerOutcome.Applied,
+                                created.ExecutionId,
+                                "Pipeline run released runtime capacity while the execution waits for an external durable condition.",
+                                new Dictionary<string, string>
+                                {
+                                    ["run.id"] = handle.RunId,
+                                    ["execution.id"] = created.ExecutionId,
+                                    ["pipeline.name"] = request.PipelineName,
+                                    ["execution.status"] = final.Status.ToString()
+                                },
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
 
                     queuedRun.CompletionSource.TrySetResult(final);
 
                     _logger.Engine.LogInformation(
-                        $"[AI PIPELINE CONTROLLER] Run terminal. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Status='{final.Status}'.");
+                        $"[AI PIPELINE CONTROLLER] Run processing attempt returned. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Status='{final.Status}', ControllerStatus='{handle.Status}'.");
                 }
                 catch (Exception ex)
                 {
@@ -2404,7 +2450,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         /// </summary>
         /// <param name="executionId">The runtime execution identifier.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
-        /// <returns>The terminal execution record.</returns>
+        /// <returns>The terminal or durably waiting execution record.</returns>
         private async Task<AiExecutionRecord> RunCreatedExecutionAsync(
             string executionId,
             CancellationToken cancellationToken)
@@ -2984,6 +3030,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 AiRuntimeWorkerRunStatus.Queued => "queued",
                 AiRuntimeWorkerRunStatus.CreatingExecution => "creating-execution",
                 AiRuntimeWorkerRunStatus.Running => "running",
+                AiRuntimeWorkerRunStatus.Paused => "waiting",
                 AiRuntimeWorkerRunStatus.Completed => "completed",
                 AiRuntimeWorkerRunStatus.Failed => "failed",
                 AiRuntimeWorkerRunStatus.Cancelled => "cancelled",

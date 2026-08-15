@@ -256,6 +256,12 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                         $"Child relation status '{relation.Status}' cannot contain child execution allocation data.");
                 }
 
+                if (relation.WaitingAtUtc is not null)
+                {
+                    throw new InvalidOperationException(
+                        $"Child relation status '{relation.Status}' cannot contain a waiting timestamp.");
+                }
+
                 return;
             }
 
@@ -263,6 +269,18 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             {
                 throw new InvalidOperationException(
                     $"Child relation status '{relation.Status}' requires one durably allocated child execution identifier.");
+            }
+
+            if (relation.Status == AiChildExecutionRelationStatus.ChildAllocated && relation.WaitingAtUtc is not null)
+            {
+                throw new InvalidOperationException(
+                    "A child-allocated relation cannot contain a waiting timestamp before entering the Waiting state.");
+            }
+
+            if (relation.Status == AiChildExecutionRelationStatus.Waiting && relation.WaitingAtUtc is null)
+            {
+                throw new InvalidOperationException(
+                    "A waiting child relation must preserve its durable waiting timestamp.");
             }
         }
 

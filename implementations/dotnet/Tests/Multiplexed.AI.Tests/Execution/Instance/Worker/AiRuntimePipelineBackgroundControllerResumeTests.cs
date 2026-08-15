@@ -325,6 +325,106 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
         }
 
         /// <summary>
+        /// Verifies that a durable execution wait completes the current controller attempt,
+        /// releases the single controller slot, and allows a later run to execute.
+        /// </summary>
+        [Fact]
+        public async Task EnqueueResumeAsync_DurableWaiting_Should_Release_Controller_Slot_And_Allow_Next_Run()
+        {
+            const string waitingExecutionId = "execution-waiting-capacity";
+            const string waitingRecoveryOwnerId =
+                "runtime-recovery:execution-waiting-capacity:shared-run-waiting:local-run-waiting";
+
+            const string nextExecutionId = "execution-after-waiting";
+            const string nextRecoveryOwnerId =
+                "runtime-recovery:execution-after-waiting:shared-run-next:local-run-next";
+
+            var worker = new CapturingRuntimeInstanceWorker(
+                AiExecutionStatus.Waiting,
+                AiExecutionStatus.Completed);
+
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+            var lifecycleHook = new CapturingRunLifecycleHook();
+            var executionControlService = new RecoveryExecutionControlService();
+            var controller = CreateController(
+                worker,
+                runExecutionIndex,
+                lifecycleHook,
+                executionControlService);
+
+            await controller.StartAsync().ConfigureAwait(false);
+
+            var waitingHandle = await controller
+                .EnqueueResumeAsync(
+                    CreateRecoveryRequest(
+                        waitingExecutionId,
+                        waitingRecoveryOwnerId,
+                        "shared-run-waiting",
+                        "local-run-waiting"),
+                    waitingExecutionId)
+                .ConfigureAwait(false);
+
+            var waiting = await waitingHandle.Completion.WaitAsync(
+                TimeSpan.FromSeconds(10));
+
+            var waitingIndex = await runExecutionIndex
+                .GetAsync(waitingHandle.RunId)
+                .ConfigureAwait(false);
+
+            Assert.Equal(AiExecutionStatus.Waiting, waiting.Status);
+            Assert.Equal(AiRuntimeWorkerRunStatus.Paused, waitingHandle.Status);
+            Assert.NotNull(waitingIndex);
+            Assert.Equal("waiting", waitingIndex!.Status);
+            Assert.False(lifecycleHook.FinalizedCalled);
+
+            var nextHandle = await controller
+                .EnqueueResumeAsync(
+                    CreateRecoveryRequest(
+                        nextExecutionId,
+                        nextRecoveryOwnerId,
+                        "shared-run-next",
+                        "local-run-next"),
+                    nextExecutionId)
+                .ConfigureAwait(false);
+
+            var completed = await nextHandle.Completion.WaitAsync(
+                TimeSpan.FromSeconds(10));
+
+            await controller.StopAsync().ConfigureAwait(false);
+
+            Assert.Equal(AiExecutionStatus.Completed, completed.Status);
+            Assert.Equal(2, worker.RunExecutionCallCount);
+            Assert.True(lifecycleHook.FinalizedCalled);
+            Assert.Equal(nextExecutionId, lifecycleHook.LastExecutionId);
+        }
+
+        /// <summary>
+        /// Creates a deterministic recovery-resume request for controller lifecycle tests.
+        /// </summary>
+        private static AiRuntimePipelineRunRequest CreateRecoveryRequest(
+            string executionId,
+            string recoveryOwnerId,
+            string sharedRunId,
+            string failedLocalRunId)
+        {
+            return new AiRuntimePipelineRunRequest
+            {
+                PipelineName = "pipeline-1",
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                PipelineDefinition = CreatePipelineDefinition(),
+                Metadata = new Dictionary<string, string>
+                {
+                    ["recovery.mode"] = "resume-existing-execution",
+                    ["recovery.forensicsId"] = recoveryOwnerId,
+                    ["recovery.failedExecutionId"] = executionId,
+                    ["recovery.failedRuntimeInstanceId"] = "runtime-instance-failed",
+                    ["recovery.failedLocalRunId"] = failedLocalRunId,
+                    ["shared.run.id"] = sharedRunId
+                }
+            };
+        }
+
+        /// <summary>
         /// Creates a runtime pipeline background controller with test doubles.
         /// </summary>
         private static AiRuntimePipelineBackgroundController CreateController(
@@ -592,6 +692,17 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
         /// </summary>
         private sealed class CapturingRuntimeInstanceWorker : IAiRuntimeInstanceWorker
         {
+            private readonly Queue<AiExecutionStatus> statuses;
+
+            public CapturingRuntimeInstanceWorker(
+                params AiExecutionStatus[] statuses)
+            {
+                this.statuses = new Queue<AiExecutionStatus>(
+                    statuses.Length == 0
+                        ? new[] { AiExecutionStatus.Completed }
+                        : statuses);
+            }
+
             public string? LastExecutionId { get; private set; }
 
             public int RunExecutionCallCount { get; private set; }
@@ -606,12 +717,18 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
                 LastExecutionId = executionId;
                 RunExecutionCallCount++;
 
+                var status = statuses.Count > 0
+                    ? statuses.Dequeue()
+                    : AiExecutionStatus.Completed;
+
                 return Task.FromResult(new AiExecutionRecord
                 {
                     ExecutionId = executionId,
                     PipelineName = "pipeline-1",
-                    Status = AiExecutionStatus.Completed,
-                    CompletedAtUtc = DateTime.UtcNow
+                    Status = status,
+                    CompletedAtUtc = status == AiExecutionStatus.Completed
+                        ? DateTime.UtcNow
+                        : default
                 });
             }
         }

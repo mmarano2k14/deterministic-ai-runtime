@@ -18,7 +18,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis
     /// - StateReader for record/state reads.
     /// - StateWriter for record/state writes, restore, and deletion.
     /// - ClaimService for step discovery and claim operations.
-    /// - TransitionService for completion, failure, and finalization.
+    /// - TransitionService for completion, parking, failure, and finalization.
     /// - RecoveryService for timed-out running step recovery.
     ///
     /// DAG execution uses step-level Redis coordination, Lua-backed atomic mutations,
@@ -218,6 +218,27 @@ namespace Multiplexed.AI.Stores.Cache.Redis
             CancellationToken cancellationToken = default)
         {
             return await _services.TransitionService.TryCompleteStepAsync(executionId, stepName, claimToken, result, cancellationToken);
+        }
+
+        /// <summary>
+        /// Attempts to atomically park a claimed DAG step while it waits for an external condition.
+        /// </summary>
+        /// <param name="executionId">The unique execution identifier.</param>
+        /// <param name="stepName">The step name to park.</param>
+        /// <param name="claimToken">The claim token that owns the running step.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when the park transition was accepted; otherwise <c>false</c>.</returns>
+        public Task<bool> TryParkStepAsync(
+            string executionId,
+            string stepName,
+            string claimToken,
+            CancellationToken cancellationToken = default)
+        {
+            return _services.TransitionService.TryParkStepAsync(
+                executionId,
+                stepName,
+                claimToken,
+                cancellationToken);
         }
 
         /// <summary>

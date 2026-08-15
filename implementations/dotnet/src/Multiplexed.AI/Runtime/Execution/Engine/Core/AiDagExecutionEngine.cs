@@ -175,6 +175,56 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
                 cancellationToken);
         }
 
+        /// <summary>
+        /// Determines whether a globally waiting DAG execution is blocked specifically by
+        /// an external durable step wait and can therefore release its runtime worker.
+        /// </summary>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>
+        /// <c>true</c> when at least one step is waiting externally and no running or
+        /// retry-timed step still requires the current worker loop; otherwise <c>false</c>.
+        /// </returns>
+        /// <remarks>
+        /// This distinction preserves existing timed-retry behavior. A global
+        /// <see cref="AiExecutionStatus.Waiting"/> caused only by a future retry must keep its
+        /// worker loop alive, while <see cref="AiStepExecutionStatus.WaitingForExternal"/> has no
+        /// autonomous timer and must release runtime capacity until a durable continuation arrives.
+        /// </remarks>
+        public async Task<bool> ShouldReleaseForExternalWaitAsync(
+            string executionId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+
+            var state = _engineServices.DagStore is not null
+                ? await _engineServices.DagStore
+                    .GetStateAsync(executionId, cancellationToken)
+                    .ConfigureAwait(false)
+                : await _engineServices.Store
+                    .GetStateAsync(executionId, cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (state is null)
+            {
+                return false;
+            }
+
+            var steps = state.Steps.Values;
+
+            var hasExternalWait = steps.Any(step =>
+                step.Status == AiStepExecutionStatus.WaitingForExternal);
+
+            if (!hasExternalWait)
+            {
+                return false;
+            }
+
+            return !steps.Any(step =>
+                step.Status is AiStepExecutionStatus.Running or
+                    AiStepExecutionStatus.WaitingForRetry);
+        }
+
         /// <inheritdoc />
         public override async Task<AiExecutionRecord> ExecuteAllAsync(
             string executionId,

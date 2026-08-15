@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Multiplexed.Abstractions.AI.Steps
 {
@@ -25,6 +26,24 @@ namespace Multiplexed.Abstractions.AI.Steps
         /// Gets or sets whether the step completed successfully.
         /// </summary>
         public bool Success { get; set; }
+
+        /// <summary>
+        /// Gets or sets the explicit orchestration outcome for this step attempt.
+        /// </summary>
+        /// <remarks>
+        /// The property is nullable for backward compatibility with persisted results created
+        /// before explicit outcomes existed. <see cref="EffectiveOutcome"/> preserves the legacy
+        /// mapping from <see cref="Success"/> when this value is absent.
+        /// </remarks>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public AiStepExecutionOutcome? Outcome { get; set; }
+
+        /// <summary>
+        /// Gets the effective orchestration outcome, including compatibility mapping for legacy results.
+        /// </summary>
+        [JsonIgnore]
+        public AiStepExecutionOutcome EffectiveOutcome =>
+            Outcome ?? (Success ? AiStepExecutionOutcome.Complete : AiStepExecutionOutcome.Fail);
 
         /// <summary>
         /// Gets or sets the optional primary inline value returned by the step.
@@ -71,6 +90,7 @@ namespace Multiplexed.Abstractions.AI.Steps
             return new AiStepResult
             {
                 Success = true,
+                Outcome = AiStepExecutionOutcome.Complete,
                 Value = value,
                 Payload = null,
                 Output = output,
@@ -92,6 +112,7 @@ namespace Multiplexed.Abstractions.AI.Steps
             return new AiStepResult
             {
                 Success = true,
+                Outcome = AiStepExecutionOutcome.Complete,
                 Value = null,
                 Payload = payload,
                 Output = output,
@@ -113,6 +134,7 @@ namespace Multiplexed.Abstractions.AI.Steps
             return new AiStepResult
             {
                 Success = false,
+                Outcome = AiStepExecutionOutcome.Fail,
                 Value = value,
                 Payload = null,
                 Output = null,
@@ -135,11 +157,42 @@ namespace Multiplexed.Abstractions.AI.Steps
             return new AiStepResult
             {
                 Success = false,
+                Outcome = AiStepExecutionOutcome.Fail,
                 Value = null,
                 Payload = payload,
                 Output = null,
                 Error = error,
                 Data = data ?? CreateEmptyData()
+            };
+        }
+
+        /// <summary>
+        /// Creates a non-terminal result that asks the DAG runtime to park the current step.
+        /// </summary>
+        /// <param name="output">Optional human-readable suspension output.</param>
+        /// <returns>A result whose effective outcome is <see cref="AiStepExecutionOutcome.Park"/>.</returns>
+        /// <remarks>
+        /// <para>
+        /// A parked result is intentionally not successful because it has not completed the
+        /// logical step. DAG runners recognize the explicit outcome before applying legacy
+        /// success/failure handling. Non-DAG executors must reject this outcome.
+        /// </para>
+        /// <para>
+        /// Authoritative external-wait state must be committed durably before this result is
+        /// returned. The Park outcome deliberately carries no authoritative business payload.
+        /// </para>
+        /// </remarks>
+        public static AiStepResult Park(string? output = null)
+        {
+            return new AiStepResult
+            {
+                Success = false,
+                Outcome = AiStepExecutionOutcome.Park,
+                Value = null,
+                Payload = null,
+                Output = output,
+                Error = null,
+                Data = CreateEmptyData()
             };
         }
 
