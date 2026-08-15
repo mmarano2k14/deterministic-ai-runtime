@@ -105,6 +105,49 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Persi
         }
 
         [Fact]
+        public async Task TryReplaceContinuationAsync_Should_Allow_One_Pending_To_Scheduled_Winner_And_Exclude_Resumed()
+        {
+            var completed = await CreatePersistedCompletedRelationAsync();
+            var scheduledAtUtc = DateTimeOffset.Parse("2026-08-15T00:05:00Z");
+            var firstScheduled = CreateRelation(
+                status: AiChildExecutionRelationStatus.Completed,
+                continuationStatus: AiChildContinuationStatus.Scheduled,
+                parentContinuationScheduledAtUtc: scheduledAtUtc);
+            var secondScheduled = CreateRelation(
+                status: AiChildExecutionRelationStatus.Completed,
+                continuationStatus: AiChildContinuationStatus.Scheduled,
+                parentContinuationScheduledAtUtc: scheduledAtUtc);
+
+            var attempts = await Task.WhenAll(
+                this.store.TryReplaceContinuationAsync(
+                    firstScheduled,
+                    AiChildContinuationStatus.Pending),
+                this.store.TryReplaceContinuationAsync(
+                    secondScheduled,
+                    AiChildContinuationStatus.Pending));
+
+            Assert.Equal(1, attempts.Count(result => result));
+            Assert.Equal(1, attempts.Count(result => !result));
+
+            var scheduledCandidates = await this.store.ListContinuationCandidatesAsync(10);
+            var scheduled = Assert.Single(scheduledCandidates);
+            Assert.Equal(AiChildContinuationStatus.Scheduled, scheduled.ContinuationStatus);
+            Assert.Equal(completed.ChildExecutionId, scheduled.ChildExecutionId);
+
+            var resumed = CreateRelation(
+                status: AiChildExecutionRelationStatus.Completed,
+                continuationStatus: AiChildContinuationStatus.Resumed,
+                parentContinuationScheduledAtUtc: scheduledAtUtc,
+                parentResumedAtUtc: DateTimeOffset.Parse("2026-08-15T00:06:00Z"));
+
+            Assert.True(await this.store.TryReplaceContinuationAsync(
+                resumed,
+                AiChildContinuationStatus.Scheduled));
+
+            Assert.Empty(await this.store.ListContinuationCandidatesAsync(10));
+        }
+
+        [Fact]
         public async Task GetOrCreateAsync_Should_Create_Typed_Unique_Index_Without_Hash_Uniqueness()
         {
             await this.store.GetOrCreateAsync(CreateRelation());
@@ -122,9 +165,39 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Persi
             Assert.False(keyIndex.TryGetValue("unique", out var unique) && unique.AsBoolean);
         }
 
+        private async Task<AiChildExecutionRelation> CreatePersistedCompletedRelationAsync()
+        {
+            var initial = CreateRelation();
+            await this.store.GetOrCreateAsync(initial);
+
+            var approved = CreateRelation(
+                status: AiChildExecutionRelationStatus.DelegationApproved);
+            Assert.True(await this.store.TryReplaceAsync(
+                approved,
+                AiChildExecutionRelationStatus.DelegationPolicyPending));
+
+            var allocated = CreateRelation(
+                status: AiChildExecutionRelationStatus.ChildAllocated);
+            Assert.True(await this.store.TryReplaceAsync(
+                allocated,
+                AiChildExecutionRelationStatus.DelegationApproved));
+
+            var completed = CreateRelation(
+                status: AiChildExecutionRelationStatus.Completed,
+                continuationStatus: AiChildContinuationStatus.Pending);
+            Assert.True(await this.store.TryReplaceAsync(
+                completed,
+                AiChildExecutionRelationStatus.ChildAllocated));
+
+            return completed;
+        }
+
         private static AiChildExecutionRelation CreateRelation(
             AiStoredPayload? frozenInput = null,
-            AiChildExecutionRelationStatus status = AiChildExecutionRelationStatus.DelegationPolicyPending)
+            AiChildExecutionRelationStatus status = AiChildExecutionRelationStatus.DelegationPolicyPending,
+            AiChildContinuationStatus continuationStatus = AiChildContinuationStatus.Pending,
+            DateTimeOffset? parentContinuationScheduledAtUtc = null,
+            DateTimeOffset? parentResumedAtUtc = null)
         {
             var identity = new Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Identity.AiChildInvocationIdentity
             {
@@ -166,6 +239,43 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Persi
                         contentType: "application/json",
                         contentHash: "1ffc76af93422de9f8e0985c77ff7793d726f49fd9d7e7b46794c58e4a6a280a"),
                 Status = status,
+                ChildExecutionId = status is AiChildExecutionRelationStatus.ChildAllocated or
+                    AiChildExecutionRelationStatus.Waiting or
+                    AiChildExecutionRelationStatus.Completed
+                        ? "child-execution-1"
+                        : null,
+                ChildAllocatedAtUtc = status is AiChildExecutionRelationStatus.ChildAllocated or
+                    AiChildExecutionRelationStatus.Waiting or
+                    AiChildExecutionRelationStatus.Completed
+                        ? DateTimeOffset.Parse("2026-08-14T00:02:00Z")
+                        : null,
+                WaitingAtUtc = status == AiChildExecutionRelationStatus.Waiting
+                    ? DateTimeOffset.Parse("2026-08-14T00:03:00Z")
+                    : null,
+                ChildResult = status == AiChildExecutionRelationStatus.Completed
+                    ? AiStoredPayload.Inline(
+                        "{}",
+                        contentType: "application/json",
+                        contentHash: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a")
+                    : null,
+                CompletedAtUtc = status == AiChildExecutionRelationStatus.Completed
+                    ? DateTimeOffset.Parse("2026-08-14T00:04:00Z")
+                    : null,
+                ContinuationStatus = status == AiChildExecutionRelationStatus.Completed
+                    ? continuationStatus
+                    : AiChildContinuationStatus.None,
+                ParentContinuationScheduledAtUtc = status == AiChildExecutionRelationStatus.Completed &&
+                    (continuationStatus is AiChildContinuationStatus.Scheduled or AiChildContinuationStatus.Resumed)
+                        ? parentContinuationScheduledAtUtc ?? DateTimeOffset.Parse("2026-08-14T00:05:00Z")
+                        : null,
+                ParentContinuationScheduledStepVersion = status == AiChildExecutionRelationStatus.Completed &&
+                    (continuationStatus is AiChildContinuationStatus.Scheduled or AiChildContinuationStatus.Resumed)
+                        ? 10
+                        : null,
+                ParentResumedAtUtc = status == AiChildExecutionRelationStatus.Completed &&
+                    continuationStatus == AiChildContinuationStatus.Resumed
+                        ? parentResumedAtUtc ?? DateTimeOffset.Parse("2026-08-14T00:06:00Z")
+                        : null,
                 DelegationEvaluatedAtUtc = status == AiChildExecutionRelationStatus.DelegationPolicyPending
                     ? null
                     : DateTimeOffset.Parse("2026-08-14T00:01:00Z"),

@@ -18,6 +18,11 @@ namespace Multiplexed.Abstractions.AI.Execution.Instance.Worker
     /// for a normal run that has not yet been created.
     /// </para>
     /// <para>
+    /// Normal external-wait continuation is also distinct from recovery. When
+    /// <see cref="ExternalWaitContinuation"/> is present, the runtime reactivates exactly one existing
+    /// <see cref="AiStepExecutionStatus.WaitingForExternal"/> step and never enters the crash-recovery control path.
+    /// </para>
+    /// <para>
     /// A pipeline definition can be supplied as raw JSON, as a JSON file path, or as
     /// an in-memory <see cref="AiPipelineDefinition"/> instance. Source priority is:
     /// raw JSON first, JSON file path second, in-memory pipeline definition third.
@@ -44,6 +49,16 @@ namespace Multiplexed.Abstractions.AI.Execution.Instance.Worker
         /// execution under this identifier only when absent and converges on the existing execution on redelivery.
         /// </remarks>
         public string? RequestedExecutionId { get; init; }
+
+        /// <summary>
+        /// Gets the optional normal continuation request for one existing step that is durably waiting externally.
+        /// </summary>
+        /// <remarks>
+        /// This value is mutually exclusive with <see cref="RequestedExecutionId"/> and with controlled
+        /// crash-recovery resume. It does not create an execution and it does not acquire recovery ownership;
+        /// it only reactivates the named <see cref="AiStepExecutionStatus.WaitingForExternal"/> step.
+        /// </remarks>
+        public AiRuntimeExternalWaitContinuation? ExternalWaitContinuation { get; init; }
 
         /// <summary>
         /// Gets the optional immutable declarative pipeline definition descriptor bound to a preallocated execution.

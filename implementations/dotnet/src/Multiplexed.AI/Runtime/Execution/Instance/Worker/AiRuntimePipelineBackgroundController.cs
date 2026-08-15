@@ -39,9 +39,10 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
     /// distinct execution identifier.
     /// </para>
     /// <para>
-    /// Controlled recovery resume requests are the only supported exception. They
-    /// explicitly target an existing durable execution identifier and must not call
-    /// the execution creation path again.
+    /// Two narrow existing-execution paths intentionally bypass creation: controlled crash-recovery resume and
+    /// normal external-wait continuation. Recovery keeps its ownership and forensic semantics, while an external
+    /// continuation targets one durable <see cref="AiStepExecutionStatus.WaitingForExternal"/> step without using
+    /// recovery metadata. Neither path creates the execution again.
     /// </para>
     /// <para>
     /// The execution identifier remains the namespace for the execution record, DAG
@@ -372,6 +373,9 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     "The runtime pipeline background controller has been stopped and cannot accept new work.");
             }
 
+            var externalWaitContinuation =
+                ResolveExternalWaitContinuation(request, resumeExecutionId);
+
             var recoveryResume =
                 string.IsNullOrWhiteSpace(resumeExecutionId)
                     ? null
@@ -389,7 +393,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 {
                     CorrelationId = runId,
                     RunId = runId,
-                    ExecutionId = resumeExecutionId,
+                    ExecutionId = resumeExecutionId ?? externalWaitContinuation?.ExecutionId,
                     PipelineName = request.PipelineName,
                     RuntimeInstanceId =
                         _runtimeInstanceIdentity.RuntimeInstanceId,
@@ -401,15 +405,18 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 new TaskCompletionSource<AiExecutionRecord>(
                     TaskCreationOptions.RunContinuationsAsynchronously);
 
+            var existingExecutionId =
+                resumeExecutionId;
+
             var handle =
-                string.IsNullOrWhiteSpace(resumeExecutionId)
+                string.IsNullOrWhiteSpace(existingExecutionId)
                     ? new AiRuntimeWorkerRunHandle(
                         runId,
                         completionSource.Task)
                     : new AiRuntimeWorkerRunHandle(
                         runId,
                         completionSource.Task,
-                        resumeExecutionId);
+                        existingExecutionId);
 
             var queuedRun =
                 new AiRuntimeQueuedPipelineRun(
@@ -418,6 +425,15 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     completionSource,
                     correlation,
                     resumeExecutionId);
+
+            if (externalWaitContinuation is not null)
+            {
+                await RegisterExternalWaitQueuedRunAsync(
+                        queuedRun,
+                        externalWaitContinuation,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
             if (recoveryResume is not null)
             {
@@ -462,7 +478,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 await _queue.Writer
                     .WriteAsync(
                         queuedRun,
-                        recoveryResume is null
+                        recoveryResume is null && externalWaitContinuation is null
                             ? cancellationToken
                             : CancellationToken.None)
                     .ConfigureAwait(false);
@@ -475,6 +491,25 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 _queuedRuns.TryRemove(
                     runId,
                     out _);
+
+                if (externalWaitContinuation is not null)
+                {
+                    try
+                    {
+                        await _runExecutionIndex
+                            .MarkFailedAsync(
+                                runId,
+                                null,
+                                $"External-wait continuation local acceptance failed before channel enqueue. ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.",
+                                CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception indexException)
+                    {
+                        _logger.Engine.LogWarning(
+                            $"[AI PIPELINE CONTROLLER] External-wait queued acceptance failure could not be persisted. RunId='{runId}', ParentExecutionId='{externalWaitContinuation.ExecutionId}', ExceptionType='{indexException.GetType().FullName}', Message='{indexException.Message}'.");
+                    }
+                }
 
                 if (recoveryResume is not null)
                 {
@@ -519,7 +554,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             }
 
             _logger.Engine.LogInformation(
-                $"[AI PIPELINE CONTROLLER] Run queued. RunId='{runId}', Pipeline='{request.PipelineName}', ResumeExecutionId='{resumeExecutionId ?? string.Empty}', RecoveryOwnerId='{recoveryResume?.RecoveryOwnerId ?? string.Empty}'.");
+                $"[AI PIPELINE CONTROLLER] Run queued. RunId='{runId}', Pipeline='{request.PipelineName}', ResumeExecutionId='{resumeExecutionId ?? string.Empty}', ExternalWaitExecutionId='{externalWaitContinuation?.ExecutionId ?? string.Empty}', ExternalWaitStep='{externalWaitContinuation?.StepName ?? string.Empty}', RecoveryOwnerId='{recoveryResume?.RecoveryOwnerId ?? string.Empty}'.");
 
             /*
              * The Channel write above is the local runtime acceptance boundary.
@@ -533,9 +568,11 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         request.PipelineName,
                         AiDecisionLedgerEvents.Run.Queued,
                         AiDecisionLedgerOutcome.Persisted,
-                        reason: recoveryResume is null
-                            ? "Pipeline run queued."
-                            : "Pipeline run queued for existing execution recovery resume.",
+                        reason: recoveryResume is not null
+                            ? "Pipeline run queued for existing execution recovery resume."
+                            : externalWaitContinuation is not null
+                                ? "Pipeline run queued for normal external-wait continuation."
+                                : "Pipeline run queued.",
                         metadata: new Dictionary<string, string>
                         {
                             ["run.id"] =
@@ -553,6 +590,21 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
                             ["recovery.owner.id"] =
                                 recoveryResume?.RecoveryOwnerId ??
+                                string.Empty,
+
+                            ["external.wait.continuation"] =
+                                (externalWaitContinuation is not null).ToString(),
+
+                            ["external.wait.execution.id"] =
+                                externalWaitContinuation?.ExecutionId ??
+                                string.Empty,
+
+                            ["external.wait.step"] =
+                                externalWaitContinuation?.StepName ??
+                                string.Empty,
+
+                            ["external.wait.continuation.id"] =
+                                externalWaitContinuation?.ContinuationId ??
                                 string.Empty
                         },
                         cancellationToken: CancellationToken.None)
@@ -565,6 +617,125 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             }
 
             return handle;
+        }
+
+        /// <summary>
+        /// Resolves and validates one normal external-wait continuation request.
+        /// </summary>
+        /// <param name="request">The submitted runtime pipeline request.</param>
+        /// <param name="resumeExecutionId">The optional crash-recovery execution identifier.</param>
+        /// <returns>The validated continuation, or <see langword="null"/> when this is not a continuation request.</returns>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when a normal continuation attempts to reuse execution-creation or crash-recovery semantics.
+        /// </exception>
+        private static AiRuntimeExternalWaitContinuation? ResolveExternalWaitContinuation(
+            AiRuntimePipelineRunRequest request,
+            string? resumeExecutionId)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            var continuation = request.ExternalWaitContinuation;
+            if (continuation is null)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(resumeExecutionId))
+            {
+                throw new InvalidOperationException(
+                    "Normal external-wait continuation cannot be combined with crash-recovery resume.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.RequestedExecutionId))
+            {
+                throw new InvalidOperationException(
+                    "Normal external-wait continuation cannot request execution creation.");
+            }
+
+            if (request.PipelineDefinitionSnapshot is not null ||
+                request.PipelineDefinition is not null ||
+                !string.IsNullOrWhiteSpace(request.PipelineJson) ||
+                !string.IsNullOrWhiteSpace(request.PipelineJsonFilePath) ||
+                request.Input is not null)
+            {
+                throw new InvalidOperationException(
+                    "Normal external-wait continuation cannot provide a pipeline definition or execution input.");
+            }
+
+            ArgumentException.ThrowIfNullOrWhiteSpace(continuation.ExecutionId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(continuation.StepName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(continuation.ContinuationId);
+
+            if (request.ExecutionContextSnapshot is null)
+            {
+                throw new InvalidOperationException(
+                    "Normal external-wait continuation requires the durable parent execution context snapshot.");
+            }
+
+            var metadata = GetPipelineRunMetadata(request);
+            if (TryGetMetadataValue(metadata, "recovery.mode", out _))
+            {
+                throw new InvalidOperationException(
+                    "Normal external-wait continuation cannot carry crash-recovery mode metadata.");
+            }
+
+            return continuation;
+        }
+
+        /// <summary>
+        /// Registers a normal external-wait continuation as local queued work before transient channel acceptance.
+        /// </summary>
+        /// <remarks>
+        /// The queued index entry intentionally has no execution identifier until the continuation actually starts.
+        /// If the runtime disappears before local channel delivery, the existing local-queued recovery path requeues
+        /// the shared run instead of misclassifying the parent as an in-flight crash-recovery resume.
+        /// </remarks>
+        /// <param name="queuedRun">The queued runtime pipeline run.</param>
+        /// <param name="continuation">The validated continuation identity.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        private async Task RegisterExternalWaitQueuedRunAsync(
+            AiRuntimeQueuedPipelineRun queuedRun,
+            AiRuntimeExternalWaitContinuation continuation,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(queuedRun);
+            ArgumentNullException.ThrowIfNull(continuation);
+
+            var metadata = new Dictionary<string, string>(
+                GetPipelineRunMetadata(queuedRun.Request),
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["pipeline.name"] = queuedRun.Request.PipelineName,
+                ["runtime.instance.id"] = _runtimeInstanceIdentity.RuntimeInstanceId,
+                ["external.wait.continuation"] = "true",
+                ["external.wait.execution.id"] = continuation.ExecutionId,
+                ["external.wait.step"] = continuation.StepName,
+                ["external.wait.continuation.id"] = continuation.ContinuationId,
+                ["context.key"] = queuedRun.Request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
+                [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = queuedRun.Request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
+                [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = queuedRun.Request.ExecutionContextSnapshot?.TenantGroupId ?? string.Empty
+            };
+
+            var registered = await _runExecutionIndex
+                .TryRegisterQueuedAsync(
+                    new AiRuntimeRunExecutionIndexEntry
+                    {
+                        RunId = queuedRun.Handle.RunId,
+                        ExecutionId = null,
+                        RuntimeInstanceId = _runtimeInstanceIdentity.RuntimeInstanceId,
+                        Status = "queued",
+                        CreatedAtUtc = DateTimeOffset.UtcNow,
+                        ExecutionContextSnapshot = queuedRun.Request.ExecutionContextSnapshot!,
+                        Metadata = metadata
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (!registered)
+            {
+                throw new InvalidOperationException(
+                    $"External-wait continuation local run id collision. RunId='{queuedRun.Handle.RunId}', ExecutionId='{continuation.ExecutionId}', Step='{continuation.StepName}'.");
+            }
         }
 
         /// <summary>
@@ -1332,6 +1503,8 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             AiExecutionRecord? created = null;
             AiPipelineDefinition? definition = null;
             RecoveryResumeContext? recoveryResume = null;
+            AiRuntimeExternalWaitContinuation? externalWaitContinuation = null;
+            var assistanceCandidateRegistered = false;
 
             var previousExecutionContext = _executionContextAccessor.Current;
             var executionContextRestored = false;
@@ -1353,46 +1526,70 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             cancellationToken)
                         .ConfigureAwait(false);
                 }
+                else if (queuedRun.IsExternalWaitContinuation)
+                {
+                    externalWaitContinuation = ResolveExternalWaitContinuation(request, resumeExecutionId: null)
+                        ?? throw new InvalidOperationException(
+                            "External-wait continuation metadata disappeared after queue acceptance.");
 
-                diagnosticPhase = "mark-creating-execution";
+                    diagnosticPhase = "seed-external-wait-execution-context";
+
+                    await SeedExternalWaitExecutionContextAsync(
+                            queuedRun,
+                            externalWaitContinuation,
+                            restoredExecutionContext,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
+                diagnosticPhase = queuedRun.IsExternalWaitContinuation
+                    ? "mark-continuing-execution"
+                    : "mark-creating-execution";
                 handle.MarkCreatingExecution();
 
                 _logger.Engine.LogInformation(
                     queuedRun.IsResume
-                        ? $"[AI PIPELINE CONTROLLER] Preparing existing execution resume. RunId='{handle.RunId}', ExecutionId='{queuedRun.ResumeExecutionId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{request.ExecutionContextSnapshot?.TenantId ?? string.Empty}', ContextKey='{request.ExecutionContextSnapshot?.ContextKey ?? string.Empty}', InputType='{ResolveInputTypeName(request.Input)}'."
-                        : $"[AI PIPELINE CONTROLLER] Creating execution. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{request.ExecutionContextSnapshot?.TenantId ?? string.Empty}', ContextKey='{request.ExecutionContextSnapshot?.ContextKey ?? string.Empty}', InputType='{ResolveInputTypeName(request.Input)}'.");
+                        ? $"[AI PIPELINE CONTROLLER] Preparing existing execution recovery resume. RunId='{handle.RunId}', ExecutionId='{queuedRun.ResumeExecutionId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{request.ExecutionContextSnapshot?.TenantId ?? string.Empty}', ContextKey='{request.ExecutionContextSnapshot?.ContextKey ?? string.Empty}'."
+                        : externalWaitContinuation is not null
+                            ? $"[AI PIPELINE CONTROLLER] Preparing normal external-wait continuation. RunId='{handle.RunId}', ExecutionId='{externalWaitContinuation.ExecutionId}', Step='{externalWaitContinuation.StepName}', ContinuationId='{externalWaitContinuation.ContinuationId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{request.ExecutionContextSnapshot?.TenantId ?? string.Empty}', ContextKey='{request.ExecutionContextSnapshot?.ContextKey ?? string.Empty}'."
+                            : $"[AI PIPELINE CONTROLLER] Creating execution. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{request.ExecutionContextSnapshot?.TenantId ?? string.Empty}', ContextKey='{request.ExecutionContextSnapshot?.ContextKey ?? string.Empty}', InputType='{ResolveInputTypeName(request.Input)}'.");
 
-                diagnosticPhase = "resolve-definition";
-
-                definition = await _definitionResolver
-                    .ResolveAsync(request, cancellationToken)
-                    .ConfigureAwait(false);
-
-                _logger.Engine.LogInformation(
-                    $"[AI PIPELINE CONTROLLER] Definition resolved. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', StepCount='{definition.Steps.Count}'.");
-
-                if (request.PipelineDefinitionSnapshot is null)
+                if (externalWaitContinuation is null)
                 {
-                    diagnosticPhase = "publish-definition";
+                    diagnosticPhase = "resolve-definition";
 
-                    await _definitionPublisher
-                        .PublishAsync(definition, cancellationToken)
+                    definition = await _definitionResolver
+                        .ResolveAsync(request, cancellationToken)
                         .ConfigureAwait(false);
 
                     _logger.Engine.LogInformation(
-                        $"[AI PIPELINE CONTROLLER] Definition published. RunId='{handle.RunId}', Pipeline='{request.PipelineName}'.");
-                }
-                else
-                {
-                    diagnosticPhase = "use-pinned-definition";
+                        $"[AI PIPELINE CONTROLLER] Definition resolved. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', StepCount='{definition.Steps.Count}'.");
 
-                    _logger.Engine.LogInformation(
-                        $"[AI PIPELINE CONTROLLER] Immutable execution-bound definition retained without publishing as latest. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', DefinitionHash='{request.PipelineDefinitionSnapshot.ContentHash ?? string.Empty}'.");
+                    if (request.PipelineDefinitionSnapshot is null)
+                    {
+                        diagnosticPhase = "publish-definition";
+
+                        await _definitionPublisher
+                            .PublishAsync(definition, cancellationToken)
+                            .ConfigureAwait(false);
+
+                        _logger.Engine.LogInformation(
+                            $"[AI PIPELINE CONTROLLER] Definition published. RunId='{handle.RunId}', Pipeline='{request.PipelineName}'.");
+                    }
+                    else
+                    {
+                        diagnosticPhase = "use-pinned-definition";
+
+                        _logger.Engine.LogInformation(
+                            $"[AI PIPELINE CONTROLLER] Immutable execution-bound definition retained without publishing as latest. RunId='{handle.RunId}', Pipeline='{request.PipelineName}', DefinitionHash='{request.PipelineDefinitionSnapshot.ContentHash ?? string.Empty}'.");
+                    }
                 }
 
                 diagnosticPhase = queuedRun.IsResume
                     ? "validate-recovery-resume"
-                    : "create-execution";
+                    : externalWaitContinuation is not null
+                        ? "continue-external-wait"
+                        : "create-execution";
 
                 if (queuedRun.IsResume)
                 {
@@ -1438,9 +1635,25 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             cancellationToken)
                         .ConfigureAwait(false);
                 }
+                else if (externalWaitContinuation is not null)
+                {
+                    created = await _engine
+                        .ResumeExternalWaitingStepAsync(
+                            externalWaitContinuation.ExecutionId,
+                            externalWaitContinuation.StepName,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    _logger.Engine.LogInformation(
+                        $"[AI PIPELINE CONTROLLER] Normal external-wait continuation accepted. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Step='{externalWaitContinuation.StepName}', ContinuationId='{externalWaitContinuation.ContinuationId}', Pipeline='{created.PipelineName ?? request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}'.");
+                }
                 else
                 {
-                    created = await CreateExecutionAsync(request, definition, cancellationToken)
+                    created = await CreateExecutionAsync(
+                            request,
+                            definition ?? throw new InvalidOperationException(
+                                "Pipeline definition was not resolved before execution creation."),
+                            cancellationToken)
                         .ConfigureAwait(false);
 
                     _logger.Engine.LogInformation(
@@ -1463,15 +1676,21 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                diagnosticPhase = "register-execution-assistance-candidate";
+                if (externalWaitContinuation is null)
+                {
+                    diagnosticPhase = "register-execution-assistance-candidate";
 
-                await RegisterExecutionAssistanceCandidateAsync(
-                        handle.RunId,
-                        request,
-                        created,
-                        definition,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                    await RegisterExecutionAssistanceCandidateAsync(
+                            handle.RunId,
+                            request,
+                            created,
+                            definition ?? throw new InvalidOperationException(
+                                "Pipeline definition was not resolved before execution assistance registration."),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    assistanceCandidateRegistered = true;
+                }
 
                 diagnosticPhase = "record-run-started-ledger";
 
@@ -1496,7 +1715,11 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             ["effective.worker.count.per.execution"] = ResolveMaxWorkerCountForExecution().ToString(),
                             ["recovery.resume"] = queuedRun.IsResume.ToString(),
                             ["recovery.execution.id"] = queuedRun.ResumeExecutionId ?? string.Empty,
-                            ["recovery.owner.id"] = recoveryResume?.RecoveryOwnerId ?? string.Empty
+                            ["recovery.owner.id"] = recoveryResume?.RecoveryOwnerId ?? string.Empty,
+                            ["external.wait.continuation"] = (externalWaitContinuation is not null).ToString(),
+                            ["external.wait.execution.id"] = externalWaitContinuation?.ExecutionId ?? string.Empty,
+                            ["external.wait.step"] = externalWaitContinuation?.StepName ?? string.Empty,
+                            ["external.wait.continuation.id"] = externalWaitContinuation?.ContinuationId ?? string.Empty
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -1700,13 +1923,16 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 }
                 finally
                 {
-                    diagnosticPhase = "mark-execution-assistance-candidate-completed";
+                    if (assistanceCandidateRegistered)
+                    {
+                        diagnosticPhase = "mark-execution-assistance-candidate-completed";
 
-                    await MarkExecutionAssistanceCandidateCompletedAsync(
-                            created.ExecutionId,
-                            final?.Status.ToString() ?? "unknown",
-                            CancellationToken.None)
-                        .ConfigureAwait(false);
+                        await MarkExecutionAssistanceCandidateCompletedAsync(
+                                created.ExecutionId,
+                                final?.Status.ToString() ?? "unknown",
+                                CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
                 }
             }
             catch (Exception ex)
@@ -2207,6 +2433,47 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             _logger.Engine.LogInformation(
                 $"[AI PIPELINE CONTROLLER] Resume execution context seeded. RunId='{queuedRun.Handle.RunId}', ExecutionId='{queuedRun.ResumeExecutionId}', Pipeline='{queuedRun.Request.PipelineName}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{context.TenantId}', ContextKey='{context.ContextKey}'.");
+        }
+
+        /// <summary>
+        /// Seeds the restored RBAC execution context before a normal external-wait continuation re-drives an existing execution.
+        /// </summary>
+        /// <param name="queuedRun">The queued runtime pipeline run.</param>
+        /// <param name="continuation">The validated normal continuation identity.</param>
+        /// <param name="context">The restored RBAC execution context.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        private async Task SeedExternalWaitExecutionContextAsync(
+            AiRuntimeQueuedPipelineRun queuedRun,
+            AiRuntimeExternalWaitContinuation continuation,
+            ExecutionContext context,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(queuedRun);
+            ArgumentNullException.ThrowIfNull(continuation);
+            ArgumentNullException.ThrowIfNull(context);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!queuedRun.IsExternalWaitContinuation)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(context.ContextKey))
+            {
+                throw new InvalidOperationException(
+                    $"Cannot continue external-wait execution '{continuation.ExecutionId}' for runtime run '{queuedRun.Handle.RunId}' because the restored execution context has no ContextKey.");
+            }
+
+            await _engine
+                .SeedRestoredExecutionContextAsync(
+                    continuation.ExecutionId,
+                    context,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            _logger.Engine.LogInformation(
+                $"[AI PIPELINE CONTROLLER] External-wait execution context seeded. RunId='{queuedRun.Handle.RunId}', ExecutionId='{continuation.ExecutionId}', Step='{continuation.StepName}', ContinuationId='{continuation.ContinuationId}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}', TenantId='{context.TenantId}', ContextKey='{context.ContextKey}'.");
         }
 
         /// <summary>

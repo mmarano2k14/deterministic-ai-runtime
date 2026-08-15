@@ -197,6 +197,65 @@ namespace Multiplexed.AI.Tests.Runtime.Execution
         }
 
         /// <summary>
+        /// Ensures normal external-wait continuation reactivates the step without consuming retry or recovery budget.
+        /// </summary>
+        [Fact]
+        public void MarkReadyFromExternalWait_Should_Restore_Ready_Without_Changing_Retry_Or_Recovery_Counters()
+        {
+            var step = CreateRunningStep();
+            step.RetryState = new AiStepRetryState
+            {
+                RetryCount = 2,
+                NextRetryAtUtc = DateTime.UtcNow.AddMinutes(1)
+            };
+            step.RecoveryCount = 3;
+            step.MarkWaitingForExternal();
+
+            var retryCount = step.RetryState.RetryCount;
+            var nextRetryAtUtc = step.RetryState.NextRetryAtUtc;
+
+            step.MarkReadyFromExternalWait();
+
+            Assert.Equal(AiStepExecutionStatus.Ready, step.Status);
+            Assert.True(step.IsSchedulable);
+            Assert.Null(step.ClaimedBy);
+            Assert.Null(step.ClaimToken);
+            Assert.Null(step.ClaimedAtUtc);
+            Assert.Null(step.LeaseExpiresAtUtc);
+            Assert.Equal(retryCount, step.RetryState.RetryCount);
+            Assert.Equal(nextRetryAtUtc, step.RetryState.NextRetryAtUtc);
+            Assert.Equal(3, step.RecoveryCount);
+            Assert.Null(step.CompletedAtUtc);
+            Assert.Null(step.Duration);
+            Assert.False(step.IsTerminal);
+        }
+
+        /// <summary>
+        /// Ensures normal external-wait continuation cannot be applied from unrelated step states.
+        /// </summary>
+        [Theory]
+        [InlineData(AiStepExecutionStatus.None)]
+        [InlineData(AiStepExecutionStatus.Ready)]
+        [InlineData(AiStepExecutionStatus.Running)]
+        [InlineData(AiStepExecutionStatus.WaitingForRetry)]
+        [InlineData(AiStepExecutionStatus.Completed)]
+        [InlineData(AiStepExecutionStatus.Failed)]
+        public void MarkReadyFromExternalWait_Should_Throw_When_Step_Is_Not_WaitingForExternal(
+            AiStepExecutionStatus invalidStatus)
+        {
+            var step = CreateStep();
+            step.Status = invalidStatus;
+
+            var exception = Assert.Throws<InvalidOperationException>(
+                step.MarkReadyFromExternalWait);
+
+            Assert.Contains(
+                "external wait",
+                exception.Message,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// Ensures timeout recovery is only legal from Running.
         /// </summary>
         [Theory]

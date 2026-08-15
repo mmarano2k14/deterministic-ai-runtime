@@ -1380,6 +1380,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
                 return Task.FromResult(true);
             }
 
+            public Task<bool> TryResumeExternalWaitingStepAsync(
+                string executionId,
+                string stepName,
+                CancellationToken cancellationToken = default)
+            {
+                return Task.FromResult(false);
+            }
+
             public Task<bool> TryFailStepAsync(
                 string executionId,
                 string stepName,

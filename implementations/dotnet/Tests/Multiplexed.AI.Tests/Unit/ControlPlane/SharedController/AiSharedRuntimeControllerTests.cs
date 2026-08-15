@@ -813,6 +813,82 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
         }
 
         [Fact]
+        public async Task SubmitRunAsync_Should_Converge_Duplicate_ExternalWait_QueueFirst_Physical_Submission()
+        {
+            var admission = new FakeRunAdmissionController(
+                new AiRunAdmissionDecision
+                {
+                    DecisionType = AiRunAdmissionDecisionType.QueueGlobally,
+                    Reason = "Queue parent continuation."
+                });
+            var store = new InMemoryAiSharedRunStore();
+            var queue = new InMemoryAiSharedQueue();
+            var controller = CreateController(admission, store: store, sharedQueue: queue);
+            var request = new AiSharedRuntimeControllerRequest
+            {
+                Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                RequestedSharedRunId = "child-continuation-physical-1",
+                SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                PipelineKey = "parent-pipeline",
+                RunRequest = CreateExternalWaitContinuationRunRequest("continuation-1"),
+                Source = "unit-test"
+            };
+
+            var first = await controller.SubmitRunAsync(request);
+            var second = await controller.SubmitRunAsync(request);
+
+            Assert.True(first.Success);
+            Assert.True(second.Success);
+            Assert.Equal(first.SharedRunId, second.SharedRunId);
+            Assert.Equal(
+                "continuation-1",
+                second.Run?.RunRequest.ExternalWaitContinuation?.ContinuationId);
+            Assert.Single(await store.ListAsync(includeCancelled: true, includeCompleted: true, includeFailed: true));
+            Assert.Single(await queue.ListAsync(includeTerminal: true));
+        }
+
+        [Fact]
+        public async Task SubmitRunAsync_Should_Reject_Conflicting_ExternalWait_Physical_Duplicate()
+        {
+            var admission = new FakeRunAdmissionController(
+                new AiRunAdmissionDecision
+                {
+                    DecisionType = AiRunAdmissionDecisionType.QueueGlobally,
+                    Reason = "Queue parent continuation."
+                });
+            var store = new InMemoryAiSharedRunStore();
+            var queue = new InMemoryAiSharedQueue();
+            var controller = CreateController(admission, store: store, sharedQueue: queue);
+            const string sharedRunId = "child-continuation-physical-2";
+
+            var first = await controller.SubmitRunAsync(
+                new AiSharedRuntimeControllerRequest
+                {
+                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                    RequestedSharedRunId = sharedRunId,
+                    SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                    PipelineKey = "parent-pipeline",
+                    RunRequest = CreateExternalWaitContinuationRunRequest("continuation-1")
+                });
+
+            var conflict = await controller.SubmitRunAsync(
+                new AiSharedRuntimeControllerRequest
+                {
+                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                    RequestedSharedRunId = sharedRunId,
+                    SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                    PipelineKey = "parent-pipeline",
+                    RunRequest = CreateExternalWaitContinuationRunRequest("different-continuation")
+                });
+
+            Assert.True(first.Success);
+            Assert.False(conflict.Success);
+            Assert.Contains("incompatible", conflict.FailureReason, StringComparison.OrdinalIgnoreCase);
+            Assert.Single(await store.ListAsync(includeCancelled: true, includeCompleted: true, includeFailed: true));
+            Assert.Single(await queue.ListAsync(includeTerminal: true));
+        }
+
+        [Fact]
         public async Task SubmitRunAsync_Should_Converge_Duplicate_Preallocated_QueueFirst_Submissions()
         {
             var admission = new FakeRunAdmissionController(
@@ -1098,6 +1174,20 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             return new AiRuntimePipelineRunRequest
             {
                 PipelineName = "pipeline-1"
+            };
+        }
+
+        private static AiRuntimePipelineRunRequest CreateExternalWaitContinuationRunRequest(string continuationId)
+        {
+            return new AiRuntimePipelineRunRequest
+            {
+                PipelineName = "parent-pipeline",
+                ExternalWaitContinuation = new AiRuntimeExternalWaitContinuation
+                {
+                    ExecutionId = "parent-execution-1",
+                    StepName = "research-call-site",
+                    ContinuationId = continuationId
+                }
             };
         }
 

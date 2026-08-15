@@ -303,6 +303,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
             {
                 PipelineName = request.PipelineName,
                 RequestedExecutionId = request.RequestedExecutionId,
+                ExternalWaitContinuation = request.ExternalWaitContinuation,
                 PipelineDefinitionSnapshot = request.PipelineDefinitionSnapshot,
                 ExecutionContextSnapshot = executionContextSnapshot,
                 PipelineJson = request.PipelineJson,

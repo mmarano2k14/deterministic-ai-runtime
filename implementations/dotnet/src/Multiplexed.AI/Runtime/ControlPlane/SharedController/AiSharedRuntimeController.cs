@@ -421,10 +421,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 
             var submitMode = request.SubmitModeOverride ?? _options.SubmitMode;
             var queueFirst = submitMode == AiSharedRuntimeSubmitMode.QueueFirst;
-            var idempotentPreallocatedSubmission =
+            var idempotentDeterministicSubmission =
                 queueFirst &&
                 !string.IsNullOrWhiteSpace(request.RequestedSharedRunId) &&
-                !string.IsNullOrWhiteSpace(runRequest.RequestedExecutionId);
+                (!string.IsNullOrWhiteSpace(runRequest.RequestedExecutionId) ||
+                 runRequest.ExternalWaitContinuation is not null);
 
             var effectiveStatus = queueFirst
                 ? AiSharedRunStatus.QueuedGlobally
@@ -466,7 +467,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     .CreateAsync(record, cancellationToken)
                     .ConfigureAwait(false);
             }
-            catch (InvalidOperationException exception) when (idempotentPreallocatedSubmission)
+            catch (InvalidOperationException exception) when (idempotentDeterministicSubmission)
             {
                 created = await _store
                     .GetAsync(sharedRunId, cancellationToken)
@@ -475,14 +476,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                         $"Shared run '{sharedRunId}' reported a duplicate create, but the authoritative record could not be reloaded.",
                         exception);
 
-                EnsureCompatiblePreallocatedSubmission(created, record);
+                EnsureCompatibleDeterministicSubmission(created, record);
             }
 
             var current = created;
 
             if (queueFirst)
             {
-                if (idempotentPreallocatedSubmission)
+                if (idempotentDeterministicSubmission)
                 {
                     await EnsureGloballyEnqueuedAsync(
                             created,
@@ -1035,7 +1036,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         }
 
         /// <summary>
-        /// Ensures that an idempotent preallocated submission has one durable shared queue item.
+        /// Ensures that an idempotent deterministic submission has one durable shared queue item.
         /// </summary>
         /// <param name="created">The authoritative shared run record.</param>
         /// <param name="admissionDecision">The admission decision used to build a missing queue item.</param>
@@ -1080,11 +1081,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         }
 
         /// <summary>
-        /// Validates that a duplicate deterministic shared run submission represents the same physical request.
+        /// Validates that a duplicate deterministic shared run submission represents the same logical request.
         /// </summary>
         /// <param name="existing">The authoritative previously persisted shared run.</param>
         /// <param name="candidate">The duplicate candidate.</param>
-        private static void EnsureCompatiblePreallocatedSubmission(
+        private static void EnsureCompatibleDeterministicSubmission(
             AiSharedRunRecord existing,
             AiSharedRunRecord candidate)
         {
@@ -1093,6 +1094,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 
             if (!string.Equals(existing.SharedRunId, candidate.SharedRunId, StringComparison.Ordinal) ||
                 !string.Equals(existingExecutionId, candidateExecutionId, StringComparison.Ordinal) ||
+                !MatchesExternalWaitContinuation(
+                    existing.RunRequest.ExternalWaitContinuation,
+                    candidate.RunRequest.ExternalWaitContinuation) ||
                 !string.Equals(existing.PipelineKey, candidate.PipelineKey, StringComparison.Ordinal) ||
                 !string.Equals(existing.RunRequest.PipelineName, candidate.RunRequest.PipelineName, StringComparison.Ordinal) ||
                 !MatchesPipelineDefinitionSnapshot(
@@ -1107,8 +1111,28 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 !MatchesDeterministicMetadata(existing.Metadata, candidate.Metadata, "child.input.digest"))
             {
                 throw new InvalidOperationException(
-                    $"Shared run '{candidate.SharedRunId}' already exists with incompatible preallocated execution data.");
+                    $"Shared run '{candidate.SharedRunId}' already exists with incompatible deterministic execution data.");
             }
+        }
+
+        /// <summary>
+        /// Determines whether two optional external-wait continuation requests represent the same deterministic re-drive.
+        /// </summary>
+        /// <param name="existing">The authoritative persisted continuation.</param>
+        /// <param name="candidate">The duplicate candidate continuation.</param>
+        /// <returns><c>true</c> when both are absent or all continuation identity fields match.</returns>
+        private static bool MatchesExternalWaitContinuation(
+            AiRuntimeExternalWaitContinuation? existing,
+            AiRuntimeExternalWaitContinuation? candidate)
+        {
+            if (existing is null || candidate is null)
+            {
+                return existing is null && candidate is null;
+            }
+
+            return string.Equals(existing.ExecutionId, candidate.ExecutionId, StringComparison.Ordinal) &&
+                   string.Equals(existing.StepName, candidate.StepName, StringComparison.Ordinal) &&
+                   string.Equals(existing.ContinuationId, candidate.ContinuationId, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -1361,6 +1385,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             {
                 PipelineName = request.PipelineName,
                 RequestedExecutionId = request.RequestedExecutionId,
+                ExternalWaitContinuation = request.ExternalWaitContinuation,
                 PipelineDefinitionSnapshot = request.PipelineDefinitionSnapshot,
                 ExecutionContextSnapshot = executionContextSnapshot,
                 PipelineJson = request.PipelineJson,

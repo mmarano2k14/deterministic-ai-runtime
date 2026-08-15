@@ -176,6 +176,186 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
         }
 
         /// <summary>
+        /// Reactivates one existing DAG step after its external durable condition has been satisfied.
+        /// </summary>
+        /// <remarks>
+        /// This is a normal continuation boundary. It does not create an execution, acquire crash-recovery ownership,
+        /// or increment retry or recovery counters. Duplicate physical delivery converges on the already advanced step.
+        /// </remarks>
+        /// <param name="executionId">The existing durable execution identifier.</param>
+        /// <param name="stepName">The exact step that was parked in WaitingForExternal.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The authoritative execution record after the continuation transition or an idempotent redelivery.</returns>
+        public async Task<AiExecutionRecord> ResumeExternalWaitingStepAsync(
+            string executionId,
+            string stepName,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(stepName);
+
+            if (_engineServices.DagStore is not null)
+            {
+                var record = await _engineServices.DagStore
+                    .GetRecordAsync(executionId, cancellationToken)
+                    .ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"Execution '{executionId}' was not found.");
+
+                EnsureExternalWaitContinuationEligible(record, stepName);
+
+                var state = await _engineServices.DagStore
+                    .GetStateAsync(executionId, cancellationToken)
+                    .ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"Execution state '{executionId}' was not found.");
+
+                if (!state.Steps.TryGetValue(stepName, out var step))
+                {
+                    throw new InvalidOperationException(
+                        $"Execution '{executionId}' does not contain step '{stepName}'.");
+                }
+
+                if (step.Status == AiStepExecutionStatus.WaitingForExternal)
+                {
+                    var resumed = await _engineServices.DagStore
+                        .TryResumeExternalWaitingStepAsync(executionId, stepName, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (resumed)
+                    {
+                        return record;
+                    }
+
+                    state = await _engineServices.DagStore
+                        .GetStateAsync(executionId, cancellationToken)
+                        .ConfigureAwait(false)
+                        ?? throw new InvalidOperationException($"Execution state '{executionId}' disappeared during continuation.");
+
+                    if (!state.Steps.TryGetValue(stepName, out step))
+                    {
+                        throw new InvalidOperationException(
+                            $"Execution '{executionId}' lost step '{stepName}' during continuation.");
+                    }
+                }
+
+                EnsureExternalWaitRedeliveryCompatible(executionId, stepName, step.Status);
+                return record;
+            }
+
+            var localRecord = await _engineServices.Store
+                .GetRecordAsync(executionId, cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Execution '{executionId}' was not found.");
+
+            EnsureExternalWaitContinuationEligible(localRecord, stepName);
+
+            var localState = await _engineServices.Store
+                .GetStateAsync(executionId, cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Execution state '{executionId}' was not found.");
+
+            if (!localState.Steps.TryGetValue(stepName, out var localStep))
+            {
+                throw new InvalidOperationException(
+                    $"Execution '{executionId}' does not contain step '{stepName}'.");
+            }
+
+            if (localStep.Status == AiStepExecutionStatus.WaitingForExternal)
+            {
+                var expectedStepKey = localRecord.ExecutionStepKey;
+                if (string.IsNullOrWhiteSpace(expectedStepKey))
+                {
+                    throw new InvalidOperationException(
+                        $"Execution '{executionId}' does not contain an optimistic execution step key.");
+                }
+
+                localStep.MarkReadyFromExternalWait();
+                localRecord.MarkRunning();
+                localRecord.TouchVersion();
+                localRecord.RenewExecutionStepKey();
+
+                var updated = await _engineServices.Store
+                    .TryUpdateAsync(
+                        executionId,
+                        expectedStepKey,
+                        localRecord,
+                        localState,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (updated)
+                {
+                    return localRecord;
+                }
+
+                localRecord = await _engineServices.Store
+                    .GetRecordAsync(executionId, cancellationToken)
+                    .ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"Execution '{executionId}' disappeared during continuation.");
+
+                localState = await _engineServices.Store
+                    .GetStateAsync(executionId, cancellationToken)
+                    .ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"Execution state '{executionId}' disappeared during continuation.");
+
+                if (!localState.Steps.TryGetValue(stepName, out localStep))
+                {
+                    throw new InvalidOperationException(
+                        $"Execution '{executionId}' lost step '{stepName}' during continuation.");
+                }
+            }
+
+            EnsureExternalWaitContinuationEligible(localRecord, stepName);
+            EnsureExternalWaitRedeliveryCompatible(executionId, stepName, localStep.Status);
+            return localRecord;
+        }
+
+        /// <summary>
+        /// Validates that an execution may participate in normal external-wait continuation.
+        /// </summary>
+        /// <param name="record">The authoritative execution record.</param>
+        /// <param name="stepName">The requested continuation step.</param>
+        private static void EnsureExternalWaitContinuationEligible(
+            AiExecutionRecord record,
+            string stepName)
+        {
+            if (record.IsTerminal)
+            {
+                throw new InvalidOperationException(
+                    $"Execution '{record.ExecutionId}' is terminal and cannot continue external wait step '{stepName}'.");
+            }
+
+            if (record.ExecutionMode != AiExecutionMode.Dag)
+            {
+                throw new InvalidOperationException(
+                    $"Execution '{record.ExecutionId}' is not a DAG execution and cannot continue external wait step '{stepName}'.");
+            }
+        }
+
+        /// <summary>
+        /// Accepts only statuses that prove the same external-wait continuation has already advanced physically.
+        /// </summary>
+        /// <param name="executionId">The execution identifier.</param>
+        /// <param name="stepName">The step name.</param>
+        /// <param name="status">The authoritative step status after a failed continuation CAS or redelivery.</param>
+        private static void EnsureExternalWaitRedeliveryCompatible(
+            string executionId,
+            string stepName,
+            AiStepExecutionStatus status)
+        {
+            if (status is AiStepExecutionStatus.Ready or
+                AiStepExecutionStatus.Running or
+                AiStepExecutionStatus.WaitingForRetry or
+                AiStepExecutionStatus.Completed or
+                AiStepExecutionStatus.Failed)
+            {
+                return;
+            }
+
+            throw new InvalidOperationException(
+                $"Execution '{executionId}' step '{stepName}' cannot be continued from status '{status}'.");
+        }
+
+        /// <summary>
         /// Determines whether a globally waiting DAG execution is blocked specifically by
         /// an external durable step wait and can therefore release its runtime worker.
         /// </summary>

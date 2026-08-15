@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Delegation;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Resolvers;
@@ -25,6 +26,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
         private const string InvocationInputPayloadKind = "child-dag-invocation-input";
         private const string DelegationPolicyBindingPayloadKind = "child-dag-delegation-policy-binding";
         private const string DelegationPolicyDecisionPayloadKind = "child-dag-delegation-policy-decision";
+        private const string ChildResultPayloadKind = "child-dag-result";
         private const string ArtifactKeyPrefix = "immutable-sha256-";
 
         private readonly IAiPayloadStoreResolver payloadStoreResolver;
@@ -218,6 +220,41 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
         }
 
         /// <summary>
+        /// Freezes the authoritative execution-level output of one terminal child DAG execution.
+        /// </summary>
+        /// <remarks>
+        /// The snapshot reuses the execution state's existing inline data and payload-backed data descriptors.
+        /// Step runtime state, claims, leases, and other orchestration internals are intentionally excluded from
+        /// the business result snapshot.
+        /// </remarks>
+        /// <param name="state">The terminal child execution state.</param>
+        /// <param name="childExecutionId">The child execution identifier used only as immutable payload metadata.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>An inline or artifact-backed immutable child result snapshot.</returns>
+        public Task<AiStoredPayload> FreezeChildResultAsync(
+            AiExecutionState state,
+            string childExecutionId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(state);
+            ArgumentException.ThrowIfNullOrWhiteSpace(childExecutionId);
+
+            var snapshot = new ChildExecutionResultSnapshot
+            {
+                Data = new Dictionary<string, object?>(state.Data, StringComparer.Ordinal),
+                DataPayloads = state.DataPayloads is null
+                    ? null
+                    : new Dictionary<string, AiStoredPayload>(state.DataPayloads, StringComparer.Ordinal)
+            };
+
+            return FreezeAsync(
+                snapshot,
+                ChildResultPayloadKind,
+                childExecutionId,
+                cancellationToken);
+        }
+
+        /// <summary>
         /// Loads a previously frozen snapshot and verifies its stable content hash before returning it.
         /// </summary>
         /// <param name="snapshot">The frozen payload snapshot.</param>
@@ -301,6 +338,23 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
                 digest,
                 sizeBytes,
                 JsonContentType);
+        }
+
+        /// <summary>
+        /// Defines the stable execution-level business output frozen for one terminal child execution.
+        /// </summary>
+        private sealed class ChildExecutionResultSnapshot
+        {
+            /// <summary>
+            /// Gets the inline execution-level output data.
+            /// </summary>
+            public IReadOnlyDictionary<string, object?> Data { get; init; } =
+                new Dictionary<string, object?>();
+
+            /// <summary>
+            /// Gets payload-backed execution-level output descriptors when present.
+            /// </summary>
+            public IReadOnlyDictionary<string, AiStoredPayload>? DataPayloads { get; init; }
         }
 
         /// <summary>

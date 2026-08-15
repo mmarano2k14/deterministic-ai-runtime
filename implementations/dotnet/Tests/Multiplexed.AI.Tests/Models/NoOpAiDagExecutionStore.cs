@@ -94,6 +94,14 @@ namespace Multiplexed.AI.Tests.Fakes
             return Task.FromResult(true);
         }
 
+        public Task<bool> TryResumeExternalWaitingStepAsync(
+            string executionId,
+            string stepName,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(false);
+        }
+
         public Task<bool> TryFailStepAsync(
             string executionId,
             string stepName,

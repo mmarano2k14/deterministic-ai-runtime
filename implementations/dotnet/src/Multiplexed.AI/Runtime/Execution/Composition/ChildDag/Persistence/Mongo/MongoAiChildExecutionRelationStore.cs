@@ -60,6 +60,111 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
         }
 
         /// <inheritdoc />
+        public async Task<AiChildExecutionRelation?> GetByChildExecutionIdAsync(
+            string childExecutionId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(childExecutionId);
+            await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
+
+            var document = await this.collection
+                .Find(item => item.Relation.ChildExecutionId == childExecutionId)
+                .FirstOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            return document?.Relation;
+        }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<AiChildExecutionRelation>> ListIncompleteAsync(
+            int maxCount,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(maxCount, 1);
+            await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
+
+            var statuses = new[]
+            {
+                AiChildExecutionRelationStatus.ChildAllocated,
+                AiChildExecutionRelationStatus.Waiting
+            };
+
+            var documents = await this.collection
+                .Find(Builders<MongoAiChildExecutionRelationDocument>.Filter.In(
+                    item => item.Relation.Status,
+                    statuses))
+                .SortBy(item => item.Relation.ChildAllocatedAtUtc)
+                .ThenBy(item => item.Relation.CreatedAtUtc)
+                .Limit(maxCount)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            return documents.Select(item => item.Relation).ToArray();
+        }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<AiChildExecutionRelation>> ListContinuationCandidatesAsync(
+            int maxCount,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(maxCount, 1);
+            await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
+
+            var continuationStatuses = new[]
+            {
+                AiChildContinuationStatus.Pending,
+                AiChildContinuationStatus.Scheduled
+            };
+
+            var filters = Builders<MongoAiChildExecutionRelationDocument>.Filter;
+            var filter = filters.And(
+                filters.Eq(item => item.Relation.Status, AiChildExecutionRelationStatus.Completed),
+                filters.In(item => item.Relation.ContinuationStatus, continuationStatuses));
+
+            var documents = await this.collection
+                .Find(filter)
+                .SortBy(item => item.Relation.CompletedAtUtc)
+                .ThenBy(item => item.Relation.CreatedAtUtc)
+                .Limit(maxCount)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            return documents.Select(item => item.Relation).ToArray();
+        }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<AiChildExecutionRelation>> ListParkConsistencyCandidatesAsync(
+            DateTimeOffset allocatedBeforeUtc,
+            int maxCount,
+            CancellationToken cancellationToken = default)
+        {
+            if (allocatedBeforeUtc == default)
+            {
+                throw new ArgumentException(
+                    "The park-consistency allocation cutoff must be set.",
+                    nameof(allocatedBeforeUtc));
+            }
+
+            ArgumentOutOfRangeException.ThrowIfLessThan(maxCount, 1);
+            await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
+
+            var filters = Builders<MongoAiChildExecutionRelationDocument>.Filter;
+            var filter = filters.And(
+                filters.Eq(item => item.Relation.Status, AiChildExecutionRelationStatus.ChildAllocated),
+                filters.Lte(item => item.Relation.ChildAllocatedAtUtc, allocatedBeforeUtc));
+
+            var documents = await this.collection
+                .Find(filter)
+                .SortBy(item => item.Relation.ChildAllocatedAtUtc)
+                .ThenBy(item => item.Relation.CreatedAtUtc)
+                .Limit(maxCount)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            return documents.Select(item => item.Relation).ToArray();
+        }
+
+        /// <inheritdoc />
         public async Task<AiChildExecutionRelation> GetOrCreateAsync(
             AiChildExecutionRelation relation,
             CancellationToken cancellationToken = default)
@@ -123,6 +228,51 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                 Builders<MongoAiChildExecutionRelationDocument>.Filter.Eq(
                     item => item.Relation.Status,
                     expectedStatus));
+
+            var update = Builders<MongoAiChildExecutionRelationDocument>.Update
+                .Set(item => item.Relation, relation);
+
+            var result = await this.collection
+                .UpdateOneAsync(
+                    filter,
+                    update,
+                    new UpdateOptions { IsUpsert = false },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return result.ModifiedCount == 1;
+        }
+
+        /// <inheritdoc />
+        public async Task<bool> TryReplaceContinuationAsync(
+            AiChildExecutionRelation relation,
+            AiChildContinuationStatus expectedContinuationStatus,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(relation);
+            ValidateDurableRelation(relation);
+
+            if (relation.Status != AiChildExecutionRelationStatus.Completed)
+            {
+                throw new ArgumentException(
+                    "Continuation compare-and-swap requires a completed child relation.",
+                    nameof(relation));
+            }
+
+            if (relation.ContinuationStatus == expectedContinuationStatus)
+            {
+                throw new ArgumentException(
+                    "Replacement continuation status must differ from the expected compare-and-swap value.",
+                    nameof(relation));
+            }
+
+            await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
+
+            var filters = Builders<MongoAiChildExecutionRelationDocument>.Filter;
+            var filter = filters.And(
+                BuildIdentityFilter(relation.ToInvocationIdentity()),
+                filters.Eq(item => item.Relation.Status, AiChildExecutionRelationStatus.Completed),
+                filters.Eq(item => item.Relation.ContinuationStatus, expectedContinuationStatus));
 
             var update = Builders<MongoAiChildExecutionRelationDocument>.Update
                 .Set(item => item.Relation, relation);
@@ -202,6 +352,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             ValidateSnapshot(relation.DelegationPolicyBindingSnapshot, nameof(relation.DelegationPolicyBindingSnapshot));
             ValidateDelegationDecisionState(relation);
             ValidateChildAllocationState(relation);
+            ValidateCompletionAndContinuationState(relation);
 
             if (relation.CreatedAtUtc == default)
             {
@@ -281,6 +432,80 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             {
                 throw new InvalidOperationException(
                     "A waiting child relation must preserve its durable waiting timestamp.");
+            }
+        }
+
+        /// <summary>
+        /// Validates authoritative child completion and parent continuation invariants.
+        /// </summary>
+        /// <param name="relation">The relation to validate.</param>
+        private static void ValidateCompletionAndContinuationState(AiChildExecutionRelation relation)
+        {
+            if (relation.Status != AiChildExecutionRelationStatus.Completed)
+            {
+                if (relation.ChildResult is not null ||
+                    relation.ChildFailureReason is not null ||
+                    relation.CompletedAtUtc is not null ||
+                    relation.ContinuationStatus != AiChildContinuationStatus.None ||
+                    relation.ParentContinuationScheduledAtUtc is not null ||
+                    relation.ParentContinuationScheduledStepVersion is not null ||
+                    relation.ParentResumedAtUtc is not null)
+                {
+                    throw new InvalidOperationException(
+                        "A non-completed child relation cannot contain authoritative child outcome or parent continuation state.");
+                }
+
+                return;
+            }
+
+            if (relation.ChildResult is null || relation.CompletedAtUtc is null)
+            {
+                throw new InvalidOperationException(
+                    "A completed child relation must preserve its authoritative child result and completion timestamp.");
+            }
+
+            ValidateSnapshot(relation.ChildResult, nameof(relation.ChildResult));
+
+            switch (relation.ContinuationStatus)
+            {
+                case AiChildContinuationStatus.Pending:
+                    if (relation.ParentContinuationScheduledAtUtc is not null ||
+                        relation.ParentContinuationScheduledStepVersion is not null ||
+                        relation.ParentResumedAtUtc is not null)
+                    {
+                        throw new InvalidOperationException(
+                            "A pending child continuation cannot contain scheduled or resumed timestamps.");
+                    }
+
+                    break;
+
+                case AiChildContinuationStatus.Scheduled:
+                    if (relation.ParentContinuationScheduledAtUtc is null ||
+                        relation.ParentContinuationScheduledStepVersion is null ||
+                        relation.ParentContinuationScheduledStepVersion < 0 ||
+                        relation.ParentResumedAtUtc is not null)
+                    {
+                        throw new InvalidOperationException(
+                            "A scheduled child continuation requires a scheduling timestamp, a non-negative scheduling step version, and no resumed timestamp.");
+                    }
+
+                    break;
+
+                case AiChildContinuationStatus.Resumed:
+                    if (relation.ParentContinuationScheduledAtUtc is null ||
+                        relation.ParentContinuationScheduledStepVersion is null ||
+                        relation.ParentContinuationScheduledStepVersion < 0 ||
+                        relation.ParentResumedAtUtc is null)
+                    {
+                        throw new InvalidOperationException(
+                            "A resumed child continuation requires a scheduling timestamp, a non-negative scheduling step version, and a resumed timestamp.");
+                    }
+
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        "A completed child relation must enter Pending, Scheduled, or Resumed continuation state.");
             }
         }
 
@@ -423,6 +648,23 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                         {
                             Name = "ix_child_relation_child_execution_id",
                             Sparse = true
+                        }),
+                    new CreateIndexModel<MongoAiChildExecutionRelationDocument>(
+                        Builders<MongoAiChildExecutionRelationDocument>.IndexKeys
+                            .Ascending(item => item.Relation.Status)
+                            .Ascending(item => item.Relation.ContinuationStatus)
+                            .Ascending(item => item.Relation.CompletedAtUtc),
+                        new CreateIndexOptions
+                        {
+                            Name = "ix_child_relation_completion_continuation"
+                        }),
+                    new CreateIndexModel<MongoAiChildExecutionRelationDocument>(
+                        Builders<MongoAiChildExecutionRelationDocument>.IndexKeys
+                            .Ascending(item => item.Relation.Status)
+                            .Ascending(item => item.Relation.ChildAllocatedAtUtc),
+                        new CreateIndexOptions
+                        {
+                            Name = "ix_child_relation_park_consistency"
                         })
                 };
 

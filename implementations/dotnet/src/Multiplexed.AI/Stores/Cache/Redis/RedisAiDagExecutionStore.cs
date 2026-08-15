@@ -242,6 +242,24 @@ namespace Multiplexed.AI.Stores.Cache.Redis
         }
 
         /// <summary>
+        /// Attempts to atomically reactivate one DAG step that is waiting for an external durable condition.
+        /// </summary>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="stepName">The externally waiting step name.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when the transition to Ready was committed; otherwise <c>false</c>.</returns>
+        public Task<bool> TryResumeExternalWaitingStepAsync(
+            string executionId,
+            string stepName,
+            CancellationToken cancellationToken = default)
+        {
+            return _services.TransitionService.TryResumeExternalWaitingStepAsync(
+                executionId,
+                stepName,
+                cancellationToken);
+        }
+
+        /// <summary>
         /// Attempts to atomically fail a claimed DAG step.
         /// </summary>
         /// <param name="executionId">The unique execution identifier.</param>

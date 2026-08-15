@@ -177,6 +177,15 @@ namespace Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations
         public DateTimeOffset? ParentContinuationScheduledAtUtc { get; set; }
 
         /// <summary>
+        /// Gets or sets the durable parent call-site step version observed when continuation scheduling was committed.
+        /// </summary>
+        /// <remarks>
+        /// This version is the monotonic proof boundary used to distinguish real continuation progress from a
+        /// signal-before-wait race where the original parent invocation is still running.
+        /// </remarks>
+        public long? ParentContinuationScheduledStepVersion { get; set; }
+
+        /// <summary>
         /// Gets or sets the UTC timestamp at which the parent durably demonstrated resumed progress.
         /// </summary>
         public DateTimeOffset? ParentResumedAtUtc { get; set; }

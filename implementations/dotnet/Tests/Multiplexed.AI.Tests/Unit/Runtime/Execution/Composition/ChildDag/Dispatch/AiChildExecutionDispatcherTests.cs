@@ -151,6 +151,32 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Dispa
                 return Task.FromResult<AiChildExecutionRelation?>(this.relation);
             }
 
+            public Task<AiChildExecutionRelation?> GetByChildExecutionIdAsync(
+                string childExecutionId,
+                CancellationToken cancellationToken = default)
+            {
+                return Task.FromResult<AiChildExecutionRelation?>(
+                    string.Equals(this.relation.ChildExecutionId, childExecutionId, StringComparison.Ordinal)
+                        ? this.relation
+                        : null);
+            }
+
+            public Task<IReadOnlyList<AiChildExecutionRelation>> ListIncompleteAsync(
+                int maxCount,
+                CancellationToken cancellationToken = default) =>
+                Task.FromResult<IReadOnlyList<AiChildExecutionRelation>>(Array.Empty<AiChildExecutionRelation>());
+
+            public Task<IReadOnlyList<AiChildExecutionRelation>> ListContinuationCandidatesAsync(
+                int maxCount,
+                CancellationToken cancellationToken = default) =>
+                Task.FromResult<IReadOnlyList<AiChildExecutionRelation>>(Array.Empty<AiChildExecutionRelation>());
+
+            public Task<IReadOnlyList<AiChildExecutionRelation>> ListParkConsistencyCandidatesAsync(
+                DateTimeOffset allocatedBeforeUtc,
+                int maxCount,
+                CancellationToken cancellationToken = default) =>
+                Task.FromResult<IReadOnlyList<AiChildExecutionRelation>>(Array.Empty<AiChildExecutionRelation>());
+
             public Task<AiChildExecutionRelation> GetOrCreateAsync(
                 AiChildExecutionRelation relation,
                 CancellationToken cancellationToken = default)
@@ -161,6 +187,13 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Dispa
             public Task<bool> TryReplaceAsync(
                 AiChildExecutionRelation relation,
                 AiChildExecutionRelationStatus expectedStatus,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+            public Task<bool> TryReplaceContinuationAsync(
+                AiChildExecutionRelation relation,
+                AiChildContinuationStatus expectedContinuationStatus,
                 CancellationToken cancellationToken = default)
             {
                 throw new NotSupportedException();

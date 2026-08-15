@@ -655,6 +655,33 @@ namespace Multiplexed.Abstractions.AI.Execution
         }
 
         /// <summary>
+        /// Reactivates a step after its external durable condition has been satisfied.
+        /// </summary>
+        /// <remarks>
+        /// This is a nominal continuation transition, not an execution recovery. Retry and recovery counters,
+        /// result data, failure data, and terminal timestamps remain unchanged.
+        /// </remarks>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when the step is not currently <see cref="AiStepExecutionStatus.WaitingForExternal"/>.
+        /// </exception>
+        public void MarkReadyFromExternalWait()
+        {
+            if (Status != AiStepExecutionStatus.WaitingForExternal)
+            {
+                throw new InvalidOperationException(
+                    $"Step '{StepName}' cannot resume from external wait while status is '{Status}'.");
+            }
+
+            Status = AiStepExecutionStatus.Ready;
+            ClaimedBy = null;
+            ClaimToken = null;
+            ClaimedAtUtc = null;
+            LeaseExpiresAtUtc = null;
+            UpdatedAtUtc = DateTime.UtcNow;
+            Version++;
+        }
+
+        /// <summary>
         /// Requeues a timed-out running step back to Ready.
         /// </summary>
         public void MarkRequeuedAfterTimeout()

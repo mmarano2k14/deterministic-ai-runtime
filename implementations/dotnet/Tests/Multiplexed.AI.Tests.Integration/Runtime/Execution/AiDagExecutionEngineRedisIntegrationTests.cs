@@ -247,6 +247,62 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
         }
 
         /// <summary>
+        /// Verifies that Redis atomically reactivates one externally waiting step without changing retry or recovery counters.
+        /// </summary>
+        [RedisFact]
+        public async Task TryResumeExternalWaitingStepAsync_Should_Commit_Ready_And_Remain_Idempotent()
+        {
+            await using var host = await CreateHostAsync("dag-parallel-basic.json");
+            var created = await host.Engine.CreateAsync("dag-parallel-basic", "Marco");
+
+            try
+            {
+                var dagStore = host.ServiceProvider.GetRequiredService<IAiDagExecutionStore>();
+                var claimed = await dagStore.TryClaimNextReadyStepAsync(
+                    created.ExecutionId,
+                    "external-wait-worker");
+
+                Assert.NotNull(claimed);
+                var claimedState = await dagStore.GetStateAsync(created.ExecutionId);
+                Assert.NotNull(claimedState);
+                var before = claimedState!.Steps[claimed!.StepName];
+                var retryCount = before.RetryState?.RetryCount ?? 0;
+                var recoveryCount = before.RecoveryCount;
+
+                Assert.True(await dagStore.TryParkStepAsync(
+                    created.ExecutionId,
+                    claimed.StepName,
+                    claimed.ClaimToken));
+
+                var resumed = await dagStore.TryResumeExternalWaitingStepAsync(
+                    created.ExecutionId,
+                    claimed.StepName);
+
+                Assert.True(resumed);
+
+                var resumedState = await dagStore.GetStateAsync(created.ExecutionId);
+                Assert.NotNull(resumedState);
+                var step = resumedState!.Steps[claimed.StepName];
+                Assert.Equal(AiStepExecutionStatus.Ready, step.Status);
+                Assert.Null(step.ClaimedBy);
+                Assert.Null(step.ClaimToken);
+                Assert.Null(step.ClaimedAtUtc);
+                Assert.Null(step.LeaseExpiresAtUtc);
+                Assert.Equal(retryCount, step.RetryState?.RetryCount ?? 0);
+                Assert.Equal(recoveryCount, step.RecoveryCount);
+                Assert.Null(step.CompletedAtUtc);
+
+                Assert.False(await dagStore.TryResumeExternalWaitingStepAsync(
+                    created.ExecutionId,
+                    claimed.StepName));
+            }
+            finally
+            {
+                await CleanupDagExecutionAsync(created.ExecutionId);
+            }
+        }
+
+        /// <summary>
         /// Verifies that ExecuteNext executes the root step first.
         /// </summary>
         [RedisFact]

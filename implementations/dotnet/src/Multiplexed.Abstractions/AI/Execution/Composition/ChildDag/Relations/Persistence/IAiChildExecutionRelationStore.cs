@@ -22,6 +22,48 @@ namespace Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations.P
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Gets the durable relation that owns one exact child execution identifier.
+        /// </summary>
+        /// <param name="childExecutionId">The exact child execution identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The authoritative relation when present; otherwise <see langword="null"/>.</returns>
+        Task<AiChildExecutionRelation?> GetByChildExecutionIdAsync(
+            string childExecutionId,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Lists allocated or waiting child relations whose child execution may still reach a terminal outcome.
+        /// </summary>
+        /// <param name="maxCount">The maximum number of relations to return.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The oldest incomplete child relations first.</returns>
+        Task<IReadOnlyList<AiChildExecutionRelation>> ListIncompleteAsync(
+            int maxCount,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Lists completed child relations whose parent continuation is pending or scheduled but not yet resumed.
+        /// </summary>
+        /// <param name="maxCount">The maximum number of relations to return.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The oldest continuation candidates first.</returns>
+        Task<IReadOnlyList<AiChildExecutionRelation>> ListContinuationCandidatesAsync(
+            int maxCount,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Lists child-allocated relations old enough to require defensive parent-park consistency checking.
+        /// </summary>
+        /// <param name="allocatedBeforeUtc">Only relations allocated on or before this UTC boundary are returned.</param>
+        /// <param name="maxCount">The maximum number of relations to return.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The oldest child-allocated relations first.</returns>
+        Task<IReadOnlyList<AiChildExecutionRelation>> ListParkConsistencyCandidatesAsync(
+            DateTimeOffset allocatedBeforeUtc,
+            int maxCount,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Creates a complete initial relation or returns the already committed equivalent relation.
         /// </summary>
         /// <param name="relation">The complete initial relation to persist.</param>
@@ -44,6 +86,18 @@ namespace Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations.P
         Task<bool> TryReplaceAsync(
             AiChildExecutionRelation relation,
             AiChildExecutionRelationStatus expectedStatus,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Atomically replaces a completed relation only while its continuation status matches the expected value.
+        /// </summary>
+        /// <param name="relation">The complete replacement relation.</param>
+        /// <param name="expectedContinuationStatus">The continuation status that must still be authoritative.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><see langword="true"/> when the compare-and-swap succeeds; otherwise <see langword="false"/>.</returns>
+        Task<bool> TryReplaceContinuationAsync(
+            AiChildExecutionRelation relation,
+            AiChildContinuationStatus expectedContinuationStatus,
             CancellationToken cancellationToken = default);
     }
 }

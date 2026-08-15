@@ -129,6 +129,23 @@ namespace Multiplexed.AI.Stores
             string claimToken,
             CancellationToken cancellationToken = default);
 
+        /// <summary>
+        /// Atomically reactivates one step whose external durable condition has been satisfied.
+        /// </summary>
+        /// <remarks>
+        /// The transition is valid only from <see cref="AiStepExecutionStatus.WaitingForExternal"/> to
+        /// <see cref="AiStepExecutionStatus.Ready"/>. Implementations must not increment retry or recovery counters
+        /// and must not use crash-recovery ownership semantics.
+        /// </remarks>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="stepName">The waiting step name.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when the waiting step was reactivated; otherwise <c>false</c>.</returns>
+        Task<bool> TryResumeExternalWaitingStepAsync(
+            string executionId,
+            string stepName,
+            CancellationToken cancellationToken = default);
+
         Task<int> RecoverTimedOutStepsAsync(
             string executionId,
             CancellationToken cancellationToken = default);

@@ -130,6 +130,36 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suspe
                 }
             }
 
+            public Task<AiChildExecutionRelation?> GetByChildExecutionIdAsync(
+                string childExecutionId,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                lock (sync)
+                {
+                    return Task.FromResult<AiChildExecutionRelation?>(
+                        string.Equals(relation.ChildExecutionId, childExecutionId, StringComparison.Ordinal)
+                            ? Clone(relation)
+                            : null);
+                }
+            }
+
+            public Task<IReadOnlyList<AiChildExecutionRelation>> ListIncompleteAsync(
+                int maxCount,
+                CancellationToken cancellationToken = default) =>
+                Task.FromResult<IReadOnlyList<AiChildExecutionRelation>>(Array.Empty<AiChildExecutionRelation>());
+
+            public Task<IReadOnlyList<AiChildExecutionRelation>> ListContinuationCandidatesAsync(
+                int maxCount,
+                CancellationToken cancellationToken = default) =>
+                Task.FromResult<IReadOnlyList<AiChildExecutionRelation>>(Array.Empty<AiChildExecutionRelation>());
+
+            public Task<IReadOnlyList<AiChildExecutionRelation>> ListParkConsistencyCandidatesAsync(
+                DateTimeOffset allocatedBeforeUtc,
+                int maxCount,
+                CancellationToken cancellationToken = default) =>
+                Task.FromResult<IReadOnlyList<AiChildExecutionRelation>>(Array.Empty<AiChildExecutionRelation>());
+
             public Task<AiChildExecutionRelation> GetOrCreateAsync(
                 AiChildExecutionRelation relation,
                 CancellationToken cancellationToken = default)
@@ -153,6 +183,24 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suspe
 
                     relation = Clone(replacement);
                     SuccessfulReplaceCount++;
+                    return Task.FromResult(true);
+                }
+            }
+
+            public Task<bool> TryReplaceContinuationAsync(
+                AiChildExecutionRelation replacement,
+                AiChildContinuationStatus expectedContinuationStatus,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                lock (sync)
+                {
+                    if (relation.ContinuationStatus != expectedContinuationStatus)
+                    {
+                        return Task.FromResult(false);
+                    }
+
+                    relation = Clone(replacement);
                     return Task.FromResult(true);
                 }
             }
@@ -187,6 +235,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suspe
                     WaitingAtUtc = source.WaitingAtUtc,
                     CompletedAtUtc = source.CompletedAtUtc,
                     ParentContinuationScheduledAtUtc = source.ParentContinuationScheduledAtUtc,
+                    ParentContinuationScheduledStepVersion = source.ParentContinuationScheduledStepVersion,
                     ParentResumedAtUtc = source.ParentResumedAtUtc
                 };
             }

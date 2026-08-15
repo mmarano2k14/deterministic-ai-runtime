@@ -63,6 +63,12 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             !string.IsNullOrWhiteSpace(ResumeExecutionId);
 
         /// <summary>
+        /// Gets a value indicating whether this run reactivates a normal externally waiting step.
+        /// </summary>
+        public bool IsExternalWaitContinuation =>
+            Request.ExternalWaitContinuation is not null;
+
+        /// <summary>
         /// Gets the submitted pipeline run request.
         /// </summary>
         public AiRuntimePipelineRunRequest Request { get; }
