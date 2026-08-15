@@ -58,6 +58,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Result
         public bool HasReplayTrace { get; init; }
 
         /// <summary>
+        /// Gets the ordered child DAG relation results captured for this submitted parent execution.
+        /// </summary>
+        public IReadOnlyList<ProductionChildDagScenarioResult> ChildDagExecutions { get; init; } =
+            Array.Empty<ProductionChildDagScenarioResult>();
+
+        /// <summary>
         /// Gets arbitrary run-level metadata captured by the runner.
         /// </summary>
         public IReadOnlyDictionary<string, string> Metadata { get; init; } =

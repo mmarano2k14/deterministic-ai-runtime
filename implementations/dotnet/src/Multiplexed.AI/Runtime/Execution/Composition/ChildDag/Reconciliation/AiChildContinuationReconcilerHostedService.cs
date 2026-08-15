@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -8,27 +9,28 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Reconciliation
     /// Periodically runs durable child-completion and parent-continuation reconciliation.
     /// </summary>
     /// <remarks>
-    /// This service schedules iterations only. All correctness decisions are owned by
-    /// <see cref="AiChildContinuationReconciler"/> and durable relation/execution state.
+    /// This hosted service is singleton-scoped by the host. Each iteration creates a normal DI scope before resolving
+    /// <see cref="AiChildContinuationReconciler"/> so scoped DAG engine services are never captured by the hosted
+    /// service lifetime. Correctness decisions remain owned by the reconciler and durable relation/execution state.
     /// </remarks>
     public sealed class AiChildContinuationReconcilerHostedService : BackgroundService
     {
-        private readonly AiChildContinuationReconciler reconciler;
+        private readonly IServiceScopeFactory scopeFactory;
         private readonly IOptionsMonitor<AiChildContinuationReconciliationOptions> options;
         private readonly ILogger<AiChildContinuationReconcilerHostedService> logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiChildContinuationReconcilerHostedService"/> class.
         /// </summary>
-        /// <param name="reconciler">The durable child continuation reconciler.</param>
+        /// <param name="scopeFactory">The scope factory used to resolve one reconciler per iteration.</param>
         /// <param name="options">The reconciliation options.</param>
         /// <param name="logger">The logger.</param>
         public AiChildContinuationReconcilerHostedService(
-            AiChildContinuationReconciler reconciler,
+            IServiceScopeFactory scopeFactory,
             IOptionsMonitor<AiChildContinuationReconciliationOptions> options,
             ILogger<AiChildContinuationReconcilerHostedService> logger)
         {
-            this.reconciler = reconciler ?? throw new ArgumentNullException(nameof(reconciler));
+            this.scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
             this.options = options ?? throw new ArgumentNullException(nameof(options));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -48,7 +50,9 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Reconciliation
                 {
                     if (current.Enabled)
                     {
-                        var result = await this.reconciler
+                        using var scope = this.scopeFactory.CreateScope();
+                        var reconciler = scope.ServiceProvider.GetRequiredService<AiChildContinuationReconciler>();
+                        var result = await reconciler
                             .ReconcileAsync(batchSize, stoppingToken)
                             .ConfigureAwait(false);
 

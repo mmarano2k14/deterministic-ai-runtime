@@ -33,6 +33,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         public bool EnableRetention { get; init; } = true;
 
         /// <summary>
+        /// Gets the number of nested child DAG levels added to the production-test pipeline.
+        /// </summary>
+        /// <remarks>
+        /// The default value is zero so every historical production scenario keeps its exact pipeline shape and
+        /// execution behavior. Positive values opt in to deterministic child DAG composition for dedicated tests.
+        /// </remarks>
+        public int ChildDepth { get; init; } = 0;
+
+        /// <summary>
         /// Gets additional input values merged into the submitted pipeline input.
         /// </summary>
         public IReadOnlyDictionary<string, object?> Input { get; init; } =

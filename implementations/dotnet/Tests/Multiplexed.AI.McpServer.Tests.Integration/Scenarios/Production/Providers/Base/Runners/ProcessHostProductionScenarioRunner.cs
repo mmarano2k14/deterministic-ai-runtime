@@ -9,7 +9,10 @@ using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Results;
+using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations.Persistence;
+using Multiplexed.AI.Stores;
 using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
@@ -92,6 +95,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var scaleOutRequestStore =
                 host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
 
+            var childCompositionEnabled =
+                scenario.Tenants.Any(tenant => tenant.Run.ChildDepth > 0);
+            var childRelationStore =
+                childCompositionEnabled
+                    ? ProductionChildDagScenarioHelpers.CreateRelationStore(host.Services)
+                    : null;
+            using var childObservationScope =
+                childCompositionEnabled
+                    ? host.Services.CreateScope()
+                    : null;
+            var childDagExecutionStore =
+                childObservationScope?.ServiceProvider.GetRequiredService<IAiDagExecutionStore>();
+
             output.WriteLine(
                 $"[{logPrefix}] Scenario='{scenario.Name}', ControlPlaneId='{controlPlaneId}', TenantCount='{scenario.Tenants.Count}', RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'.");
 
@@ -145,6 +161,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 controlPlaneId,
                                 context.Mcp,
                                 scaleOutRequestStore,
+                                childRelationStore,
+                                childDagExecutionStore,
                                 cancellationToken)
                             .ConfigureAwait(false);
 
@@ -164,6 +182,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     controlPlaneId,
                                     context.Mcp,
                                     scaleOutRequestStore,
+                                    childRelationStore,
+                                    childDagExecutionStore,
                                     cancellationToken))
                             .ToArray();
 
@@ -208,13 +228,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string controlPlaneId,
             McpTestClient mcp,
             IAiRuntimeScaleOutRequestStore scaleOutRequestStore,
+            IAiChildExecutionRelationStore? childRelationStore,
+            IAiDagExecutionStore? childDagExecutionStore,
             CancellationToken cancellationToken)
         {
             var pipelineName =
                 $"{scenario.Name}-{tenant.TenantId}-{Guid.NewGuid():N}";
 
             output.WriteLine(
-                $"[{logPrefix}] Submitting tenant workload. TenantId='{tenant.TenantId}', TenantGroupId='{tenant.TenantGroupId}', PipelineKey='{pipelineName}', RunCount='{tenant.Run.RunCount}', StepCount='{tenant.Run.StepCount}'.");
+                $"[{logPrefix}] Submitting tenant workload. TenantId='{tenant.TenantId}', TenantGroupId='{tenant.TenantGroupId}', PipelineKey='{pipelineName}', RunCount='{tenant.Run.RunCount}', StepCount='{tenant.Run.StepCount}', ChildDepth='{tenant.Run.ChildDepth}'.");
 
             var sharedRunIds =
                 await SubmitRunsAsync(
@@ -243,12 +265,24 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .ConfigureAwait(false);
 
             var finalStatuses =
-                await McpTestWaitHelpers
-                    .WaitForTerminalRuntimeRunStatusesAsync(
-                        mcp,
-                        dispatchedRuns,
-                        timeout: scenario.CompletionTimeout)
-                    .ConfigureAwait(false);
+                tenant.Run.ChildDepth == 0
+                    ? await McpTestWaitHelpers
+                        .WaitForTerminalRuntimeRunStatusesAsync(
+                            mcp,
+                            dispatchedRuns,
+                            timeout: scenario.CompletionTimeout)
+                        .ConfigureAwait(false)
+                    : childDagExecutionStore is not null
+                        ? await ProductionChildDagScenarioHelpers
+                            .WaitForDurableParentCompletionAsync(
+                                mcp,
+                                childDagExecutionStore,
+                                dispatchedRuns,
+                                scenario.CompletionTimeout,
+                                cancellationToken)
+                            .ConfigureAwait(false)
+                        : throw new InvalidOperationException(
+                            "Child DAG scenarios require the shared authoritative DAG execution store.");
 
             var scaleOutRequests =
                 await CollectTenantScaleOutRequestsAsync(
@@ -264,7 +298,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     mcp,
                     dispatchedRuns,
                     finalStatuses,
-                    scenario.Assertions)
+                    tenant,
+                    pipelineName,
+                    childRelationStore,
+                    scenario.CompletionTimeout,
+                    scenario.Assertions,
+                    cancellationToken)
                 .ConfigureAwait(false);
 
             var runtimeInstanceIds =
@@ -334,7 +373,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         stepCount: tenant.Run.StepCount,
                         input: input,
                         enableRetention: tenant.Run.EnableRetention,
-                        flakyStepInterval: tenant.Run.FlakyStepInterval)
+                        flakyStepInterval: tenant.Run.FlakyStepInterval,
+                        childDepth: tenant.Run.ChildDepth)
                 };
 
             var submitResults =
@@ -539,7 +579,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             McpTestClient mcp,
             IReadOnlyList<AiSharedRunRecord> dispatchedRuns,
             IReadOnlyList<AiRuntimeQueueControlPlaneResult> finalStatuses,
-            ProductionRuntimeScenarioAssertionOptions assertions)
+            ProductionTenantScenarioDefinition tenant,
+            string pipelineName,
+            IAiChildExecutionRelationStore? childRelationStore,
+            TimeSpan childRelationTimeout,
+            ProductionRuntimeScenarioAssertionOptions assertions,
+            CancellationToken cancellationToken)
         {
             var results =
                 new List<ProductionRunScenarioResult>();
@@ -680,6 +725,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine(
                     $"[{logPrefix}][OBSERVABILITY DEBUG] ExecutionId='{executionId}', LedgerCount='{ledgerCount}', TraceCount='{traceCount}', HasLedger='{hasLedger}', HasTrace='{hasTrace}', ReplaySuccess='{replaySuccess}', ReplayMessage='{replayMessage}', HasReplayReport='{hasReplayReport}', HasReplayLedger='{hasReplayLedger}', HasReplayTrace='{hasReplayTrace}'.");
 
+                var childDagExecutions =
+                    tenant.Run.ChildDepth == 0
+                        ? Array.Empty<ProductionChildDagScenarioResult>()
+                        : childRelationStore is not null
+                            ? await ProductionChildDagScenarioHelpers
+                                .WaitForNestedRelationsAsync(
+                                    childRelationStore,
+                                    tenant.TenantId,
+                                    executionId!,
+                                    pipelineName,
+                                    tenant.Run.ChildDepth,
+                                    childRelationTimeout,
+                                    cancellationToken)
+                                .ConfigureAwait(false)
+                            : throw new InvalidOperationException(
+                                "Child DAG scenario results require an authoritative child execution relation store.");
+
                 results.Add(
                     new ProductionRunScenarioResult
                     {
@@ -692,7 +754,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         HasTrace = hasTrace,
                         HasReplayReport = hasReplayReport,
                         HasReplayLedger = hasReplayLedger,
-                        HasReplayTrace = hasReplayTrace
+                        HasReplayTrace = hasReplayTrace,
+                        ChildDagExecutions = childDagExecutions
                     });
             }
 

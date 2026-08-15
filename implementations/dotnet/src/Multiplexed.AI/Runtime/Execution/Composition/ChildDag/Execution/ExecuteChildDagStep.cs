@@ -30,9 +30,11 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
     /// </para>
     /// <para>
     /// The parent step configuration must provide <c>childDagId</c>, <c>childDagVersion</c>, and
-    /// <c>logicalInvocationKey</c>. Keeping the child definition version in the declarative parent definition allows
-    /// recovery to reconstruct the same typed invocation identity without consulting the mutable latest child
-    /// definition after the relation has been created.
+    /// <c>logicalInvocationKey</c>. It may also embed the same declarative JSON-compatible
+    /// <see cref="AiPipelineDefinition"/> under <c>childDagDefinition</c>. When present, that exact declarative
+    /// definition is used for initial freezing instead of resolving mutable live provider state. Keeping the child
+    /// definition version in the declarative parent definition allows recovery to reconstruct the same typed
+    /// invocation identity after the relation or preparation snapshot exists.
     /// </para>
     /// </remarks>
     [AiStep(StepKey)]
@@ -43,9 +45,25 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
         /// </summary>
         public const string StepKey = "execution.child-dag";
 
-        private const string ChildDagIdConfigKey = "childDagId";
-        private const string ChildDagVersionConfigKey = "childDagVersion";
-        private const string LogicalInvocationKeyConfigKey = "logicalInvocationKey";
+        /// <summary>
+        /// Gets the declarative configuration key containing the logical child pipeline identifier.
+        /// </summary>
+        public const string ChildDagIdConfigKey = "childDagId";
+
+        /// <summary>
+        /// Gets the declarative configuration key containing the exact child pipeline definition version.
+        /// </summary>
+        public const string ChildDagVersionConfigKey = "childDagVersion";
+
+        /// <summary>
+        /// Gets the declarative configuration key containing the canonical logical invocation key.
+        /// </summary>
+        public const string LogicalInvocationKeyConfigKey = "logicalInvocationKey";
+
+        /// <summary>
+        /// Gets the optional declarative configuration key containing an inline JSON-compatible child definition.
+        /// </summary>
+        public const string ChildDagDefinitionConfigKey = "childDagDefinition";
         private const int MaximumGenerationTraversal = 1024;
 
         private readonly IAiChildExecutionRelationStore relationStore;
@@ -220,9 +238,10 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
 
             if (preparation is null)
             {
-                var provider = this.pipelineDefinitionSourceSelector.Select(identity.ChildDagId);
-                var definition = await provider
-                    .GetDefinitionAsync(identity.ChildDagId, cancellationToken)
+                var definition = await ResolveInitialChildDefinitionAsync(
+                        identity,
+                        helper,
+                        cancellationToken)
                     .ConfigureAwait(false);
 
                 if (!string.Equals(definition.Name, identity.ChildDagId, StringComparison.Ordinal))
@@ -295,6 +314,41 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
 
             return await this.relationStore
                 .GetOrCreateAsync(relation, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Resolves the exact declarative child definition used for initial invocation preparation.
+        /// </summary>
+        /// <param name="identity">The typed generation-zero invocation identity.</param>
+        /// <param name="helper">The existing parent step context helper.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>
+        /// The inline JSON-compatible child definition when configured; otherwise the definition resolved through
+        /// the existing pipeline definition source selector.
+        /// </returns>
+        /// <remarks>
+        /// Inline definitions use the existing <see cref="AiPipelineDefinition"/> contract and are not a second
+        /// pipeline format. Once immutable preparation or relation state exists, recovery no longer calls this
+        /// method and therefore does not depend on live provider state.
+        /// </remarks>
+        private async Task<AiPipelineDefinition> ResolveInitialChildDefinitionAsync(
+            AiChildInvocationIdentity identity,
+            IAiStepContextHelper helper,
+            CancellationToken cancellationToken)
+        {
+            var inlineDefinition = await helper
+                .GetConfigAsync<AiPipelineDefinition>(ChildDagDefinitionConfigKey, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (inlineDefinition is not null)
+            {
+                return inlineDefinition;
+            }
+
+            var provider = this.pipelineDefinitionSourceSelector.Select(identity.ChildDagId);
+            return await provider
+                .GetDefinitionAsync(identity.ChildDagId, cancellationToken)
                 .ConfigureAwait(false);
         }
 

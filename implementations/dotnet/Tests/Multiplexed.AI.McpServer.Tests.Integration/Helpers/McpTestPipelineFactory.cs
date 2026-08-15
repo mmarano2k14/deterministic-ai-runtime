@@ -1,6 +1,7 @@
 ﻿using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Pipeline;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
 {
@@ -9,16 +10,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
     /// </summary>
     public static class McpTestPipelineFactory
     {
+        /// <summary>
+        /// Gets the declarative pipeline version used by MCP integration-test definitions.
+        /// </summary>
+        public const string PipelineVersion = "1.0.0";
+
+        /// <summary>
+        /// Gets the stable logical step name used by production test pipelines for one child DAG call-site.
+        /// </summary>
+        public const string ChildDagStepName = "execute-child-dag";
+
         public static AiRuntimePipelineRunRequest CreateRunRequest(
             string pipelineName,
             int stepCount,
             object? input = null,
             bool enableRetention = false,
             int flakyStepInterval = 0,
-            McpTestCrashCheckpointDefinition? crashCheckpoint = null)
+            McpTestCrashCheckpointDefinition? crashCheckpoint = null,
+            int childDepth = 0)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stepCount);
+            ArgumentOutOfRangeException.ThrowIfNegative(childDepth);
 
             ValidateCrashCheckpoint(
                 stepCount,
@@ -32,7 +45,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                     stepCount,
                     enableRetention,
                     flakyStepInterval,
-                    crashCheckpoint),
+                    crashCheckpoint,
+                    childDepth),
                 Input = input ?? new
                 {
                     source = "mcp-integration-test",
@@ -48,10 +62,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
             int stepCount,
             bool enableRetention = false,
             int flakyStepInterval = 0,
-            McpTestCrashCheckpointDefinition? crashCheckpoint = null)
+            McpTestCrashCheckpointDefinition? crashCheckpoint = null,
+            int childDepth = 0)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stepCount);
+            ArgumentOutOfRangeException.ThrowIfNegative(childDepth);
 
             ValidateCrashCheckpoint(
                 stepCount,
@@ -94,14 +110,75 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                     });
             }
 
+            if (childDepth > 0)
+            {
+                var childDefinition = CreatePipelineDefinition(
+                    CreateChildPipelineName(pipelineName, childDepth),
+                    stepCount,
+                    enableRetention,
+                    flakyStepInterval,
+                    crashCheckpoint: null,
+                    childDepth: childDepth - 1);
+
+                steps.Add(
+                    new AiPipelineStepDefinition
+                    {
+                        Name = ChildDagStepName,
+                        StepKey = ExecuteChildDagStep.StepKey,
+                        Order = stepCount + 1,
+                        DependsOn = steps
+                            .Select(step => step.Name)
+                            .ToArray(),
+                        Config = new Dictionary<string, object?>
+                        {
+                            [ExecuteChildDagStep.ChildDagIdConfigKey] = childDefinition.Name,
+                            [ExecuteChildDagStep.ChildDagVersionConfigKey] = childDefinition.Version,
+                            [ExecuteChildDagStep.LogicalInvocationKeyConfigKey] = CreateChildLogicalInvocationKey(pipelineName, childDepth),
+                            [ExecuteChildDagStep.ChildDagDefinitionConfigKey] = childDefinition
+                        }
+                    });
+            }
+
             return new AiPipelineDefinition
             {
                 Name = pipelineName,
-                Version = "1.0.0",
+                Version = PipelineVersion,
                 ExecutionMode = AiExecutionMode.Dag,
                 Config = CreatePipelineConfig(enableRetention),
                 Steps = steps
             };
+        }
+
+        /// <summary>
+        /// Creates the deterministic child pipeline name used by one production-test nesting level.
+        /// </summary>
+        /// <param name="parentPipelineName">The parent pipeline name.</param>
+        /// <param name="childDepth">The remaining child depth at the parent call-site.</param>
+        /// <returns>The child pipeline name embedded in the parent definition.</returns>
+        public static string CreateChildPipelineName(
+            string parentPipelineName,
+            int childDepth)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(parentPipelineName);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(childDepth);
+
+            return $"{parentPipelineName}-child-depth-{childDepth:000}";
+        }
+
+        /// <summary>
+        /// Creates the deterministic business invocation key used by one production-test child call-site.
+        /// </summary>
+        /// <param name="parentPipelineName">The parent pipeline name.</param>
+        /// <param name="childDepth">The remaining child depth at the parent call-site.</param>
+        /// <returns>The canonical logical invocation key stored in the child relation identity.</returns>
+        public static string CreateChildLogicalInvocationKey(
+            string parentPipelineName,
+            int childDepth)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(parentPipelineName);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(childDepth);
+
+            return $"{parentPipelineName}|child-depth={childDepth.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
         }
 
         private static string[] CreateVariableDependencies(

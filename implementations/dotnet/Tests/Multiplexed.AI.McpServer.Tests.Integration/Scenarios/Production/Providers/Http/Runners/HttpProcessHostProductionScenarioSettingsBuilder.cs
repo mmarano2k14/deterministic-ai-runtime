@@ -46,6 +46,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             ApplyRuntimeExecutionRecoverySettings(settings, scenario);
             ApplySubmitModeSettings(settings, scenario);
             ApplyTenantRuntimeSettings(settings, scenario);
+            ApplyChildDagCompositionSettings(settings, scenario);
             ApplyScaleOutSettings(settings);
             ApplyHttpProviderSettings(settings);
             ApplyPersistenceSettings(settings, scenario);
@@ -182,6 +183,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 ApplyParentAndProcessSetting(settings, $"{prefix}:LocalQueueCapacity", tenant.LocalQueueCapacity.ToString());
                 ApplyParentAndProcessSetting(settings, $"{prefix}:RuntimeInstanceIdPrefix", tenant.RuntimeInstanceIdPrefix);
             }
+        }
+
+        /// <summary>
+        /// Enables child DAG composition only for process-host scenarios that explicitly request nested children.
+        /// </summary>
+        /// <param name="settings">The settings dictionary to mutate.</param>
+        /// <param name="scenario">The production runtime scenario definition.</param>
+        /// <remarks>
+        /// Historical scenarios keep <c>ChildDepth = 0</c>, so they do not receive any new runtime-host feature
+        /// settings. Positive depth is opt-in and enables only the child composition lifecycle inside spawned
+        /// RuntimeInstanceOnly processes. The existing process-host settings already provide Mongo-backed execution
+        /// snapshots, so this method deliberately does not duplicate those persistence settings.
+        /// </remarks>
+        private static void ApplyChildDagCompositionSettings(
+            Dictionary<string, string?> settings,
+            ProductionRuntimeScenarioDefinition scenario)
+        {
+            var enabled = false;
+
+            foreach (var tenant in scenario.Tenants)
+            {
+                ArgumentOutOfRangeException.ThrowIfNegative(tenant.Run.ChildDepth);
+                enabled |= tenant.Run.ChildDepth > 0;
+            }
+
+            if (!enabled)
+            {
+                return;
+            }
+
+            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiChildDagComposition__Enabled"] = "true";
         }
 
         /// <summary>

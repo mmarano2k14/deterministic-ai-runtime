@@ -120,6 +120,41 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Verifies that the existing single-tenant Shared process-host scenario can opt in to exactly one nested
+        /// child DAG without changing the historical zero-depth scenario contract.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Run_SingleTenant_Shared_Runtime_Mode_With_Child_Dag_Depth_One()
+        {
+            var baseScenario = ProductionRuntimeScenarioFactory.CreateSingleTenantSharedRuntimeModeScenario();
+            var tenant = Assert.Single(baseScenario.Tenants);
+
+            var scenario =
+                baseScenario with
+                {
+                    Name = "single-tenant-shared-runtime-mode-child-depth-one",
+                    ControlPlaneIdPrefix = "production-single-tenant-shared-child-depth-one",
+                    CompletionTimeout = TimeSpan.FromMinutes(5),
+                    Tenants = new[]
+                    {
+                        tenant with
+                        {
+                            Run = tenant.Run with
+                            {
+                                ChildDepth = 1
+                            }
+                        }
+                    }
+                };
+
+            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
+            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
+
+            AssertScenarioResult(scenario, result);
+            ProductionChildDagAssertions.AssertNestedComposition(scenario, result);
+        }
+
+        /// <summary>
         /// Verifies that the HTTP process-host provider runs a single tenant in Hybrid runtime mode.
         /// </summary>
         [Fact]
@@ -144,8 +179,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             AssertScenarioResult(scenario, result);
         }
-
-        
 
         /// <summary>
         /// Asserts a production runtime scenario result according to the scenario assertion options.
