@@ -44,6 +44,7 @@ The current architecture is built around the following core foundations:
 | Execution Identity | Provide stable identifiers for executions, runs, runtime instances, workers, and correlation. |
 | Deterministic Runtime | Execute AI workflows through controlled state transitions instead of uncontrolled execution. |
 | DAG Execution | Represent workflows as step-based directed execution graphs. |
+| Durable Child DAG Composition | **Experimental.** Delegate from one DAG to another, park the parent durably, recover nested work through existing runtime recovery, and resume the same parent execution through deterministic continuation. Full engine lifecycle observation and deeper nested closure remain required. |
 | Execution State | Track workflow progress, step status, retry direction, pause/resume/cancel state, retention decisions, memory/context evidence direction, and finalization. |
 | Worker Model | Allow work to be processed by workers inside runtime instances. |
 | Queue Model | Support local queues and shared queue direction for multi-instance execution. |
@@ -307,6 +308,34 @@ They often involve:
 - downstream operations.
 
 The runtime foundation is designed to orchestrate these steps in a controlled way.
+
+---
+
+## 6A. Durable Child DAG Composition Foundation — Experimental
+
+The runtime now contains a native durable Child DAG composition path rather than only a future nested-workflow direction.
+
+```text
+Parent DAG
+    ↓
+execution.child-dag
+    ↓
+Child DAG
+    ↓
+Parent WaitingForExternal
+    ↓
+child terminal result
+    ↓
+deterministic continuation
+    ↓
+same parent ExecutionId resumes
+```
+
+The capability reuses the existing DAG engine, execution state, Policy Engine, shared queue, recovery, replay, Ledger, tracing, and Forensics foundations. It does not create a second orchestration engine.
+
+The current full `ChildDepth = 1` Kubernetes warm-reuse production proof is green. The capability remains **Experimental** until the complete engine lifecycle is directly observable through the existing Lifecycle Events, durable Ledger, and Forensics, and deeper nesting closes at the same production-proof level.
+
+See [Durable Child DAG Composition](../ai/child-dag-composition.md).
 
 ---
 
@@ -1613,6 +1642,7 @@ It is the foundation for a complete AI workflow execution platform.
 |---|---|
 | Deterministic execution | Foundation exists |
 | DAG workflow execution | Foundation exists |
+| Durable Child DAG composition | **Experimental** — implementation exists; full Depth 1 production proof green; engine lifecycle observation + deeper nested closure pending |
 | Execution state | Foundation exists |
 | Step lifecycle | Foundation exists |
 | Worker model | Foundation exists |

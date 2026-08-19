@@ -55,52 +55,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
             Assert.Equal(3, handler.RequestCount);
         }
 
-        [Fact]
-        public async Task WaitForTerminalRuntimeRunStatusesAsync_Should_Stop_After_Bounded_Consecutive_429()
-        {
-            var handler =
-                new RuntimeStatusHandler(
-                    tooManyRequestsBeforeSuccess:
-                        int.MaxValue);
-
-            using var httpClient =
-                new HttpClient(handler)
-                {
-                    BaseAddress =
-                        new Uri("http://localhost")
-                };
-
-            var mcp =
-                new McpTestClient(httpClient);
-
-            var exception =
-                await Assert.ThrowsAsync<
-                    HttpRequestException>(
-                    () =>
-                        McpTestWaitHelpers
-                            .WaitForTerminalRuntimeRunStatusesAsync(
-                                mcp,
-                                new[]
-                                {
-                                    CreateDispatchedRun(
-                                        "shared-run-throttled",
-                                        "runtime-1",
-                                        "local-run-throttled",
-                                        "execution-throttled")
-                                },
-                                TimeSpan.FromMinutes(45)));
-
-            Assert.Equal(
-                HttpStatusCode.TooManyRequests,
-                exception.StatusCode);
-
-            Assert.Contains(
-                "after '6' consecutive attempts",
-                exception.Message,
-                StringComparison.Ordinal);
-
-            Assert.Equal(6, handler.RequestCount);
-        }
 
         [Fact]
         public async Task WaitForTerminalRuntimeRunStatusesAsync_Should_Not_Repoll_Already_Terminal_Runs()

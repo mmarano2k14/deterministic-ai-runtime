@@ -10,6 +10,7 @@ This document summarizes the focused observability documents:
 - [Runtime Recovery Forensics](runtime-recovery-forensics.md)
 - [Control-Plane Ledger Causal Chain](control-plane-ledger-causal-chain.md)
 - [Recovery Replay Ledger Trace Proof](recovery-replay-ledger-trace-proof.md)
+- [Durable Child DAG Composition](child-dag-composition.md) — Experimental; depends on complete engine lifecycle observation for promotion beyond the current validation boundary.
 
 
 ---
@@ -61,6 +62,40 @@ Did unrelated tenants remain absent from the recovery surface?
 Which metrics changed?
 Can this be inspected later?
 ```
+
+---
+
+## Engine Lifecycle Observation — Current Priority
+
+The runtime already has durable Ledger, tracing, Runtime Lifecycle Journal, recovery Forensics, and realtime observability foundations. The current priority is to align the **engine lifecycle itself** across those existing surfaces rather than create another event system.
+
+This is especially important for Experimental Child DAG composition, where the runtime must directly expose and correlate transitions such as:
+
+```text
+ChildCompleted
+→ ContinuationPending
+→ ContinuationScheduled
+→ ContinuationDelivered
+→ ContinuationConsumed
+→ ParentReady
+→ ParentResumed
+```
+
+The intended contract is:
+
+```text
+Existing Lifecycle Events
+        ↕
+Existing Durable Ledger
+        ↕
+Existing Forensics
+```
+
+The Event Manager provides immediate observation, the Ledger provides durable evidence and audit history, and Forensics reconstructs causality. They describe the same semantic transition and must correlate through the existing execution identities.
+
+Until that lifecycle coverage is complete and deeper nested recovery validation is closed, Child DAG composition remains **Experimental**.
+
+See [Durable Child DAG Composition](child-dag-composition.md).
 
 ---
 

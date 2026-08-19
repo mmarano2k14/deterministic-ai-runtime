@@ -804,8 +804,9 @@ All roadmap work should respect these principles:
 The current priorities are:
 
 ```text
-Child-DAG durable await / ExecuteChildDag foundation
-Multi-agent orchestration proof on top of the deterministic runtime
+Engine Lifecycle Observation: align Lifecycle Events + durable Ledger + Forensics
+Experimental Child DAG: preserve the green Depth 1 baseline and close deeper nesting after lifecycle observation
+Multi-agent orchestration proof on top of durable Child DAG composition
 Enterprise demo polish
 Recovery / replay / ledger / lifecycle / trace documentation
 Observability polish
@@ -829,6 +830,6 @@ Phase 0 documentation restructure is complete as V1.
 
 The runtime foundations are already implemented and validated through distributed integration scenarios, MCP control-plane scenarios, HTTP process-host scenarios, replay/ledger/trace scenarios, and runtime crash recovery scenarios.
 
-The Runtime Pool correctness phase is now closed at the current proof boundary. The focus shifts to child-DAG durable await and multi-agent orchestration on top of that foundation, alongside operational polish, clearer API/controller surfaces, recovery and replay tooling, MLOps-oriented platform direction, broader Kubernetes operations, and public positioning.
+The Runtime Pool correctness phase is now closed at the current proof boundary. Native durable Child DAG composition is implemented and has a full green `ChildDepth = 1` warm-reuse production proof, but it remains **Experimental**. The immediate focus is complete engine lifecycle observation by aligning the existing Lifecycle Events, durable Ledger, and Forensics before closing deeper nested Child DAG validation and building the multi-agent orchestration proof. Operational polish, clearer API/controller surfaces, recovery and replay tooling, MLOps-oriented platform direction, broader Kubernetes operations, and public positioning continue alongside that work.
 
 The dedicated long-term platform direction is documented in [`docs/road-to-mlops.md`](road-to-mlops.md).

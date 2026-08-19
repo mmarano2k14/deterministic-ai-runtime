@@ -150,6 +150,20 @@ It is also used by the final Runtime Pool production proofs for lifecycle and to
 
 ---
 
+## Engine Lifecycle Observation Expansion
+
+The current Runtime Lifecycle Journal is intentionally strongest around **infrastructure lifecycle**: hosts, Pods, runtime processes, incidents, replacements, and placement history.
+
+A separate near-term hardening effort is to expose the complete **execution-engine lifecycle** through the existing lifecycle event infrastructure and align it with the durable Ledger and Forensics. This includes Child DAG transitions such as child completion, continuation scheduling/delivery/consumption, and parent resume.
+
+This expansion does **not** change the journal into a competing execution store and does not introduce another event bus. It closes the observability gap between infrastructure lifecycle and nested execution lifecycle.
+
+Child DAG composition remains **Experimental** until this engine-lifecycle observation contract and deeper nested validation are complete.
+
+See [Durable Child DAG Composition](child-dag-composition.md).
+
+---
+
 ## Related Documents
 
 - [Runtime Pool Architecture](runtime-pool-architecture.md)

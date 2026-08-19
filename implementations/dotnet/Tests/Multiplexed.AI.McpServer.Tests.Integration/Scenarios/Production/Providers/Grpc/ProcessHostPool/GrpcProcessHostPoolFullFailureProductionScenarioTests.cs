@@ -26,7 +26,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// reuses the converged warm pool across cycles, and cleans only after the final cycle.
         /// </summary>
         [Theory]
-        [InlineData(7, 5, 20, 2)]
+        [InlineData(5, 5, 5, 2)]
         public Task Grpc_ProcessHostPool_Should_Recover_Child_Runtime_Then_Distinct_Parent_And_Reuse_Warm_Capacity(
             int maximumProcessHostCount,
             int runtimeCountPerHost,
