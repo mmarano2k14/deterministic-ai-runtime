@@ -263,6 +263,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
         /// Persists the complete immutable pre-relation preparation for one child invocation generation.
         /// </summary>
         /// <param name="identity">The authoritative typed child invocation identity.</param>
+        /// <param name="controlPlaneId">The logical control-plane authority frozen for this invocation.</param>
         /// <param name="frozenDefinition">The already frozen declarative child DAG definition.</param>
         /// <param name="frozenInvocationInput">The already frozen invocation input.</param>
         /// <param name="executionContextSnapshot">The durable delegated execution context.</param>
@@ -276,6 +277,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
         /// </exception>
         public async Task<AiChildInvocationPreparationSnapshot> FreezeInvocationPreparationAsync(
             AiChildInvocationIdentity identity,
+            string controlPlaneId,
             AiStoredPayload frozenDefinition,
             AiStoredPayload frozenInvocationInput,
             ExecutionContextSnapshot executionContextSnapshot,
@@ -284,6 +286,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(identity);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
             ArgumentNullException.ThrowIfNull(frozenDefinition);
             ArgumentNullException.ThrowIfNull(frozenInvocationInput);
             ArgumentNullException.ThrowIfNull(executionContextSnapshot);
@@ -295,6 +298,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
             {
                 Identity = identity,
                 ChildInvocationKey = childInvocationKey,
+                ControlPlaneId = controlPlaneId.Trim(),
                 FrozenChildDagDefinition = frozenDefinition,
                 FrozenInvocationInput = frozenInvocationInput,
                 DelegatedExecutionContextSnapshot = executionContextSnapshot,

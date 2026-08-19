@@ -67,6 +67,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Dispa
             var relation = new AiChildExecutionRelation
             {
                 TenantId = identity.TenantId,
+                ControlPlaneId = "control-plane-dispatch-tests",
                 ParentExecutionId = identity.ParentExecutionId,
                 ParentCallSiteId = identity.ParentCallSiteId,
                 ChildDagId = identity.ChildDagId,
@@ -163,18 +164,21 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Dispa
 
             public Task<IReadOnlyList<AiChildExecutionRelation>> ListIncompleteAsync(
                 int maxCount,
-                CancellationToken cancellationToken = default) =>
+                CancellationToken cancellationToken = default,
+                string? controlPlaneId = null) =>
                 Task.FromResult<IReadOnlyList<AiChildExecutionRelation>>(Array.Empty<AiChildExecutionRelation>());
 
             public Task<IReadOnlyList<AiChildExecutionRelation>> ListContinuationCandidatesAsync(
                 int maxCount,
-                CancellationToken cancellationToken = default) =>
+                CancellationToken cancellationToken = default,
+                string? controlPlaneId = null) =>
                 Task.FromResult<IReadOnlyList<AiChildExecutionRelation>>(Array.Empty<AiChildExecutionRelation>());
 
             public Task<IReadOnlyList<AiChildExecutionRelation>> ListParkConsistencyCandidatesAsync(
                 DateTimeOffset allocatedBeforeUtc,
                 int maxCount,
-                CancellationToken cancellationToken = default) =>
+                CancellationToken cancellationToken = default,
+                string? controlPlaneId = null) =>
                 Task.FromResult<IReadOnlyList<AiChildExecutionRelation>>(Array.Empty<AiChildExecutionRelation>());
 
             public Task<AiChildExecutionRelation> GetOrCreateAsync(

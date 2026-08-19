@@ -18,6 +18,7 @@ using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Identity;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Suspension;
 using Multiplexed.AI.Runtime.Pipeline.Definition;
+using Multiplexed.AI.Tests.Fixtures;
 using Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Support;
 
 namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Adversarial
@@ -63,6 +64,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Adver
                 identity.ParentExecutionId);
             var preparation = await snapshotService.FreezeInvocationPreparationAsync(
                 identity,
+                ChildDagCompositionTestData.ControlPlaneId,
                 frozenDefinition,
                 frozenInput,
                 executionContextSnapshot,
@@ -85,6 +87,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Adver
             var relation = await relationStore.GetAsync(identity);
             Assert.NotNull(relation);
             Assert.Equal(AiChildExecutionRelationStatus.Waiting, relation!.Status);
+            Assert.Equal(ChildDagCompositionTestData.ControlPlaneId, relation.ControlPlaneId);
             Assert.Equal(preparation.ChildInvocationKey, relation.ChildInvocationKey);
             Assert.Equal(preparation.FrozenChildDagDefinition.ContentHash, relation.FrozenChildDagDefinition.ContentHash);
             Assert.Equal(preparation.FrozenInvocationInput.ContentHash, relation.FrozenInvocationInput.ContentHash);
@@ -362,6 +365,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Adver
 
             return new ExecuteChildDagStep(
                 relationStore,
+                new StaticAiControlPlaneIdResolver(ChildDagCompositionTestData.ControlPlaneId),
                 definitionSourceSelector,
                 snapshotService,
                 policyCoordinator,

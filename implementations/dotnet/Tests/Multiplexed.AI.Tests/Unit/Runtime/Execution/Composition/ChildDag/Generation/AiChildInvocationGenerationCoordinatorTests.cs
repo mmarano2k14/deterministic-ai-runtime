@@ -54,6 +54,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Gener
             Assert.All(results, item => Assert.Equal(AiChildExecutionRelationStatus.DelegationPolicyPending, item.Status));
             Assert.NotEqual(failed.ChildInvocationKey, next.ChildInvocationKey);
             Assert.Equal(failed.CanonicalLogicalInvocationKey, next.CanonicalLogicalInvocationKey);
+            Assert.Equal(failed.ControlPlaneId, next.ControlPlaneId);
             Assert.Equal(2, store.Count);
 
             var current = await store.GetAsync(failed.ToInvocationIdentity());

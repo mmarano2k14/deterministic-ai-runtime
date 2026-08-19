@@ -99,5 +99,114 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                 levelTwo.Steps,
                 step => string.Equals(step.StepKey, ExecuteChildDagStep.StepKey, StringComparison.Ordinal));
         }
+
+        /// <summary>
+        /// Verifies that a child crash checkpoint is embedded only at the requested nested depth.
+        /// </summary>
+        [Fact]
+        public void CreatePipelineDefinition_Should_Embed_Child_Crash_Checkpoint_Only_At_Target_Depth()
+        {
+            const int stepCount = 3;
+            const string pipelineName = "production-child-crash-target-depth-two";
+
+            var checkpoint = new McpTestCrashCheckpointDefinition
+            {
+                StepIndex = 2,
+                StateKey = "test:child-crash:state",
+                ReachedChannel = "test:child-crash:reached",
+                ReleasedChannel = "test:child-crash:released",
+                TtlSeconds = 60
+            };
+
+            var parent = McpTestPipelineFactory.CreatePipelineDefinition(
+                pipelineName,
+                stepCount,
+                childDepth: 2,
+                childCrashCheckpoint: checkpoint,
+                childCrashCheckpointDepth: 2);
+
+            Assert.DoesNotContain(
+                parent.Steps,
+                step => string.Equals(step.StepKey, McpTestCrashCheckpointDefinition.StepKey, StringComparison.Ordinal));
+
+            var levelOneStep = Assert.Single(
+                parent.Steps.Where(step =>
+                    string.Equals(step.StepKey, ExecuteChildDagStep.StepKey, StringComparison.Ordinal)));
+            var levelOne = Assert.IsType<Multiplexed.Abstractions.AI.Pipeline.AiPipelineDefinition>(
+                levelOneStep.Config[ExecuteChildDagStep.ChildDagDefinitionConfigKey]);
+
+            Assert.DoesNotContain(
+                levelOne.Steps,
+                step => string.Equals(step.StepKey, McpTestCrashCheckpointDefinition.StepKey, StringComparison.Ordinal));
+
+            var levelTwoStep = Assert.Single(
+                levelOne.Steps.Where(step =>
+                    string.Equals(step.StepKey, ExecuteChildDagStep.StepKey, StringComparison.Ordinal)));
+            var levelTwo = Assert.IsType<Multiplexed.Abstractions.AI.Pipeline.AiPipelineDefinition>(
+                levelTwoStep.Config[ExecuteChildDagStep.ChildDagDefinitionConfigKey]);
+
+            var crashStep = Assert.Single(
+                levelTwo.Steps.Where(step =>
+                    string.Equals(step.StepKey, McpTestCrashCheckpointDefinition.StepKey, StringComparison.Ordinal)));
+
+            Assert.Equal("step-002", crashStep.Name);
+            Assert.Equal(checkpoint.StateKey, crashStep.Config["test.crashCheckpoint.stateKey"]);
+        }
+
+        /// <summary>
+        /// Verifies that the root pre-child checkpoint and the child failure checkpoint coexist without changing
+        /// the single ExecuteChildDag call-site shape used by the parent-failure production proof.
+        /// </summary>
+        [Fact]
+        public void CreatePipelineDefinition_Should_Preserve_Independent_Root_And_Child_Checkpoints()
+        {
+            const int stepCount = 5;
+            const string pipelineName = "production-parent-and-child-checkpoints";
+
+            var parentCheckpoint = new McpTestCrashCheckpointDefinition
+            {
+                StepIndex = stepCount,
+                StateKey = "test:parent-placement:state",
+                ReachedChannel = "test:parent-placement:reached",
+                ReleasedChannel = "test:parent-placement:released",
+                TtlSeconds = 60
+            };
+
+            var childCheckpoint = new McpTestCrashCheckpointDefinition
+            {
+                StepIndex = 2,
+                StateKey = "test:child-failure:state",
+                ReachedChannel = "test:child-failure:reached",
+                ReleasedChannel = "test:child-failure:released",
+                TtlSeconds = 60
+            };
+
+            var parent = McpTestPipelineFactory.CreatePipelineDefinition(
+                pipelineName,
+                stepCount,
+                crashCheckpoint: parentCheckpoint,
+                childDepth: 1,
+                childCrashCheckpoint: childCheckpoint,
+                childCrashCheckpointDepth: 1);
+
+            var rootCheckpoint = Assert.Single(
+                parent.Steps.Where(step =>
+                    string.Equals(step.StepKey, McpTestCrashCheckpointDefinition.StepKey, StringComparison.Ordinal)));
+            Assert.Equal("step-005", rootCheckpoint.Name);
+            Assert.Equal(parentCheckpoint.StateKey, rootCheckpoint.Config["test.crashCheckpoint.stateKey"]);
+
+            var childStep = Assert.Single(
+                parent.Steps.Where(step =>
+                    string.Equals(step.StepKey, ExecuteChildDagStep.StepKey, StringComparison.Ordinal)));
+            var child = Assert.IsType<Multiplexed.Abstractions.AI.Pipeline.AiPipelineDefinition>(
+                childStep.Config[ExecuteChildDagStep.ChildDagDefinitionConfigKey]);
+
+            var nestedCheckpoint = Assert.Single(
+                child.Steps.Where(step =>
+                    string.Equals(step.StepKey, McpTestCrashCheckpointDefinition.StepKey, StringComparison.Ordinal)));
+            Assert.Equal("step-002", nestedCheckpoint.Name);
+            Assert.Equal(childCheckpoint.StateKey, nestedCheckpoint.Config["test.crashCheckpoint.stateKey"]);
+        }
+
     }
 }

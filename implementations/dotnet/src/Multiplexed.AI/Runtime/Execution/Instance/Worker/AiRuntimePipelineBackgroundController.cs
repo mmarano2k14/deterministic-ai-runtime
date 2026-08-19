@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -88,6 +88,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         private readonly ConcurrentDictionary<string, Task> _activeRuns = new(StringComparer.Ordinal);
         private readonly ConcurrentDictionary<string, AiRuntimeQueuedPipelineRun> _queuedRuns = new(StringComparer.Ordinal);
         private readonly ConcurrentDictionary<string, AiRuntimeQueuedPipelineRun> _runningRuns = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, byte> _externallyWaitingCapacityReleasedRuns = new(StringComparer.Ordinal);
         private readonly object _sync = new();
 
         private CancellationTokenSource? _controllerCancellation;
@@ -1171,11 +1172,19 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                                 queuedRun.Handle.RunId,
                                 out _);
 
+                            var capacityWasReleasedForExternalWait =
+                                _externallyWaitingCapacityReleasedRuns.TryRemove(
+                                    queuedRun.Handle.RunId,
+                                    out _);
+
                             _runningRuns.TryRemove(
                                 queuedRun.Handle.RunId,
                                 out _);
 
-                            _parallelismGate.Release();
+                            if (!capacityWasReleasedForExternalWait)
+                            {
+                                _parallelismGate.Release();
+                            }
 
                             if (completed.Exception is not null)
                             {
@@ -1328,6 +1337,46 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             }
         }
 
+        /// <summary>
+        /// Releases one runtime execution slot immediately after the durable run index proves that the
+        /// execution has entered external waiting.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// External waiting is a capacity-release boundary. Once <c>MarkWaitingAsync</c> has committed,
+        /// continuation scheduling must not depend on ancillary observability work completing first.
+        /// </para>
+        /// <para>
+        /// The background task remains tracked in <see cref="_activeRuns"/> until all post-transition work
+        /// finishes so shutdown still observes it. The release marker makes the normal task continuation
+        /// idempotent and prevents a second semaphore release.
+        /// </para>
+        /// </remarks>
+        /// <param name="queuedRun">The runtime run that has durably entered external waiting.</param>
+        private void ReleaseExternallyWaitingRunCapacity(
+            AiRuntimeQueuedPipelineRun queuedRun)
+        {
+            ArgumentNullException.ThrowIfNull(queuedRun);
+
+            var runId = queuedRun.Handle.RunId;
+
+            if (!_runningRuns.TryRemove(runId, out _))
+            {
+                return;
+            }
+
+            if (!_externallyWaitingCapacityReleasedRuns.TryAdd(runId, 0))
+            {
+                throw new InvalidOperationException(
+                    $"Runtime run '{runId}' attempted to release external-wait capacity more than once.");
+            }
+
+            _parallelismGate.Release();
+
+            _logger.Engine.LogInformation(
+                $"[AI PIPELINE CONTROLLER] External-wait capacity released. RunId='{runId}', ExecutionId='{queuedRun.Handle.ExecutionId ?? string.Empty}', RuntimeInstanceId='{_runtimeInstanceIdentity.RuntimeInstanceId}'.");
+        }
+
         /// <inheritdoc />
         public Task<AiRuntimePipelineRunState?> GetRunStateAsync(
             string runId,
@@ -1375,7 +1424,9 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             var queuedRunCount = _queuedRuns.Count;
             var runningRunCount = _runningRuns.Count;
-            var activeRunCount = _activeRuns.Count;
+            var activeRunCount = Math.Max(
+                0,
+                _activeRuns.Count - _externallyWaitingCapacityReleasedRuns.Count);
             var queueCapacity =
                 Math.Max(
                     0,
@@ -1838,6 +1889,8 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                                 created.ExecutionId,
                                 cancellationToken)
                             .ConfigureAwait(false);
+
+                        ReleaseExternallyWaitingRunCapacity(queuedRun);
                     }
                     else
                     {
@@ -2378,7 +2431,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             }
 
             var context =
-                MapSnapshotToExecutionContext(
+                ExecutionContextSnapshotMapper.ToExecutionContext(
                     snapshot);
 
             _executionContextAccessor.Set(
@@ -2524,38 +2577,6 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             clearMethod?.Invoke(
                 _executionContextAccessor,
                 parameters: null);
-        }
-
-        /// <summary>
-        /// Maps a durable execution context snapshot back to the RBAC execution context model.
-        /// </summary>
-        /// <param name="snapshot">The durable execution context snapshot.</param>
-        /// <returns>The runtime RBAC execution context.</returns>
-        private static ExecutionContext MapSnapshotToExecutionContext(
-            ExecutionContextSnapshot snapshot)
-        {
-            ArgumentNullException.ThrowIfNull(snapshot);
-
-            return new ExecutionContext
-            {
-                ContextKey = snapshot.ContextKey,
-                Project = snapshot.Project,
-                UserId = snapshot.UserId,
-                TenantId = snapshot.TenantId,
-                TenantGroupId = snapshot.TenantGroupId,
-                CurrentNamespace = snapshot.CurrentNamespace,
-                Namespaces = snapshot.Namespaces
-                    .Select(namespaceEntry => new NamespaceEntry
-                    {
-                        Name = namespaceEntry.Name,
-                        Trns = new HashSet<string>(
-                            namespaceEntry.Trns,
-                            StringComparer.Ordinal)
-                    })
-                    .ToList(),
-                InFlightCount = snapshot.InFlightCount,
-                TtlSeconds = snapshot.TtlSeconds
-            };
         }
 
         /// <summary>

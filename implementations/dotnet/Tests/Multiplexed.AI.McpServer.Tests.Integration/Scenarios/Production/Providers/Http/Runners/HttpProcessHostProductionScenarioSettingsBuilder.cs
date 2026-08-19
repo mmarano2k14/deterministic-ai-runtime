@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 
@@ -98,6 +99,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             ArgumentNullException.ThrowIfNull(scenario);
 
             var enableDagExecutionResume =
+                scenario.Tenants.Any(tenant => tenant.Run.ChildRuntimeFailure is not null) ||
                 scenario.Name.Contains(
                     "dag-resume",
                     StringComparison.OrdinalIgnoreCase) ||
@@ -186,15 +188,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
-        /// Enables child DAG composition only for process-host scenarios that explicitly request nested children.
+        /// Enables child DAG composition for process-host scenarios that explicitly request nested children.
         /// </summary>
         /// <param name="settings">The settings dictionary to mutate.</param>
         /// <param name="scenario">The production runtime scenario definition.</param>
         /// <remarks>
-        /// Historical scenarios keep <c>ChildDepth = 0</c>, so they do not receive any new runtime-host feature
-        /// settings. Positive depth is opt-in and enables only the child composition lifecycle inside spawned
-        /// RuntimeInstanceOnly processes. The existing process-host settings already provide Mongo-backed execution
-        /// snapshots, so this method deliberately does not duplicate those persistence settings.
+        /// Historical scenarios keep <c>ChildDepth = 0</c>, so they do not receive any child-composition feature
+        /// settings. Positive depth is opt-in and enables composition in both the surviving control plane and spawned
+        /// RuntimeInstanceOnly processes. Runtime instances own the low-latency execution/finalization fast path, while
+        /// the control plane must keep the durable continuation reconciler alive across physical runtime process loss.
+        /// The existing process-host settings already provide Mongo-backed execution snapshots, so this method
+        /// deliberately does not duplicate those persistence settings.
         /// </remarks>
         private static void ApplyChildDagCompositionSettings(
             Dictionary<string, string?> settings,
@@ -213,7 +217,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 return;
             }
 
-            settings["AiRuntimeProcessHostCreation:EnvironmentVariables:AiChildDagComposition__Enabled"] = "true";
+            ApplyParentAndProcessSetting(
+                settings,
+                "AiChildDagComposition:Enabled",
+                "true");
         }
 
         /// <summary>

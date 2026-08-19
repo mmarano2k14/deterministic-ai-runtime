@@ -1,3 +1,4 @@
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations.Persistence;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Completion;
@@ -25,6 +26,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Reconciliation
     public sealed class AiChildContinuationReconciler
     {
         private readonly IAiChildExecutionRelationStore relationStore;
+        private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
         private readonly AiChildExecutionCompletionCoordinator completionCoordinator;
         private readonly AiChildContinuationCoordinator continuationCoordinator;
         private readonly IAiDagExecutionEngineServices engineServices;
@@ -33,16 +35,19 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Reconciliation
         /// Initializes a new instance of the <see cref="AiChildContinuationReconciler"/> class.
         /// </summary>
         /// <param name="relationStore">The authoritative child relation store.</param>
+        /// <param name="controlPlaneIdResolver">The existing logical control-plane identifier resolver.</param>
         /// <param name="completionCoordinator">The child completion coordinator.</param>
         /// <param name="continuationCoordinator">The parent continuation coordinator.</param>
         /// <param name="engineServices">The existing DAG engine services, including runtime logging.</param>
         public AiChildContinuationReconciler(
             IAiChildExecutionRelationStore relationStore,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
             AiChildExecutionCompletionCoordinator completionCoordinator,
             AiChildContinuationCoordinator continuationCoordinator,
             IAiDagExecutionEngineServices engineServices)
         {
             this.relationStore = relationStore ?? throw new ArgumentNullException(nameof(relationStore));
+            this.controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
             this.completionCoordinator = completionCoordinator ?? throw new ArgumentNullException(nameof(completionCoordinator));
             this.continuationCoordinator = continuationCoordinator ?? throw new ArgumentNullException(nameof(continuationCoordinator));
             this.engineServices = engineServices ?? throw new ArgumentNullException(nameof(engineServices));
@@ -60,8 +65,21 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Reconciliation
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
 
+            var controlPlaneId = await this.controlPlaneIdResolver
+                .ResolveAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    "Child continuation reconciliation requires a non-empty logical control-plane identifier.");
+            }
+
             var incomplete = await this.relationStore
-                .ListIncompleteAsync(batchSize, cancellationToken)
+                .ListIncompleteAsync(
+                    batchSize,
+                    cancellationToken,
+                    controlPlaneId)
                 .ConfigureAwait(false);
 
             var completedCount = 0;
@@ -99,7 +117,10 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Reconciliation
             }
 
             var continuationCandidates = await this.relationStore
-                .ListContinuationCandidatesAsync(batchSize, cancellationToken)
+                .ListContinuationCandidatesAsync(
+                    batchSize,
+                    cancellationToken,
+                    controlPlaneId)
                 .ConfigureAwait(false);
 
             foreach (var relation in continuationCandidates)
@@ -134,7 +155,11 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Reconciliation
 
             var nowUtc = DateTimeOffset.UtcNow;
             var parkCandidates = await this.relationStore
-                .ListParkConsistencyCandidatesAsync(nowUtc, batchSize, cancellationToken)
+                .ListParkConsistencyCandidatesAsync(
+                    nowUtc,
+                    batchSize,
+                    cancellationToken,
+                    controlPlaneId)
                 .ConfigureAwait(false);
 
             var parkRepairCount = 0;

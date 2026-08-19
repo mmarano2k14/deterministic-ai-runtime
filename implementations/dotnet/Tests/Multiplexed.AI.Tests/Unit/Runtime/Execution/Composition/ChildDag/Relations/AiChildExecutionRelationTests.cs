@@ -76,6 +76,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Relat
             return new AiChildExecutionRelation
             {
                 TenantId = "tenant-a",
+                ControlPlaneId = "control-plane-relation-tests",
                 ParentExecutionId = "parent-execution-001",
                 ParentCallSiteId = "portfolio-analysis",
                 ChildDagId = "market-analysis",

@@ -79,6 +79,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suspe
             return new AiChildExecutionRelation
             {
                 TenantId = "tenant-waiting",
+                ControlPlaneId = "control-plane-waiting-tests",
                 ParentExecutionId = "parent-execution-waiting",
                 ParentCallSiteId = "child-call-site",
                 ChildDagId = "child-pipeline",
@@ -146,18 +147,21 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suspe
 
             public Task<IReadOnlyList<AiChildExecutionRelation>> ListIncompleteAsync(
                 int maxCount,
-                CancellationToken cancellationToken = default) =>
+                CancellationToken cancellationToken = default,
+                string? controlPlaneId = null) =>
                 Task.FromResult<IReadOnlyList<AiChildExecutionRelation>>(Array.Empty<AiChildExecutionRelation>());
 
             public Task<IReadOnlyList<AiChildExecutionRelation>> ListContinuationCandidatesAsync(
                 int maxCount,
-                CancellationToken cancellationToken = default) =>
+                CancellationToken cancellationToken = default,
+                string? controlPlaneId = null) =>
                 Task.FromResult<IReadOnlyList<AiChildExecutionRelation>>(Array.Empty<AiChildExecutionRelation>());
 
             public Task<IReadOnlyList<AiChildExecutionRelation>> ListParkConsistencyCandidatesAsync(
                 DateTimeOffset allocatedBeforeUtc,
                 int maxCount,
-                CancellationToken cancellationToken = default) =>
+                CancellationToken cancellationToken = default,
+                string? controlPlaneId = null) =>
                 Task.FromResult<IReadOnlyList<AiChildExecutionRelation>>(Array.Empty<AiChildExecutionRelation>());
 
             public Task<AiChildExecutionRelation> GetOrCreateAsync(
@@ -218,6 +222,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suspe
                 return new AiChildExecutionRelation
                 {
                     TenantId = source.TenantId,
+                    ControlPlaneId = source.ControlPlaneId,
                     ParentExecutionId = source.ParentExecutionId,
                     ParentCallSiteId = source.ParentCallSiteId,
                     ChildDagId = source.ChildDagId,

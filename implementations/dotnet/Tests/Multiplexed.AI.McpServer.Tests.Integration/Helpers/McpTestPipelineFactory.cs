@@ -27,7 +27,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
             bool enableRetention = false,
             int flakyStepInterval = 0,
             McpTestCrashCheckpointDefinition? crashCheckpoint = null,
-            int childDepth = 0)
+            int childDepth = 0,
+            McpTestCrashCheckpointDefinition? childCrashCheckpoint = null,
+            int childCrashCheckpointDepth = 0)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stepCount);
@@ -36,6 +38,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
             ValidateCrashCheckpoint(
                 stepCount,
                 crashCheckpoint);
+
+            ValidateChildCrashCheckpoint(
+                stepCount,
+                childDepth,
+                childCrashCheckpoint,
+                childCrashCheckpointDepth);
 
             return new AiRuntimePipelineRunRequest
             {
@@ -46,7 +54,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                     enableRetention,
                     flakyStepInterval,
                     crashCheckpoint,
-                    childDepth),
+                    childDepth,
+                    childCrashCheckpoint,
+                    childCrashCheckpointDepth),
                 Input = input ?? new
                 {
                     source = "mcp-integration-test",
@@ -63,7 +73,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
             bool enableRetention = false,
             int flakyStepInterval = 0,
             McpTestCrashCheckpointDefinition? crashCheckpoint = null,
-            int childDepth = 0)
+            int childDepth = 0,
+            McpTestCrashCheckpointDefinition? childCrashCheckpoint = null,
+            int childCrashCheckpointDepth = 0)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stepCount);
@@ -72,6 +84,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
             ValidateCrashCheckpoint(
                 stepCount,
                 crashCheckpoint);
+
+            ValidateChildCrashCheckpoint(
+                stepCount,
+                childDepth,
+                childCrashCheckpoint,
+                childCrashCheckpointDepth);
 
             var steps = new List<AiPipelineStepDefinition>();
 
@@ -112,13 +130,30 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
 
             if (childDepth > 0)
             {
+                var childOwnCrashCheckpoint =
+                    childCrashCheckpointDepth == 1
+                        ? childCrashCheckpoint
+                        : null;
+
+                var nestedChildCrashCheckpoint =
+                    childCrashCheckpointDepth > 1
+                        ? childCrashCheckpoint
+                        : null;
+
+                var nestedChildCrashCheckpointDepth =
+                    childCrashCheckpointDepth > 1
+                        ? childCrashCheckpointDepth - 1
+                        : 0;
+
                 var childDefinition = CreatePipelineDefinition(
                     CreateChildPipelineName(pipelineName, childDepth),
                     stepCount,
                     enableRetention,
                     flakyStepInterval,
-                    crashCheckpoint: null,
-                    childDepth: childDepth - 1);
+                    crashCheckpoint: childOwnCrashCheckpoint,
+                    childDepth: childDepth - 1,
+                    childCrashCheckpoint: nestedChildCrashCheckpoint,
+                    childCrashCheckpointDepth: nestedChildCrashCheckpointDepth);
 
                 steps.Add(
                     new AiPipelineStepDefinition
@@ -356,6 +391,47 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
             }
 
             return config;
+        }
+
+        private static void ValidateChildCrashCheckpoint(
+            int stepCount,
+            int childDepth,
+            McpTestCrashCheckpointDefinition? childCrashCheckpoint,
+            int childCrashCheckpointDepth)
+        {
+            if (childCrashCheckpoint is null)
+            {
+                if (childCrashCheckpointDepth != 0)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(childCrashCheckpointDepth),
+                        childCrashCheckpointDepth,
+                        "Child crash checkpoint depth must be zero when no child crash checkpoint is configured.");
+                }
+
+                return;
+            }
+
+            ValidateCrashCheckpoint(
+                stepCount,
+                childCrashCheckpoint);
+
+            if (childDepth <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(childDepth),
+                    childDepth,
+                    "A child crash checkpoint requires at least one child DAG level.");
+            }
+
+            if (childCrashCheckpointDepth <= 0 ||
+                childCrashCheckpointDepth > childDepth)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(childCrashCheckpointDepth),
+                    childCrashCheckpointDepth,
+                    $"Child crash checkpoint depth must be between 1 and '{childDepth}'.");
+            }
         }
 
         private static void ValidateCrashCheckpoint(

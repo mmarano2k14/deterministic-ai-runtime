@@ -1,4 +1,5 @@
-﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Runners;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Results;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Runners;
@@ -25,6 +26,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     "grpc-process-host",
                     "GRPC PROCESS PRODUCTION",
                     "grpc",
+                    AiRuntimeHostCreationMode.Process,
                     GrpcProcessHostProductionScenarioSettingsBuilder.Build,
                     output);
         }

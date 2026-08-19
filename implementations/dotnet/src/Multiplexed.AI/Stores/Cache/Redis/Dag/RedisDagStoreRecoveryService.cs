@@ -11,9 +11,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
     {
         private readonly IRedisDagStoreServices _services;
 
-        private LoadedLuaScript _recoverTimedOutLoadedScript;
+        private LuaScript _recoverTimedOutScript;
 
-        private LoadedLuaScript _recoverRunningForRecoveryLoadedScript;
+        private LuaScript _recoverRunningForRecoveryScript;
 
         /// <summary>
         /// Initializes a new instance of the
@@ -28,14 +28,12 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             _services =
                 services;
 
-            _recoverTimedOutLoadedScript =
-                _services.Helper.LoadScript(
-                    RedisDagLuaScripts.RecoverPreparedScript);
+            _recoverTimedOutScript =
+                RedisDagLuaScripts.RecoverPreparedScript;
 
-            _recoverRunningForRecoveryLoadedScript =
-                _services.Helper.LoadScript(
-                    RedisDagLuaScripts
-                        .RecoverRunningForRecoveryPreparedScript);
+            _recoverRunningForRecoveryScript =
+                RedisDagLuaScripts
+                    .RecoverRunningForRecoveryPreparedScript;
         }
 
         /// <summary>
@@ -91,9 +89,8 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             catch (RedisServerException exception)
                 when (IsNoScriptException(exception))
             {
-                _recoverTimedOutLoadedScript =
-                    _services.Helper.LoadScript(
-                        RedisDagLuaScripts.RecoverPreparedScript);
+                _recoverTimedOutScript =
+                    RedisDagLuaScripts.RecoverPreparedScript;
 
                 var recovered =
                     await ExecuteRecoverTimedOutAsync(
@@ -166,10 +163,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             catch (RedisServerException exception)
                 when (IsNoScriptException(exception))
             {
-                _recoverRunningForRecoveryLoadedScript =
-                    _services.Helper.LoadScript(
-                        RedisDagLuaScripts
-                            .RecoverRunningForRecoveryPreparedScript);
+                _recoverRunningForRecoveryScript =
+                    RedisDagLuaScripts
+                        .RecoverRunningForRecoveryPreparedScript;
 
                 var recovered =
                     await ExecuteRecoverRunningForRecoveryAsync(
@@ -197,7 +193,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             cancellationToken.ThrowIfCancellationRequested();
 
             var result =
-                await _recoverTimedOutLoadedScript
+                await _recoverTimedOutScript
                     .EvaluateAsync(
                         _services.Database,
                         new
@@ -225,7 +221,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             cancellationToken.ThrowIfCancellationRequested();
 
             var result =
-                await _recoverRunningForRecoveryLoadedScript
+                await _recoverRunningForRecoveryScript
                     .EvaluateAsync(
                         _services.Database,
                         new
@@ -261,7 +257,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
 
             _services.Logger.Engine.LogInformation(
                 reloadedAfterNoScript
-                    ? $"[AI DAG STORE] Timed-out steps recovered after NOSCRIPT reload. ExecutionId='{executionId}', RecoveredCount='{recovered}'."
+                    ? $"[AI DAG STORE] Timed-out steps recovered after NOSCRIPT retry. ExecutionId='{executionId}', RecoveredCount='{recovered}'."
                     : $"[AI DAG STORE] Timed-out steps recovered. ExecutionId='{executionId}', RecoveredCount='{recovered}'.");
         }
 
@@ -282,7 +278,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
 
             _services.Logger.Engine.LogWarning(
                  reloadedAfterNoScript
-                     ? $"[AI DAG STORE] Running steps recovered explicitly after NOSCRIPT reload. ExecutionId='{executionId}', RecoveredCount='{recovered}'."
+                     ? $"[AI DAG STORE] Running steps recovered explicitly after NOSCRIPT retry. ExecutionId='{executionId}', RecoveredCount='{recovered}'."
                      : $"[AI DAG STORE] Running steps recovered explicitly for runtime recovery. ExecutionId='{executionId}', RecoveredCount='{recovered}'.");
         
         }

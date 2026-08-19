@@ -18,6 +18,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
     internal static class ChildDagCompositionTestData
     {
         public const string TenantId = "tenant-1";
+        public const string ControlPlaneId = "control-plane-child-dag-tests";
         public const string ParentExecutionId = "parent-execution-1";
         public const string ParentCallSiteId = "research-call-site";
         public const string ChildExecutionId = "child-execution-1";
@@ -27,7 +28,8 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
             AiChildContinuationStatus continuationStatus = AiChildContinuationStatus.None,
             DateTimeOffset? childAllocatedAtUtc = null,
             int invocationGeneration = 0,
-            string? childFailureReason = null)
+            string? childFailureReason = null,
+            string? controlPlaneId = null)
         {
             var identity = new Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Identity.AiChildInvocationIdentity
             {
@@ -49,6 +51,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
             return new AiChildExecutionRelation
             {
                 TenantId = identity.TenantId,
+                ControlPlaneId = controlPlaneId ?? ControlPlaneId,
                 ParentExecutionId = identity.ParentExecutionId,
                 ParentCallSiteId = identity.ParentCallSiteId,
                 ChildDagId = identity.ChildDagId,

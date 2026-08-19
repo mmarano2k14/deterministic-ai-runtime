@@ -229,6 +229,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Deleg
             return new AiChildExecutionRelation
             {
                 TenantId = identity.TenantId,
+                ControlPlaneId = "control-plane-delegation-tests",
                 ParentExecutionId = identity.ParentExecutionId,
                 ParentCallSiteId = identity.ParentCallSiteId,
                 ChildDagId = identity.ChildDagId,

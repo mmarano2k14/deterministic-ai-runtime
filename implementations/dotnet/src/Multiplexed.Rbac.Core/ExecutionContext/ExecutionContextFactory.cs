@@ -27,6 +27,8 @@ namespace Multiplexed.Rbac.Core.ExecutionContext
                 Project = context.Project,
                 CurrentNamespace = context.CurrentNamespace,
                 Namespaces = context.Namespaces?.ToList() ?? new List<NamespaceEntry>(),
+                InFlightCount = context.InFlightCount,
+                TtlSeconds = context.TtlSeconds,
                 CreatedAtUtc = DateTime.UtcNow
             };
         }
@@ -47,6 +49,8 @@ namespace Multiplexed.Rbac.Core.ExecutionContext
                 Project = context.Project,
                 CurrentNamespace = context.CurrentNamespace,
                 Namespaces = context.Namespaces?.ToList() ?? new List<NamespaceEntry>(),
+                InFlightCount = context.InFlightCount,
+                TtlSeconds = context.TtlSeconds,
                 CreatedAtUtc = DateTime.UtcNow
             };
         }

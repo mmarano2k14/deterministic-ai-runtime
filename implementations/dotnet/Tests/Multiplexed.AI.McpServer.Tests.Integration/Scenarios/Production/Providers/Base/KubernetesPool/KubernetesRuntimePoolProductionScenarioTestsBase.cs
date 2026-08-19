@@ -179,18 +179,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// is killed after durable DAG progress, its Pod and siblings survive, then one distinct
         /// fully busy Pod is force-deleted. The converged warm pool is reused across every cycle.
         /// </summary>
+        /// <param name="maximumPodCount">The maximum number of Kubernetes Runtime Pool Pods.</param>
+        /// <param name="runtimeCountPerPod">The exact number of independently registered runtimes per Pod.</param>
+        /// <param name="submissionIterationCount">The number of full-capacity submission waves per cycle.</param>
+        /// <param name="executionCycleCount">The number of sequential warm-pool execution cycles.</param>
+        /// <param name="childDepth">The number of nested child DAG levels composed by every submitted parent DAG. Zero preserves the historical workload shape.</param>
+        /// <returns>A task that completes after the hierarchical runtime and Pod failure proof converges across every cycle.</returns>
         protected Task ExecuteFullFailureProductionScenarioAsync(
             int maximumPodCount,
             int runtimeCountPerPod,
             int submissionIterationCount,
-            int executionCycleCount)
+            int executionCycleCount,
+            int childDepth = 0)
         {
             return ExecuteReusableBoundedCapacityPodFailureProductionScenarioCoreAsync(
                 maximumPodCount,
                 runtimeCountPerPod,
                 submissionIterationCount,
                 executionCycleCount,
-                injectChildRuntimeFailure: true);
+                injectChildRuntimeFailure: true,
+                childDepth: childDepth);
         }
 
         /// <summary>
@@ -201,11 +209,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// Keep the manual gate watcher open in a separate PowerShell window:
         /// <code>Get-Content "$env:TEMP\multiplexed-ai-manual-kubernetes-kill.txt" -Wait</code>
         /// </summary>
+        /// <param name="maximumPodCount">The maximum number of Kubernetes Runtime Pool Pods.</param>
+        /// <param name="runtimeCountPerPod">The exact number of independently registered runtimes per Pod.</param>
+        /// <param name="submissionIterationCount">The number of full-capacity submission waves per cycle.</param>
+        /// <param name="executionCycleCount">The number of sequential warm-pool execution cycles.</param>
+        /// <param name="childDepth">The number of nested child DAG levels composed by every submitted parent DAG. Zero preserves the historical workload shape.</param>
+        /// <returns>A task that completes after the external Pod failure and hierarchical recovery proof converges across every cycle.</returns>
         protected Task ExecuteFullFailureProductionScenarioAwaitExternalPodFailureAsync(
             int maximumPodCount,
             int runtimeCountPerPod,
             int submissionIterationCount,
-            int executionCycleCount)
+            int executionCycleCount,
+            int childDepth = 0)
         {
             var signalPath =
                 ManualExternalFailureGateSignal.PrepareKubernetesWatch();
@@ -219,7 +234,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 submissionIterationCount,
                 executionCycleCount,
                 injectChildRuntimeFailure: true,
-                waitForExternalPodDeletion: true);
+                waitForExternalPodDeletion: true,
+                childDepth: childDepth);
         }
 
         private async Task ExecuteBoundedCapacityScenarioAsync(
@@ -1649,11 +1665,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             int submissionIterationCount,
             int executionCycleCount,
             bool injectChildRuntimeFailure,
-            bool waitForExternalPodDeletion = false)
+            bool waitForExternalPodDeletion = false,
+            int childDepth = 0)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumPodCount);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(runtimeCountPerPod);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(submissionIterationCount);
+            ArgumentOutOfRangeException.ThrowIfNegative(childDepth);
 
             if (executionCycleCount < 2)
             {
@@ -1684,6 +1702,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             const int stepCount = 50;
             const int maximumAdmissionAttemptCount = 8;
 
+            var parentLogicalStepCount =
+                checked(stepCount + (childDepth > 0 ? 1 : 0));
+
             var runsPerIteration =
                 checked(maximumPodCount * runtimeCountPerPod);
 
@@ -1691,7 +1712,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 checked(runsPerIteration * submissionIterationCount);
 
             var logicalStepCountPerCycle =
-                checked(submittedRunCountPerCycle * stepCount);
+                checked(submittedRunCountPerCycle * parentLogicalStepCount);
 
             var maximumRuntimeCapacity =
                 checked(maximumPodCount * runtimeCountPerPod);
@@ -1738,7 +1759,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         StepCount = stepCount,
                         DelayMs = 750,
                         FlakyStepInterval = 0,
-                        EnableRetention = false
+                        EnableRetention = false,
+                        ChildDepth = childDepth
                     }
                 };
 
@@ -1823,7 +1845,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         ? $"  - [ON] Every cycle kills one exact child runtime after at least {FinalScenarioKillAfterCompletedStepCount} completed steps, preserves its Pod and siblings, then waits for an operator to force-delete one distinct fully busy Pod."
                         : $"  - [ON] Every cycle kills one exact child runtime after at least {FinalScenarioKillAfterCompletedStepCount} completed steps, preserves its Pod and siblings, then force-deletes one distinct fully busy Pod."
                     : "  - [ON] Every cycle force-deletes one fully busy Pod and recovers exactly its assigned work.");
-            output.WriteLine("  - [ON] Every run completes 50 steps and passes replay, ledger, trace, and exact recovery-forensics proof.");
+            output.WriteLine(
+                $"  - [ON] Every submitted parent DAG completes exactly {parentLogicalStepCount} logical steps; ChildDepth='{childDepth}' composes the nested Child DAG contract before terminal completion.");
+            output.WriteLine("  - [ON] Every submitted parent run passes replay, ledger, trace, and exact recovery-forensics proof.");
             output.WriteLine("  - [ON] Deterministic Pod cleanup executes once, after the final cycle.");
             output.WriteLine(string.Empty);
             output.WriteLine("Workload summary:");
@@ -1836,6 +1860,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             output.WriteLine($"  TotalSubmittedRunCount='{totalSubmittedRunCount}'");
             output.WriteLine($"  LogicalStepCountPerCycle='{logicalStepCountPerCycle}'");
             output.WriteLine($"  TotalLogicalStepCount='{totalLogicalStepCount}'");
+            output.WriteLine($"  ChildDepth='{childDepth}'");
+            output.WriteLine($"  ParentLogicalStepCount='{parentLogicalStepCount}'");
             output.WriteLine($"  ControlPlaneId='{controlPlaneId}'");
             output.WriteLine($"  PoolId='{poolId}'");
             output.WriteLine($"  InjectChildRuntimeFailure='{injectChildRuntimeFailure}'");
@@ -1916,16 +1942,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                 submissionHttpClient.Timeout =
                     TimeSpan.FromMinutes(15);
-
-                var submissionMcp =
-                    await McpRbacTestClientHelper
-                        .CreateConfiguredClientAsync(
-                            host,
-                            submissionHttpClient,
-                            boundedCapacityProfile.RequestedBy,
-                            tenantId: tenant.TenantId,
-                            tenantGroupId: tenant.TenantGroupId)
-                        .ConfigureAwait(false);
 
                 await WaitForBoundedCapacityScaleOutWatcherReadyAsync(
                         host.Services,
@@ -2024,6 +2040,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                     try
                     {
+                        var cycleSubmissionMcp =
+                            await McpRbacTestClientHelper
+                                .CreateConfiguredClientAsync(
+                                    host,
+                                    submissionHttpClient,
+                                    boundedCapacityProfile.RequestedBy,
+                                    tenantId: tenant.TenantId,
+                                    tenantGroupId: tenant.TenantGroupId)
+                                .ConfigureAwait(false);
+
                         var deferPodFailureWave =
                             injectChildRuntimeFailure;
                         var initialSubmissionIterationCount =
@@ -2034,7 +2060,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         var admissionProof =
                             await RuntimePoolProductionCycleExecutor
                                 .SubmitQueueFirstWavesAsync(
-                                    submissionMcp,
+                                    cycleSubmissionMcp,
                                     tenant,
                                     scenario.Name,
                                     controlPlaneId,
@@ -2073,7 +2099,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     maximumPodCount,
                                     runtimeCountPerPod,
                                     requireAvailableCapacity: false,
-                                    TimeSpan.FromMinutes(10))
+                                    TimeSpan.FromMinutes(10),
+                                    hardTimeout: TimeSpan.FromMinutes(20))
                                 .ConfigureAwait(false);
 
                         if (warmStartMembership is not null)
@@ -2122,7 +2149,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             var childInventory =
                                 CreateBoundedCapacityChildRuntimeFailureInventory(
                                     tenant,
-                                    submissionMcp,
+                                    cycleSubmissionMcp,
                                     childRuntimeFailureTarget);
 
                             observation.MarkIntentionalFailedRuntimeInstance(
@@ -2224,7 +2251,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                         tenant.TenantId,
                                         observation,
                                         scenario.CompletionTimeout,
-                                        TimeSpan.FromMinutes(5))
+                                        TimeSpan.FromMinutes(5),
+                                        useDagExecutionCompletion: childDepth > 0)
                                     .ConfigureAwait(false);
 
                                 podFailureStartMembership =
@@ -2252,10 +2280,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                                 if (boundaryFailureFillerRunCount > 0)
                                 {
+                                    var boundaryFailureFillerMcp =
+                                        await McpRbacTestClientHelper
+                                            .CreateConfiguredClientAsync(
+                                                host,
+                                                submissionHttpClient,
+                                                boundedCapacityProfile.RequestedBy,
+                                                tenantId: tenant.TenantId,
+                                                tenantGroupId: tenant.TenantGroupId)
+                                            .ConfigureAwait(false);
+
                                     var boundaryFailureFillerAdmission =
                                         await RuntimePoolProductionCycleExecutor
                                             .SubmitQueueFirstWavesAsync(
-                                                submissionMcp,
+                                                boundaryFailureFillerMcp,
                                                 tenant,
                                                 scenario.Name,
                                                 controlPlaneId,
@@ -2310,7 +2348,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                             tenant.TenantId,
                                             observation,
                                             scenario.CompletionTimeout,
-                                            TimeSpan.FromMinutes(5))
+                                            TimeSpan.FromMinutes(5),
+                                            useDagExecutionCompletion: childDepth > 0)
                                         .ConfigureAwait(false);
                                 }
 
@@ -2420,10 +2459,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                                 try
                                 {
+                                    var boundaryFailureTargetMcp =
+                                        await McpRbacTestClientHelper
+                                            .CreateConfiguredClientAsync(
+                                                host,
+                                                submissionHttpClient,
+                                                boundedCapacityProfile.RequestedBy,
+                                                tenantId: tenant.TenantId,
+                                                tenantGroupId: tenant.TenantGroupId)
+                                            .ConfigureAwait(false);
+
                                     podFailureAdmission =
                                         await RuntimePoolProductionCycleExecutor
                                             .SubmitQueueFirstWavesAsync(
-                                                submissionMcp,
+                                                boundaryFailureTargetMcp,
                                                 tenant,
                                                 scenario.Name,
                                                 controlPlaneId,
@@ -2568,7 +2617,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                         externalFailureCycleNumber:
                                             waitForExternalPodDeletion
                                                 ? cycleNumber
-                                                : null)
+                                                : null,
+                                        useDagExecutionCompletion:
+                                            childDepth > 0)
                                     .ConfigureAwait(false);
                         }
                         finally
@@ -2609,7 +2660,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     tenant.TenantId,
                                     observation,
                                     scenario.CompletionTimeout,
-                                    TimeSpan.FromMinutes(5))
+                                    TimeSpan.FromMinutes(5),
+                                    useDagExecutionCompletion: childDepth > 0)
                                 .ConfigureAwait(false);
 
                         await Task.WhenAll(
@@ -2619,7 +2671,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                             .WaitForDagCompletedStepCountAsync(
                                                 dagStore,
                                                 run.ExecutionId,
-                                                stepCount,
+                                                parentLogicalStepCount,
                                                 TimeSpan.FromMinutes(2))))
                             .ConfigureAwait(false);
 
@@ -2639,36 +2691,67 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     tenantGroupId: tenant.TenantGroupId)
                                 .ConfigureAwait(false);
 
-                        var finalRuntimeStatuses =
-                            await McpTestWaitHelpers
-                                .WaitForTerminalRuntimeRunStatusesAsync(
-                                    runtimeStatusProofMcp,
-                                    finalRuns
-                                        .Select(run => run.SharedRun)
-                                        .ToArray(),
-                                    timeout: scenario.CompletionTimeout)
-                                .ConfigureAwait(false);
+                        IReadOnlyList<AiRuntimeQueueControlPlaneResult>
+                            finalRuntimeStatuses;
 
-                        Assert.Equal(
-                            submittedRunCountPerCycle,
-                            finalRuntimeStatuses.Count);
+                        if (childDepth == 0)
+                        {
+                            finalRuntimeStatuses =
+                                await McpTestWaitHelpers
+                                    .WaitForTerminalRuntimeRunStatusesAsync(
+                                        runtimeStatusProofMcp,
+                                        finalRuns
+                                            .Select(run => run.SharedRun)
+                                            .ToArray(),
+                                        timeout: scenario.CompletionTimeout)
+                                    .ConfigureAwait(false);
 
-                        Assert.All(
-                            finalRuntimeStatuses,
-                            finalRuntimeStatus =>
-                            {
-                                Assert.True(
-                                    finalRuntimeStatus.Success,
-                                    finalRuntimeStatus.FailureReason ??
-                                    finalRuntimeStatus.Message);
+                            Assert.Equal(
+                                submittedRunCountPerCycle,
+                                finalRuntimeStatuses.Count);
 
-                                Assert.True(
-                                    string.Equals(
-                                        finalRuntimeStatus.RunState?.Status,
-                                        "completed",
-                                        StringComparison.OrdinalIgnoreCase),
-                                    $"Warm reuse runtime work did not complete. Cycle='{cycleNumber}', RuntimeInstanceId='{finalRuntimeStatus.RuntimeInstanceId}', RunId='{finalRuntimeStatus.RunId}', ExecutionId='{finalRuntimeStatus.ExecutionId ?? finalRuntimeStatus.RunState?.ExecutionId}', Status='{finalRuntimeStatus.RunState?.Status}'.");
-                            });
+                            Assert.All(
+                                finalRuntimeStatuses,
+                                finalRuntimeStatus =>
+                                {
+                                    Assert.True(
+                                        finalRuntimeStatus.Success,
+                                        finalRuntimeStatus.FailureReason ??
+                                        finalRuntimeStatus.Message);
+
+                                    Assert.True(
+                                        string.Equals(
+                                            finalRuntimeStatus.RunState?.Status,
+                                            "completed",
+                                            StringComparison.OrdinalIgnoreCase),
+                                        $"Warm reuse runtime work did not complete. Cycle='{cycleNumber}', RuntimeInstanceId='{finalRuntimeStatus.RuntimeInstanceId}', RunId='{finalRuntimeStatus.RunId}', ExecutionId='{finalRuntimeStatus.ExecutionId ?? finalRuntimeStatus.RunState?.ExecutionId}', Status='{finalRuntimeStatus.RunState?.Status}'.");
+                                });
+                        }
+                        else
+                        {
+                            finalRuntimeStatuses =
+                                await ProductionChildDagScenarioHelpers
+                                    .WaitForDurableParentCompletionAsync(
+                                        runtimeStatusProofMcp,
+                                        dagStore,
+                                        finalRuns
+                                            .Select(run => run.SharedRun)
+                                            .ToArray(),
+                                        scenario.CompletionTimeout)
+                                    .ConfigureAwait(false);
+
+                            Assert.Equal(
+                                submittedRunCountPerCycle,
+                                finalRuntimeStatuses.Count);
+
+                            output.WriteLine(
+                                $"[{boundedCapacityProfile.LogPrefix} CHILD DAG TERMINAL PROOF] " +
+                                $"Cycle='{cycleNumber}', " +
+                                $"ChildDepth='{childDepth}', " +
+                                $"CompletedExecutionCount='{finalRuns.Count}', " +
+                                "Proof='authoritative-dag-execution-record', " +
+                                "RootLocalRunContract='waiting-physical-attempt-released-capacity'.");
+                        }
 
                         observationCancellation.Cancel();
 
@@ -3086,7 +3169,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                         .Select(proof => proof.ExecutionId)
                                         .ToHashSet(StringComparer.Ordinal),
                                     recoveredExecutionIds,
-                                    stepCount,
+                                    parentLogicalStepCount,
                                     $"Warm reuse cycle {cycleNumber} logical step completion ledger proof");
 
                         var dispatchLedgerProof =
@@ -3534,7 +3617,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     index.RuntimeInstanceId,
                                 RuntimeIndexExecutionId: executionId,
                                 RuntimeIndexCompletedAtUtc:
-                                    index.CompletedAtUtc),
+                                    index.CompletedAtUtc,
+                                DagExecutionStatus: null,
+                                UseDagExecutionCompletion: false),
                             siblingRuntimeInstanceIds);
                     }
                 }
@@ -3789,7 +3874,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 IReadOnlySet<string>? excludedPodUids = null,
                 ProductionCrashCheckpointGate? boundaryFailureCrashGate = null,
                 bool waitForExternalPodDeletion = false,
-                int? externalFailureCycleNumber = null)
+                int? externalFailureCycleNumber = null,
+                bool useDagExecutionCompletion = false)
         {
             ArgumentNullException.ThrowIfNull(services);
             ArgumentNullException.ThrowIfNull(registry);
@@ -3803,11 +3889,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumRuntimeCapacity);
             ArgumentNullException.ThrowIfNull(observation);
 
+            var dagStore =
+                services.GetRequiredService<IAiDagExecutionStore>();
+
             var target =
                 await WaitForBoundedCapacityBusyPodFailureTargetAsync(
                         registry,
                         sharedRunStore,
                         runExecutionIndex,
+                        dagStore,
+                        useDagExecutionCompletion,
                         controlPlaneId,
                         poolId,
                         tenant.TenantId,
@@ -4268,6 +4359,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 IAiRuntimeInstanceRegistry registry,
                 IAiSharedRunStore sharedRunStore,
                 IAiRuntimeRunExecutionIndex runExecutionIndex,
+                IAiDagExecutionStore dagStore,
+                bool useDagExecutionCompletion,
                 string controlPlaneId,
                 string poolId,
                 string tenantId,
@@ -4278,6 +4371,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 IReadOnlySet<string>? excludedPodUids = null)
         {
             ArgumentNullException.ThrowIfNull(submittedSharedRunIds);
+            ArgumentNullException.ThrowIfNull(dagStore);
 
             var deadline = DateTimeOffset.UtcNow.Add(timeout);
             var lastRuntimeCount = 0;
@@ -4365,7 +4459,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                             run =>
                                                 ReadBoundedCapacityRunObservationAsync(
                                                     runExecutionIndex,
-                                                    run)))
+                                                    dagStore,
+                                                    run,
+                                                    useDagExecutionCompletion)))
                                     .ConfigureAwait(false);
 
                             var activeRunsByRuntimeInstanceId =
@@ -4491,25 +4587,52 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 int expectedPodCount,
                 int runtimeCountPerPod,
                 bool requireAvailableCapacity,
-                TimeSpan timeout)
+                TimeSpan timeout,
+                TimeSpan? hardTimeout = null)
         {
             ArgumentNullException.ThrowIfNull(registry);
             ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(expectedPodCount);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(runtimeCountPerPod);
 
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeout),
+                    timeout,
+                    "The topology convergence timeout must be positive.");
+            }
+
+            if (hardTimeout.HasValue &&
+                hardTimeout.Value < timeout)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(hardTimeout),
+                    hardTimeout,
+                    "The topology convergence hard timeout cannot be shorter than the progress timeout.");
+            }
+
             var expectedRuntimeCount =
                 checked(expectedPodCount * runtimeCountPerPod);
 
-            var deadline =
-                DateTimeOffset.UtcNow.Add(timeout);
+            var startedAtUtc =
+                DateTimeOffset.UtcNow;
+            var hardDeadlineUtc =
+                startedAtUtc.Add(hardTimeout ?? timeout);
+            var progressDeadlineUtc =
+                startedAtUtc.Add(timeout);
 
             var lastPodCount = 0;
             var lastRuntimeCount = 0;
             var lastReadyRuntimeCount = 0;
             var lastAvailableRuntimeCount = 0;
+            var highestPodCount = 0;
+            var highestRuntimeCount = 0;
+            var highestReadyRuntimeCount = 0;
+            var highestAvailableRuntimeCount = 0;
 
-            while (DateTimeOffset.UtcNow < deadline)
+            while (DateTimeOffset.UtcNow < hardDeadlineUtc &&
+                   DateTimeOffset.UtcNow < progressDeadlineUtc)
             {
                 var runtimes =
                     (await registry
@@ -4535,6 +4658,36 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     runtime => runtime.Status == AiRuntimeInstanceStatus.Ready);
                 lastAvailableRuntimeCount = runtimes.Count(
                     runtime => runtime.CanAcceptRun);
+
+                var madeTopologyProgress =
+                    lastPodCount > highestPodCount ||
+                    lastRuntimeCount > highestRuntimeCount ||
+                    lastReadyRuntimeCount > highestReadyRuntimeCount ||
+                    lastAvailableRuntimeCount > highestAvailableRuntimeCount;
+
+                if (madeTopologyProgress)
+                {
+                    highestPodCount = Math.Max(
+                        highestPodCount,
+                        lastPodCount);
+                    highestRuntimeCount = Math.Max(
+                        highestRuntimeCount,
+                        lastRuntimeCount);
+                    highestReadyRuntimeCount = Math.Max(
+                        highestReadyRuntimeCount,
+                        lastReadyRuntimeCount);
+                    highestAvailableRuntimeCount = Math.Max(
+                        highestAvailableRuntimeCount,
+                        lastAvailableRuntimeCount);
+
+                    var renewedProgressDeadlineUtc =
+                        DateTimeOffset.UtcNow.Add(timeout);
+
+                    progressDeadlineUtc =
+                        renewedProgressDeadlineUtc < hardDeadlineUtc
+                            ? renewedProgressDeadlineUtc
+                            : hardDeadlineUtc;
+                }
 
                 var exactTopology =
                     pods.Length == expectedPodCount &&
@@ -4570,6 +4723,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"PoolId='{poolId}', ExpectedPodCount='{expectedPodCount}', LastPodCount='{lastPodCount}', " +
                 $"ExpectedRuntimeCount='{expectedRuntimeCount}', LastRuntimeCount='{lastRuntimeCount}', " +
                 $"LastReadyRuntimeCount='{lastReadyRuntimeCount}', LastAvailableRuntimeCount='{lastAvailableRuntimeCount}', " +
+                $"HighestPodCount='{highestPodCount}', HighestRuntimeCount='{highestRuntimeCount}', " +
+                $"HighestReadyRuntimeCount='{highestReadyRuntimeCount}', HighestAvailableRuntimeCount='{highestAvailableRuntimeCount}', " +
+                $"ProgressTimeout='{timeout}', HardTimeout='{hardTimeout ?? timeout}', " +
                 $"RequireAvailableCapacity='{requireAvailableCapacity}'.");
         }
 
@@ -4733,7 +4889,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 string tenantId,
                 BoundedCapacityMachineLimitObservation observation,
                 TimeSpan timeout,
-                TimeSpan noProgressTimeout)
+                TimeSpan noProgressTimeout,
+                bool useDagExecutionCompletion = false)
         {
             ArgumentNullException.ThrowIfNull(sharedRunStore);
             ArgumentNullException.ThrowIfNull(runExecutionIndex);
@@ -4758,6 +4915,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string? lastProgressSignature = null;
 
             string? lastDurableDagProgressSignature = null;
+
+            IReadOnlyList<AiRuntimeRunExecutionIndexEntry> lastUnfinishedRuntimeRuns =
+                Array.Empty<AiRuntimeRunExecutionIndexEntry>();
 
             var nextDurableDagProgressProbeAtUtc =
                 DateTimeOffset.UtcNow;
@@ -4799,7 +4959,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                                     return ReadBoundedCapacityRunObservationAsync(
                                         runExecutionIndex,
-                                        run);
+                                        dagStore,
+                                        run,
+                                        useDagExecutionCompletion);
                                 }))
                         .ConfigureAwait(false);
 
@@ -4880,17 +5042,57 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                 if (nowUtc >= nextDurableDagProgressProbeAtUtc)
                 {
-                    var runningExecutionIds =
+                    var submittedExecutionIds =
                         lastObservations
                             .Where(
                                 run =>
-                                    string.Equals(
-                                        run.RuntimeIndexStatus,
-                                        "running",
-                                        StringComparison.OrdinalIgnoreCase) &&
+                                    !run.IsCompleted &&
+                                    (useDagExecutionCompletion ||
+                                     string.Equals(
+                                         run.RuntimeIndexStatus,
+                                         "running",
+                                         StringComparison.OrdinalIgnoreCase)) &&
                                     !string.IsNullOrWhiteSpace(
                                         run.ResolvedExecutionId))
                             .Select(run => run.ResolvedExecutionId!)
+                            .ToArray();
+
+                    var unfinishedExecutionIds =
+                        Array.Empty<string>();
+
+                    if (useDagExecutionCompletion)
+                    {
+                        // A parked parent is intentionally absent from ListUnfinishedAsync. Child and nested-child
+                        // executions, however, remain normal active runtime work. Include their durable ExecutionIds
+                        // in the watchdog so real child progress prevents a false parent-only no-progress timeout.
+                        var unfinishedRuntimeRuns =
+                            await runExecutionIndex
+                                .ListUnfinishedAsync()
+                                .ConfigureAwait(false);
+
+                        lastUnfinishedRuntimeRuns =
+                            unfinishedRuntimeRuns
+                                .Where(
+                                    entry =>
+                                        string.Equals(
+                                            entry.ExecutionContextSnapshot.TenantId,
+                                            tenantId,
+                                            StringComparison.Ordinal))
+                                .ToArray();
+
+                        unfinishedExecutionIds =
+                            lastUnfinishedRuntimeRuns
+                                .Where(
+                                    entry =>
+                                        !string.IsNullOrWhiteSpace(
+                                            entry.ExecutionId))
+                                .Select(entry => entry.ExecutionId!)
+                                .ToArray();
+                    }
+
+                    var activeExecutionIds =
+                        submittedExecutionIds
+                            .Concat(unfinishedExecutionIds)
                             .Distinct(StringComparer.Ordinal)
                             .OrderBy(
                                 executionId => executionId,
@@ -4901,7 +5103,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         await ProductionRecoveryWaitHelpers
                             .ReadDurableDagProgressSignatureAsync(
                                 dagStore,
-                                runningExecutionIds)
+                                activeExecutionIds)
                             .ConfigureAwait(false);
 
                     if (lastDurableDagProgressSignature is not null &&
@@ -4974,8 +5176,67 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                         run =>
                                             $"SharedRunId='{run.SharedRun.SharedRunId}', SharedRunStatus='{run.SharedRun.Status}', AssignedRuntimeInstanceId='{run.SharedRun.AssignedRuntimeInstanceId ?? string.Empty}', LocalRunId='{run.SharedRun.LocalRunId ?? string.Empty}', SharedRunExecutionId='{run.SharedRun.ExecutionId ?? string.Empty}', RuntimeIndexStatus='{run.RuntimeIndexStatus ?? string.Empty}', RuntimeIndexRuntimeInstanceId='{run.RuntimeIndexRuntimeInstanceId ?? string.Empty}', RuntimeIndexExecutionId='{run.RuntimeIndexExecutionId ?? string.Empty}', RuntimeIndexCompletedAtUtc='{run.RuntimeIndexCompletedAtUtc?.ToString("O") ?? string.Empty}', FailureReason='{run.SharedRun.FailureReason ?? string.Empty}'."));
 
+                    var childAwareProgressDiagnostics =
+                        string.Empty;
+
+                    if (useDagExecutionCompletion)
+                    {
+                        var submittedExecutionIds =
+                            lastObservations
+                                .Select(run => run.ResolvedExecutionId)
+                                .Where(
+                                    executionId =>
+                                        !string.IsNullOrWhiteSpace(
+                                            executionId))
+                                .Select(executionId => executionId!)
+                                .ToHashSet(StringComparer.Ordinal);
+
+                        var nonRootActiveExecutionIds =
+                            lastUnfinishedRuntimeRuns
+                                .Where(
+                                    entry =>
+                                        !string.IsNullOrWhiteSpace(
+                                            entry.ExecutionId) &&
+                                        !submittedExecutionIds.Contains(
+                                            entry.ExecutionId!))
+                                .Select(entry => entry.ExecutionId!)
+                                .Distinct(StringComparer.Ordinal)
+                                .OrderBy(
+                                    executionId => executionId,
+                                    StringComparer.Ordinal)
+                                .ToArray();
+
+                        var unfinishedStatusBreakdown =
+                            lastUnfinishedRuntimeRuns.Count == 0
+                                ? "(none)"
+                                : string.Join(
+                                    ",",
+                                    lastUnfinishedRuntimeRuns
+                                        .GroupBy(
+                                            entry =>
+                                                entry.Status ??
+                                                "(status-missing)",
+                                            StringComparer.OrdinalIgnoreCase)
+                                        .OrderBy(
+                                            group => group.Key,
+                                            StringComparer.OrdinalIgnoreCase)
+                                        .Select(
+                                            group =>
+                                                $"{group.Key}:{group.Count()}"));
+
+                        childAwareProgressDiagnostics =
+                            $"DurableDagProgressSignature='{lastDurableDagProgressSignature ?? "(not-probed)"}', " +
+                            $"UnfinishedRuntimeRunCount='{lastUnfinishedRuntimeRuns.Count}', " +
+                            $"UnfinishedRuntimeStatusBreakdown='{unfinishedStatusBreakdown}', " +
+                            $"NonRootActiveExecutionCount='{nonRootActiveExecutionIds.Length}', " +
+                            $"NonRootActiveExecutionIds='{string.Join(",", nonRootActiveExecutionIds)}'.";
+                    }
+
                     throw new TimeoutException(
                         $"The bounded-capacity workload made no durable progress for '{noProgressTimeout}'. Expected='{submittedSharedRunIds.Count}', Observed='{lastObservations.Count}', SharedStatusBreakdown='{sharedStatusBreakdown}', RuntimeIndexStatusBreakdown='{runtimeIndexStatusBreakdown}'." +
+                        (string.IsNullOrWhiteSpace(childAwareProgressDiagnostics)
+                            ? string.Empty
+                            : Environment.NewLine + childAwareProgressDiagnostics) +
                         Environment.NewLine +
                         runDiagnostics);
                 }
@@ -5021,41 +5282,41 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private static async Task<BoundedCapacityRunObservation>
             ReadBoundedCapacityRunObservationAsync(
                 IAiRuntimeRunExecutionIndex runExecutionIndex,
-                AiSharedRunRecord sharedRun)
+                IAiDagExecutionStore dagStore,
+                AiSharedRunRecord sharedRun,
+                bool useDagExecutionCompletion)
         {
-            if (string.IsNullOrWhiteSpace(sharedRun.LocalRunId))
-            {
-                return new BoundedCapacityRunObservation(
-                    sharedRun,
-                    RuntimeIndexExists: false,
-                    RuntimeIndexStatus: null,
-                    RuntimeIndexRuntimeInstanceId: null,
-                    RuntimeIndexExecutionId: null,
-                    RuntimeIndexCompletedAtUtc: null);
-            }
+            AiRuntimeRunExecutionIndexEntry? indexEntry = null;
 
-            var indexEntry =
-                await runExecutionIndex
+            if (!string.IsNullOrWhiteSpace(sharedRun.LocalRunId))
+            {
+                indexEntry = await runExecutionIndex
                     .GetAsync(sharedRun.LocalRunId)
                     .ConfigureAwait(false);
+            }
 
-            return indexEntry is null
-                ? new BoundedCapacityRunObservation(
-                    sharedRun,
-                    RuntimeIndexExists: false,
-                    RuntimeIndexStatus: null,
-                    RuntimeIndexRuntimeInstanceId: null,
-                    RuntimeIndexExecutionId: null,
-                    RuntimeIndexCompletedAtUtc: null)
-                : new BoundedCapacityRunObservation(
-                    sharedRun,
-                    RuntimeIndexExists: true,
-                    RuntimeIndexStatus: indexEntry.Status,
-                    RuntimeIndexRuntimeInstanceId:
-                        indexEntry.RuntimeInstanceId,
-                    RuntimeIndexExecutionId: indexEntry.ExecutionId,
-                    RuntimeIndexCompletedAtUtc:
-                        indexEntry.CompletedAtUtc);
+            var resolvedExecutionId =
+                !string.IsNullOrWhiteSpace(sharedRun.ExecutionId)
+                    ? sharedRun.ExecutionId
+                    : indexEntry?.ExecutionId;
+
+            var dagRecord =
+                !useDagExecutionCompletion ||
+                string.IsNullOrWhiteSpace(resolvedExecutionId)
+                    ? null
+                    : await dagStore
+                        .GetRecordAsync(resolvedExecutionId)
+                        .ConfigureAwait(false);
+
+            return new BoundedCapacityRunObservation(
+                sharedRun,
+                RuntimeIndexExists: indexEntry is not null,
+                RuntimeIndexStatus: indexEntry?.Status,
+                RuntimeIndexRuntimeInstanceId: indexEntry?.RuntimeInstanceId,
+                RuntimeIndexExecutionId: indexEntry?.ExecutionId,
+                RuntimeIndexCompletedAtUtc: indexEntry?.CompletedAtUtc,
+                DagExecutionStatus: dagRecord?.Status,
+                UseDagExecutionCompletion: useDagExecutionCompletion);
         }
 
         private sealed record BoundedCapacityCompletedRun(
@@ -5070,7 +5331,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string? RuntimeIndexStatus,
             string? RuntimeIndexRuntimeInstanceId,
             string? RuntimeIndexExecutionId,
-            DateTimeOffset? RuntimeIndexCompletedAtUtc)
+            DateTimeOffset? RuntimeIndexCompletedAtUtc,
+            AiExecutionStatus? DagExecutionStatus,
+            bool UseDagExecutionCompletion)
         {
             public string? ResolvedExecutionId =>
                 !string.IsNullOrWhiteSpace(SharedRun.ExecutionId)
@@ -5085,15 +5348,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         : "(index-missing)";
 
             public bool IsCompleted =>
-                RuntimeIndexExists &&
-                !string.IsNullOrWhiteSpace(
-                    SharedRun.AssignedRuntimeInstanceId) &&
-                !string.IsNullOrWhiteSpace(SharedRun.LocalRunId) &&
-                string.Equals(
-                    RuntimeIndexStatus,
-                    "completed",
-                    StringComparison.OrdinalIgnoreCase) &&
-                !string.IsNullOrWhiteSpace(ResolvedExecutionId);
+                UseDagExecutionCompletion
+                    ? !string.IsNullOrWhiteSpace(ResolvedExecutionId) &&
+                      DagExecutionStatus == AiExecutionStatus.Completed
+                    : RuntimeIndexExists &&
+                      !string.IsNullOrWhiteSpace(
+                          SharedRun.AssignedRuntimeInstanceId) &&
+                      !string.IsNullOrWhiteSpace(SharedRun.LocalRunId) &&
+                      string.Equals(
+                          RuntimeIndexStatus,
+                          "completed",
+                          StringComparison.OrdinalIgnoreCase) &&
+                      !string.IsNullOrWhiteSpace(ResolvedExecutionId);
 
             public bool IsRuntimeIndexTerminalFailure =>
                 RuntimeIndexExists &&

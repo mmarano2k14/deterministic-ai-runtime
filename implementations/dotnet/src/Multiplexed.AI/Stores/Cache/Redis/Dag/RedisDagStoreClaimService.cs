@@ -17,9 +17,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
     public sealed class RedisDagStoreClaimService
     {
         private readonly IRedisDagStoreServices _services;
-        private LoadedLuaScript _claimLoadedScript;
-        private LoadedLuaScript _claimBatchLoadedScript;
-        private LoadedLuaScript _claimSpecificLoadedScript;
+        private LuaScript _claimScript;
+        private LuaScript _claimBatchScript;
+        private LuaScript _claimSpecificScript;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RedisDagStoreClaimService"/> class.
@@ -30,9 +30,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             ArgumentNullException.ThrowIfNull(services);
             _services = services;
 
-            _claimLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.ClaimPreparedScript);
-            _claimBatchLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.ClaimBatchPreparedScript);
-            _claimSpecificLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.ClaimSpecificPreparedScript);
+            _claimScript = RedisDagLuaScripts.ClaimPreparedScript;
+            _claimBatchScript = RedisDagLuaScripts.ClaimBatchPreparedScript;
+            _claimSpecificScript = RedisDagLuaScripts.ClaimSpecificPreparedScript;
         }
 
         /// <summary>
@@ -98,7 +98,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             }
             catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
             {
-                _claimLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.ClaimPreparedScript);
+                _claimScript = RedisDagLuaScripts.ClaimPreparedScript;
 
                 var claimed = await ExecuteClaimAsync(
                     stepIndexKey,
@@ -115,7 +115,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                         claimed.StepName);
 
                     _services.Logger.Engine.LogInformation(
-                        $"[AI DAG STORE] Step claimed after NOSCRIPT reload. ExecutionId='{executionId}', StepName='{claimed.StepName}', WorkerId='{workerId}', ClaimToken='{claimed.ClaimToken}'.");
+                        $"[AI DAG STORE] Step claimed after NOSCRIPT retry. ExecutionId='{executionId}', StepName='{claimed.StepName}', WorkerId='{workerId}', ClaimToken='{claimed.ClaimToken}'.");
                 }
                 else
                 {
@@ -203,7 +203,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             }
             catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
             {
-                _claimBatchLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.ClaimBatchPreparedScript);
+                _claimBatchScript = RedisDagLuaScripts.ClaimBatchPreparedScript;
 
                 var claimed = await ExecuteClaimBatchAsync(
                     stepIndexKey,
@@ -223,7 +223,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                             step.StepName);
 
                         _services.Logger.Engine.LogInformation(
-                            $"[AI DAG STORE] Step batch-claimed after NOSCRIPT reload. ExecutionId='{executionId}', StepName='{step.StepName}', WorkerId='{workerId}', ClaimToken='{step.ClaimToken}'.");
+                            $"[AI DAG STORE] Step batch-claimed after NOSCRIPT retry. ExecutionId='{executionId}', StepName='{step.StepName}', WorkerId='{workerId}', ClaimToken='{step.ClaimToken}'.");
                     }
                 }
                 else
@@ -283,7 +283,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             }
             catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
             {
-                _claimSpecificLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.ClaimSpecificPreparedScript);
+                _claimSpecificScript = RedisDagLuaScripts.ClaimSpecificPreparedScript;
 
                 var claimed = await ExecuteTryClaimStepScriptAsync(
                     executionId,
@@ -300,7 +300,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                 _services.Metrics.Execution.RecordStepClaimed(executionId, stepName);
 
                 _services.Logger.Engine.LogInformation(
-                    $"[AI DAG STORE] Specific step claimed after NOSCRIPT reload. ExecutionId='{executionId}', StepName='{stepName}', WorkerId='{workerId}', ClaimToken='{claimToken}'.");
+                    $"[AI DAG STORE] Specific step claimed after NOSCRIPT retry. ExecutionId='{executionId}', StepName='{stepName}', WorkerId='{workerId}', ClaimToken='{claimToken}'.");
 
                 return new AiClaimedStep
                 {
@@ -333,7 +333,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             string stepKeyPrefix,
             string executionId)
         {
-            var result = await _claimLoadedScript.EvaluateAsync(
+            var result = await _claimScript.EvaluateAsync(
                 _services.Database,
                 new
                 {
@@ -453,7 +453,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             int maxSteps,
             string claimTokensJson)
         {
-            var result = await _claimBatchLoadedScript.EvaluateAsync(
+            var result = await _claimBatchScript.EvaluateAsync(
                 _services.Database,
                 new
                 {
@@ -507,7 +507,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             var stepKeyPrefix = _services.KeyBuilder.GetDagStepKeyPrefix(executionId);
             var nowUnix = RedisDagStoreHelper.NowMs();
 
-            var result = await _claimSpecificLoadedScript.EvaluateAsync(
+            var result = await _claimSpecificScript.EvaluateAsync(
                 _services.Database,
                 new
                 {

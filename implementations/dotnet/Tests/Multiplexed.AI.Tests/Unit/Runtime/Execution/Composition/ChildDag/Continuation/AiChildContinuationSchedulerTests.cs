@@ -3,6 +3,8 @@ using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
+using Multiplexed.AI.Runtime.ControlPlane.ShareQueue;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation;
 using Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Support;
 
@@ -14,30 +16,27 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Conti
     public sealed class AiChildContinuationSchedulerTests
     {
         [Fact]
-        public async Task EnqueueContinuationAsync_Should_Reuse_Stable_Logical_Continuation_Without_Recovery_Metadata()
+        public async Task EnqueueContinuationAsync_Should_Reuse_Stable_Logical_And_Shared_Run_Identity_Without_Recovery_Metadata()
         {
             var controller = new CapturingSharedRuntimeController();
-            var scheduler = new AiChildContinuationScheduler(controller);
+            var scheduler = new AiChildContinuationScheduler(controller, new InMemoryAiSharedQueue());
             var relation = CreateCompletedScheduledRelation();
             var parentRecord = CreateParentRecord();
 
             var first = await scheduler.EnqueueContinuationAsync(relation, parentRecord);
             var second = await scheduler.EnqueueContinuationAsync(relation, parentRecord);
 
-            Assert.NotEqual(first.SharedRunId, second.SharedRunId);
+            Assert.Equal(first.SharedRunId, second.SharedRunId);
             Assert.Equal(2, controller.Requests.Count);
             Assert.All(
                 controller.Requests,
-                captured => Assert.True(
-                    captured.RequestedSharedRunId?.StartsWith(
-                        "child-continuation-child-invocation-1-",
-                        StringComparison.Ordinal) == true));
-            Assert.Equal(
-                2,
+                captured => Assert.Equal(
+                    "child-continuation-child-invocation-1",
+                    captured.RequestedSharedRunId));
+            Assert.Single(
                 controller.Requests
                     .Select(captured => captured.RequestedSharedRunId)
-                    .Distinct(StringComparer.Ordinal)
-                    .Count());
+                    .Distinct(StringComparer.Ordinal));
 
             var request = controller.Requests[1];
             Assert.Equal(AiSharedRuntimeSubmitMode.QueueFirst, request.SubmitModeOverride);
@@ -65,6 +64,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Conti
             return new AiChildExecutionRelation
             {
                 TenantId = "tenant-1",
+                ControlPlaneId = "control-plane-continuation-tests",
                 ParentExecutionId = "parent-execution-1",
                 ParentCallSiteId = "research-call-site",
                 ChildDagId = "child-analysis",

@@ -73,6 +73,39 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Convergence
             Assert.False(result.IsTerminal);
         }
 
+        [Fact]
+        public async Task EvaluateAsync_Should_Use_Lightweight_Step_Status_Resolution()
+        {
+            var pipeline = CreatePipeline(
+                CreateResolvedStep("first", 0),
+                CreateResolvedStep("second", 1, "first"));
+
+            var state = CreateState(
+                new AiStepState
+                {
+                    StepName = "first",
+                    Status = AiStepExecutionStatus.Completed
+                },
+                new AiStepState
+                {
+                    StepName = "second",
+                    Status = AiStepExecutionStatus.Ready,
+                    DependsOn = new List<string> { "first" }
+                });
+
+            var resolver = new StatusOnlyStepResolver();
+
+            var result = await AiDagExecutionConvergenceEvaluator.EvaluateAsync(
+                pipeline,
+                state,
+                NoOpStateWriter.Instance,
+                resolver,
+                DateTime.UtcNow);
+
+            Assert.Equal(AiExecutionStatus.Running, result.Status);
+            Assert.Equal(2, resolver.StatusResolutionCount);
+        }
+
         private static ResolvedAiPipeline CreatePipeline(params ResolvedAiPipelineStep[] steps)
         {
             return new ResolvedAiPipeline
@@ -161,6 +194,49 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Convergence
                 CancellationToken cancellationToken = default)
             {
                 return GetStepAsync(executionId, stepName, state, cancellationToken);
+            }
+        }
+
+        private sealed class StatusOnlyStepResolver : IAiExecutionStepResolver
+        {
+            public int StatusResolutionCount { get; private set; }
+
+            public Task WarmAsync(
+                string executionId,
+                AiExecutionState state,
+                CancellationToken cancellationToken = default)
+            {
+                return Task.CompletedTask;
+            }
+
+            public Task WarmStepsAsync(
+                string executionId,
+                AiExecutionState state,
+                IReadOnlyCollection<string> stepNames,
+                CancellationToken cancellationToken = default)
+            {
+                return Task.CompletedTask;
+            }
+
+            public Task<AiStepState?> GetStepAsync(
+                string executionId,
+                string stepName,
+                AiExecutionState state,
+                CancellationToken cancellationToken = default)
+            {
+                throw new InvalidOperationException(
+                    "Full step resolution must not be used by DAG convergence.");
+            }
+
+            public Task<AiStepState?> GetStepStatusAsync(
+                string executionId,
+                string stepName,
+                AiExecutionState state,
+                CancellationToken cancellationToken = default)
+            {
+                StatusResolutionCount++;
+                state.Steps.TryGetValue(stepName, out var step);
+                return Task.FromResult(step);
             }
         }
 

@@ -128,6 +128,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Snaps
                 identity.ParentExecutionId);
             var persisted = await firstService.FreezeInvocationPreparationAsync(
                 identity,
+                "control-plane-snapshot-tests",
                 frozenDefinition,
                 frozenInput,
                 new ExecutionContextSnapshot
@@ -155,6 +156,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Snaps
 
             Assert.NotNull(recovered);
             Assert.Equal(persisted.ChildInvocationKey, recovered!.ChildInvocationKey);
+            Assert.Equal("control-plane-snapshot-tests", recovered.ControlPlaneId);
             Assert.Equal(persisted.FrozenChildDagDefinition.ContentHash, recovered.FrozenChildDagDefinition.ContentHash);
             Assert.Equal(persisted.FrozenInvocationInput.ContentHash, recovered.FrozenInvocationInput.ContentHash);
             Assert.Equal(persisted.DelegationPolicyBindingSnapshot.ContentHash, recovered.DelegationPolicyBindingSnapshot.ContentHash);
@@ -167,6 +169,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Snaps
             await Assert.ThrowsAsync<InvalidOperationException>(
                 () => secondService.FreezeInvocationPreparationAsync(
                     identity,
+                    "control-plane-snapshot-tests",
                     recovered.FrozenChildDagDefinition,
                     conflictingInput,
                     recovered.DelegatedExecutionContextSnapshot,

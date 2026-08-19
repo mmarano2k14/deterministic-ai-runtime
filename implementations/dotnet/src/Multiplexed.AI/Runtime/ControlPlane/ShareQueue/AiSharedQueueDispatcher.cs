@@ -297,7 +297,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 }
 
                 sharedRun =
-                    await ReleaseFailedRecoveryOwnershipIfCurrentAsync(
+                    await ReleaseFailedDispatchOwnershipIfCurrentAsync(
                             queueItem,
                             sharedRun,
                             cancellationToken)
@@ -393,14 +393,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 cancellationToken)
                             .ConfigureAwait(false);
 
-                    var isRecoveryRedispatch =
-                        TryResolveFailedRecoveryOwnership(
+                    var isFailedOwnershipRedispatch =
+                        TryResolveFailedDispatchOwnership(
                             queueItem.Metadata,
+                            sharedRun,
                             out _,
                             out _);
 
                     var dispatchPlacement =
-                        isRecoveryRedispatch
+                        isFailedOwnershipRedispatch
                             ? null
                             : sharedRun.Placement;
 
@@ -1283,21 +1284,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         }
 
         /// <summary>
-        /// Releases the exact failed runtime ownership carried by a recovery queue item
+        /// Releases the exact failed physical dispatch ownership carried by a claimed queue item
         /// before the stale durable-dispatch guard is evaluated.
         /// </summary>
-        /// <param name="queueItem">The claimed recovery queue item.</param>
+        /// <remarks>
+        /// The existing atomic shared-run compare-and-set is reused by both crash recovery and normal
+        /// external-wait continuation re-drive. A continuation re-drive is intentionally not assigned
+        /// <c>recovery.mode</c>; it remains a normal continuation of the existing parent execution.
+        /// </remarks>
+        /// <param name="queueItem">The claimed queue item.</param>
         /// <param name="sharedRun">The current durable shared-run record.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The current durable shared-run record after the exact compare-and-set release.</returns>
         private async Task<AiSharedRunRecord>
-            ReleaseFailedRecoveryOwnershipIfCurrentAsync(
+            ReleaseFailedDispatchOwnershipIfCurrentAsync(
                 AiSharedQueueItem queueItem,
                 AiSharedRunRecord sharedRun,
                 CancellationToken cancellationToken)
         {
-            if (!TryResolveFailedRecoveryOwnership(
+            if (!TryResolveFailedDispatchOwnership(
                     queueItem.Metadata,
+                    sharedRun,
                     out var failedRuntimeInstanceId,
                     out var failedLocalRunId) ||
                 !string.Equals(
@@ -1318,7 +1325,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         sharedRun.SharedRunId,
                         failedRuntimeInstanceId,
                         failedLocalRunId,
-                        "Recovery redispatch claimed; failed durable ownership released before replacement dispatch.",
+                        "Shared queue redispatch claimed; failed durable ownership released before replacement dispatch.",
                         queueItem.Metadata,
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -1326,11 +1333,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             if (released is null)
             {
                 throw new InvalidOperationException(
-                    $"Recovery redispatch could not reload shared run '{sharedRun.SharedRunId}' after releasing failed durable ownership.");
+                    $"Shared queue redispatch could not reload shared run '{sharedRun.SharedRunId}' after releasing failed durable ownership.");
             }
 
             _logger.LogInformation(
-                "Recovery redispatch released failed durable shared-run ownership before replacement dispatch. SharedRunId={SharedRunId}, FailedRuntimeInstanceId={FailedRuntimeInstanceId}, FailedLocalRunId={FailedLocalRunId}, CurrentStatus={CurrentStatus}, CurrentRuntimeInstanceId={CurrentRuntimeInstanceId}, CurrentLocalRunId={CurrentLocalRunId}",
+                "Shared queue redispatch released failed durable shared-run ownership before replacement dispatch. SharedRunId={SharedRunId}, FailedRuntimeInstanceId={FailedRuntimeInstanceId}, FailedLocalRunId={FailedLocalRunId}, CurrentStatus={CurrentStatus}, CurrentRuntimeInstanceId={CurrentRuntimeInstanceId}, CurrentLocalRunId={CurrentLocalRunId}",
                 sharedRun.SharedRunId,
                 failedRuntimeInstanceId,
                 failedLocalRunId,
@@ -1342,32 +1349,45 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         }
 
         /// <summary>
-        /// Resolves an exact failed runtime ownership only for supported recovery redispatch modes.
+        /// Resolves exact failed physical dispatch ownership for either a supported crash-recovery redispatch
+        /// or a normal external-wait continuation re-drive.
         /// </summary>
-        /// <param name="metadata">The recovery queue metadata.</param>
+        /// <param name="metadata">The claimed queue metadata.</param>
+        /// <param name="sharedRun">The durable shared run used to distinguish normal continuation re-drive from crash recovery.</param>
         /// <param name="failedRuntimeInstanceId">The failed runtime instance identifier.</param>
         /// <param name="failedLocalRunId">The failed local run identifier.</param>
-        /// <returns><c>true</c> when a complete supported recovery ownership is present.</returns>
-        private static bool TryResolveFailedRecoveryOwnership(
+        /// <returns><c>true</c> when a complete supported failed dispatch ownership is present.</returns>
+        private static bool TryResolveFailedDispatchOwnership(
             IReadOnlyDictionary<string, string> metadata,
+            AiSharedRunRecord sharedRun,
             out string failedRuntimeInstanceId,
             out string failedLocalRunId)
         {
             failedRuntimeInstanceId = string.Empty;
             failedLocalRunId = string.Empty;
 
-            if (!TryGetMetadataValue(
-                    metadata,
-                    RecoveryModeMetadataKey,
-                    out var recoveryMode) ||
-                (!string.Equals(
+            var hasRecoveryMode = TryGetMetadataValue(
+                metadata,
+                RecoveryModeMetadataKey,
+                out var recoveryMode);
+
+            var supportedRecoveryRedispatch =
+                hasRecoveryMode &&
+                (string.Equals(
                      recoveryMode,
                      RecoveryModeResumeExistingExecution,
-                     StringComparison.OrdinalIgnoreCase) &&
-                 !string.Equals(
+                     StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(
                      recoveryMode,
                      RecoveryModeRequeueLocalQueuedRun,
-                     StringComparison.OrdinalIgnoreCase)))
+                     StringComparison.OrdinalIgnoreCase));
+
+            var normalExternalWaitContinuationRedrive =
+                !hasRecoveryMode &&
+                sharedRun.RunRequest.ExternalWaitContinuation is not null;
+
+            if (!supportedRecoveryRedispatch &&
+                !normalExternalWaitContinuationRedrive)
             {
                 return false;
             }

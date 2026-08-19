@@ -178,6 +178,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         public string OpenAiApiKey { get; set; } = string.Empty;
 
         /// <summary>
+        /// Gets additional environment variables projected into every RuntimeInstanceOnly child process
+        /// created by the in-Pod Runtime Pool Manager.
+        /// </summary>
+        /// <remarks>
+        /// Authoritative runtime identity and endpoint values are still applied by the shared
+        /// Process Pool start-plan factory after these values.
+        /// </remarks>
+        public IDictionary<string, string> ChildEnvironmentVariables { get; } =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
         /// Gets additional non-authoritative labels.
         /// </summary>
         public IDictionary<string, string> Labels { get; } =

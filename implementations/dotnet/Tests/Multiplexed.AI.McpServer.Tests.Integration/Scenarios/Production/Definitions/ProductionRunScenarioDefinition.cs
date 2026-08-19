@@ -42,6 +42,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         public int ChildDepth { get; init; } = 0;
 
         /// <summary>
+        /// Gets the optional physical runtime failure injected into one nested child execution.
+        /// </summary>
+        /// <remarks>
+        /// The default is <see langword="null"/>, preserving every historical production scenario. A failure
+        /// injection is valid only when <see cref="ChildDepth"/> is positive and the target depth is within the
+        /// configured nested child chain.
+        /// </remarks>
+        public ProductionChildDagFailureInjectionDefinition? ChildRuntimeFailure { get; init; }
+
+        /// <summary>
         /// Gets additional input values merged into the submitted pipeline input.
         /// </summary>
         public IReadOnlyDictionary<string, object?> Input { get; init; } =

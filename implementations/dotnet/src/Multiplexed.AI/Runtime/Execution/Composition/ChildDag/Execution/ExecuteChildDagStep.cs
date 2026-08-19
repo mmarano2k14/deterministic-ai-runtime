@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Identity;
 using Multiplexed.Abstractions.AI.Execution.Context;
@@ -67,6 +68,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
         private const int MaximumGenerationTraversal = 1024;
 
         private readonly IAiChildExecutionRelationStore relationStore;
+        private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
         private readonly IAiPipelineDefinitionSourceSelector pipelineDefinitionSourceSelector;
         private readonly AiChildDagSnapshotService snapshotService;
         private readonly AiChildDelegationPolicyCoordinator delegationPolicyCoordinator;
@@ -79,6 +81,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
         /// Initializes a new instance of the <see cref="ExecuteChildDagStep"/> class.
         /// </summary>
         /// <param name="relationStore">The authoritative parent-child relation store.</param>
+        /// <param name="controlPlaneIdResolver">The existing logical control-plane identifier resolver.</param>
         /// <param name="pipelineDefinitionSourceSelector">The existing declarative pipeline definition source selector.</param>
         /// <param name="snapshotService">The immutable child DAG snapshot service.</param>
         /// <param name="delegationPolicyCoordinator">The existing Policy Engine delegation coordinator.</param>
@@ -88,6 +91,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
         /// <param name="generationCoordinator">The explicit retry-generation coordinator.</param>
         public ExecuteChildDagStep(
             IAiChildExecutionRelationStore relationStore,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
             IAiPipelineDefinitionSourceSelector pipelineDefinitionSourceSelector,
             AiChildDagSnapshotService snapshotService,
             AiChildDelegationPolicyCoordinator delegationPolicyCoordinator,
@@ -97,6 +101,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
             AiChildInvocationGenerationCoordinator generationCoordinator)
         {
             this.relationStore = relationStore ?? throw new ArgumentNullException(nameof(relationStore));
+            this.controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
             this.pipelineDefinitionSourceSelector = pipelineDefinitionSourceSelector ?? throw new ArgumentNullException(nameof(pipelineDefinitionSourceSelector));
             this.snapshotService = snapshotService ?? throw new ArgumentNullException(nameof(snapshotService));
             this.delegationPolicyCoordinator = delegationPolicyCoordinator ?? throw new ArgumentNullException(nameof(delegationPolicyCoordinator));
@@ -150,6 +155,16 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
                 logicalInvocationKey,
                 invocationGeneration: 0);
 
+            var controlPlaneId = await this.controlPlaneIdResolver
+                .ResolveAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    "ExecuteChildDag requires a non-empty logical control-plane identifier before child composition can continue.");
+            }
+
             var relation = await this.relationStore
                 .GetAsync(identity, cancellationToken)
                 .ConfigureAwait(false);
@@ -158,6 +173,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
             {
                 relation = await CreateInitialRelationAsync(
                         identity,
+                        controlPlaneId,
                         context,
                         helper,
                         cancellationToken)
@@ -165,6 +181,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
             }
 
             relation = await ResolveActiveGenerationAsync(relation, cancellationToken).ConfigureAwait(false);
+            EnsureControlPlaneAuthority(relation, controlPlaneId);
 
             while (true)
             {
@@ -219,19 +236,51 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
         }
 
         /// <summary>
+        /// Verifies that an existing durable child relation belongs to the current logical control plane.
+        /// </summary>
+        /// <param name="relation">The authoritative child relation.</param>
+        /// <param name="controlPlaneId">The current logical control-plane identifier.</param>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when the relation has no durable authority or belongs to another logical control plane.
+        /// </exception>
+        private static void EnsureControlPlaneAuthority(
+            AiChildExecutionRelation relation,
+            string controlPlaneId)
+        {
+            ArgumentNullException.ThrowIfNull(relation);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+
+            if (string.IsNullOrWhiteSpace(relation.ControlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    $"Child relation '{relation.ChildInvocationKey}' does not contain the durable logical control-plane authority required for execution.");
+            }
+
+            if (!string.Equals(relation.ControlPlaneId, controlPlaneId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Child relation '{relation.ChildInvocationKey}' belongs to logical control plane '{relation.ControlPlaneId}' and cannot execute under '{controlPlaneId}'.");
+            }
+        }
+
+        /// <summary>
         /// Creates the complete initial durable relation only after all immutable invocation inputs have been frozen.
         /// </summary>
         /// <param name="identity">The generation-zero typed invocation identity.</param>
+        /// <param name="controlPlaneId">The current logical control-plane authority.</param>
         /// <param name="context">The current parent step context.</param>
         /// <param name="helper">The existing step context helper.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The authoritative initial relation, including a concurrent winner when another writer created it first.</returns>
         private async Task<AiChildExecutionRelation> CreateInitialRelationAsync(
             AiChildInvocationIdentity identity,
+            string controlPlaneId,
             AiStepExecutionContext context,
             IAiStepContextHelper helper,
             CancellationToken cancellationToken)
         {
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+
             var preparation = await this.snapshotService
                 .TryLoadInvocationPreparationAsync(identity, cancellationToken)
                 .ConfigureAwait(false);
@@ -281,6 +330,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
                 preparation = await this.snapshotService
                     .FreezeInvocationPreparationAsync(
                         identity,
+                        controlPlaneId,
                         frozenDefinition,
                         frozenInvocationInput,
                         context.Record.ExecutionContextSnapshot
@@ -292,9 +342,22 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
                     .ConfigureAwait(false);
             }
 
+            if (string.IsNullOrWhiteSpace(preparation.ControlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    $"Child invocation preparation '{preparation.ChildInvocationKey}' does not contain the durable logical control-plane authority required for relation creation.");
+            }
+
+            if (!string.Equals(preparation.ControlPlaneId, controlPlaneId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Child invocation preparation '{preparation.ChildInvocationKey}' belongs to logical control plane '{preparation.ControlPlaneId}' and cannot be materialized by '{controlPlaneId}'.");
+            }
+
             var relation = new AiChildExecutionRelation
             {
                 TenantId = preparation.Identity.TenantId,
+                ControlPlaneId = preparation.ControlPlaneId,
                 ParentExecutionId = preparation.Identity.ParentExecutionId,
                 ParentCallSiteId = preparation.Identity.ParentCallSiteId,
                 ChildDagId = preparation.Identity.ChildDagId,

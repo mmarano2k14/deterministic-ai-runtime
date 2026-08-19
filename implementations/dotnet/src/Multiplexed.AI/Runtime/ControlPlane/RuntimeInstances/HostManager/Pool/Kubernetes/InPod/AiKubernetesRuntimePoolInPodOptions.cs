@@ -217,6 +217,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         public int SnapshotTtlSeconds { get; set; } = 3600;
 
         /// <summary>
+        /// Gets additional environment variables projected into every RuntimeInstanceOnly child process.
+        /// </summary>
+        public IDictionary<string, string> ChildEnvironmentVariables { get; } =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
         /// Gets the exact initial child runtime plans.
         /// </summary>
         public IList<AiKubernetesRuntimePoolInPodRuntimeInstanceOptions>

@@ -54,12 +54,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             ValidateFailurePhases(
                 orderedFailurePhases);
 
+            Topology = new KubernetesRuntimePoolScenarioTopology(
+                initialPodCount,
+                maximumPodCount,
+                initialRuntimeCountPerPod,
+                maximumRuntimeCountPerPod);
             InitialPodCount = initialPodCount;
             MaximumPodCount = maximumPodCount;
             InitialRuntimeCountPerPod = initialRuntimeCountPerPod;
             MaximumRuntimeCountPerPod = maximumRuntimeCountPerPod;
             FailurePhases = orderedFailurePhases;
         }
+
+        /// <summary>
+        /// Gets the bounded Kubernetes Runtime Pool topology retained by this failure plan.
+        /// </summary>
+        public KubernetesRuntimePoolScenarioTopology Topology { get; }
 
         /// <summary>
         /// Gets the number of Runtime Pool Pods created before workload submission.

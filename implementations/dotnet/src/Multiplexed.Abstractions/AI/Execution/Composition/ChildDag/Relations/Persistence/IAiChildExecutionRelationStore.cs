@@ -36,20 +36,24 @@ namespace Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations.P
         /// </summary>
         /// <param name="maxCount">The maximum number of relations to return.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
+        /// <param name="controlPlaneId">Optional logical control-plane authority used to scope background reconciliation.</param>
         /// <returns>The oldest incomplete child relations first.</returns>
         Task<IReadOnlyList<AiChildExecutionRelation>> ListIncompleteAsync(
             int maxCount,
-            CancellationToken cancellationToken = default);
+            CancellationToken cancellationToken = default,
+            string? controlPlaneId = null);
 
         /// <summary>
         /// Lists completed child relations whose parent continuation is pending or scheduled but not yet resumed.
         /// </summary>
         /// <param name="maxCount">The maximum number of relations to return.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
+        /// <param name="controlPlaneId">Optional logical control-plane authority used to scope background reconciliation.</param>
         /// <returns>The oldest continuation candidates first.</returns>
         Task<IReadOnlyList<AiChildExecutionRelation>> ListContinuationCandidatesAsync(
             int maxCount,
-            CancellationToken cancellationToken = default);
+            CancellationToken cancellationToken = default,
+            string? controlPlaneId = null);
 
         /// <summary>
         /// Lists child-allocated relations old enough to require defensive parent-park consistency checking.
@@ -57,11 +61,13 @@ namespace Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations.P
         /// <param name="allocatedBeforeUtc">Only relations allocated on or before this UTC boundary are returned.</param>
         /// <param name="maxCount">The maximum number of relations to return.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
+        /// <param name="controlPlaneId">Optional logical control-plane authority used to scope background reconciliation.</param>
         /// <returns>The oldest child-allocated relations first.</returns>
         Task<IReadOnlyList<AiChildExecutionRelation>> ListParkConsistencyCandidatesAsync(
             DateTimeOffset allocatedBeforeUtc,
             int maxCount,
-            CancellationToken cancellationToken = default);
+            CancellationToken cancellationToken = default,
+            string? controlPlaneId = null);
 
         /// <summary>
         /// Creates a complete initial relation or returns the already committed equivalent relation.

@@ -23,6 +23,7 @@ using Multiplexed.AI.Runtime.Execution.Persistence.Replay;
 using Multiplexed.AI.Runtime.Observability.Logging;
 using Multiplexed.AI.Stores;
 using Multiplexed.Rbac.Core.ExecutionContext;
+using Multiplexed.Rbac.Core.Runtime;
 
 namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Support
 {
@@ -34,19 +35,23 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
         public TestAiDagExecutionEngineServices(
             IAiExecutionStore store,
             IAiRuntimeLogger? logger = null,
-            IAiDagExecutionStore? dagStore = null)
+            IAiDagExecutionStore? dagStore = null,
+            IExecutionContextAccessor? accessor = null,
+            IExecutionContextFactory? contextFactory = null)
         {
             Store = store ?? throw new ArgumentNullException(nameof(store));
             Logger = logger ?? new NoopLogger();
             DagStore = dagStore;
+            Accessor = accessor ?? new ExecutionContextAccessor();
+            ContextFactory = contextFactory ?? new ExecutionContextFactory();
         }
 
         public IAiExecutionStore Store { get; }
         public IAiDagExecutionStore? DagStore { get; }
         public IAiRuntimeLogger Logger { get; }
         public IContextStore ContextStore => throw new NotSupportedException();
-        public IExecutionContextAccessor Accessor => throw new NotSupportedException();
-        public IExecutionContextFactory ContextFactory => throw new NotSupportedException();
+        public IExecutionContextAccessor Accessor { get; }
+        public IExecutionContextFactory ContextFactory { get; }
         public IServiceProvider Services => throw new NotSupportedException();
         public IAiSequentialPipelineExecutor PipelineExecutor => throw new NotSupportedException();
         public IAiExecutionCleanupService CleanupService => throw new NotSupportedException();

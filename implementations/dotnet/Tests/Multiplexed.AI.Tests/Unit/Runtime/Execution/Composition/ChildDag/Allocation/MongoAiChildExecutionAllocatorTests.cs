@@ -282,6 +282,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Alloc
             var relation = new AiChildExecutionRelation
             {
                 TenantId = identity.TenantId,
+                ControlPlaneId = "control-plane-allocation-tests",
                 ParentExecutionId = identity.ParentExecutionId,
                 ParentCallSiteId = identity.ParentCallSiteId,
                 ChildDagId = identity.ChildDagId,

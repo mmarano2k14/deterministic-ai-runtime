@@ -119,8 +119,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
         /// Verifies that a real MCP control-plane host creates and fulfills a Redis-backed
         /// scale-out request using the local provider and local runtime instance scaler.
         /// </summary>
-        [Fact]
-        public async Task ControlPlaneWithLocalRuntimeInstances_With_No_Runtime_Capacity_Should_Fulfill_Redis_ScaleOut_Request_Using_Local_Scaler()
+        [Theory]
+        [InlineData(0)]
+        [InlineData(2)]
+        public async Task ControlPlaneWithLocalRuntimeInstances_With_No_Runtime_Capacity_Should_Fulfill_Redis_ScaleOut_Request_Using_Local_Scaler(
+            int childDepth)
         {
             var controlPlaneId =
                 GenericMcpServerTestSettings.CreateControlPlaneId(
@@ -168,7 +171,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
                         pipelineName,
                         count: 1,
                         stepCount: 3,
-                        flakyStepInterval: 0)
+                        flakyStepInterval: 0,
+                        childDepth: childDepth)
                     .ConfigureAwait(false);
 
             var sharedRunId =
@@ -209,6 +213,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
             Assert.Equal(
                 TenantId,
                 sharedRun.RunRequest.ExecutionContextSnapshot?.TenantId);
+
+            Assert.Equal(
+                300,
+                sharedRun.ExecutionContextSnapshot.TtlSeconds);
+
+            Assert.Equal(
+                300,
+                sharedRun.RunRequest.ExecutionContextSnapshot?.TtlSeconds);
 
             Assert.NotNull(
                 sharedRun.AdmissionDecision);
@@ -265,6 +277,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
             Assert.Equal(
                 TenantId,
                 scaleOutRequest.TenantId);
+
+            Assert.Equal(
+                300,
+                scaleOutRequest.ExecutionContextSnapshot.TtlSeconds);
 
             Assert.Equal(
                 pipelineName,
@@ -6768,6 +6784,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
         /// <param name="stepCount">The number of pipeline steps.</param>
         /// <param name="flakyStepInterval">The flaky step interval.</param>
         /// <param name="tenantId">The optional tenant id for the submit request.</param>
+        /// <param name="childDepth">The recursive child DAG depth. Zero preserves the historical request.</param>
         /// <returns>The submitted shared run ids.</returns>
         private static async Task<IReadOnlySet<string>> SubmitRunsAsync(
             McpTestClient mcp,
@@ -6775,14 +6792,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
             int count,
             int stepCount,
             int flakyStepInterval,
-            string? tenantId = null)
+            string? tenantId = null,
+            int childDepth = 0)
         {
             var submitRequest =
                 CreateSubmitRequest(
                     pipelineName,
                     stepCount: stepCount,
                     flakyStepInterval: flakyStepInterval,
-                    tenantId: tenantId);
+                    tenantId: tenantId,
+                    childDepth: childDepth);
 
             var submitResults =
                 await mcp
@@ -6901,12 +6920,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
         /// <param name="stepCount">The number of steps.</param>
         /// <param name="flakyStepInterval">The flaky interval.</param>
         /// <param name="tenantId">The optional tenant id for the submit request.</param>
+        /// <param name="childDepth">The recursive child DAG depth. Zero preserves the historical request.</param>
         /// <returns>The submit request.</returns>
         private static AiSharedRuntimeControllerRequest CreateSubmitRequest(
             string pipelineName,
             int stepCount,
             int flakyStepInterval,
-            string? tenantId = null)
+            string? tenantId = null,
+            int childDepth = 0)
         {
             return new AiSharedRuntimeControllerRequest
             {
@@ -6918,7 +6939,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Development
                 RunRequest = McpTestPipelineFactory.CreateRunRequest(
                     pipelineName,
                     stepCount: stepCount,
-                    flakyStepInterval: flakyStepInterval)
+                    flakyStepInterval: flakyStepInterval,
+                    childDepth: childDepth)
             };
         }
     }

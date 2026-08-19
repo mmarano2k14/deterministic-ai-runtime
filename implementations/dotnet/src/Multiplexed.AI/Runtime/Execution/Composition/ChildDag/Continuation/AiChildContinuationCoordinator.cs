@@ -1,8 +1,10 @@
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Identity;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations.Persistence;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
+using Multiplexed.Rbac.Core.ExecutionContext;
 
 namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
 {
@@ -12,8 +14,9 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
     /// <remarks>
     /// <para>
     /// Continuation follows the durable lifecycle Pending -&gt; Scheduled -&gt; Resumed. Scheduling is a CAS;
-    /// <see cref="AiChildContinuationStatus.Scheduled"/> remains safely re-enqueueable until parent step state proves
-    /// durable progress beyond <see cref="AiStepExecutionStatus.WaitingForExternal"/>.
+    /// <see cref="AiChildContinuationStatus.Scheduled"/> remains safely re-enqueueable until the parent child-call-site
+    /// reaches a terminal step state after the scheduling boundary. Ready/running/retry progress proves that a physical
+    /// continuation was accepted, but not that its delivery completed, so those states remain reconcilable.
     /// </para>
     /// <para>
     /// This component never uses crash-recovery ownership. The parent is re-driven under its existing execution
@@ -23,6 +26,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
     public sealed class AiChildContinuationCoordinator
     {
         private readonly IAiChildExecutionRelationStore relationStore;
+        private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
         private readonly IAiDagExecutionEngineServices engineServices;
         private readonly AiChildContinuationScheduler scheduler;
 
@@ -30,14 +34,17 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
         /// Initializes a new instance of the <see cref="AiChildContinuationCoordinator"/> class.
         /// </summary>
         /// <param name="relationStore">The authoritative child relation store.</param>
+        /// <param name="controlPlaneIdResolver">The existing logical control-plane identifier resolver.</param>
         /// <param name="engineServices">The existing DAG engine services used to inspect parent execution state.</param>
         /// <param name="scheduler">The narrow existing-queue continuation scheduler.</param>
         public AiChildContinuationCoordinator(
             IAiChildExecutionRelationStore relationStore,
+            IAiControlPlaneIdResolver controlPlaneIdResolver,
             IAiDagExecutionEngineServices engineServices,
             AiChildContinuationScheduler scheduler)
         {
             this.relationStore = relationStore ?? throw new ArgumentNullException(nameof(relationStore));
+            this.controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
             this.engineServices = engineServices ?? throw new ArgumentNullException(nameof(engineServices));
             this.scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
         }
@@ -59,6 +66,8 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
                 .ConfigureAwait(false)
                 ?? throw new InvalidOperationException(
                     "Parent continuation cannot be scheduled before the authoritative child relation exists.");
+
+            await EnsureCurrentControlPlaneAuthorityAsync(relation, cancellationToken).ConfigureAwait(false);
 
             if (relation.Status != AiChildExecutionRelationStatus.Completed)
             {
@@ -138,6 +147,8 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
         {
             ArgumentNullException.ThrowIfNull(relation);
 
+            await EnsureCurrentControlPlaneAuthorityAsync(relation, cancellationToken).ConfigureAwait(false);
+
             if (relation.Status != AiChildExecutionRelationStatus.Completed ||
                 relation.ContinuationStatus != AiChildContinuationStatus.Scheduled)
             {
@@ -163,7 +174,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
                     step.Status is AiStepExecutionStatus.Completed or AiStepExecutionStatus.Failed &&
                     HasDurableParentProgressAfterScheduling(relation, step))
                 {
-                    return await MarkResumedAsync(relation, cancellationToken).ConfigureAwait(false);
+                    return await MarkResumedAsync(relation, parentRecord, cancellationToken).ConfigureAwait(false);
                 }
 
                 return await SuppressContinuationAsync(
@@ -176,23 +187,46 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
 
             if (step.Status == AiStepExecutionStatus.WaitingForExternal)
             {
-                await this.scheduler
-                    .EnqueueContinuationAsync(relation, parentRecord, cancellationToken)
+                await ExecuteWithParentExecutionContextAsync(
+                        parentRecord,
+                        token => this.scheduler.EnqueueContinuationAsync(relation, parentRecord, token),
+                        cancellationToken)
                     .ConfigureAwait(false);
 
                 return relation;
             }
 
-            if (IsContinuationProgressStatus(step.Status))
+            if (step.Status is AiStepExecutionStatus.Ready or
+                AiStepExecutionStatus.Running or
+                AiStepExecutionStatus.WaitingForRetry)
             {
                 if (HasDurableParentProgressAfterScheduling(relation, step))
                 {
-                    return await MarkResumedAsync(relation, cancellationToken).ConfigureAwait(false);
+                    // ResumeExternalWaitingStepAsync advances WaitingForExternal -> Ready before the physical
+                    // continuation run is durably finished. That acceptance boundary must not consume the durable
+                    // Scheduled relation: the same physical attempt can still fail after binding the parent ExecutionId.
+                    // Re-submit the same deterministic continuation identity. The shared controller converges a healthy
+                    // dispatched attempt as a no-op and requeues the exact item when its bound local run is failed.
+                    await ExecuteWithParentExecutionContextAsync(
+                            parentRecord,
+                            token => this.scheduler.EnqueueContinuationAsync(relation, parentRecord, token),
+                            cancellationToken)
+                        .ConfigureAwait(false);
                 }
 
-                // Signal-before-wait race: the child may complete and schedule while the original parent invocation is
-                // still Running (or otherwise has pre-schedule state). That state does not prove the continuation was
-                // consumed. Keep Scheduled durable and let the original invocation or the poller converge later.
+                // Signal-before-wait race: without monotonic post-schedule progress the original parent invocation may
+                // still own the step. In either case Scheduled remains the liveness authority until terminal call-site
+                // state proves that the continuation was actually consumed.
+                return relation;
+            }
+
+            if (step.Status is AiStepExecutionStatus.Completed or AiStepExecutionStatus.Failed)
+            {
+                if (HasDurableParentProgressAfterScheduling(relation, step))
+                {
+                    return await MarkResumedAsync(relation, parentRecord, cancellationToken).ConfigureAwait(false);
+                }
+
                 return relation;
             }
 
@@ -214,6 +248,8 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(relation);
+
+            await EnsureCurrentControlPlaneAuthorityAsync(relation, cancellationToken).ConfigureAwait(false);
 
             if (relation.Status != AiChildExecutionRelationStatus.ChildAllocated)
             {
@@ -258,11 +294,102 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
                 return false;
             }
 
-            await this.scheduler
-                .EnqueueParkRepairAsync(relation, parentRecord, cancellationToken)
+            await ExecuteWithParentExecutionContextAsync(
+                    parentRecord,
+                    token => this.scheduler.EnqueueParkRepairAsync(relation, parentRecord, token),
+                    cancellationToken)
                 .ConfigureAwait(false);
 
             return true;
+        }
+
+        /// <summary>
+        /// Verifies that the current logical control plane owns durable reconciliation authority for the relation.
+        /// </summary>
+        /// <param name="relation">The authoritative child relation.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A task that completes when reconciliation authority is confirmed.</returns>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when the relation has no durable control-plane authority or belongs to another logical control plane.
+        /// </exception>
+        private async Task EnsureCurrentControlPlaneAuthorityAsync(
+            AiChildExecutionRelation relation,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(relation.ControlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    $"Child relation '{relation.ChildInvocationKey}' does not contain the durable logical control-plane authority required for reconciliation.");
+            }
+
+            var currentControlPlaneId = await this.controlPlaneIdResolver
+                .ResolveAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(currentControlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    "Child continuation reconciliation requires a non-empty current logical control-plane identifier.");
+            }
+
+            if (!string.Equals(relation.ControlPlaneId, currentControlPlaneId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Child relation '{relation.ChildInvocationKey}' belongs to logical control plane '{relation.ControlPlaneId}' and cannot be reconciled by '{currentControlPlaneId}'.");
+            }
+        }
+
+        /// <summary>
+        /// Executes one background parent re-drive inside the durable RBAC execution context captured by the parent.
+        /// </summary>
+        /// <remarks>
+        /// Foreground submissions continue to use the request-scoped RBAC context. Durable continuation reconciliation
+        /// has no ambient MCP request, so it restores the parent snapshot only for the scheduler call and always restores
+        /// the previously active context afterward. The downstream shared runtime controller therefore keeps its normal
+        /// fail-closed context mapping behavior without any Child DAG-specific bypass.
+        /// </remarks>
+        /// <param name="parentRecord">The authoritative parent execution record.</param>
+        /// <param name="operation">The background operation to execute inside the restored parent context.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        private async Task ExecuteWithParentExecutionContextAsync(
+            AiExecutionRecord parentRecord,
+            Func<CancellationToken, Task> operation,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(parentRecord);
+            ArgumentNullException.ThrowIfNull(operation);
+
+            var snapshot = parentRecord.ExecutionContextSnapshot
+                ?? throw new InvalidOperationException(
+                    $"Parent execution '{parentRecord.ExecutionId}' does not contain the durable execution context snapshot required for background continuation dispatch.");
+
+            if (string.IsNullOrWhiteSpace(snapshot.TenantId))
+            {
+                throw new InvalidOperationException(
+                    $"Parent execution '{parentRecord.ExecutionId}' contains a durable execution context snapshot without TenantId.");
+            }
+
+            var accessor = this.engineServices.Accessor;
+            var previousContext = accessor.Current;
+            var restoredContext = ExecutionContextSnapshotMapper.ToExecutionContext(snapshot);
+
+            accessor.Set(restoredContext);
+
+            try
+            {
+                await operation(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (previousContext is null)
+                {
+                    accessor.Clear();
+                }
+                else
+                {
+                    accessor.Set(previousContext);
+                }
+            }
         }
 
         /// <summary>
@@ -285,10 +412,18 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
                     $"Parent execution '{parentRecord.ExecutionId}' must be terminal before child continuation can be suppressed.");
             }
 
+            var suppressionReason =
+                $"Parent execution reached terminal status '{parentRecord.Status}' before child continuation could be consumed.";
+
+            await ExecuteWithParentExecutionContextAsync(
+                    parentRecord,
+                    token => this.scheduler.CancelContinuationDeliveryAsync(relation, suppressionReason, token),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             relation.ContinuationStatus = AiChildContinuationStatus.Suppressed;
             relation.ParentContinuationSuppressedAtUtc = DateTimeOffset.UtcNow;
-            relation.ParentContinuationSuppressionReason =
-                $"Parent execution reached terminal status '{parentRecord.Status}' before child continuation could be consumed.";
+            relation.ParentContinuationSuppressionReason = suppressionReason;
             relation.ParentResumedAtUtc = null;
 
             var committed = await this.relationStore
@@ -325,12 +460,26 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
         }
 
         /// <summary>
-        /// Marks a durable Scheduled continuation as Resumed after parent step state proves progress.
+        /// Marks a durable Scheduled continuation as Resumed after terminal parent call-site state proves consumption.
         /// </summary>
+        /// <param name="relation">The authoritative completed/scheduled child relation.</param>
+        /// <param name="parentRecord">The authoritative parent execution record whose call-site consumed the continuation.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The authoritative resumed relation.</returns>
         private async Task<AiChildExecutionRelation> MarkResumedAsync(
             AiChildExecutionRelation relation,
+            AiExecutionRecord parentRecord,
             CancellationToken cancellationToken)
         {
+            var cancellationReason =
+                $"Parent execution '{parentRecord.ExecutionId}' child call-site '{relation.ParentCallSiteId}' reached terminal step state after scheduled continuation consumption.";
+
+            await ExecuteWithParentExecutionContextAsync(
+                    parentRecord,
+                    token => this.scheduler.CancelContinuationDeliveryAsync(relation, cancellationReason, token),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             relation.ContinuationStatus = AiChildContinuationStatus.Resumed;
             relation.ParentResumedAtUtc = DateTimeOffset.UtcNow;
 
@@ -403,18 +552,6 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
             }
 
             return (record, state);
-        }
-
-        /// <summary>
-        /// Determines whether one parent step status can represent progress after an external-wait continuation.
-        /// </summary>
-        private static bool IsContinuationProgressStatus(AiStepExecutionStatus status)
-        {
-            return status is AiStepExecutionStatus.Ready or
-                AiStepExecutionStatus.Running or
-                AiStepExecutionStatus.WaitingForRetry or
-                AiStepExecutionStatus.Completed or
-                AiStepExecutionStatus.Failed;
         }
 
         /// <summary>

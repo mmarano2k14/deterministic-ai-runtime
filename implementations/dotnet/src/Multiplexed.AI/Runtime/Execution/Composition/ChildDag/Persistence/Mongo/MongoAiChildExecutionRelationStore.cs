@@ -78,7 +78,8 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
         /// <inheritdoc />
         public async Task<IReadOnlyList<AiChildExecutionRelation>> ListIncompleteAsync(
             int maxCount,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            string? controlPlaneId = null)
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(maxCount, 1);
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
@@ -89,10 +90,20 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                 AiChildExecutionRelationStatus.Waiting
             };
 
+            var filters = Builders<MongoAiChildExecutionRelationDocument>.Filter;
+            var filter = filters.In(
+                item => item.Relation.Status,
+                statuses);
+
+            if (!string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                filter = filters.And(
+                    filter,
+                    filters.Eq(item => item.Relation.ControlPlaneId, controlPlaneId));
+            }
+
             var documents = await this.collection
-                .Find(Builders<MongoAiChildExecutionRelationDocument>.Filter.In(
-                    item => item.Relation.Status,
-                    statuses))
+                .Find(filter)
                 .SortBy(item => item.Relation.ChildAllocatedAtUtc)
                 .ThenBy(item => item.Relation.CreatedAtUtc)
                 .Limit(maxCount)
@@ -105,7 +116,8 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
         /// <inheritdoc />
         public async Task<IReadOnlyList<AiChildExecutionRelation>> ListContinuationCandidatesAsync(
             int maxCount,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            string? controlPlaneId = null)
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(maxCount, 1);
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
@@ -120,6 +132,13 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             var filter = filters.And(
                 filters.Eq(item => item.Relation.Status, AiChildExecutionRelationStatus.Completed),
                 filters.In(item => item.Relation.ContinuationStatus, continuationStatuses));
+
+            if (!string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                filter = filters.And(
+                    filter,
+                    filters.Eq(item => item.Relation.ControlPlaneId, controlPlaneId));
+            }
 
             var documents = await this.collection
                 .Find(filter)
@@ -136,7 +155,8 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
         public async Task<IReadOnlyList<AiChildExecutionRelation>> ListParkConsistencyCandidatesAsync(
             DateTimeOffset allocatedBeforeUtc,
             int maxCount,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            string? controlPlaneId = null)
         {
             if (allocatedBeforeUtc == default)
             {
@@ -152,6 +172,13 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             var filter = filters.And(
                 filters.Eq(item => item.Relation.Status, AiChildExecutionRelationStatus.ChildAllocated),
                 filters.Lte(item => item.Relation.ChildAllocatedAtUtc, allocatedBeforeUtc));
+
+            if (!string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                filter = filters.And(
+                    filter,
+                    filters.Eq(item => item.Relation.ControlPlaneId, controlPlaneId));
+            }
 
             var documents = await this.collection
                 .Find(filter)
@@ -352,6 +379,12 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
         private static void ValidateInitialRelation(AiChildExecutionRelation relation)
         {
             ValidateDurableRelation(relation);
+
+            if (string.IsNullOrWhiteSpace(relation.ControlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    "A newly created child execution relation must contain a logical control-plane authority.");
+            }
 
             if (relation.Status != AiChildExecutionRelationStatus.DelegationPolicyPending)
             {
@@ -692,6 +725,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             AiChildExecutionRelation candidate)
         {
             return string.Equals(existing.ChildInvocationKey, candidate.ChildInvocationKey, StringComparison.Ordinal) &&
+                   string.Equals(existing.ControlPlaneId, candidate.ControlPlaneId, StringComparison.Ordinal) &&
                    SnapshotEquals(existing.FrozenChildDagDefinition, candidate.FrozenChildDagDefinition) &&
                    SnapshotEquals(existing.FrozenInvocationInput, candidate.FrozenInvocationInput) &&
                    SnapshotEquals(existing.DelegationPolicyBindingSnapshot, candidate.DelegationPolicyBindingSnapshot) &&
@@ -770,6 +804,35 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                         {
                             Name = "ix_child_relation_child_execution_id",
                             Sparse = true
+                        }),
+                    new CreateIndexModel<MongoAiChildExecutionRelationDocument>(
+                        Builders<MongoAiChildExecutionRelationDocument>.IndexKeys
+                            .Ascending(item => item.Relation.ControlPlaneId)
+                            .Ascending(item => item.Relation.Status)
+                            .Ascending(item => item.Relation.ChildAllocatedAtUtc)
+                            .Ascending(item => item.Relation.CreatedAtUtc),
+                        new CreateIndexOptions
+                        {
+                            Name = "ix_child_relation_control_plane_incomplete"
+                        }),
+                    new CreateIndexModel<MongoAiChildExecutionRelationDocument>(
+                        Builders<MongoAiChildExecutionRelationDocument>.IndexKeys
+                            .Ascending(item => item.Relation.ControlPlaneId)
+                            .Ascending(item => item.Relation.Status)
+                            .Ascending(item => item.Relation.ContinuationStatus)
+                            .Ascending(item => item.Relation.CompletedAtUtc),
+                        new CreateIndexOptions
+                        {
+                            Name = "ix_child_relation_control_plane_continuation"
+                        }),
+                    new CreateIndexModel<MongoAiChildExecutionRelationDocument>(
+                        Builders<MongoAiChildExecutionRelationDocument>.IndexKeys
+                            .Ascending(item => item.Relation.ControlPlaneId)
+                            .Ascending(item => item.Relation.Status)
+                            .Ascending(item => item.Relation.ChildAllocatedAtUtc),
+                        new CreateIndexOptions
+                        {
+                            Name = "ix_child_relation_control_plane_park"
                         }),
                     new CreateIndexModel<MongoAiChildExecutionRelationDocument>(
                         Builders<MongoAiChildExecutionRelationDocument>.IndexKeys

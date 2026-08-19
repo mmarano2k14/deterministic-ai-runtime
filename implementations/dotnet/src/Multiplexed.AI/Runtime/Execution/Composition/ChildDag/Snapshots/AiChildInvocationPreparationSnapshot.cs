@@ -31,6 +31,16 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots
         public required string ChildInvocationKey { get; init; }
 
         /// <summary>
+        /// Gets the logical control-plane identifier frozen before relation creation.
+        /// </summary>
+        /// <remarks>
+        /// This authority is frozen in the pre-relation manifest so a crash between immutable preparation and relation
+        /// creation cannot cause recovery under a different logical control plane. The property is nullable only for
+        /// backward deserialization of legacy preparation payloads.
+        /// </remarks>
+        public string? ControlPlaneId { get; init; }
+
+        /// <summary>
         /// Gets the immutable declarative child DAG definition snapshot.
         /// </summary>
         public required AiStoredPayload FrozenChildDagDefinition { get; init; }

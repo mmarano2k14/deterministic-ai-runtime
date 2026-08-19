@@ -153,6 +153,12 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Dispatch
                     "Child execution cannot be dispatched before its exact execution identifier is durably allocated.");
             }
 
+            if (string.IsNullOrWhiteSpace(relation.ControlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    "Child execution dispatch requires the durable logical control-plane authority captured with the invocation preparation snapshot.");
+            }
+
             if (relation.DelegatedExecutionContextSnapshot is null)
             {
                 throw new InvalidOperationException(
@@ -198,6 +204,12 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Dispatch
         /// <returns>The delegated metadata enriched with durable child identities and snapshot hashes.</returns>
         private static IReadOnlyDictionary<string, string> BuildMetadata(AiChildExecutionRelation relation)
         {
+            if (string.IsNullOrWhiteSpace(relation.ControlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    $"Child relation '{relation.ChildInvocationKey}' does not contain the durable logical control-plane authority required for dispatch metadata.");
+            }
+
             var metadata = new Dictionary<string, string>(relation.DelegatedMetadata, StringComparer.Ordinal)
             {
                 ["child.invocation.key"] = relation.ChildInvocationKey,

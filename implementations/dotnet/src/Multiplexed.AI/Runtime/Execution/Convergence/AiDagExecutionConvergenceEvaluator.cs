@@ -102,7 +102,7 @@ namespace Multiplexed.AI.Runtime.Execution.Convergence
 
             foreach (var resolvedStep in resolvedSteps)
             {
-                var step = await stepResolver.GetStepAsync(
+                var step = await stepResolver.GetStepStatusAsync(
                         state.ExecutionId,
                         resolvedStep.Name,
                         state,

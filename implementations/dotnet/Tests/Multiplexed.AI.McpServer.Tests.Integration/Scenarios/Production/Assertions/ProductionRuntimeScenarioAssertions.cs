@@ -59,6 +59,45 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assert
         }
 
         /// <summary>
+        /// Verifies every assertion family enabled by the supplied production scenario definition.
+        /// </summary>
+        /// <param name="scenario">The expected scenario definition.</param>
+        /// <param name="result">The actual scenario result.</param>
+        public static void AssertConfiguredScenario(
+            ProductionRuntimeScenarioDefinition scenario,
+            ProductionRuntimeScenarioResult result)
+        {
+            ArgumentNullException.ThrowIfNull(scenario);
+            ArgumentNullException.ThrowIfNull(result);
+
+            AssertScenarioShape(scenario, result);
+
+            if (scenario.Assertions.AssertAllRunsCompleted)
+            {
+                AssertAllRunsCompleted(scenario, result);
+            }
+
+            if (scenario.Assertions.AssertMaxRuntimeInstances)
+            {
+                ProductionCapacityAssertions.AssertMaxRuntimeInstancesWereRespected(scenario, result);
+            }
+
+            if (scenario.Assertions.AssertScaleOut)
+            {
+                ProductionCapacityAssertions.AssertFulfilledScaleOutRequestsHaveRuntimeInstanceIds(result);
+                ProductionTenantRuntimeModeAssertions.AssertTenantRuntimeModesWerePropagated(scenario, result);
+            }
+
+            if (scenario.Assertions.AssertTenantIsolation)
+            {
+                ProductionTenantIsolationAssertions.AssertTenantRuntimePrefixesWereRespected(scenario, result);
+                ProductionTenantIsolationAssertions.AssertNoCrossTenantRuntimePrefixUsage(scenario, result);
+            }
+
+            ProductionReplayLedgerAssertions.AssertReplayLedgerTraceAvailable(scenario, result);
+        }
+
+        /// <summary>
         /// Verifies that all submitted runs completed successfully.
         /// </summary>
         /// <param name="scenario">The expected scenario definition.</param>

@@ -39,6 +39,88 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
 
         /// <summary>
+        /// Waits for the exact relation at one nested depth to reach the durable Waiting state.
+        /// </summary>
+        /// <param name="relationStore">The authoritative relation store.</param>
+        /// <param name="tenantId">The tenant that owns the nested chain.</param>
+        /// <param name="parentExecutionId">The originally submitted parent execution identifier.</param>
+        /// <param name="parentPipelineName">The originally submitted parent pipeline name.</param>
+        /// <param name="childDepth">The total configured nested child depth.</param>
+        /// <param name="targetDepth">The one-based nested relation depth to observe.</param>
+        /// <param name="timeout">The maximum time allowed for the waiting relation chain to appear.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The authoritative waiting relation at the requested depth.</returns>
+        public static async Task<AiChildExecutionRelation> WaitForWaitingRelationAtDepthAsync(
+            IAiChildExecutionRelationStore relationStore,
+            string tenantId,
+            string parentExecutionId,
+            string parentPipelineName,
+            int childDepth,
+            int targetDepth,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(relationStore);
+            ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(parentExecutionId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(parentPipelineName);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(childDepth);
+
+            if (targetDepth <= 0 || targetDepth > childDepth)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(targetDepth),
+                    targetDepth,
+                    $"Target depth must be between 1 and '{childDepth}'.");
+            }
+
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeout),
+                    timeout,
+                    "The waiting child relation timeout must be greater than zero.");
+            }
+
+            var deadline = DateTimeOffset.UtcNow.Add(timeout);
+            var currentParentExecutionId = parentExecutionId;
+            var currentParentPipelineName = parentPipelineName;
+
+            for (var depth = 1; depth <= targetDepth; depth++)
+            {
+                var remainingDepth = childDepth - depth + 1;
+                var identity = CreateInvocationIdentity(
+                    tenantId,
+                    currentParentExecutionId,
+                    currentParentPipelineName,
+                    remainingDepth);
+
+                var relation = await WaitForWaitingRelationAsync(
+                        relationStore,
+                        identity,
+                        deadline,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (depth == targetDepth)
+                {
+                    return relation;
+                }
+
+                if (string.IsNullOrWhiteSpace(relation.ChildExecutionId))
+                {
+                    throw new InvalidOperationException(
+                        $"Waiting child relation '{relation.ChildInvocationKey}' does not contain a ChildExecutionId.");
+                }
+
+                currentParentExecutionId = relation.ChildExecutionId;
+                currentParentPipelineName = relation.ChildDagId;
+            }
+
+            throw new InvalidOperationException("The requested child relation depth could not be resolved.");
+        }
+
+        /// <summary>
         /// Waits for submitted parent executions to reach a durable terminal state across normal external-wait
         /// continuations that may use a different physical runtime run identifier.
         /// </summary>
@@ -198,21 +280,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             for (var depth = 1; depth <= childDepth; depth++)
             {
                 var remainingDepth = childDepth - depth + 1;
-                var childDagId = McpTestPipelineFactory.CreateChildPipelineName(
+                var identity = CreateInvocationIdentity(
+                    tenantId,
+                    currentParentExecutionId,
                     currentParentPipelineName,
                     remainingDepth);
-                var identity = new AiChildInvocationIdentity
-                {
-                    TenantId = tenantId,
-                    ParentExecutionId = currentParentExecutionId,
-                    ParentCallSiteId = McpTestPipelineFactory.ChildDagStepName,
-                    ChildDagId = childDagId,
-                    ChildDagDefinitionVersion = McpTestPipelineFactory.PipelineVersion,
-                    CanonicalLogicalInvocationKey = McpTestPipelineFactory.CreateChildLogicalInvocationKey(
-                        currentParentPipelineName,
-                        remainingDepth),
-                    InvocationGeneration = 0
-                };
 
                 var relation = await WaitForCompletedRelationAsync(
                         relationStore,
@@ -250,6 +322,67 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             return results;
         }
 
+
+        private static AiChildInvocationIdentity CreateInvocationIdentity(
+            string tenantId,
+            string parentExecutionId,
+            string parentPipelineName,
+            int remainingDepth)
+        {
+            return new AiChildInvocationIdentity
+            {
+                TenantId = tenantId,
+                ParentExecutionId = parentExecutionId,
+                ParentCallSiteId = McpTestPipelineFactory.ChildDagStepName,
+                ChildDagId = McpTestPipelineFactory.CreateChildPipelineName(
+                    parentPipelineName,
+                    remainingDepth),
+                ChildDagDefinitionVersion = McpTestPipelineFactory.PipelineVersion,
+                CanonicalLogicalInvocationKey = McpTestPipelineFactory.CreateChildLogicalInvocationKey(
+                    parentPipelineName,
+                    remainingDepth),
+                InvocationGeneration = 0
+            };
+        }
+
+        private static async Task<AiChildExecutionRelation> WaitForWaitingRelationAsync(
+            IAiChildExecutionRelationStore relationStore,
+            AiChildInvocationIdentity identity,
+            DateTimeOffset deadline,
+            CancellationToken cancellationToken)
+        {
+            AiChildExecutionRelation? lastRelation = null;
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                lastRelation = await relationStore
+                    .GetAsync(identity, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (lastRelation is not null &&
+                    lastRelation.Status == AiChildExecutionRelationStatus.Waiting &&
+                    !string.IsNullOrWhiteSpace(lastRelation.ChildExecutionId))
+                {
+                    return lastRelation;
+                }
+
+                if (lastRelation?.Status == AiChildExecutionRelationStatus.Completed)
+                {
+                    throw new InvalidOperationException(
+                        $"Child relation '{lastRelation.ChildInvocationKey}' completed before the physical runtime failure window was observed.");
+                }
+
+                await Task.Delay(PollInterval, cancellationToken).ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                $"Child relation did not reach Waiting before timeout. " +
+                $"TenantId='{identity.TenantId}', ParentExecutionId='{identity.ParentExecutionId}', " +
+                $"ChildDagId='{identity.ChildDagId}', Generation='{identity.InvocationGeneration}', " +
+                $"LastStatus='{lastRelation?.Status}', ChildExecutionId='{lastRelation?.ChildExecutionId ?? string.Empty}'.");
+        }
 
         /// <summary>
         /// Creates a control-plane-shaped observation from the authoritative durable execution record.

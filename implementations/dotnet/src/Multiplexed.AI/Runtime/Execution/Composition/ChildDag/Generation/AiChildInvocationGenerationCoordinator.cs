@@ -152,6 +152,12 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Generation
                 ?? throw new InvalidOperationException(
                     "A next-generation relation cannot be created before the durable generation decision exists.");
 
+            if (string.IsNullOrWhiteSpace(current.ControlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    $"Child relation '{current.ChildInvocationKey}' cannot advance invocation generation without durable logical control-plane authority.");
+            }
+
             var nextIdentity = new AiChildInvocationIdentity
             {
                 TenantId = current.TenantId,
@@ -166,6 +172,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Generation
             var nextRelation = new AiChildExecutionRelation
             {
                 TenantId = current.TenantId,
+                ControlPlaneId = current.ControlPlaneId,
                 ParentExecutionId = current.ParentExecutionId,
                 ParentCallSiteId = current.ParentCallSiteId,
                 ChildDagId = current.ChildDagId,

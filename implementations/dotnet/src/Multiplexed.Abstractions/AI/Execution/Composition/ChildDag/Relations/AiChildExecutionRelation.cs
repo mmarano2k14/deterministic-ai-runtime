@@ -26,6 +26,17 @@ namespace Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations
         public required string TenantId { get; init; }
 
         /// <summary>
+        /// Gets the logical control-plane identifier that owns durable reconciliation for this relation.
+        /// </summary>
+        /// <remarks>
+        /// New relations must persist this value before the first durable write. The property remains nullable only
+        /// so previously persisted relation documents can still be deserialized; background reconciliation must not
+        /// claim a legacy relation whose control-plane authority is unknown. The value is not part of child invocation
+        /// identity and therefore does not change deterministic child identity semantics.
+        /// </remarks>
+        public string? ControlPlaneId { get; init; }
+
+        /// <summary>
         /// Gets the durable parent execution identifier.
         /// </summary>
         public required string ParentExecutionId { get; init; }

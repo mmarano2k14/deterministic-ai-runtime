@@ -4,11 +4,13 @@ using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
@@ -845,6 +847,104 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                 second.Run?.RunRequest.ExternalWaitContinuation?.ContinuationId);
             Assert.Single(await store.ListAsync(includeCancelled: true, includeCompleted: true, includeFailed: true));
             Assert.Single(await queue.ListAsync(includeTerminal: true));
+            Assert.Equal(1, admission.AdmitCallCount);
+        }
+
+        [Fact]
+        public async Task SubmitRunAsync_Should_Requeue_Same_Deterministic_ExternalWait_Run_When_Bound_Local_Attempt_Failed()
+        {
+            const string sharedRunId = "child-continuation-physical-redrive-1";
+            const string failedRuntimeInstanceId = "runtime-failed-1";
+            const string failedLocalRunId = "local-continuation-failed-1";
+            const string executionId = "parent-execution-1";
+
+            var admission = new FakeRunAdmissionController(
+                new AiRunAdmissionDecision
+                {
+                    DecisionType = AiRunAdmissionDecisionType.QueueGlobally,
+                    Reason = "Queue parent continuation."
+                });
+            var store = new InMemoryAiSharedRunStore();
+            var queue = new InMemoryAiSharedQueue();
+            var runExecutionIndex = new FakeRuntimeRunExecutionIndex();
+            var controller = CreateController(
+                admission,
+                store: store,
+                sharedQueue: queue,
+                runtimeRunExecutionIndex: runExecutionIndex);
+            var request = new AiSharedRuntimeControllerRequest
+            {
+                Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                RequestedSharedRunId = sharedRunId,
+                SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                PipelineKey = "parent-pipeline",
+                RunRequest = CreateExternalWaitContinuationRunRequest("continuation-redrive-1"),
+                Source = "unit-test"
+            };
+
+            var first = await controller.SubmitRunAsync(request);
+            Assert.True(first.Success);
+
+            var claimed = await queue.ClaimAsync(
+                sharedRunId,
+                new AiSharedQueueClaimRequest
+                {
+                    RuntimeInstanceId = "mcp-control-plane",
+                    ControlPlaneId = "test-control-plane",
+                    TenantId = "tenant-1",
+                    PipelineKey = "parent-pipeline",
+                    WorkerId = "mcp-background-pump"
+                });
+
+            Assert.NotNull(claimed);
+            Assert.NotNull(
+                await queue.MarkDispatchedAsync(
+                    sharedRunId,
+                    claimed!.ClaimToken!));
+            Assert.NotNull(
+                await store.MarkDispatchedAsync(
+                    sharedRunId,
+                    failedRuntimeInstanceId,
+                    failedLocalRunId,
+                    executionId));
+
+            runExecutionIndex.RegisteredEntries.Add(
+                new AiRuntimeRunExecutionIndexEntry
+                {
+                    RunId = failedLocalRunId,
+                    ExecutionId = executionId,
+                    RuntimeInstanceId = failedRuntimeInstanceId,
+                    Status = "failed",
+                    FailureReason = "continuation-failed-after-binding",
+                    ExecutionContextSnapshot = first.Run!.ExecutionContextSnapshot,
+                    CreatedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-30),
+                    StartedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-20),
+                    CompletedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-10)
+                });
+
+            var second = await controller.SubmitRunAsync(request);
+
+            Assert.True(second.Success);
+            Assert.Equal(sharedRunId, second.SharedRunId);
+
+            var requeued = await queue.GetAsync(sharedRunId);
+            Assert.NotNull(requeued);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, requeued!.Status);
+            Assert.Null(requeued.ClaimToken);
+            Assert.Equal(
+                failedRuntimeInstanceId,
+                requeued.Metadata["recovery.failedRuntimeInstanceId"]);
+            Assert.Equal(
+                failedLocalRunId,
+                requeued.Metadata["recovery.failedLocalRunId"]);
+            Assert.False(requeued.Metadata.ContainsKey("recovery.mode"));
+            Assert.Equal(1, admission.AdmitCallCount);
+
+            var durableRun = await store.GetAsync(sharedRunId);
+            Assert.NotNull(durableRun);
+            Assert.Equal(AiSharedRunStatus.Dispatched, durableRun!.Status);
+            Assert.Equal(failedRuntimeInstanceId, durableRun.AssignedRuntimeInstanceId);
+            Assert.Equal(failedLocalRunId, durableRun.LocalRunId);
         }
 
         [Fact]
@@ -919,6 +1019,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             Assert.Equal("execution-42", second.Run?.RunRequest.RequestedExecutionId);
             Assert.Single(await store.ListAsync(includeCancelled: true, includeCompleted: true, includeFailed: true));
             Assert.Single(await queue.ListAsync(includeTerminal: true));
+            Assert.Equal(1, admission.AdmitCallCount);
         }
 
         [Fact]
@@ -1152,7 +1253,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             IAiSharedRunDispatcher? dispatcher = null,
             IAiRuntimeScaleOutRequestPublisher? scaleOutPublisher = null,
             IAiSharedRunStore? store = null,
-            IAiSharedQueue? sharedQueue = null)
+            IAiSharedQueue? sharedQueue = null,
+            IAiRuntimeRunExecutionIndex? runtimeRunExecutionIndex = null)
         {
             return new AiSharedRuntimeController(
                 admissionController,
@@ -1166,7 +1268,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                 new NoopAiControlPlaneObserver(),
                 new FakeExecutionContextSnapshotProvider(
                     AiExecutionContextSnapshotTestFactory.Create(
-                        tenantId: "tenant-1")));
+                        tenantId: "tenant-1")),
+                runtimeRunExecutionIndex: runtimeRunExecutionIndex);
         }
 
         private static AiRuntimePipelineRunRequest CreateRunRequest()
@@ -1255,6 +1358,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
 
             public bool AdmitCalled { get; private set; }
 
+            public int AdmitCallCount { get; private set; }
+
             public AiRunAdmissionRequest? LastRequest { get; private set; }
 
             public Task<AiRunAdmissionDecision> AdmitAsync(
@@ -1262,6 +1367,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                 CancellationToken cancellationToken = default)
             {
                 AdmitCalled = true;
+                AdmitCallCount++;
                 LastRequest = request;
 
                 return Task.FromResult(_decision);

@@ -1078,6 +1078,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 foreach (var work in inventory.Works)
                 {
                     await WaitForWorkRequeuedForRecoveryAsync(
+                            registry,
                             runExecutionIndex,
                             dagStore,
                             inventory,
@@ -2330,6 +2331,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         }
 
         private static async Task WaitForWorkRequeuedForRecoveryAsync(
+    IAiRuntimeInstanceRegistry registry,
     IAiRuntimeRunExecutionIndex runExecutionIndex,
     IAiDagExecutionStore dagStore,
     RealRuntimeCrashAssignedWorkInventoryProof inventory,
@@ -2340,6 +2342,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
     DateTimeOffset killCompletedAtUtc,
     TimeSpan timeout)
         {
+            ArgumentNullException.ThrowIfNull(registry);
             ArgumentNullException.ThrowIfNull(runExecutionIndex);
             ArgumentNullException.ThrowIfNull(dagStore);
             ArgumentNullException.ThrowIfNull(inventory);
@@ -2349,6 +2352,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
             var deadline =
                 DateTimeOffset.UtcNow.Add(timeout);
+
+            // The failed runtime can remain visible until its registry lease expires.
+            // Once durable membership actually disappears, recovery enters a distinct
+            // orphan-confirmation phase. Give that real phase its own existing timeout
+            // budget instead of letting a near-expired registry lease consume it.
+            var runtimeAbsenceObserved =
+                false;
 
             AiRuntimeRunExecutionIndexEntry? lastEntry =
                 null;
@@ -2393,6 +2403,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     executionMatches)
                 {
                     return;
+                }
+
+                if (!runtimeAbsenceObserved)
+                {
+                    var failedRuntimeInstance =
+                        await registry
+                            .GetAsync(inventory.RuntimeInstanceId)
+                            .ConfigureAwait(false);
+
+                    if (failedRuntimeInstance is null)
+                    {
+                        runtimeAbsenceObserved = true;
+                        deadline = DateTimeOffset.UtcNow.Add(timeout);
+                    }
                 }
 
                 await Task
@@ -2495,7 +2519,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 $"KillRequestedAtUtc='{killRequestedAtUtc:O}', " +
                 $"KillCompletedAtUtc='{killCompletedAtUtc:O}', " +
                 $"KillDuration='{killCompletedAtUtc - killRequestedAtUtc}', " +
-                $"CompletionTiming='{completionTiming}'.");
+                $"CompletionTiming='{completionTiming}', " +
+                $"RuntimeAbsenceObserved='{runtimeAbsenceObserved}', " +
+                $"RecoveryObservationTimeout='{timeout}'.");
 
             throw new InvalidOperationException(
                 "Unreachable assertion path.");

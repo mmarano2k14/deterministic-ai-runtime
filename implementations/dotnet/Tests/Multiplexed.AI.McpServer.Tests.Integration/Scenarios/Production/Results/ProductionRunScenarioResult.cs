@@ -64,6 +64,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Result
             Array.Empty<ProductionChildDagScenarioResult>();
 
         /// <summary>
+        /// Gets the optional physical child-runtime recovery proof captured for this run.
+        /// </summary>
+        public ProductionChildDagRuntimeFailureResult? ChildDagRuntimeFailure { get; init; }
+
+        /// <summary>
         /// Gets arbitrary run-level metadata captured by the runner.
         /// </summary>
         public IReadOnlyDictionary<string, string> Metadata { get; init; } =

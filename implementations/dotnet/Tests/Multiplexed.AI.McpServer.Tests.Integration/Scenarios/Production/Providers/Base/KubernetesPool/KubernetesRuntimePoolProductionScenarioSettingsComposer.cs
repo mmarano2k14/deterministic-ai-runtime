@@ -26,7 +26,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         public static Dictionary<string, string?> Apply(
             Dictionary<string, string?> settings,
             string poolId,
-            IRuntimePoolCrashRecoveryScenarioRuntimeProfile profile,
+            IKubernetesRuntimePoolScenarioRuntimeProfile profile,
             string scaleOutSectionName,
             int firstChildTransportPort)
         {
@@ -38,7 +38,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             ValidateProfile(profile);
 
-            ApplyStrictCrashRecoverySettings(settings);
+            ApplyDagExecutionResumeSettings(
+                settings,
+                profile.EnableDagExecutionResume);
 
             ApplyKubernetesPoolScaleOutSettings(
                 settings,
@@ -56,6 +58,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 settings,
                 profile);
 
+            ApplyRuntimePoolChildEnvironmentSettings(settings);
+
             WriteRuntimePoolTransportSettingsDebug(
                 settings,
                 profile,
@@ -65,7 +69,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         private static void ValidateProfile(
-            IRuntimePoolCrashRecoveryScenarioRuntimeProfile profile)
+            IKubernetesRuntimePoolScenarioRuntimeProfile profile)
         {
             if (profile.CapacityTopologyMode !=
                 AiRuntimeCapacityTopologyMode.KubernetesPool)
@@ -98,12 +102,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             }
         }
 
-        private static void ApplyStrictCrashRecoverySettings(
-            Dictionary<string, string?> settings)
+        private static void ApplyDagExecutionResumeSettings(
+            Dictionary<string, string?> settings,
+            bool enableDagExecutionResume)
         {
+            if (!enableDagExecutionResume)
+            {
+                return;
+            }
+
             /*
-             * Every scenario composed through this boundary is a strict crash-recovery proof.
-             * Do not depend on scenario-name heuristics inherited from process-host profiles.
+             * Crash-recovery profiles force DAG resume independently from scenario-name heuristics.
+             * Nominal Runtime Pool scenarios preserve the transport-specific parent settings.
              */
             settings["AiRuntimeExecutionRecoveryReconciliation:EnableDagExecutionResume"] =
                 "true";
@@ -112,7 +122,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private static void ApplyKubernetesPoolScaleOutSettings(
             Dictionary<string, string?> settings,
             string poolId,
-            IRuntimePoolCrashRecoveryScenarioRuntimeProfile profile,
+            IKubernetesRuntimePoolScenarioRuntimeProfile profile,
             string scaleOutSectionName)
         {
             settings[$"{scaleOutSectionName}:CapacityTopologyMode"] =
@@ -143,18 +153,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private static void ApplyRuntimePoolSettings(
             Dictionary<string, string?> settings,
             string poolId,
-            IRuntimePoolCrashRecoveryScenarioRuntimeProfile profile,
+            IKubernetesRuntimePoolScenarioRuntimeProfile profile,
             int firstChildTransportPort)
         {
-            var plan = profile.CrashRecoveryPlan;
+            var topology = profile.Topology;
 
             /*
              * AiRunAdmission counts first-class RuntimeInstance identities, not Pods.
              */
             var maximumRuntimeCapacity =
                 checked(
-                    plan.MaximumPodCount *
-                    plan.MaximumRuntimeCountPerPod);
+                    topology.MaximumPodCount *
+                    topology.MaximumRuntimeCountPerPod);
 
             settings["AiRunAdmission:MaxInstanceCount"] =
                 maximumRuntimeCapacity.ToString();
@@ -162,7 +172,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimePool:Enabled"] = "true";
             settings["AiKubernetesRuntimePool:PoolId"] = poolId;
             settings["AiKubernetesRuntimePool:MaximumPodCount"] =
-                plan.MaximumPodCount.ToString();
+                topology.MaximumPodCount.ToString();
             settings["AiKubernetesRuntimePool:Namespace"] =
                 KubernetesRuntimePoolScenarioConstants.Namespace;
             settings["AiKubernetesRuntimePool:PodNamePrefix"] =
@@ -174,11 +184,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["AiKubernetesRuntimePool:TransportName"] =
                 profile.ProviderName;
             settings["AiKubernetesRuntimePool:InitialRuntimeInstanceCount"] =
-                plan.InitialRuntimeCountPerPod.ToString();
+                topology.InitialRuntimeCountPerPod.ToString();
             settings["AiKubernetesRuntimePool:MinimumRuntimeInstanceCount"] =
-                plan.InitialRuntimeCountPerPod.ToString();
+                topology.InitialRuntimeCountPerPod.ToString();
             settings["AiKubernetesRuntimePool:MaximumRuntimeInstanceCount"] =
-                plan.MaximumRuntimeCountPerPod.ToString();
+                topology.MaximumRuntimeCountPerPod.ToString();
             settings["AiKubernetesRuntimePool:StartupParallelism"] = "1";
             settings["AiKubernetesRuntimePool:StableTransportPort"] = "8080";
             settings["AiKubernetesRuntimePool:ReadinessPort"] = "8081";
@@ -190,7 +200,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
         private static void ApplyRuntimePoolHostSettings(
             Dictionary<string, string?> settings,
-            IRuntimePoolCrashRecoveryScenarioRuntimeProfile profile)
+            IKubernetesRuntimePoolScenarioRuntimeProfile profile)
         {
             ArgumentNullException.ThrowIfNull(profile);
 
@@ -224,7 +234,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 TimeSpan.FromMinutes(
                     Math.Max(
                         3,
-                        profile.CrashRecoveryPlan.MaximumRuntimeCountPerPod + 1));
+                        profile.Topology.MaximumRuntimeCountPerPod + 1));
 
             settings["AiKubernetesRuntimePoolHost:StartupTimeout"] =
                 runtimePoolHostStartupTimeout.ToString("c");
@@ -293,9 +303,45 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 "false";
         }
 
+        /// <summary>
+        /// Projects the already-composed Process Host child environment into the in-Pod Process Pool
+        /// children so optional runtime features stay topology-neutral.
+        /// </summary>
+        /// <param name="settings">The composed scenario settings.</param>
+        private static void ApplyRuntimePoolChildEnvironmentSettings(
+            Dictionary<string, string?> settings)
+        {
+            const string processChildEnvironmentPrefix =
+                "AiRuntimeProcessHostCreation:EnvironmentVariables:";
+            const string kubernetesChildEnvironmentPrefix =
+                "AiKubernetesRuntimePoolHost:ChildEnvironmentVariables:";
+
+            var processChildEnvironment =
+                settings
+                    .Where(pair =>
+                        pair.Key.StartsWith(
+                            processChildEnvironmentPrefix,
+                            StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+
+            foreach (var pair in processChildEnvironment)
+            {
+                var childKey = pair.Key[processChildEnvironmentPrefix.Length..];
+
+                if (string.IsNullOrWhiteSpace(childKey))
+                {
+                    continue;
+                }
+
+                settings[string.Concat(
+                    kubernetesChildEnvironmentPrefix,
+                    childKey)] = pair.Value;
+            }
+        }
+
         private static void WriteRuntimePoolTransportSettingsDebug(
             IReadOnlyDictionary<string, string?> settings,
-            IRuntimePoolCrashRecoveryScenarioRuntimeProfile profile,
+            IKubernetesRuntimePoolScenarioRuntimeProfile profile,
             string scaleOutSectionName)
         {
             Console.WriteLine(

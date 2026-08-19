@@ -1,4 +1,5 @@
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
@@ -16,9 +17,10 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
     /// recorded continuation status <see cref="AiChildContinuationStatus.Scheduled"/>.
     /// </para>
     /// <para>
-    /// The logical continuation identifier is deterministic and stable, while each physical queue re-drive receives a
-    /// fresh shared-run identifier. This distinction allows a durable Scheduled continuation to be re-enqueued even
-    /// after an earlier physical queue item was already dispatched, without introducing a second scheduler.
+    /// The logical continuation identifier and its shared-run identifier are deterministic and stable. Reconciliation
+    /// therefore re-drives the same durable shared queue item instead of manufacturing parallel physical copies while
+    /// an earlier continuation attempt is still queued, claimed, or being accepted by a runtime. The existing shared
+    /// controller and queue provide the idempotent create/enqueue boundary for duplicate submissions.
     /// </para>
     /// </remarks>
     public sealed class AiChildContinuationScheduler
@@ -29,15 +31,19 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
         private const string ParkRepairIdentityPrefix = "child-park-repair:";
 
         private readonly IAiSharedRuntimeController sharedRuntimeController;
+        private readonly IAiSharedQueue sharedQueue;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiChildContinuationScheduler"/> class.
         /// </summary>
         /// <param name="sharedRuntimeController">The existing shared runtime controller.</param>
+        /// <param name="sharedQueue">The existing shared/global queue that owns physical continuation delivery.</param>
         public AiChildContinuationScheduler(
-            IAiSharedRuntimeController sharedRuntimeController)
+            IAiSharedRuntimeController sharedRuntimeController,
+            IAiSharedQueue sharedQueue)
         {
             this.sharedRuntimeController = sharedRuntimeController ?? throw new ArgumentNullException(nameof(sharedRuntimeController));
+            this.sharedQueue = sharedQueue ?? throw new ArgumentNullException(nameof(sharedQueue));
         }
 
         /// <summary>
@@ -69,10 +75,46 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
             return EnqueueAsync(
                 relation,
                 parentRecord,
-                CreatePhysicalSharedRunId(ContinuationSharedRunPrefix, relation.ChildInvocationKey),
+                CreateDeterministicSharedRunId(ContinuationSharedRunPrefix, relation.ChildInvocationKey),
                 string.Concat(ContinuationIdentityPrefix, relation.ChildInvocationKey),
                 "resume-parent-after-child-completion",
                 cancellationToken);
+        }
+
+        /// <summary>
+        /// Cancels any still-pending physical delivery for one deterministic completed-child continuation.
+        /// </summary>
+        /// <remarks>
+        /// The durable child relation remains the logical continuation authority. Once parent state proves that the
+        /// continuation was consumed or can no longer run, any pending or claimed copy of the deterministic queue
+        /// item is obsolete. Cancelling that existing item prevents a stale at-least-once delivery from being
+        /// requeued forever while preserving the historical shared-run record and all completed dispatch evidence.
+        /// </remarks>
+        /// <param name="relation">The authoritative completed child relation.</param>
+        /// <param name="reason">The durable reason why further physical continuation delivery is obsolete.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        public async Task CancelContinuationDeliveryAsync(
+            AiChildExecutionRelation relation,
+            string reason,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(relation);
+            ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+            if (relation.Status != AiChildExecutionRelationStatus.Completed ||
+                relation.ContinuationStatus is not (AiChildContinuationStatus.Pending or AiChildContinuationStatus.Scheduled))
+            {
+                throw new InvalidOperationException(
+                    $"Physical continuation delivery can be cancelled only from Completed/Pending or Completed/Scheduled relation state. " +
+                    $"RelationStatus='{relation.Status}', ContinuationStatus='{relation.ContinuationStatus}'.");
+            }
+
+            await this.sharedQueue
+                .CancelAsync(
+                    CreateDeterministicSharedRunId(ContinuationSharedRunPrefix, relation.ChildInvocationKey),
+                    reason,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         /// <summary>
@@ -100,7 +142,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
             return EnqueueAsync(
                 relation,
                 parentRecord,
-                CreatePhysicalSharedRunId(ParkRepairSharedRunPrefix, relation.ChildInvocationKey),
+                CreateDeterministicSharedRunId(ParkRepairSharedRunPrefix, relation.ChildInvocationKey),
                 string.Concat(ParkRepairIdentityPrefix, relation.ChildInvocationKey),
                 "repair-parent-park-consistency",
                 cancellationToken);
@@ -201,12 +243,19 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
 
 
         /// <summary>
-        /// Creates a fresh physical shared-run identity for one queue attempt while preserving the durable logical
-        /// continuation identity separately in <see cref="AiRuntimeExternalWaitContinuation.ContinuationId"/>.
+        /// Creates the stable shared-run identity for one logical continuation or park-repair operation.
         /// </summary>
-        private static string CreatePhysicalSharedRunId(string prefix, string childInvocationKey)
+        /// <param name="prefix">The operation-specific shared-run prefix.</param>
+        /// <param name="childInvocationKey">The durable child invocation key.</param>
+        /// <returns>The deterministic shared-run identifier used by every reconciliation re-drive.</returns>
+        private static string CreateDeterministicSharedRunId(
+            string prefix,
+            string childInvocationKey)
         {
-            return string.Concat(prefix, childInvocationKey, "-", Guid.NewGuid().ToString("N"));
+            ArgumentException.ThrowIfNullOrWhiteSpace(prefix);
+            ArgumentException.ThrowIfNullOrWhiteSpace(childInvocationKey);
+
+            return string.Concat(prefix, childInvocationKey);
         }
 
         /// <summary>
@@ -217,7 +266,14 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
             string continuationId,
             string reason)
         {
-            return new Dictionary<string, string>(StringComparer.Ordinal)
+            var controlPlaneId = relation.ControlPlaneId;
+            if (string.IsNullOrWhiteSpace(controlPlaneId))
+            {
+                throw new InvalidOperationException(
+                    $"Child relation '{relation.ChildInvocationKey}' does not contain the durable logical control-plane authority required for continuation dispatch.");
+            }
+
+            return new Dictionary<string, string>(relation.DelegatedMetadata, StringComparer.Ordinal)
             {
                 ["child.invocation.key"] = relation.ChildInvocationKey,
                 ["child.execution.id"] = relation.ChildExecutionId ?? string.Empty,

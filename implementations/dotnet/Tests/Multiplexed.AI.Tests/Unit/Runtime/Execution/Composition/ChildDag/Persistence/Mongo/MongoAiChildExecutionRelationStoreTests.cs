@@ -225,6 +225,28 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Persi
         }
 
         [Fact]
+        public async Task ListContinuationCandidatesAsync_Should_Filter_By_Durable_ControlPlane_Authority()
+        {
+            var current = await CreatePersistedCompletedRelationAsync(
+                controlPlaneId: "control-plane-current",
+                parentExecutionId: "parent-current",
+                childExecutionId: "child-current");
+            await CreatePersistedCompletedRelationAsync(
+                controlPlaneId: "control-plane-previous",
+                parentExecutionId: "parent-previous",
+                childExecutionId: "child-previous");
+
+            var candidates = await this.store.ListContinuationCandidatesAsync(
+                10,
+                CancellationToken.None,
+                "control-plane-current");
+
+            var candidate = Assert.Single(candidates);
+            Assert.Equal(current.ChildInvocationKey, candidate.ChildInvocationKey);
+            Assert.Equal("control-plane-current", candidate.ControlPlaneId);
+        }
+
+        [Fact]
         public async Task GetOrCreateAsync_Should_Create_Typed_Unique_Index_Without_Hash_Uniqueness()
         {
             await this.store.GetOrCreateAsync(CreateRelation());
@@ -242,26 +264,41 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Persi
             Assert.False(keyIndex.TryGetValue("unique", out var unique) && unique.AsBoolean);
         }
 
-        private async Task<AiChildExecutionRelation> CreatePersistedCompletedRelationAsync()
+        private async Task<AiChildExecutionRelation> CreatePersistedCompletedRelationAsync(
+            string controlPlaneId = "control-plane-relation-store-tests",
+            string parentExecutionId = "parent-execution-1",
+            string childExecutionId = "child-execution-1")
         {
-            var initial = CreateRelation();
+            var initial = CreateRelation(
+                controlPlaneId: controlPlaneId,
+                parentExecutionId: parentExecutionId,
+                childExecutionId: childExecutionId);
             await this.store.GetOrCreateAsync(initial);
 
             var approved = CreateRelation(
-                status: AiChildExecutionRelationStatus.DelegationApproved);
+                status: AiChildExecutionRelationStatus.DelegationApproved,
+                controlPlaneId: controlPlaneId,
+                parentExecutionId: parentExecutionId,
+                childExecutionId: childExecutionId);
             Assert.True(await this.store.TryReplaceAsync(
                 approved,
                 AiChildExecutionRelationStatus.DelegationPolicyPending));
 
             var allocated = CreateRelation(
-                status: AiChildExecutionRelationStatus.ChildAllocated);
+                status: AiChildExecutionRelationStatus.ChildAllocated,
+                controlPlaneId: controlPlaneId,
+                parentExecutionId: parentExecutionId,
+                childExecutionId: childExecutionId);
             Assert.True(await this.store.TryReplaceAsync(
                 allocated,
                 AiChildExecutionRelationStatus.DelegationApproved));
 
             var completed = CreateRelation(
                 status: AiChildExecutionRelationStatus.Completed,
-                continuationStatus: AiChildContinuationStatus.Pending);
+                continuationStatus: AiChildContinuationStatus.Pending,
+                controlPlaneId: controlPlaneId,
+                parentExecutionId: parentExecutionId,
+                childExecutionId: childExecutionId);
             Assert.True(await this.store.TryReplaceAsync(
                 completed,
                 AiChildExecutionRelationStatus.ChildAllocated));
@@ -322,12 +359,15 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Persi
             DateTimeOffset? nextInvocationGenerationDecidedAtUtc = null,
             string? nextInvocationGenerationDecisionReason = null,
             DateTimeOffset? parentContinuationSuppressedAtUtc = null,
-            string? parentContinuationSuppressionReason = null)
+            string? parentContinuationSuppressionReason = null,
+            string controlPlaneId = "control-plane-relation-store-tests",
+            string parentExecutionId = "parent-execution-1",
+            string childExecutionId = "child-execution-1")
         {
             var identity = new Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Identity.AiChildInvocationIdentity
             {
                 TenantId = "tenant-1",
-                ParentExecutionId = "parent-execution-1",
+                ParentExecutionId = parentExecutionId,
                 ParentCallSiteId = "research-call-site",
                 ChildDagId = "child-analysis",
                 ChildDagDefinitionVersion = "v1",
@@ -338,6 +378,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Persi
             return new AiChildExecutionRelation
             {
                 TenantId = identity.TenantId,
+                ControlPlaneId = controlPlaneId,
                 ParentExecutionId = identity.ParentExecutionId,
                 ParentCallSiteId = identity.ParentCallSiteId,
                 ChildDagId = identity.ChildDagId,
@@ -370,7 +411,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Persi
                 ChildExecutionId = status is AiChildExecutionRelationStatus.ChildAllocated or
                     AiChildExecutionRelationStatus.Waiting or
                     AiChildExecutionRelationStatus.Completed
-                        ? "child-execution-1"
+                        ? childExecutionId
                         : null,
                 ChildAllocatedAtUtc = status is AiChildExecutionRelationStatus.ChildAllocated or
                     AiChildExecutionRelationStatus.Waiting or

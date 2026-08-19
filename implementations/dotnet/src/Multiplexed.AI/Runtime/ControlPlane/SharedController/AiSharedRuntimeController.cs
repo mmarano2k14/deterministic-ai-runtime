@@ -4,6 +4,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
@@ -57,6 +58,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         private readonly AiSharedRuntimeControllerOptions _options;
         private readonly IAiControlPlaneObserver _observer;
         private readonly IExecutionContextSnapshotProvider _executionContextSnapshotProvider;
+        private readonly IAiRuntimeRunExecutionIndex? _runtimeRunExecutionIndex;
         private readonly AiRuntimeLifecycleEventWriter _lifecycleWriter;
 
         /// <summary>
@@ -81,6 +83,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         /// <param name="lifecycleJournal">
         /// The optional append-only lifecycle journal used to record durable direct-dispatch placement facts.
         /// </param>
+        /// <param name="runtimeRunExecutionIndex">
+        /// The optional existing runtime-run execution index used to detect a failed physical external-wait continuation attempt
+        /// when an idempotent deterministic submission is re-driven.
+        /// </param>
         /// <exception cref="ArgumentNullException">
         /// Thrown when one of the required dependencies is null.
         /// </exception>
@@ -95,7 +101,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             IOptions<AiSharedRuntimeControllerOptions> options,
             IAiControlPlaneObserver observer,
             IExecutionContextSnapshotProvider executionContextSnapshotProvider,
-            IAiRuntimeLifecycleJournal? lifecycleJournal = null)
+            IAiRuntimeLifecycleJournal? lifecycleJournal = null,
+            IAiRuntimeRunExecutionIndex? runtimeRunExecutionIndex = null)
         {
             _admissionController =
                 admissionController
@@ -136,6 +143,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             _executionContextSnapshotProvider =
                 executionContextSnapshotProvider
                 ?? throw new ArgumentNullException(nameof(executionContextSnapshotProvider));
+
+            _runtimeRunExecutionIndex = runtimeRunExecutionIndex;
 
             _lifecycleWriter = new AiRuntimeLifecycleEventWriter(
                 lifecycleJournal ?? NoopAiRuntimeLifecycleJournal.Instance);
@@ -400,25 +409,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     request.Metadata,
                     controlPlaneMetadata);
 
-            var admissionDecision = await _admissionController
-                .AdmitAsync(
-                    new AiRunAdmissionRequest
-                    {
-                        RunRequest = runRequest,
-                        RunId = sharedRunId,
-                        TenantId = executionContextSnapshot.TenantId,
-                        PipelineKey = request.PipelineKey ?? runRequest.PipelineName,
-                        PreferredRuntimeInstanceId = request.PreferredRuntimeInstanceId,
-                        Placement = request.Placement,
-                        CorrelationId = request.CorrelationId,
-                        RequestedBy = request.RequestedBy,
-                        Source = request.Source,
-                        Reason = request.Reason,
-                        Metadata = metadata
-                    },
-                    cancellationToken)
-                .ConfigureAwait(false);
-
             var submitMode = request.SubmitModeOverride ?? _options.SubmitMode;
             var queueFirst = submitMode == AiSharedRuntimeSubmitMode.QueueFirst;
             var idempotentDeterministicSubmission =
@@ -426,6 +416,46 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 !string.IsNullOrWhiteSpace(request.RequestedSharedRunId) &&
                 (!string.IsNullOrWhiteSpace(runRequest.RequestedExecutionId) ||
                  runRequest.ExternalWaitContinuation is not null);
+
+            AiSharedRunRecord? existingDeterministicRun = null;
+            if (idempotentDeterministicSubmission)
+            {
+                existingDeterministicRun = await _store
+                    .GetAsync(sharedRunId, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            AiRunAdmissionDecision admissionDecision;
+            if (existingDeterministicRun?.AdmissionDecision is { } persistedAdmissionDecision)
+            {
+                /*
+                 * Deterministic redelivery must converge on the already persisted shared run before
+                 * evaluating mutable capacity again. The shared queue dispatcher remains the authority
+                 * for selecting physical capacity when the existing queue item becomes dispatchable.
+                 */
+                admissionDecision = persistedAdmissionDecision;
+            }
+            else
+            {
+                admissionDecision = await _admissionController
+                    .AdmitAsync(
+                        new AiRunAdmissionRequest
+                        {
+                            RunRequest = runRequest,
+                            RunId = sharedRunId,
+                            TenantId = executionContextSnapshot.TenantId,
+                            PipelineKey = request.PipelineKey ?? runRequest.PipelineName,
+                            PreferredRuntimeInstanceId = request.PreferredRuntimeInstanceId,
+                            Placement = request.Placement,
+                            CorrelationId = request.CorrelationId,
+                            RequestedBy = request.RequestedBy,
+                            Source = request.Source,
+                            Reason = request.Reason,
+                            Metadata = metadata
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
             var effectiveStatus = queueFirst
                 ? AiSharedRunStatus.QueuedGlobally
@@ -459,6 +489,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 UpdatedAtUtc = now,
                 Metadata = metadata
             };
+
+            if (existingDeterministicRun is not null)
+            {
+                EnsureCompatibleDeterministicSubmission(existingDeterministicRun, record);
+
+                await EnsureGloballyEnqueuedAsync(
+                        existingDeterministicRun,
+                        admissionDecision,
+                        now,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return new SharedRuntimeControllerOperationResult
+                {
+                    Run = existingDeterministicRun
+                };
+            }
 
             AiSharedRunRecord created;
             try
@@ -1055,6 +1102,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
             if (existing is not null)
             {
                 EnsureCompatibleQueueItem(existing, created);
+
+                await RequeueFailedExternalWaitContinuationIfCurrentAsync(
+                        existing,
+                        created,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
                 return;
             }
 
@@ -1078,6 +1132,111 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 
                 EnsureCompatibleQueueItem(existing, created);
             }
+        }
+
+        /// <summary>
+        /// Requeues the same deterministic shared queue item when its current normal external-wait continuation
+        /// attempt failed after binding the expected durable parent execution.
+        /// </summary>
+        /// <remarks>
+        /// This reuses the existing shared queue requeue boundary. It does not create crash-recovery resume semantics,
+        /// does not allocate a new shared-run identity, and intentionally does not attach <c>recovery.mode</c>.
+        /// The shared queue dispatcher releases the exact stale durable runtime/local-run assignment with its existing
+        /// shared-run compare-and-set before replacement dispatch.
+        /// </remarks>
+        /// <param name="queueItem">The existing deterministic queue item.</param>
+        /// <param name="sharedRun">The authoritative existing deterministic shared run.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
+        private async Task RequeueFailedExternalWaitContinuationIfCurrentAsync(
+            AiSharedQueueItem queueItem,
+            AiSharedRunRecord sharedRun,
+            CancellationToken cancellationToken)
+        {
+            if (_runtimeRunExecutionIndex is null ||
+                sharedRun.RunRequest.ExternalWaitContinuation is not { } continuation ||
+                sharedRun.Status != AiSharedRunStatus.Dispatched ||
+                queueItem.Status != AiSharedQueueItemStatus.Dispatched ||
+                string.IsNullOrWhiteSpace(sharedRun.AssignedRuntimeInstanceId) ||
+                string.IsNullOrWhiteSpace(sharedRun.LocalRunId) ||
+                string.IsNullOrWhiteSpace(queueItem.ClaimToken))
+            {
+                return;
+            }
+
+            /*
+             * ClaimedByRuntimeInstanceId identifies the shared-queue pump that owns the claim token.
+             * It is intentionally not compared with AssignedRuntimeInstanceId, which identifies the
+             * physical runtime selected later by admission. Exact dispatch ownership is validated below
+             * through the shared run local-run assignment and the runtime-run execution index.
+             */
+            var failedAttempt =
+                await _runtimeRunExecutionIndex
+                    .GetAsync(sharedRun.LocalRunId, cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (failedAttempt is null ||
+                !string.Equals(
+                    failedAttempt.Status,
+                    "failed",
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(
+                    failedAttempt.RuntimeInstanceId,
+                    sharedRun.AssignedRuntimeInstanceId,
+                    StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (!string.Equals(
+                    failedAttempt.ExecutionId,
+                    continuation.ExecutionId,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Failed deterministic external-wait continuation local run '{sharedRun.LocalRunId}' is bound to execution '{failedAttempt.ExecutionId ?? string.Empty}', expected '{continuation.ExecutionId}'.");
+            }
+
+            var requeueMetadata =
+                MergeMetadata(
+                    queueItem.Metadata,
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["recovery.failedRuntimeInstanceId"] = sharedRun.AssignedRuntimeInstanceId,
+                        ["recovery.failedLocalRunId"] = sharedRun.LocalRunId
+                    });
+
+            var requeued =
+                await _sharedQueue
+                    .RequeueDispatchedAsync(
+                        sharedRun.SharedRunId,
+                        queueItem.ClaimToken,
+                        "External-wait continuation failed after durable execution binding; requeueing the same deterministic shared run.",
+                        requeueMetadata,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (requeued is not null)
+            {
+                return;
+            }
+
+            var current =
+                await _sharedQueue
+                    .GetAsync(sharedRun.SharedRunId, cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (current is not null &&
+                (current.Status != AiSharedQueueItemStatus.Dispatched ||
+                 !string.Equals(
+                     current.ClaimToken,
+                     queueItem.ClaimToken,
+                     StringComparison.Ordinal)))
+            {
+                return;
+            }
+
+            throw new InvalidOperationException(
+                $"Failed deterministic external-wait continuation shared run '{sharedRun.SharedRunId}' could not be requeued from its exact dispatched queue ownership.");
         }
 
         /// <summary>

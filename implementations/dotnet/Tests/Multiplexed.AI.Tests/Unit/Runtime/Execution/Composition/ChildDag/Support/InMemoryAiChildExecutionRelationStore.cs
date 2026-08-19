@@ -86,7 +86,8 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
         /// <inheritdoc />
         public Task<IReadOnlyList<AiChildExecutionRelation>> ListIncompleteAsync(
             int maxCount,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            string? controlPlaneId = null)
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(maxCount, 1);
             cancellationToken.ThrowIfCancellationRequested();
@@ -96,6 +97,8 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
                 return Task.FromResult<IReadOnlyList<AiChildExecutionRelation>>(
                     this.relations.Values
                         .Where(item => item.Status is AiChildExecutionRelationStatus.ChildAllocated or AiChildExecutionRelationStatus.Waiting)
+                        .Where(item => string.IsNullOrWhiteSpace(controlPlaneId) ||
+                            string.Equals(item.ControlPlaneId, controlPlaneId, StringComparison.Ordinal))
                         .OrderBy(item => item.ChildAllocatedAtUtc)
                         .ThenBy(item => item.CreatedAtUtc)
                         .Take(maxCount)
@@ -107,7 +110,8 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
         /// <inheritdoc />
         public Task<IReadOnlyList<AiChildExecutionRelation>> ListContinuationCandidatesAsync(
             int maxCount,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            string? controlPlaneId = null)
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(maxCount, 1);
             cancellationToken.ThrowIfCancellationRequested();
@@ -119,6 +123,8 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
                         .Where(item =>
                             item.Status == AiChildExecutionRelationStatus.Completed &&
                             item.ContinuationStatus is AiChildContinuationStatus.Pending or AiChildContinuationStatus.Scheduled)
+                        .Where(item => string.IsNullOrWhiteSpace(controlPlaneId) ||
+                            string.Equals(item.ControlPlaneId, controlPlaneId, StringComparison.Ordinal))
                         .OrderBy(item => item.CompletedAtUtc)
                         .ThenBy(item => item.CreatedAtUtc)
                         .Take(maxCount)
@@ -131,7 +137,8 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
         public Task<IReadOnlyList<AiChildExecutionRelation>> ListParkConsistencyCandidatesAsync(
             DateTimeOffset allocatedBeforeUtc,
             int maxCount,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            string? controlPlaneId = null)
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(maxCount, 1);
             cancellationToken.ThrowIfCancellationRequested();
@@ -143,6 +150,8 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Suppo
                         .Where(item =>
                             item.Status == AiChildExecutionRelationStatus.ChildAllocated &&
                             item.ChildAllocatedAtUtc <= allocatedBeforeUtc)
+                        .Where(item => string.IsNullOrWhiteSpace(controlPlaneId) ||
+                            string.Equals(item.ControlPlaneId, controlPlaneId, StringComparison.Ordinal))
                         .OrderBy(item => item.ChildAllocatedAtUtc)
                         .ThenBy(item => item.CreatedAtUtc)
                         .Take(maxCount)

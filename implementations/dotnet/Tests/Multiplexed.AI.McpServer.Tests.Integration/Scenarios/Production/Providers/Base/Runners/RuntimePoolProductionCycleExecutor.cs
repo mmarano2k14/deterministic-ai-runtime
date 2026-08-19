@@ -874,7 +874,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         enableRetention: tenant.Run.EnableRetention,
                         flakyStepInterval:
                             tenant.Run.FlakyStepInterval,
-                        crashCheckpoint: crashCheckpoint)
+                        crashCheckpoint: crashCheckpoint,
+                        childDepth: tenant.Run.ChildDepth)
             };
         }
     }
