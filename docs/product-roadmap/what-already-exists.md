@@ -14,6 +14,7 @@ The current foundation already covers several critical areas required for produc
 
 - deterministic runtime execution foundation;
 - DAG-based workflow execution;
+- **Experimental durable Child DAG composition** with durable parent suspension, deterministic continuation, and existing recovery reuse;
 - execution state management;
 - step lifecycle and status tracking;
 - distributed worker execution model;
@@ -97,6 +98,31 @@ The DAG direction enables:
 This is important because real AI workflows often require multiple steps, tools, policies, external calls, state updates, and conditional execution paths.
 
 The DAG execution model provides the foundation for future visual pipeline building and workflow versioning.
+
+---
+
+## 2A. Durable Child DAG Composition — Experimental
+
+The platform now includes native durable Child DAG composition for nested workflow execution.
+
+The implementation provides:
+
+- deterministic child invocation identity;
+- durable child relation and frozen invocation inputs;
+- existing Policy Engine delegation checks;
+- exact child execution creation;
+- existing shared-queue dispatch;
+- parent `WaitingForExternal` / capacity release;
+- durable child completion;
+- deterministic parent continuation and redrive;
+- reuse of existing runtime/process/Pod recovery semantics;
+- replay, Ledger, trace, lifecycle, and recovery Forensics integration.
+
+The strongest current closure is a full `ChildDepth = 1` gRPC Kubernetes Runtime Pool warm-reuse production scenario. Focused `ChildDepth = 2` scenarios are also implemented, but the complete bounded warm-reuse closure is not yet green.
+
+For that reason the capability is deliberately labeled **Experimental** until full engine lifecycle observation is aligned across existing Lifecycle Events, the durable Ledger, and Forensics, and deeper nesting reaches the same proof standard.
+
+See [Durable Child DAG Composition](../ai/child-dag-composition.md).
 
 ---
 
@@ -1770,6 +1796,7 @@ The project already has strong foundations in the following areas:
 |---|---|
 | Deterministic runtime execution | Foundation exists |
 | DAG-based workflow execution | Foundation exists |
+| Durable Child DAG composition | **Experimental** — native composition implemented; full Depth 1 warm-reuse proof green; lifecycle-observation and deeper-nesting closure pending |
 | Execution state management | Foundation exists |
 | Step lifecycle tracking | Foundation exists |
 | Distributed worker model | Foundation exists |

@@ -7,6 +7,10 @@ using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Control;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.Abstractions.AI.Observability.Ledger;
+using Multiplexed.Abstractions.AI.Observability.Metrics;
+using Multiplexed.Abstractions.AI.Observability.Tracing;
 using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
@@ -325,6 +329,188 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
         }
 
         /// <summary>
+        /// Verifies that a durable execution wait completes the current controller attempt,
+        /// releases the single controller slot, and allows a later run to execute.
+        /// </summary>
+        [Fact]
+        public async Task EnqueueResumeAsync_DurableWaiting_Should_Release_Controller_Slot_And_Allow_Next_Run()
+        {
+            const string waitingExecutionId = "execution-waiting-capacity";
+            const string waitingRecoveryOwnerId =
+                "runtime-recovery:execution-waiting-capacity:shared-run-waiting:local-run-waiting";
+
+            const string nextExecutionId = "execution-after-waiting";
+            const string nextRecoveryOwnerId =
+                "runtime-recovery:execution-after-waiting:shared-run-next:local-run-next";
+
+            var worker = new CapturingRuntimeInstanceWorker(
+                AiExecutionStatus.Waiting,
+                AiExecutionStatus.Completed);
+
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+            var lifecycleHook = new CapturingRunLifecycleHook();
+            var executionControlService = new RecoveryExecutionControlService();
+            var controller = CreateController(
+                worker,
+                runExecutionIndex,
+                lifecycleHook,
+                executionControlService);
+
+            await controller.StartAsync().ConfigureAwait(false);
+
+            var waitingHandle = await controller
+                .EnqueueResumeAsync(
+                    CreateRecoveryRequest(
+                        waitingExecutionId,
+                        waitingRecoveryOwnerId,
+                        "shared-run-waiting",
+                        "local-run-waiting"),
+                    waitingExecutionId)
+                .ConfigureAwait(false);
+
+            var waiting = await waitingHandle.Completion.WaitAsync(
+                TimeSpan.FromSeconds(10));
+
+            var waitingIndex = await runExecutionIndex
+                .GetAsync(waitingHandle.RunId)
+                .ConfigureAwait(false);
+
+            Assert.Equal(AiExecutionStatus.Waiting, waiting.Status);
+            Assert.Equal(AiRuntimeWorkerRunStatus.Paused, waitingHandle.Status);
+            Assert.NotNull(waitingIndex);
+            Assert.Equal("waiting", waitingIndex!.Status);
+            Assert.False(lifecycleHook.FinalizedCalled);
+
+            var nextHandle = await controller
+                .EnqueueResumeAsync(
+                    CreateRecoveryRequest(
+                        nextExecutionId,
+                        nextRecoveryOwnerId,
+                        "shared-run-next",
+                        "local-run-next"),
+                    nextExecutionId)
+                .ConfigureAwait(false);
+
+            var completed = await nextHandle.Completion.WaitAsync(
+                TimeSpan.FromSeconds(10));
+
+            await controller.StopAsync().ConfigureAwait(false);
+
+            Assert.Equal(AiExecutionStatus.Completed, completed.Status);
+            Assert.Equal(2, worker.RunExecutionCallCount);
+            Assert.True(lifecycleHook.FinalizedCalled);
+            Assert.Equal(nextExecutionId, lifecycleHook.LastExecutionId);
+        }
+
+        /// <summary>
+        /// Verifies that durable external waiting releases the physical controller slot before
+        /// suspension observability finishes, preventing child continuation admission deadlock.
+        /// </summary>
+        [Fact]
+        public async Task EnqueueResumeAsync_DurableWaiting_Should_Release_Controller_Slot_Before_Suspension_Ledger_Completes()
+        {
+            const string waitingExecutionId = "execution-waiting-before-ledger";
+            const string waitingRecoveryOwnerId =
+                "runtime-recovery:execution-waiting-before-ledger:shared-run-waiting-before-ledger:local-run-waiting-before-ledger";
+
+            const string nextExecutionId = "execution-after-waiting-before-ledger";
+            const string nextRecoveryOwnerId =
+                "runtime-recovery:execution-after-waiting-before-ledger:shared-run-next-before-ledger:local-run-next-before-ledger";
+
+            var worker = new CapturingRuntimeInstanceWorker(
+                AiExecutionStatus.Waiting,
+                AiExecutionStatus.Completed);
+
+            var runExecutionIndex = new InMemoryAiRuntimeRunExecutionIndex();
+            var lifecycleHook = new CapturingRunLifecycleHook();
+            var executionControlService = new RecoveryExecutionControlService();
+            var ledger = new BlockingSuspensionDecisionLedgerRecorder();
+            var controller = CreateController(
+                worker,
+                runExecutionIndex,
+                lifecycleHook,
+                executionControlService,
+                observability: new LedgerOverrideRuntimeObservability(ledger));
+
+            await controller.StartAsync().ConfigureAwait(false);
+
+            var waitingHandle = await controller
+                .EnqueueResumeAsync(
+                    CreateRecoveryRequest(
+                        waitingExecutionId,
+                        waitingRecoveryOwnerId,
+                        "shared-run-waiting-before-ledger",
+                        "local-run-waiting-before-ledger"),
+                    waitingExecutionId)
+                .ConfigureAwait(false);
+
+            await ledger.SuspensionRecordStarted.WaitAsync(
+                TimeSpan.FromSeconds(10));
+
+            Assert.False(waitingHandle.Completion.IsCompleted);
+
+            var releasedQueueState = await controller
+                .GetQueueStateAsync()
+                .ConfigureAwait(false);
+
+            Assert.Equal(0, releasedQueueState.RunningRunCount);
+            Assert.Equal(0, releasedQueueState.ActiveRunCount);
+            Assert.Equal(1, releasedQueueState.AvailableRunSlots);
+            Assert.True(releasedQueueState.CanAcceptRun);
+
+            var nextHandle = await controller
+                .EnqueueResumeAsync(
+                    CreateRecoveryRequest(
+                        nextExecutionId,
+                        nextRecoveryOwnerId,
+                        "shared-run-next-before-ledger",
+                        "local-run-next-before-ledger"),
+                    nextExecutionId)
+                .ConfigureAwait(false);
+
+            var completed = await nextHandle.Completion.WaitAsync(
+                TimeSpan.FromSeconds(10));
+
+            Assert.Equal(AiExecutionStatus.Completed, completed.Status);
+            Assert.Equal(2, worker.RunExecutionCallCount);
+
+            ledger.ReleaseSuspensionRecord();
+
+            var waiting = await waitingHandle.Completion.WaitAsync(
+                TimeSpan.FromSeconds(10));
+
+            await controller.StopAsync().ConfigureAwait(false);
+
+            Assert.Equal(AiExecutionStatus.Waiting, waiting.Status);
+        }
+
+        /// <summary>
+        /// Creates a deterministic recovery-resume request for controller lifecycle tests.
+        /// </summary>
+        private static AiRuntimePipelineRunRequest CreateRecoveryRequest(
+            string executionId,
+            string recoveryOwnerId,
+            string sharedRunId,
+            string failedLocalRunId)
+        {
+            return new AiRuntimePipelineRunRequest
+            {
+                PipelineName = "pipeline-1",
+                ExecutionContextSnapshot = CreateExecutionContextSnapshot(),
+                PipelineDefinition = CreatePipelineDefinition(),
+                Metadata = new Dictionary<string, string>
+                {
+                    ["recovery.mode"] = "resume-existing-execution",
+                    ["recovery.forensicsId"] = recoveryOwnerId,
+                    ["recovery.failedExecutionId"] = executionId,
+                    ["recovery.failedRuntimeInstanceId"] = "runtime-instance-failed",
+                    ["recovery.failedLocalRunId"] = failedLocalRunId,
+                    ["shared.run.id"] = sharedRunId
+                }
+            };
+        }
+
+        /// <summary>
         /// Creates a runtime pipeline background controller with test doubles.
         /// </summary>
         private static AiRuntimePipelineBackgroundController CreateController(
@@ -332,7 +518,8 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
             IAiRuntimeRunExecutionIndex runExecutionIndex,
             IAiRuntimePipelineRunLifecycleHook lifecycleHook,
             IAiExecutionControlService executionControlService,
-            string runtimeInstanceId = "runtime-instance-1")
+            string runtimeInstanceId = "runtime-instance-1",
+            IAiRuntimeObservability? observability = null)
         {
             var engine = new AiDagExecutionEngine(
                 NullProxy.Create<IAiDagExecutionEngineServices>(),
@@ -349,7 +536,7 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
                 executionControlService,
                 new TestRuntimeInstanceIdentity(runtimeInstanceId),
                 NullProxy.Create<IAiRuntimeLogger>(),
-                NullProxy.Create<IAiRuntimeObservability>(),
+                observability ?? NullProxy.Create<IAiRuntimeObservability>(),
                 NullProxy.Create<IAiExecutionAssistanceCandidateStore>(),
                 runExecutionIndex,
                 new TestExecutionContextAccessor(),
@@ -415,6 +602,87 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
             };
         }
 
+
+        /// <summary>
+        /// Runtime observability facade that delegates all existing components except the ledger recorder.
+        /// </summary>
+        private sealed class LedgerOverrideRuntimeObservability : IAiRuntimeObservability
+        {
+            private readonly IAiRuntimeObservability fallback =
+                NullProxy.Create<IAiRuntimeObservability>();
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="LedgerOverrideRuntimeObservability"/> class.
+            /// </summary>
+            /// <param name="ledger">The ledger recorder to expose.</param>
+            public LedgerOverrideRuntimeObservability(
+                IAiDecisionLedgerRecorder ledger)
+            {
+                Ledger = ledger ?? throw new ArgumentNullException(nameof(ledger));
+            }
+
+            /// <inheritdoc />
+            public IAiRuntimeMetrics Metrics => fallback.Metrics;
+
+            /// <inheritdoc />
+            public IAiRuntimeTracer Tracer => fallback.Tracer;
+
+            /// <inheritdoc />
+            public IAiDecisionLedgerRecorder Ledger { get; }
+
+            /// <inheritdoc />
+            public IAiRuntimeCorrelationAccessor Correlation => fallback.Correlation;
+        }
+
+        /// <summary>
+        /// Ledger recorder that deterministically blocks only the Run.Suspended event.
+        /// </summary>
+        private sealed class BlockingSuspensionDecisionLedgerRecorder : IAiDecisionLedgerRecorder
+        {
+            private readonly TaskCompletionSource<bool> suspensionRecordStarted =
+                new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            private readonly TaskCompletionSource<bool> releaseSuspensionRecord =
+                new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            /// <summary>
+            /// Gets a task that completes when the suspension ledger write has started.
+            /// </summary>
+            public Task SuspensionRecordStarted => suspensionRecordStarted.Task;
+
+            /// <summary>
+            /// Releases the blocked suspension ledger write.
+            /// </summary>
+            public void ReleaseSuspensionRecord()
+            {
+                releaseSuspensionRecord.TrySetResult(true);
+            }
+
+            /// <inheritdoc />
+            public async Task RecordAsync(
+                AiRuntimeLedgerEventCorrelationContext context,
+                AiDecisionLedgerCategory category,
+                string eventType,
+                AiDecisionLedgerOutcome outcome,
+                string? reason = null,
+                IReadOnlyDictionary<string, string>? metadata = null,
+                CancellationToken cancellationToken = default)
+            {
+                if (!string.Equals(
+                        eventType,
+                        AiDecisionLedgerEvents.Run.Suspended,
+                        StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                suspensionRecordStarted.TrySetResult(true);
+
+                await releaseSuspensionRecord.Task
+                    .WaitAsync(cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
 
         /// <summary>
         /// Provides the recovery-owned execution-control transitions required by resume.
@@ -592,6 +860,17 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
         /// </summary>
         private sealed class CapturingRuntimeInstanceWorker : IAiRuntimeInstanceWorker
         {
+            private readonly Queue<AiExecutionStatus> statuses;
+
+            public CapturingRuntimeInstanceWorker(
+                params AiExecutionStatus[] statuses)
+            {
+                this.statuses = new Queue<AiExecutionStatus>(
+                    statuses.Length == 0
+                        ? new[] { AiExecutionStatus.Completed }
+                        : statuses);
+            }
+
             public string? LastExecutionId { get; private set; }
 
             public int RunExecutionCallCount { get; private set; }
@@ -606,12 +885,18 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
                 LastExecutionId = executionId;
                 RunExecutionCallCount++;
 
+                var status = statuses.Count > 0
+                    ? statuses.Dequeue()
+                    : AiExecutionStatus.Completed;
+
                 return Task.FromResult(new AiExecutionRecord
                 {
                     ExecutionId = executionId,
                     PipelineName = "pipeline-1",
-                    Status = AiExecutionStatus.Completed,
-                    CompletedAtUtc = DateTime.UtcNow
+                    Status = status,
+                    CompletedAtUtc = status == AiExecutionStatus.Completed
+                        ? DateTime.UtcNow
+                        : default
                 });
             }
         }

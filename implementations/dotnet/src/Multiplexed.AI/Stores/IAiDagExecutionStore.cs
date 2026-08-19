@@ -110,6 +110,42 @@ namespace Multiplexed.AI.Stores
             string? error,
             CancellationToken cancellationToken = default);
 
+        /// <summary>
+        /// Atomically parks a claimed running step while it waits for an external durable condition.
+        /// </summary>
+        /// <remarks>
+        /// The transition is accepted only when the step is running and the supplied claim token
+        /// owns the current claim. Implementations must clear claim ownership without incrementing
+        /// business retry or infrastructure recovery counters.
+        /// </remarks>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="stepName">The claimed step name.</param>
+        /// <param name="claimToken">The claim token that owns the running step.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when the park transition was committed; otherwise <c>false</c>.</returns>
+        Task<bool> TryParkStepAsync(
+            string executionId,
+            string stepName,
+            string claimToken,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Atomically reactivates one step whose external durable condition has been satisfied.
+        /// </summary>
+        /// <remarks>
+        /// The transition is valid only from <see cref="AiStepExecutionStatus.WaitingForExternal"/> to
+        /// <see cref="AiStepExecutionStatus.Ready"/>. Implementations must not increment retry or recovery counters
+        /// and must not use crash-recovery ownership semantics.
+        /// </remarks>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="stepName">The waiting step name.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when the waiting step was reactivated; otherwise <c>false</c>.</returns>
+        Task<bool> TryResumeExternalWaitingStepAsync(
+            string executionId,
+            string stepName,
+            CancellationToken cancellationToken = default);
+
         Task<int> RecoverTimedOutStepsAsync(
             string executionId,
             CancellationToken cancellationToken = default);

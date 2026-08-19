@@ -86,6 +86,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 new Dictionary<string, string>(
                     StringComparer.OrdinalIgnoreCase);
 
+            /*
+             * Project inherited feature and tenant configuration first. Kubernetes-specific
+             * durable connections, physical identity, and host metadata are authoritative and
+             * are deliberately applied afterwards so a ProcessHost-oriented inherited value
+             * such as localhost Redis/Mongo cannot override the in-Pod data-plane contract.
+             */
+            foreach (var pair in options.ChildEnvironmentVariables)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(pair.Key);
+                childEnvironment[pair.Key] = pair.Value ?? string.Empty;
+            }
+
             AiRuntimeProcessPoolChildEnvironmentComposer
                 .AddDurableRuntimeEnvironment(
                     childEnvironment,

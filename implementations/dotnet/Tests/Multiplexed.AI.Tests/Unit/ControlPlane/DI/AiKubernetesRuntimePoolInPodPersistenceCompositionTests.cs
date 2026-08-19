@@ -154,6 +154,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
                             "AiEngine__Observability__Tracing__MongoCollectionName"]);
 
                     Assert.Equal(
+                        "true",
+                        environment[
+                            "AiChildDagComposition__Enabled"]);
+
+                    Assert.Equal(
                         "ai-runtime",
                         environment[
                             "AiRuntimeInstanceRegistration__ProviderMetadata__kubernetes.namespace"]);
@@ -165,6 +170,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
                         "minikube",
                         environment[
                             "AiRuntimeInstanceRegistration__ProviderMetadata__kubernetes.node.name"]);
+
+                    Assert.Equal(
+                        "kubernetes",
+                        environment[
+                            "AiRuntimeInstanceRegistration__Metadata__host.provider"]);
 
                     Assert.False(
                         plan.ProcessOptions.RedirectOutput);
@@ -217,6 +227,36 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
                     TenantGroupId = "tenant-group-01",
                     CurrentNamespace = "default"
                 };
+
+            options.ChildEnvironmentVariables[
+                "AiChildDagComposition__Enabled"] = "true";
+
+            /*
+             * Simulate ProcessHost-oriented settings projected by the outer Kubernetes
+             * control plane. These inherited values must never replace the in-Pod
+             * authoritative durable endpoints or physical Kubernetes identity.
+             */
+            options.ChildEnvironmentVariables[
+                "ConnectionStrings__Redis"] = "localhost:6379";
+            options.ChildEnvironmentVariables[
+                "ConnectionStrings__Mongo"] = "mongodb://localhost:27017";
+            options.ChildEnvironmentVariables[
+                "Mongo__DatabaseName"] = "wrong-processhost-database";
+            options.ChildEnvironmentVariables[
+                "AiEngine__Snapshots__Mongo__ConnectionString"] =
+                "mongodb://localhost:27017";
+            options.ChildEnvironmentVariables[
+                "AiEngine__Snapshots__Mongo__DatabaseName"] =
+                "wrong-processhost-database";
+            options.ChildEnvironmentVariables[
+                "AiRuntimeInstanceRegistration__ProviderMetadata__kubernetes.namespace"] =
+                "wrong-namespace";
+            options.ChildEnvironmentVariables[
+                "AiRuntimeInstanceRegistration__ProviderMetadata__kubernetes.pod.name"] =
+                "wrong-pod";
+            options.ChildEnvironmentVariables[
+                "AiRuntimeInstanceRegistration__Metadata__host.provider"] =
+                "process";
 
             options.RuntimeInstances.Add(
                 new AiKubernetesRuntimePoolInPodRuntimeInstanceOptions

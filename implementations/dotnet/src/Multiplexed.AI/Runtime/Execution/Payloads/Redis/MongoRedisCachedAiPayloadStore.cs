@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Metrics;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Stores;
 using Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores;
 using StackExchange.Redis;
@@ -23,8 +24,9 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
     /// - MongoDB remains required for durability and replay safety.
     /// - Redis may be cleared without losing payload recoverability.
     /// </summary>
-    public sealed class MongoRedisCachedAiPayloadStore : IAiPayloadStore
+    public sealed class MongoRedisCachedAiPayloadStore : IAiImmutablePayloadStore
     {
+        private readonly MongoAiPayloadStore _mongoStore;
         private readonly RedisCachedAiPayloadStore _cachedStore;
 
         public MongoRedisCachedAiPayloadStore(
@@ -38,6 +40,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
             ArgumentNullException.ThrowIfNull(options);
             ArgumentNullException.ThrowIfNull(payloadMetrics);
 
+            _mongoStore = mongoStore;
             _cachedStore = new RedisCachedAiPayloadStore(
                 mongoStore,
                 redis,
@@ -51,6 +54,20 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
             CancellationToken cancellationToken = default)
         {
             return _cachedStore.SaveAsync(content, cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public Task<string> SaveImmutableAsync(
+            string key,
+            string content,
+            AiPayloadMetadata metadata,
+            CancellationToken cancellationToken = default)
+        {
+            return _mongoStore.SaveImmutableAsync(
+                key,
+                content,
+                metadata,
+                cancellationToken);
         }
 
         /// <inheritdoc />

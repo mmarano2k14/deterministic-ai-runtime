@@ -12,7 +12,7 @@ using System.Text.Json;
 namespace Multiplexed.AI.Stores.Cache.Redis.Dag
 {
     /// <summary>
-    /// Handles Redis DAG step transition operations such as completion, failure, and execution finalization.
+    /// Handles Redis DAG step transition operations such as completion, parking, failure, and execution finalization.
     /// </summary>
     /// <remarks>
     /// This service owns transition-related Redis Lua execution paths.
@@ -21,10 +21,12 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
     public sealed class RedisDagStoreTransitionService
     {
         private readonly IRedisDagStoreServices _services;
-        private LoadedLuaScript _completeLoadedScript;
-        private LoadedLuaScript _failLoadedScript;
-        private LoadedLuaScript _finalizeLoadedScript;
-        private LoadedLuaScript _retentionPatchLoadedScript;
+        private LuaScript _completeScript;
+        private LuaScript _parkScript;
+        private LuaScript _resumeExternalWaitScript;
+        private LuaScript _failScript;
+        private LuaScript _finalizeScript;
+        private LuaScript _retentionPatchScript;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RedisDagStoreTransitionService"/> class.
@@ -36,10 +38,12 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
 
             _services = services;
 
-            _completeLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.CompletePreparedScript);
-            _failLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.FailPreparedScript);
-            _finalizeLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.FinalizeScript);
-            _retentionPatchLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.RetentionPatchPreparedScript);
+            _completeScript = RedisDagLuaScripts.CompletePreparedScript;
+            _parkScript = RedisDagLuaScripts.ParkPreparedScript;
+            _resumeExternalWaitScript = RedisDagLuaScripts.ResumeExternalWaitPreparedScript;
+            _failScript = RedisDagLuaScripts.FailPreparedScript;
+            _finalizeScript = RedisDagLuaScripts.FinalizeScript;
+            _retentionPatchScript = RedisDagLuaScripts.RetentionPatchPreparedScript;
         }
 
         /// <summary>
@@ -95,7 +99,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             }
             catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
             {
-                _completeLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.CompletePreparedScript);
+                _completeScript = RedisDagLuaScripts.CompletePreparedScript;
 
                 return await ExecuteCompleteAsync(
                         stepKey,
@@ -104,6 +108,70 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                         resultJson,
                         inlinePayloadSizeBytes)
                     .ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// Parks a claimed step atomically while preserving normal retry and recovery accounting.
+        /// </summary>
+        /// <param name="executionId">The unique execution identifier.</param>
+        /// <param name="stepName">The step name to park.</param>
+        /// <param name="claimToken">The claim token that owns the running step.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when the park transition was accepted; otherwise <c>false</c>.</returns>
+        public async Task<bool> TryParkStepAsync(
+            string executionId,
+            string stepName,
+            string claimToken,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(stepName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(claimToken);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var stepKey = _services.KeyBuilder.GetDagStepKey(executionId, stepName);
+            var nowUnix = RedisDagStoreHelper.NowMs();
+
+            try
+            {
+                return await ExecuteParkAsync(stepKey, claimToken, nowUnix).ConfigureAwait(false);
+            }
+            catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
+            {
+                _parkScript = RedisDagLuaScripts.ParkPreparedScript;
+                return await ExecuteParkAsync(stepKey, claimToken, nowUnix).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// Reactivates one step that is durably waiting for an external condition.
+        /// </summary>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="stepName">The externally waiting step name.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when the transition to Ready was committed; otherwise <c>false</c>.</returns>
+        public async Task<bool> TryResumeExternalWaitingStepAsync(
+            string executionId,
+            string stepName,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(stepName);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var stepKey = _services.KeyBuilder.GetDagStepKey(executionId, stepName);
+            var nowUnix = RedisDagStoreHelper.NowMs();
+
+            try
+            {
+                return await ExecuteResumeExternalWaitAsync(stepKey, nowUnix).ConfigureAwait(false);
+            }
+            catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
+            {
+                _resumeExternalWaitScript = RedisDagLuaScripts.ResumeExternalWaitPreparedScript;
+                return await ExecuteResumeExternalWaitAsync(stepKey, nowUnix).ConfigureAwait(false);
             }
         }
 
@@ -159,7 +227,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             }
             catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
             {
-                _failLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.FailPreparedScript);
+                _failScript = RedisDagLuaScripts.FailPreparedScript;
 
                 return await ExecuteFailAsync(
                     stepKey,
@@ -221,7 +289,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
 
             try
             {
-                var result = await _finalizeLoadedScript.EvaluateAsync(
+                var result = await _finalizeScript.EvaluateAsync(
                     _services.Database,
                     new
                     {
@@ -254,9 +322,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             }
             catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
             {
-                _finalizeLoadedScript = _services.Helper.LoadScript(RedisDagLuaScripts.FinalizeScript);
+                _finalizeScript = RedisDagLuaScripts.FinalizeScript;
 
-                var result = await _finalizeLoadedScript.EvaluateAsync(
+                var result = await _finalizeScript.EvaluateAsync(
                     _services.Database,
                     new
                     {
@@ -275,14 +343,14 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                     _services.Metrics.Execution.RecordFinalizeSuccess(request.ExecutionId);
 
                     _services.Logger.Engine.LogInformation(
-                        $"[AI DAG STORE] Finalization succeeded after NOSCRIPT reload. ExecutionId='{request.ExecutionId}', Status='{request.Status}', WorkerId='{request.WorkerId}'.");
+                        $"[AI DAG STORE] Finalization succeeded after NOSCRIPT retry. ExecutionId='{request.ExecutionId}', Status='{request.Status}', WorkerId='{request.WorkerId}'.");
                 }
                 else
                 {
                     _services.Metrics.Execution.RecordFinalizeConflict(request.ExecutionId);
 
                     _services.Logger.Engine.LogInformation(
-                        $"[AI DAG STORE] Finalization skipped or race lost after NOSCRIPT reload. ExecutionId='{request.ExecutionId}', Status='{request.Status}', WorkerId='{request.WorkerId}'.");
+                        $"[AI DAG STORE] Finalization skipped or race lost after NOSCRIPT retry. ExecutionId='{request.ExecutionId}', Status='{request.Status}', WorkerId='{request.WorkerId}'.");
                 }
 
                 return success;
@@ -356,8 +424,8 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             catch (RedisServerException exception)
                 when (exception.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
             {
-                _retentionPatchLoadedScript = _services.Helper.LoadScript(
-                    RedisDagLuaScripts.RetentionPatchPreparedScript);
+                _retentionPatchScript =
+                    RedisDagLuaScripts.RetentionPatchPreparedScript;
 
                 return await ExecuteRetentionPatchAsync(
                         stepKeyPrefix,
@@ -384,7 +452,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
            string resultJson,
            long inlinePayloadSizeBytes)
         {
-            var result = await _completeLoadedScript.EvaluateAsync(
+            var result = await _completeScript.EvaluateAsync(
                 _services.Database,
                 new
                 {
@@ -393,6 +461,51 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                     nowUnix = (RedisValue)nowUnix,
                     resultJson = (RedisValue)resultJson,
                     inlinePayloadSizeBytes = (RedisValue)inlinePayloadSizeBytes
+                });
+
+            return (int)result! == 1;
+        }
+
+        /// <summary>
+        /// Executes the prepared step park Lua script.
+        /// </summary>
+        /// <param name="stepKey">The Redis key of the step to park.</param>
+        /// <param name="claimToken">The claim token that owns the running step.</param>
+        /// <param name="nowUnix">The current UTC timestamp expressed in Unix milliseconds.</param>
+        /// <returns><c>true</c> when the park mutation succeeded; otherwise <c>false</c>.</returns>
+        private async Task<bool> ExecuteParkAsync(
+            string stepKey,
+            string claimToken,
+            long nowUnix)
+        {
+            var result = await _parkScript.EvaluateAsync(
+                _services.Database,
+                new
+                {
+                    stepKey = (RedisKey)stepKey,
+                    claimToken = (RedisValue)claimToken,
+                    nowUnix = (RedisValue)nowUnix
+                });
+
+            return (int)result! == 1;
+        }
+
+        /// <summary>
+        /// Executes the prepared external-wait resume Lua script.
+        /// </summary>
+        /// <param name="stepKey">The Redis key of the waiting step.</param>
+        /// <param name="nowUnix">The current UTC timestamp expressed in Unix milliseconds.</param>
+        /// <returns><c>true</c> when the resume mutation succeeded; otherwise <c>false</c>.</returns>
+        private async Task<bool> ExecuteResumeExternalWaitAsync(
+            string stepKey,
+            long nowUnix)
+        {
+            var result = await _resumeExternalWaitScript.EvaluateAsync(
+                _services.Database,
+                new
+                {
+                    stepKey = (RedisKey)stepKey,
+                    nowUnix = (RedisValue)nowUnix
                 });
 
             return (int)result! == 1;
@@ -412,7 +525,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             long nowUnix,
             string error)
         {
-            var result = await _failLoadedScript.EvaluateAsync(
+            var result = await _failScript.EvaluateAsync(
                 _services.Database,
                 new
                 {
@@ -450,7 +563,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             long nowUnix,
             string candidatesJson)
         {
-            var result = await _retentionPatchLoadedScript.EvaluateAsync(
+            var result = await _retentionPatchScript.EvaluateAsync(
                     _services.Database,
                     new
                     {

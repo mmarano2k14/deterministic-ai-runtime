@@ -1,4 +1,5 @@
 ﻿using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 
 namespace Multiplexed.Abstractions.AI.Execution
 {
@@ -31,6 +32,16 @@ namespace Multiplexed.Abstractions.AI.Execution
         /// when continuing or replaying the execution.
         /// </summary>
         public string? PipelineName { get; set; }
+
+        /// <summary>
+        /// Gets or sets the optional immutable declarative pipeline definition bound to this execution.
+        /// </summary>
+        /// <remarks>
+        /// When present, DAG continuation must resolve the pipeline from this verified payload instead of consulting
+        /// the mutable runtime definition provider by name. Normal historical executions leave this value null and
+        /// retain the existing provider-based resolution behavior.
+        /// </remarks>
+        public AiStoredPayload? PipelineDefinitionSnapshot { get; set; }
 
         /// <summary>
         /// Gets or sets the execution mode used for this pipeline execution.

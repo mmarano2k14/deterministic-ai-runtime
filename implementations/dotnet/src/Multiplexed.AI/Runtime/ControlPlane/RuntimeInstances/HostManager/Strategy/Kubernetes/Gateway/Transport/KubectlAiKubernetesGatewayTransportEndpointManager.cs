@@ -408,13 +408,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
                 SharedRegistrations.TryRemove(registrationKey, out _);
 
+                var processId =
+                    TryGetProcessId(registration.Process);
+
                 this.logger.LogInformation(
                     "KUBERNETES GATEWAY PORT-FORWARD STOPPING RegistrationKey={RegistrationKey} LocalPort={LocalPort} ProcessId={ProcessId}",
                     registrationKey,
                     registration.LocalPort,
-                    TryGetProcessId(registration.Process));
+                    processId);
 
-                DisposeRegistration(registration);
+                var processExited =
+                    DisposeRegistration(registration);
+
+                this.logger.LogInformation(
+                    "KUBERNETES GATEWAY PORT-FORWARD STOPPED RegistrationKey={RegistrationKey} LocalPort={LocalPort} ProcessId={ProcessId} ProcessExited={ProcessExited}",
+                    registrationKey,
+                    registration.LocalPort,
+                    processId,
+                    processExited);
             }
             finally
             {
@@ -641,34 +652,70 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         }
 
         /// <summary>
-        /// Disposes a shared registration and its kubectl process.
+        /// Disposes a shared registration and its kubectl process without waiting on process-tree traversal.
         /// </summary>
-        private static void DisposeRegistration(
+        /// <returns><c>true</c> when the kubectl process is confirmed exited; otherwise, <c>false</c>.</returns>
+        private static bool DisposeRegistration(
             SharedPortForwardRegistration registration)
         {
-            KillProcess(registration.Process);
+            CancelAsyncOutputReads(registration.Process);
+
+            var processExited =
+                KillProcess(registration.Process);
+
             registration.Process.Dispose();
+            return processExited;
         }
 
         /// <summary>
-        /// Kills a kubectl process when it is still alive.
+        /// Cancels asynchronous stdout and stderr readers before the kubectl process is terminated.
         /// </summary>
-        private static void KillProcess(
+        private static void CancelAsyncOutputReads(
             DiagnosticsProcess process)
         {
             try
             {
-                if (!process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                    process.WaitForExit(milliseconds: 2000);
-                }
+                process.CancelOutputRead();
             }
             catch (InvalidOperationException)
             {
             }
+
+            try
+            {
+                process.CancelErrorRead();
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+
+        /// <summary>
+        /// Kills the kubectl process directly when it is still alive and waits for a bounded exit interval.
+        /// </summary>
+        /// <returns><c>true</c> when the process is confirmed exited; otherwise, <c>false</c>.</returns>
+        private static bool KillProcess(
+            DiagnosticsProcess process)
+        {
+            try
+            {
+                if (process.HasExited)
+                {
+                    return true;
+                }
+
+                // kubectl owns the port-forward itself. Killing that process is sufficient to
+                // close the local tunnel and avoids the unbounded Windows process-tree walk.
+                process.Kill();
+                return process.WaitForExit(milliseconds: 2000);
+            }
+            catch (InvalidOperationException)
+            {
+                return HasProcessExited(process);
+            }
             catch (System.ComponentModel.Win32Exception)
             {
+                return HasProcessExited(process);
             }
         }
 

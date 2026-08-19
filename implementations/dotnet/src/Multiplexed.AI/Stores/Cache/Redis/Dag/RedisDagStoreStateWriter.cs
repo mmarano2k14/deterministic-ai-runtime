@@ -67,6 +67,72 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
         }
 
         /// <summary>
+        /// Atomically creates one distributed DAG execution bundle when none of its durable keys exist.
+        /// </summary>
+        /// <param name="record">The execution record carrying the exact identifier.</param>
+        /// <param name="state">The initial DAG state carrying the same exact identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when this caller created the bundle; otherwise <c>false</c>.</returns>
+        public async Task<bool> TryCreateIfAbsentAsync(
+            AiExecutionRecord record,
+            AiExecutionState state,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+            ArgumentNullException.ThrowIfNull(state);
+
+            if (!string.Equals(record.ExecutionId, state.ExecutionId, StringComparison.Ordinal))
+            {
+                throw new ArgumentException("Record and state must share the same ExecutionId.");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            foreach (var step in state.Steps.Values)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(step.StepName);
+                step.DependsOn ??= new List<string>();
+            }
+
+            var recordKey = _services.KeyBuilder.GetExecutionRecordKey(record.ExecutionId);
+            var stateKey = _services.Helper.GetStateBlobKey(record.ExecutionId);
+            var stepIndexKey = _services.KeyBuilder.GetDagStepIdsKey(record.ExecutionId);
+            var transaction = _services.Database.CreateTransaction();
+
+            transaction.AddCondition(Condition.KeyNotExists(recordKey));
+            transaction.AddCondition(Condition.KeyNotExists(stateKey));
+            transaction.AddCondition(Condition.KeyNotExists(stepIndexKey));
+
+            foreach (var step in state.Steps.Values)
+            {
+                transaction.AddCondition(
+                    Condition.KeyNotExists(
+                        _services.KeyBuilder.GetDagStepKey(record.ExecutionId, step.StepName)));
+            }
+
+            _ = transaction.StringSetAsync(
+                recordKey,
+                JsonSerializer.Serialize(record, _services.JsonOptions));
+
+            _ = transaction.StringSetAsync(
+                stateKey,
+                JsonSerializer.Serialize(state, _services.JsonOptions));
+
+            foreach (var step in state.Steps.Values)
+            {
+                var stepKey = _services.KeyBuilder.GetDagStepKey(record.ExecutionId, step.StepName);
+
+                _ = transaction.StringSetAsync(
+                    stepKey,
+                    JsonSerializer.Serialize(step, _services.JsonOptions));
+
+                _ = transaction.SetAddAsync(stepIndexKey, step.StepName);
+            }
+
+            return await transaction.ExecuteAsync().ConfigureAwait(false);
+        }
+
+        /// <summary>
         /// Saves the execution record independently.
         ///
         /// This overwrites the current execution record value without modifying step keys.

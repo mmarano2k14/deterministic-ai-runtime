@@ -576,6 +576,34 @@ Context-building logic belongs in context helpers.
 
 ---
 
+### 7A. Durable Child DAG Composition — Experimental
+
+The DAG engine now includes a native durable Child DAG composition path for delegating work to another DAG execution without introducing a second orchestration engine.
+
+```text
+Parent ExecutionId
+    ↓
+execution.child-dag
+    ↓
+ChildExecutionId
+    ↓
+parent step = WaitingForExternal
+    ↓
+child completes durably
+    ↓
+deterministic continuation
+    ↓
+same Parent ExecutionId resumes
+```
+
+The composition path reuses the existing execution store, DAG state, Policy Engine, shared queue, dispatch, recovery, replay, Ledger, tracing, and Forensics infrastructure. The waiting parent releases its claim, concurrency lease, and runtime capacity instead of holding a physical worker while the child executes.
+
+The capability is currently labeled **Experimental**. The full `ChildDepth = 1` gRPC Kubernetes Runtime Pool warm-reuse production proof is green, but promotion beyond Experimental is intentionally blocked on complete engine lifecycle observation and deeper nested closure. Lifecycle Events, durable Ledger evidence, and Forensics must expose the same child-completion / continuation / parent-resume transitions with the same correlation identities.
+
+See [Durable Child DAG Composition](child-dag-composition.md).
+
+---
+
 ### 8. Runtime Instance and Worker Capacity Layer
 
 Runtime instances are the execution participants that own local queues and workers.
@@ -1406,6 +1434,7 @@ Plugins remain responsible for domain-specific execution.
 | Area | Status |
 |---|---|
 | DAG execution | Implemented |
+| Durable Child DAG composition / `ExecuteChildDag` | **Experimental** — implemented; full `ChildDepth = 1` warm-reuse production proof green; complete engine lifecycle observation and deeper nested closure pending |
 | Redis hot state | Implemented |
 | Redis Lua atomic coordination | Implemented |
 | Distributed workers | Implemented |
@@ -1668,6 +1697,16 @@ resume.context.seeded
 
 These validations prove that recovery is not treated as a global panic button. The control plane recovers assigned work for impacted unsafe runtime instances while unrelated tenant runtime capacity continues normally.
 
+
+## Experimental Child DAG Validation Boundary
+
+Native durable Child DAG composition is implemented on top of the existing runtime primitives. The current validated high-water mark is a full `ChildDepth = 1` gRPC Kubernetes Runtime Pool warm-reuse scenario with 5 Pods × 5 runtime processes, 2 cycles, 100 parent DAGs, 5,100 parent logical steps, one exact in-Pod runtime failure/recovery per cycle, one distinct busy Pod failure/recovery per cycle, replay/Ledger/trace/Forensics proof, warm reuse, bounded capacity, and deterministic cleanup.
+
+Focused `ChildDepth = 2` scenarios validate nominal nesting and several failure boundaries, but the complete bounded warm-reuse closure is not yet green. For that reason, and because the full child-completion → continuation → parent-resume lifecycle is not yet exposed coherently across Lifecycle Events, Ledger, and Forensics, the capability remains **Experimental**.
+
+See [Durable Child DAG Composition](child-dag-composition.md).
+
+---
 
 ## Concurrency Hardening and Adversarial Validation
 

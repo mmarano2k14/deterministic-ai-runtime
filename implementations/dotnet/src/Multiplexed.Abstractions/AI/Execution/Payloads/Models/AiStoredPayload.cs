@@ -63,14 +63,24 @@
         /// <summary>
         /// Creates an inline stored payload.
         /// </summary>
-        public static AiStoredPayload Inline(object? value, long? sizeBytes = null, string? contentType = null)
+        /// <param name="value">The inline payload value.</param>
+        /// <param name="sizeBytes">The optional serialized payload size in bytes.</param>
+        /// <param name="contentType">The optional payload content type.</param>
+        /// <param name="contentHash">The optional stable hash of the serialized payload content.</param>
+        /// <returns>The inline stored payload.</returns>
+        public static AiStoredPayload Inline(
+            object? value,
+            long? sizeBytes = null,
+            string? contentType = null,
+            string? contentHash = null)
         {
             return new AiStoredPayload
             {
                 IsInline = true,
                 InlineValue = value,
                 SizeBytes = sizeBytes,
-                ContentType = contentType
+                ContentType = contentType,
+                ContentHash = contentHash
             };
         }
 

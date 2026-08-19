@@ -82,6 +82,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         public string PoolIdPrefix => "mcp-grpc-kubernetes-pool";
 
         /// <inheritdoc />
+        public KubernetesRuntimePoolScenarioTopology Topology => plan.Topology;
+
+        /// <inheritdoc />
+        public bool EnableDagExecutionResume => true;
+
+        /// <inheritdoc />
         public RuntimePoolCrashRecoveryScenarioPlan CrashRecoveryPlan => plan;
 
         /// <inheritdoc />

@@ -54,6 +54,17 @@ namespace Multiplexed.AI.Runtime.Pipeline
                 pipelineName,
                 cancellationToken);
 
+            return await PrepareAsync(definition, cancellationToken).ConfigureAwait(false);
+        }
+
+        /// <inheritdoc />
+        public async Task<ResolvedAiPipeline> PrepareAsync(
+            AiPipelineDefinition definition,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(definition);
+            ArgumentException.ThrowIfNullOrWhiteSpace(definition.Name);
+
             var pipeline = await _pipelineResolver.ResolveAsync(
                 definition,
                 cancellationToken);
@@ -65,7 +76,7 @@ namespace Multiplexed.AI.Runtime.Pipeline
             if (orderedSteps.Length == 0)
             {
                 throw new InvalidOperationException(
-                    $"Pipeline '{pipelineName}' does not contain any resolved steps.");
+                    $"Pipeline '{definition.Name}' does not contain any resolved steps.");
             }
 
             return new ResolvedAiPipeline

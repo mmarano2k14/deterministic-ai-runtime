@@ -352,8 +352,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     request.RunRequest!,
                     request.Metadata);
 
+            var externalWaitContinuation =
+                enrichedRunRequest.ExternalWaitContinuation;
+
+            if (recoveryResume is not null && externalWaitContinuation is not null)
+            {
+                throw new InvalidOperationException(
+                    "Runtime queue requests cannot combine crash-recovery resume with normal external-wait continuation.");
+            }
+
             Console.WriteLine(
-                $"[RUNTIME QUEUE ENQUEUE] BEFORE CONTROLLER ENQUEUE Pipeline='{request.RunRequest?.PipelineName}', RuntimeInstanceId='{request.RuntimeInstanceId}'.");
+                $"[RUNTIME QUEUE ENQUEUE] BEFORE CONTROLLER ENQUEUE Pipeline='{request.RunRequest?.PipelineName}', RuntimeInstanceId='{request.RuntimeInstanceId}', ExternalWaitExecutionId='{externalWaitContinuation?.ExecutionId ?? string.Empty}', ExternalWaitStep='{externalWaitContinuation?.StepName ?? string.Empty}'.");
 
             var handle = string.IsNullOrWhiteSpace(resumeExecutionId)
                 ? await _controller
@@ -399,7 +408,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             }
 
             if (runState is null &&
-                recoveryResume is not null)
+                (recoveryResume is not null || externalWaitContinuation is not null))
             {
                 var canonicalEntry = await _runExecutionIndex
                     .GetAsync(
@@ -413,7 +422,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                         CreateRunStateFromIndex(canonicalEntry);
 
                     Console.WriteLine(
-                        $"[RUNTIME QUEUE ENQUEUE] IDEMPOTENT RECOVERY ACCEPTANCE RESOLVED RunId='{handle.RunId}', ExecutionId='{canonicalEntry.ExecutionId}', CanonicalRuntimeInstanceId='{canonicalEntry.RuntimeInstanceId}', RequestedRuntimeInstanceId='{request.RuntimeInstanceId}', Status='{canonicalEntry.Status}'.");
+                        recoveryResume is not null
+                            ? $"[RUNTIME QUEUE ENQUEUE] IDEMPOTENT RECOVERY ACCEPTANCE RESOLVED RunId='{handle.RunId}', ExecutionId='{canonicalEntry.ExecutionId}', CanonicalRuntimeInstanceId='{canonicalEntry.RuntimeInstanceId}', RequestedRuntimeInstanceId='{request.RuntimeInstanceId}', Status='{canonicalEntry.Status}'."
+                            : $"[RUNTIME QUEUE ENQUEUE] IDEMPOTENT EXTERNAL-WAIT ACCEPTANCE RESOLVED RunId='{handle.RunId}', ExecutionId='{canonicalEntry.ExecutionId}', CanonicalRuntimeInstanceId='{canonicalEntry.RuntimeInstanceId}', RequestedRuntimeInstanceId='{request.RuntimeInstanceId}', Status='{canonicalEntry.Status}'.");
                 }
             }
 
@@ -440,7 +451,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             var executionContextSnapshot =
                 enrichedRunRequest.ExecutionContextSnapshot;
 
-            if (string.IsNullOrWhiteSpace(resumeExecutionId))
+            if (string.IsNullOrWhiteSpace(resumeExecutionId) &&
+                externalWaitContinuation is null)
             {
                 try
                 {
@@ -491,7 +503,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                  * started/running entry back to queued.
                  */
                 Console.WriteLine(
-                    $"[RUNTIME QUEUE ENQUEUE] RESUME INDEX REGISTRATION SKIPPED RunId='{handle.RunId}', ExecutionId='{resumeExecutionId}', Owner='AiRuntimePipelineBackgroundController'.");
+                    $"[RUNTIME QUEUE ENQUEUE] DETERMINISTIC RE-DRIVE INDEX REGISTRATION SKIPPED RunId='{handle.RunId}', ExecutionId='{resumeExecutionId ?? externalWaitContinuation?.ExecutionId ?? string.Empty}', Owner='AiRuntimePipelineBackgroundController'.");
             }
 
             return new RuntimeQueueOperationResult
@@ -995,6 +1007,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
             return new AiRuntimePipelineRunRequest
             {
                 PipelineName = runRequest.PipelineName,
+                RequestedExecutionId = runRequest.RequestedExecutionId,
+                ExternalWaitContinuation = runRequest.ExternalWaitContinuation,
+                PipelineDefinitionSnapshot = runRequest.PipelineDefinitionSnapshot,
                 PipelineJson = runRequest.PipelineJson,
                 PipelineJsonFilePath = runRequest.PipelineJsonFilePath,
                 PipelineDefinition = runRequest.PipelineDefinition,

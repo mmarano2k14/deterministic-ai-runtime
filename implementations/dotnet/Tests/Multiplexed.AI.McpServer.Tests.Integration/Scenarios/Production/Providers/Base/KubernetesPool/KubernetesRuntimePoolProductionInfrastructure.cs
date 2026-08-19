@@ -1,4 +1,10 @@
 ﻿using System.Diagnostics;
+using System.Globalization;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
+using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Failure;
 using System.Text.Json;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Xunit;
@@ -28,6 +34,139 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     : throw new ArgumentException(
                         "A Runtime Pool production infrastructure log prefix is required.",
                         nameof(logPrefix));
+        }
+
+        /// <summary>
+        /// Creates the physical controller that kills one exact RuntimeInstanceOnly process inside a Runtime Pool Pod
+        /// without deleting the Pod itself.
+        /// </summary>
+        /// <param name="registry">The shared runtime instance registry.</param>
+        /// <param name="poolId">The expected Runtime Pool identifier.</param>
+        /// <param name="childProcessLogPrefix">The log prefix used for the physical child-process kill.</param>
+        /// <returns>The in-Pod child runtime process controller.</returns>
+        public IAiRuntimeHostProcessControl CreateRuntimePoolChildProcessControl(
+            IAiRuntimeInstanceRegistry registry,
+            string poolId,
+            string childProcessLogPrefix)
+        {
+            ArgumentNullException.ThrowIfNull(registry);
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(childProcessLogPrefix);
+
+            return new KubernetesRuntimePoolChildProcessControl(
+                registry,
+                poolId,
+                this.output,
+                childProcessLogPrefix);
+        }
+
+        /// <summary>
+        /// Creates the physical controller that deletes the complete Kubernetes Pod containing one targeted
+        /// RuntimeInstanceOnly process and delegates deterministic recovery to the existing Runtime Pool Pod
+        /// failure coordinator.
+        /// </summary>
+        /// <param name="registry">The shared runtime instance registry.</param>
+        /// <param name="recoveryCoordinator">The existing Kubernetes Runtime Pool Pod recovery coordinator.</param>
+        /// <param name="poolId">The expected Runtime Pool identifier.</param>
+        /// <param name="hostStartTemplateFactory">Creates the replacement host template from the failed runtime snapshot.</param>
+        /// <param name="podFailureLogPrefix">The log prefix used for Pod deletion and recovery.</param>
+        /// <returns>The Pod-level physical failure controller.</returns>
+        public IAiRuntimeHostProcessControl CreateRuntimePoolPodFailureControl(
+            IAiRuntimeInstanceRegistry registry,
+            IAiKubernetesRuntimePoolPodFailureRecoveryCoordinator recoveryCoordinator,
+            string poolId,
+            Func<AiRuntimeInstanceSnapshot, AiRuntimeHostStartRequest> hostStartTemplateFactory,
+            string podFailureLogPrefix)
+        {
+            ArgumentNullException.ThrowIfNull(registry);
+            ArgumentNullException.ThrowIfNull(recoveryCoordinator);
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+            ArgumentNullException.ThrowIfNull(hostStartTemplateFactory);
+            ArgumentException.ThrowIfNullOrWhiteSpace(podFailureLogPrefix);
+
+            return new KubernetesRuntimePoolPodFailureControl(
+                registry,
+                recoveryCoordinator,
+                poolId,
+                hostStartTemplateFactory,
+                this.output,
+                podFailureLogPrefix);
+        }
+
+        /// <summary>
+        /// Creates the shared Kubernetes Runtime Pool replacement host template used by Pod failure proofs.
+        /// </summary>
+        /// <param name="snapshot">The runtime snapshot hosted by the failed Pod.</param>
+        /// <param name="tenant">The owning production tenant definition.</param>
+        /// <param name="controlPlaneId">The owning control-plane identifier.</param>
+        /// <param name="poolId">The logical Runtime Pool identifier.</param>
+        /// <param name="providerName">The transport provider name.</param>
+        /// <param name="maximumRuntimeCapacity">The maximum logical runtime capacity for the scenario.</param>
+        /// <param name="purpose">The short recovery purpose used only for deterministic test identifiers.</param>
+        /// <returns>The provider-authoritative host start template.</returns>
+        public static AiRuntimeHostStartRequest CreatePodRecoveryHostStartTemplate(
+            AiRuntimeInstanceSnapshot snapshot,
+            ProductionTenantScenarioDefinition tenant,
+            string controlPlaneId,
+            string poolId,
+            string providerName,
+            int maximumRuntimeCapacity,
+            string purpose)
+        {
+            ArgumentNullException.ThrowIfNull(snapshot);
+            ArgumentNullException.ThrowIfNull(tenant);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(providerName);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumRuntimeCapacity);
+            ArgumentException.ThrowIfNullOrWhiteSpace(purpose);
+
+            return new AiRuntimeHostStartRequest
+            {
+                RequestId =
+                    string.Concat(
+                        purpose,
+                        "-pod-recovery-template-",
+                        controlPlaneId),
+                ControlPlaneId = controlPlaneId,
+                HostCreationMode = AiRuntimeHostCreationMode.KubernetesPool,
+                PoolId = poolId,
+                RuntimeInstanceId = snapshot.RuntimeInstanceId,
+                RuntimeInstanceIdPrefix = tenant.RuntimeInstanceIdPrefix,
+                ProviderName = providerName,
+                TransportName = providerName,
+                TenantId = tenant.TenantId,
+                TenantGroupId = tenant.TenantGroupId,
+                IsolationMode = "Shared",
+                PreferDedicatedCapacity = false,
+                AllowSharedFallback = true,
+                WorkerCountPerInstance = tenant.WorkerCountPerInstance,
+                MaxConcurrentRunsPerInstance = tenant.MaxConcurrentRunsPerInstance,
+                LocalQueueCapacity = tenant.LocalQueueCapacity,
+                MaxRuntimeInstances = maximumRuntimeCapacity,
+                ExecutionContextSnapshot =
+                    new ExecutionContextSnapshot
+                    {
+                        ContextKey =
+                            string.Concat(
+                                "ctx-",
+                                purpose,
+                                "-pod-recovery-",
+                                controlPlaneId),
+                        Project =
+                            string.Concat(
+                                "mcp-kubernetes-runtime-pool-",
+                                purpose,
+                                "-pod-recovery"),
+                        UserId = "system",
+                        TenantId = tenant.TenantId,
+                        TenantGroupId = tenant.TenantGroupId,
+                        CurrentNamespace = "tests",
+                        Namespaces = new List<NamespaceEntry>(),
+                        TtlSeconds = 3600
+                    },
+                Metadata = new Dictionary<string, string>()
+            };
         }
 
         public async Task AssertBoundedPhysicalPodCountAsync(
@@ -188,6 +327,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             output.WriteLine(
                 $"# {logPrefix} BOUNDED CAPACITY FAILURE DIAGNOSTICS END");
             output.WriteLine(string.Empty);
+        }
+
+        /// <summary>
+        /// Cleans every Runtime Pool Pod discoverable for one control plane and pool.
+        /// </summary>
+        /// <param name="controlPlaneId">The scenario control-plane identifier.</param>
+        /// <param name="poolId">The exact Runtime Pool identifier.</param>
+        /// <returns>A task that completes when no matching Pod remains.</returns>
+        public Task CleanupControlPlanePodsAsync(
+            string controlPlaneId,
+            string poolId)
+        {
+            return CleanupControlPlanePodsAsync(
+                controlPlaneId,
+                poolId,
+                Array.Empty<TrackedPod>());
         }
 
         public async Task CleanupControlPlanePodsAsync(
@@ -476,6 +631,219 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             {
                 output.WriteLine(
                     $"[DIAGNOSTIC COMMAND WARNING] Message='{diagnosticException.Message}'.");
+            }
+        }
+        /// <summary>
+        /// Kills one exact RuntimeInstanceOnly process inside a Kubernetes Runtime Pool Pod while preserving the Pod.
+        /// </summary>
+        private sealed class KubernetesRuntimePoolChildProcessControl :
+            IAiRuntimeHostProcessControl
+        {
+            private readonly IAiRuntimeInstanceRegistry registry;
+            private readonly string poolId;
+            private readonly ITestOutputHelper output;
+            private readonly string logPrefix;
+
+            /// <summary>
+            /// Initializes the in-Pod child runtime process controller.
+            /// </summary>
+            /// <param name="registry">The shared runtime instance registry.</param>
+            /// <param name="poolId">The expected Runtime Pool identifier.</param>
+            /// <param name="output">The test output helper.</param>
+            /// <param name="logPrefix">The scenario log prefix.</param>
+            public KubernetesRuntimePoolChildProcessControl(
+                IAiRuntimeInstanceRegistry registry,
+                string poolId,
+                ITestOutputHelper output,
+                string logPrefix)
+            {
+                this.registry = registry ?? throw new ArgumentNullException(nameof(registry));
+                this.poolId = !string.IsNullOrWhiteSpace(poolId)
+                    ? poolId
+                    : throw new ArgumentException("A Runtime Pool identifier is required.", nameof(poolId));
+                this.output = output ?? throw new ArgumentNullException(nameof(output));
+                this.logPrefix = !string.IsNullOrWhiteSpace(logPrefix)
+                    ? logPrefix
+                    : throw new ArgumentException("A log prefix is required.", nameof(logPrefix));
+            }
+
+            /// <inheritdoc />
+            public async Task<bool> KillAsync(
+                string runtimeInstanceId,
+                CancellationToken cancellationToken = default)
+            {
+                var snapshot =
+                    await KubernetesRuntimePoolProductionTopology
+                        .GetRequiredRuntimeSnapshotAsync(
+                            this.registry,
+                            runtimeInstanceId)
+                        .ConfigureAwait(false);
+
+                KubernetesRuntimePoolProductionTopology
+                    .AssertRuntimePoolIdentity(
+                        snapshot,
+                        this.poolId);
+                Assert.True(snapshot.ProcessId.HasValue);
+
+                this.output.WriteLine(
+                    $"[{this.logPrefix} KUBERNETES RUNTIME POOL CHILD PROCESS KILL] RuntimeInstanceId='{runtimeInstanceId}', PodUid='{snapshot.HostId}', PodName='{snapshot.KubernetesPodName}', ProcessId='{snapshot.ProcessId}'.");
+
+                var result =
+                    await RunKubectlAsync(
+                            cancellationToken,
+                            "exec",
+                            snapshot.KubernetesPodName!,
+                            "--namespace",
+                            snapshot.KubernetesNamespace!,
+                            "--container",
+                            "runtime-pool",
+                            "--",
+                            "sh",
+                            "-c",
+                            string.Concat(
+                                "kill -9 ",
+                                snapshot.ProcessId.Value.ToString(
+                                    CultureInfo.InvariantCulture)))
+                        .ConfigureAwait(false);
+
+                if (result.ExitCode != 0)
+                {
+                    throw new InvalidOperationException(
+                        string.Concat(
+                            "The in-Pod runtime process could not be killed. StandardError=",
+                            result.StandardError));
+                }
+
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Deletes the complete Pod that owns one targeted RuntimeInstanceOnly process and then invokes the
+        /// existing production Pod failure coordinator for deterministic membership suppression and replacement.
+        /// </summary>
+        private sealed class KubernetesRuntimePoolPodFailureControl :
+            IAiRuntimeHostProcessControl
+        {
+            private readonly IAiRuntimeInstanceRegistry registry;
+            private readonly IAiKubernetesRuntimePoolPodFailureRecoveryCoordinator recoveryCoordinator;
+            private readonly string poolId;
+            private readonly Func<AiRuntimeInstanceSnapshot, AiRuntimeHostStartRequest> hostStartTemplateFactory;
+            private readonly ITestOutputHelper output;
+            private readonly string logPrefix;
+
+            /// <summary>
+            /// Initializes the complete-Pod failure controller.
+            /// </summary>
+            /// <param name="registry">The shared runtime instance registry.</param>
+            /// <param name="recoveryCoordinator">The existing production Pod failure recovery coordinator.</param>
+            /// <param name="poolId">The expected Runtime Pool identifier.</param>
+            /// <param name="hostStartTemplateFactory">Creates the replacement host template from the failed runtime snapshot.</param>
+            /// <param name="output">The test output helper.</param>
+            /// <param name="logPrefix">The scenario log prefix.</param>
+            public KubernetesRuntimePoolPodFailureControl(
+                IAiRuntimeInstanceRegistry registry,
+                IAiKubernetesRuntimePoolPodFailureRecoveryCoordinator recoveryCoordinator,
+                string poolId,
+                Func<AiRuntimeInstanceSnapshot, AiRuntimeHostStartRequest> hostStartTemplateFactory,
+                ITestOutputHelper output,
+                string logPrefix)
+            {
+                this.registry = registry ?? throw new ArgumentNullException(nameof(registry));
+                this.recoveryCoordinator = recoveryCoordinator ?? throw new ArgumentNullException(nameof(recoveryCoordinator));
+                this.poolId = !string.IsNullOrWhiteSpace(poolId)
+                    ? poolId
+                    : throw new ArgumentException("A Runtime Pool identifier is required.", nameof(poolId));
+                this.hostStartTemplateFactory = hostStartTemplateFactory ?? throw new ArgumentNullException(nameof(hostStartTemplateFactory));
+                this.output = output ?? throw new ArgumentNullException(nameof(output));
+                this.logPrefix = !string.IsNullOrWhiteSpace(logPrefix)
+                    ? logPrefix
+                    : throw new ArgumentException("A log prefix is required.", nameof(logPrefix));
+            }
+
+            /// <inheritdoc />
+            public async Task<bool> KillAsync(
+                string runtimeInstanceId,
+                CancellationToken cancellationToken = default)
+            {
+                var snapshot =
+                    await KubernetesRuntimePoolProductionTopology
+                        .GetRequiredRuntimeSnapshotAsync(
+                            this.registry,
+                            runtimeInstanceId)
+                        .ConfigureAwait(false);
+
+                KubernetesRuntimePoolProductionTopology
+                    .AssertRuntimePoolIdentity(
+                        snapshot,
+                        this.poolId);
+
+                var podUid = snapshot.HostId!;
+                var podName = snapshot.KubernetesPodName!;
+                var namespaceName = snapshot.KubernetesNamespace!;
+
+                this.output.WriteLine(
+                    $"[{this.logPrefix} KUBERNETES RUNTIME POOL POD KILL] RuntimeInstanceId='{runtimeInstanceId}', PodUid='{podUid}', PodName='{podName}', Namespace='{namespaceName}'.");
+
+                var deleteResult =
+                    await RunKubectlAsync(
+                            cancellationToken,
+                            "delete",
+                            "pod",
+                            podName,
+                            "--namespace",
+                            namespaceName,
+                            "--grace-period=0",
+                            "--force",
+                            "--wait=true",
+                            "--timeout=90s")
+                        .ConfigureAwait(false);
+
+                if (deleteResult.ExitCode != 0)
+                {
+                    throw new InvalidOperationException(
+                        string.Concat(
+                            "The Kubernetes Runtime Pool Pod could not be force-deleted. StandardError=",
+                            deleteResult.StandardError));
+                }
+
+                var failureId =
+                    string.Concat(
+                        "child-dag-pod-failure-",
+                        podUid);
+
+                var recovery =
+                    await this.recoveryCoordinator
+                        .RecoverAsync(
+                            new AiKubernetesRuntimePoolPodFailureRecoveryRequest
+                            {
+                                FailureId = failureId,
+                                PoolId = this.poolId,
+                                PodUid = podUid,
+                                ClaimedBy = "mcp-child-dag-kubernetes-pod-failure",
+                                FailureMessage =
+                                    "Forced Kubernetes Runtime Pool Pod deletion during the focused Child DAG recovery proof.",
+                                HostStartTemplate =
+                                    this.hostStartTemplateFactory(snapshot)
+                            },
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (recovery.Replacement is null)
+                {
+                    throw new InvalidOperationException(
+                        string.Concat(
+                            "The Kubernetes Runtime Pool Pod failure coordinator did not create replacement capacity. FailureId='",
+                            failureId,
+                            "', PodUid='",
+                            podUid,
+                            "'."));
+                }
+
+                this.output.WriteLine(
+                    $"[{this.logPrefix} KUBERNETES RUNTIME POOL POD RECOVERED] FailureId='{failureId}', FailedPodUid='{podUid}', ReplacementPodUid='{recovery.Replacement.ReplacementPodUid}'.");
+
+                return true;
             }
         }
     }

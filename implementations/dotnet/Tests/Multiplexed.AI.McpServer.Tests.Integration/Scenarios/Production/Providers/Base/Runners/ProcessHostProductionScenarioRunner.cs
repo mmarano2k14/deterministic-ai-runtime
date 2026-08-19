@@ -1,15 +1,25 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.ControlPlane.Replay;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
+using Multiplexed.Abstractions.AI.Execution.Persistence.Snapshot;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Results;
+using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations.Persistence;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
+using Multiplexed.AI.Stores;
+using StackExchange.Redis;
 using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
@@ -17,17 +27,22 @@ using Xunit.Abstractions;
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Runners
 {
     /// <summary>
-    /// Runs provider-agnostic production runtime scenarios against process-host remote runtime providers.
+    /// Runs provider-agnostic production runtime scenarios against remote runtime-host providers.
     /// </summary>
     internal sealed class ProcessHostProductionScenarioRunner
     {
         private const string RequestedBy = "mcp-production-runtime-scenario-test";
         private const string Source = "mcp-production-runtime-scenario";
+        private static readonly TimeSpan ReplaySnapshotReadinessTimeout = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan ReplaySnapshotReadinessPollInterval = TimeSpan.FromMilliseconds(100);
 
         private readonly string providerLabel;
         private readonly string logPrefix;
         private readonly string transportName;
+        private readonly AiRuntimeHostCreationMode hostCreationMode;
         private readonly Func<ProductionRuntimeScenarioDefinition, string, string, Dictionary<string, string?>> settingsBuilder;
+        private readonly Func<string, Task>? scenarioCleanup;
+        private readonly Func<IServiceProvider, string, ProductionRuntimeScenarioDefinition, IAiRuntimeHostProcessControl>? childRuntimeProcessControlFactory;
         private readonly ITestOutputHelper output;
 
         /// <summary>
@@ -36,14 +51,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="providerLabel">The provider label used in scenario results.</param>
         /// <param name="logPrefix">The log prefix used in test output.</param>
         /// <param name="transportName">The transport name used in result metadata.</param>
-        /// <param name="settingsBuilder">The process-host settings builder.</param>
+        /// <param name="hostCreationMode">The physical runtime-host creation mode.</param>
+        /// <param name="settingsBuilder">The runtime-host settings builder.</param>
         /// <param name="output">The test output helper.</param>
+        /// <param name="scenarioCleanup">Optional provider cleanup executed after the MCP host has stopped.</param>
+        /// <param name="childRuntimeProcessControlFactory">Optional provider-specific factory used to inject the configured physical nested-child failure boundary.</param>
         public ProcessHostProductionScenarioRunner(
             string providerLabel,
             string logPrefix,
             string transportName,
+            AiRuntimeHostCreationMode hostCreationMode,
             Func<ProductionRuntimeScenarioDefinition, string, string, Dictionary<string, string?>> settingsBuilder,
-            ITestOutputHelper output)
+            ITestOutputHelper output,
+            Func<string, Task>? scenarioCleanup = null,
+            Func<IServiceProvider, string, ProductionRuntimeScenarioDefinition, IAiRuntimeHostProcessControl>? childRuntimeProcessControlFactory = null)
         {
             this.providerLabel = !string.IsNullOrWhiteSpace(providerLabel)
                 ? providerLabel
@@ -57,7 +78,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 ? transportName
                 : throw new ArgumentException("Transport name is required.", nameof(transportName));
 
+            this.hostCreationMode = hostCreationMode;
             this.settingsBuilder = settingsBuilder ?? throw new ArgumentNullException(nameof(settingsBuilder));
+            this.scenarioCleanup = scenarioCleanup;
+            this.childRuntimeProcessControlFactory = childRuntimeProcessControlFactory;
             this.output = output ?? throw new ArgumentNullException(nameof(output));
         }
 
@@ -86,11 +110,50 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     controlPlaneId,
                     runtimeHostAssemblyPath);
 
-            await using var host =
-                new GenericMcpServerTestHost(settings);
+            try
+            {
+                await using var host =
+                    new GenericMcpServerTestHost(settings);
 
-            var scaleOutRequestStore =
+                var scaleOutRequestStore =
                 host.Services.GetRequiredService<IAiRuntimeScaleOutRequestStore>();
+
+            var executionSnapshotStore =
+                RequiresReplaySnapshot(scenario.Assertions)
+                    ? host.Services.GetRequiredService<IAiExecutionSnapshotStore<ExecutionContextSnapshot>>()
+                    : null;
+
+            var childCompositionEnabled =
+                scenario.Tenants.Any(tenant => tenant.Run.ChildDepth > 0);
+            var childRelationStore =
+                childCompositionEnabled
+                    ? ProductionChildDagScenarioHelpers.CreateRelationStore(host.Services)
+                    : null;
+            using var childObservationScope =
+                childCompositionEnabled
+                    ? host.Services.CreateScope()
+                    : null;
+            var childDagExecutionStore =
+                childObservationScope?.ServiceProvider.GetRequiredService<IAiDagExecutionStore>();
+
+            var childRuntimeFailureEnabled =
+                scenario.Tenants.Any(tenant => tenant.Run.ChildRuntimeFailure is not null);
+
+            var childRuntimeFailureServices =
+                childRuntimeFailureEnabled
+                    ? new ChildDagRuntimeFailureServices(
+                        host.Services.GetRequiredService<IConnectionMultiplexer>(),
+                        this.childRuntimeProcessControlFactory is not null
+                            ? this.childRuntimeProcessControlFactory(
+                                host.Services,
+                                controlPlaneId,
+                                scenario)
+                            : host.Services
+                                .GetRequiredService<AiRuntimeHostProcessControlSelector>()
+                                .GetRequired(this.hostCreationMode),
+                        host.Services.GetRequiredService<IAiRuntimeInstanceRegistry>(),
+                        host.Services.GetRequiredService<IAiRuntimeRunExecutionIndex>())
+                    : null;
 
             output.WriteLine(
                 $"[{logPrefix}] Scenario='{scenario.Name}', ControlPlaneId='{controlPlaneId}', TenantCount='{scenario.Tenants.Count}', RuntimeHostAssemblyPath='{runtimeHostAssemblyPath}'.");
@@ -145,6 +208,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 controlPlaneId,
                                 context.Mcp,
                                 scaleOutRequestStore,
+                                executionSnapshotStore,
+                                childRelationStore,
+                                childDagExecutionStore,
+                                childRuntimeFailureServices,
                                 cancellationToken)
                             .ConfigureAwait(false);
 
@@ -164,6 +231,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     controlPlaneId,
                                     context.Mcp,
                                     scaleOutRequestStore,
+                                    executionSnapshotStore,
+                                    childRelationStore,
+                                    childDagExecutionStore,
+                                    childRuntimeFailureServices,
                                     cancellationToken))
                             .ToArray();
 
@@ -184,7 +255,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     Metadata = new Dictionary<string, string>
                     {
                         ["runtimeHostAssemblyPath"] = runtimeHostAssemblyPath,
-                        ["hostCreationMode"] = "Process",
+                        ["hostCreationMode"] = this.hostCreationMode.ToString(),
                         ["transport"] = transportName,
                         ["tenantCount"] = scenario.Tenants.Count.ToString()
                     }
@@ -195,6 +266,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 foreach (var context in tenantContexts)
                 {
                     context.HttpClient.Dispose();
+                }
+                }
+            }
+            finally
+            {
+                if (this.scenarioCleanup is not null)
+                {
+                    await this.scenarioCleanup(controlPlaneId)
+                        .ConfigureAwait(false);
                 }
             }
         }
@@ -208,19 +288,74 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string controlPlaneId,
             McpTestClient mcp,
             IAiRuntimeScaleOutRequestStore scaleOutRequestStore,
+            IAiExecutionSnapshotStore<ExecutionContextSnapshot>? executionSnapshotStore,
+            IAiChildExecutionRelationStore? childRelationStore,
+            IAiDagExecutionStore? childDagExecutionStore,
+            ChildDagRuntimeFailureServices? childRuntimeFailureServices,
             CancellationToken cancellationToken)
         {
             var pipelineName =
                 $"{scenario.Name}-{tenant.TenantId}-{Guid.NewGuid():N}";
 
+            ValidateChildRuntimeFailure(tenant.Run);
+
+            var childRuntimeFailure = tenant.Run.ChildRuntimeFailure;
+            ProductionCrashCheckpointGate? childCrashCheckpointGate = null;
+            ProductionCrashCheckpointGate? parentPreChildCheckpointGate = null;
+
+            if (childRuntimeFailure is not null)
+            {
+                if (childRuntimeFailureServices is null ||
+                    childRelationStore is null ||
+                    childDagExecutionStore is null)
+                {
+                    throw new InvalidOperationException(
+                        "Child runtime failure scenarios require child composition persistence and physical process-control services.");
+                }
+
+                childCrashCheckpointGate = await ProductionCrashCheckpointGate
+                    .ArmAsync(
+                        childRuntimeFailureServices.ConnectionMultiplexer,
+                        output,
+                        controlPlaneId,
+                        tenant.TenantId,
+                        pipelineName,
+                        childRuntimeFailure.CrashCheckpointStepIndex,
+                        stateTtl: scenario.CompletionTimeout + TimeSpan.FromMinutes(2))
+                    .ConfigureAwait(false);
+
+                if (childRuntimeFailure.Target == ProductionChildDagFailureTarget.ParentRuntimeAfterPark)
+                {
+                    /*
+                     * The Child DAG call-site is appended after every historical root step. Blocking the final
+                     * root step therefore gives the harness one deterministic moment to make the parent runtime
+                     * ineligible for new admission before ExecuteChildDag dispatches C1. The currently running
+                     * parent is not interrupted by pausing its local queue.
+                     */
+                    parentPreChildCheckpointGate = await ProductionCrashCheckpointGate
+                        .ArmAsync(
+                            childRuntimeFailureServices.ConnectionMultiplexer,
+                            output,
+                            controlPlaneId,
+                            tenant.TenantId,
+                            pipelineName,
+                            tenant.Run.StepCount,
+                            stateTtl: scenario.CompletionTimeout + TimeSpan.FromMinutes(2))
+                        .ConfigureAwait(false);
+                }
+            }
+
             output.WriteLine(
-                $"[{logPrefix}] Submitting tenant workload. TenantId='{tenant.TenantId}', TenantGroupId='{tenant.TenantGroupId}', PipelineKey='{pipelineName}', RunCount='{tenant.Run.RunCount}', StepCount='{tenant.Run.StepCount}'.");
+                $"[{logPrefix}] Submitting tenant workload. TenantId='{tenant.TenantId}', TenantGroupId='{tenant.TenantGroupId}', PipelineKey='{pipelineName}', RunCount='{tenant.Run.RunCount}', StepCount='{tenant.Run.StepCount}', ChildDepth='{tenant.Run.ChildDepth}'.");
 
             var sharedRunIds =
                 await SubmitRunsAsync(
                     mcp,
                     tenant,
-                    pipelineName)
+                    pipelineName,
+                    parentPreChildCheckpointGate?.Definition,
+                    childCrashCheckpointGate?.Definition,
+                    childRuntimeFailure?.TargetDepth ?? 0)
                 .ConfigureAwait(false);
 
             await WaitForAnyTenantScaleOutRequestFulfilledAsync(
@@ -242,13 +377,85 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         timeout: scenario.DispatchTimeout)
                     .ConfigureAwait(false);
 
-            var finalStatuses =
-                await McpTestWaitHelpers
-                    .WaitForTerminalRuntimeRunStatusesAsync(
+            ProductionChildDagRuntimeFailureResult? childRuntimeFailureResult = null;
+
+            if (childRuntimeFailure is not null)
+            {
+                var parentRun = Assert.Single(dispatchedRuns);
+                var parentExecutionId = parentRun.ExecutionId;
+
+                if (string.IsNullOrWhiteSpace(parentExecutionId))
+                {
+                    var parentExecutionObservation = await McpTestWaitHelpers
+                        .WaitForRuntimeRunExecutionIdAsync(
+                            mcp,
+                            parentRun,
+                            scenario.DispatchTimeout)
+                        .ConfigureAwait(false);
+
+                    parentExecutionId =
+                        parentExecutionObservation.ExecutionId ??
+                        parentExecutionObservation.RunState?.ExecutionId;
+                }
+
+                if (string.IsNullOrWhiteSpace(parentExecutionId))
+                {
+                    throw new InvalidOperationException(
+                        $"Submitted parent run '{parentRun.SharedRunId}' did not expose a durable ExecutionId before child runtime failure injection.");
+                }
+
+                childRuntimeFailureResult = await ProductionChildDagRuntimeFailureTestHelpers
+                    .InjectRuntimeFailureAndObserveRecoveryAsync(
+                        output,
+                        childRuntimeFailure,
+                        childCrashCheckpointGate!,
+                        parentPreChildCheckpointGate,
                         mcp,
-                        dispatchedRuns,
-                        timeout: scenario.CompletionTimeout)
+                        childRelationStore!,
+                        childDagExecutionStore!,
+                        childRuntimeFailureServices!.RunExecutionIndex,
+                        childRuntimeFailureServices.ProcessControl,
+                        childRuntimeFailureServices.Registry,
+                        tenant.TenantId,
+                        parentExecutionId,
+                        pipelineName,
+                        parentRun.AssignedRuntimeInstanceId,
+                        parentRun.LocalRunId,
+                        tenant.Run.ChildDepth,
+                        scenario.CompletionTimeout,
+                        cancellationToken)
                     .ConfigureAwait(false);
+            }
+
+            var finalStatuses =
+                tenant.Run.ChildDepth == 0
+                    ? await McpTestWaitHelpers
+                        .WaitForTerminalRuntimeRunStatusesAsync(
+                            mcp,
+                            dispatchedRuns,
+                            timeout: scenario.CompletionTimeout)
+                        .ConfigureAwait(false)
+                    : childDagExecutionStore is not null
+                        ? await ProductionChildDagScenarioHelpers
+                            .WaitForDurableParentCompletionAsync(
+                                mcp,
+                                childDagExecutionStore,
+                                dispatchedRuns,
+                                scenario.CompletionTimeout,
+                                cancellationToken)
+                            .ConfigureAwait(false)
+                        : throw new InvalidOperationException(
+                            "Child DAG scenarios require the shared authoritative DAG execution store.");
+
+            if (executionSnapshotStore is not null)
+            {
+                await WaitForReplaySnapshotsAsync(
+                        executionSnapshotStore,
+                        finalStatuses,
+                        ReplaySnapshotReadinessTimeout,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
             var scaleOutRequests =
                 await CollectTenantScaleOutRequestsAsync(
@@ -264,7 +471,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     mcp,
                     dispatchedRuns,
                     finalStatuses,
-                    scenario.Assertions)
+                    tenant,
+                    pipelineName,
+                    childRelationStore,
+                    scenario.CompletionTimeout,
+                    childRuntimeFailureResult,
+                    scenario.Assertions,
+                    cancellationToken)
                 .ConfigureAwait(false);
 
             var runtimeInstanceIds =
@@ -296,10 +509,57 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             };
         }
 
+        private static void ValidateChildRuntimeFailure(
+            ProductionRunScenarioDefinition run)
+        {
+            ArgumentNullException.ThrowIfNull(run);
+
+            var failure = run.ChildRuntimeFailure;
+            if (failure is null)
+            {
+                return;
+            }
+
+            if (run.ChildDepth <= 0)
+            {
+                throw new InvalidOperationException(
+                    "A Child DAG runtime-boundary failure injection requires ChildDepth to be greater than zero.");
+            }
+
+            if (run.RunCount != 1)
+            {
+                throw new InvalidOperationException(
+                    "The focused physical Child DAG runtime-boundary failure proof currently requires exactly one submitted parent run.");
+            }
+
+            if (failure.TargetDepth <= 0 || failure.TargetDepth > run.ChildDepth)
+            {
+                throw new InvalidOperationException(
+                    $"Child DAG runtime-boundary failure TargetDepth must be between 1 and '{run.ChildDepth}'.");
+            }
+
+            if (failure.CrashCheckpointStepIndex <= 1 ||
+                failure.CrashCheckpointStepIndex > run.StepCount)
+            {
+                throw new InvalidOperationException(
+                    $"Child DAG runtime-boundary failure CrashCheckpointStepIndex must be between 2 and '{run.StepCount}'.");
+            }
+
+            if (failure.Target == ProductionChildDagFailureTarget.ParentRuntimeAfterPark &&
+                failure.TargetDepth != 1)
+            {
+                throw new InvalidOperationException(
+                    "The parked root-parent runtime failure proof requires TargetDepth=1.");
+            }
+        }
+
         private static async Task<IReadOnlyList<string>> SubmitRunsAsync(
             McpTestClient mcp,
             ProductionTenantScenarioDefinition tenant,
-            string pipelineName)
+            string pipelineName,
+            McpTestCrashCheckpointDefinition? parentCrashCheckpoint,
+            McpTestCrashCheckpointDefinition? childCrashCheckpoint,
+            int childCrashCheckpointDepth)
         {
             var input =
                 new Dictionary<string, object?>(
@@ -334,7 +594,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         stepCount: tenant.Run.StepCount,
                         input: input,
                         enableRetention: tenant.Run.EnableRetention,
-                        flakyStepInterval: tenant.Run.FlakyStepInterval)
+                        flakyStepInterval: tenant.Run.FlakyStepInterval,
+                        crashCheckpoint: parentCrashCheckpoint,
+                        childDepth: tenant.Run.ChildDepth,
+                        childCrashCheckpoint: childCrashCheckpoint,
+                        childCrashCheckpointDepth: childCrashCheckpointDepth)
                 };
 
             var submitResults =
@@ -535,11 +799,118 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     $"ProviderHint='{request.ProviderHint}', CreatedAtUtc='{request.CreatedAtUtc:O}'."));
         }
 
+        /// <summary>
+        /// Waits until terminal execution snapshots required by replay are visible in the shared durable store.
+        /// </summary>
+        /// <param name="snapshotStore">The authoritative shared execution snapshot store.</param>
+        /// <param name="finalStatuses">The terminal parent run observations.</param>
+        /// <param name="timeout">The maximum snapshot-readiness wait for the complete set.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A task that completes when every replay snapshot is visible.</returns>
+        /// <remarks>
+        /// The DAG engine persists its terminal execution record before running terminal lifecycle side effects.
+        /// A production poll can therefore observe <c>IsTerminal</c> slightly before terminal snapshot persistence
+        /// finishes. Waiting on the shared snapshot store closes that observation race without retrying Replay itself
+        /// or changing the runtime lifecycle ordering.
+        /// </remarks>
+        private static async Task WaitForReplaySnapshotsAsync(
+            IAiExecutionSnapshotStore<ExecutionContextSnapshot> snapshotStore,
+            IReadOnlyList<AiRuntimeQueueControlPlaneResult> finalStatuses,
+            TimeSpan timeout,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(snapshotStore);
+            ArgumentNullException.ThrowIfNull(finalStatuses);
+
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeout),
+                    timeout,
+                    "Replay snapshot readiness timeout must be greater than zero.");
+            }
+
+            var executionIds = finalStatuses
+                .Select(status => status.ExecutionId ?? status.RunState?.ExecutionId)
+                .Where(executionId => !string.IsNullOrWhiteSpace(executionId))
+                .Select(executionId => executionId!)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+
+            if (executionIds.Length != finalStatuses.Count)
+            {
+                throw new InvalidOperationException(
+                    "Replay snapshot readiness requires every terminal runtime status to expose an ExecutionId.");
+            }
+
+            var pending = executionIds.ToHashSet(StringComparer.Ordinal);
+            var deadline = DateTimeOffset.UtcNow.Add(timeout);
+
+            while (pending.Count > 0 && DateTimeOffset.UtcNow < deadline)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                foreach (var executionId in pending.ToArray())
+                {
+                    var snapshot = await snapshotStore
+                        .GetAsync(executionId, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (snapshot is not null)
+                    {
+                        pending.Remove(executionId);
+                    }
+                }
+
+                if (pending.Count == 0)
+                {
+                    return;
+                }
+
+                var remaining = deadline - DateTimeOffset.UtcNow;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    break;
+                }
+
+                await Task.Delay(
+                        remaining < ReplaySnapshotReadinessPollInterval
+                            ? remaining
+                            : ReplaySnapshotReadinessPollInterval,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                $"Terminal replay snapshots did not become visible within '{timeout}'. ExecutionIds='{string.Join(",", pending.OrderBy(id => id, StringComparer.Ordinal))}'.");
+        }
+
+        /// <summary>
+        /// Determines whether the scenario requires terminal execution snapshots for replay evidence.
+        /// </summary>
+        /// <param name="assertions">The configured production assertions.</param>
+        /// <returns><see langword="true"/> when at least one replay artifact is required.</returns>
+        private static bool RequiresReplaySnapshot(
+            ProductionRuntimeScenarioAssertionOptions assertions)
+        {
+            ArgumentNullException.ThrowIfNull(assertions);
+
+            return assertions.AssertReplayReport ||
+                   assertions.AssertReplayLedger ||
+                   assertions.AssertReplayTrace;
+        }
+
         private async Task<IReadOnlyList<ProductionRunScenarioResult>> BuildRunResultsAsync(
             McpTestClient mcp,
             IReadOnlyList<AiSharedRunRecord> dispatchedRuns,
             IReadOnlyList<AiRuntimeQueueControlPlaneResult> finalStatuses,
-            ProductionRuntimeScenarioAssertionOptions assertions)
+            ProductionTenantScenarioDefinition tenant,
+            string pipelineName,
+            IAiChildExecutionRelationStore? childRelationStore,
+            TimeSpan childRelationTimeout,
+            ProductionChildDagRuntimeFailureResult? childRuntimeFailureResult,
+            ProductionRuntimeScenarioAssertionOptions assertions,
+            CancellationToken cancellationToken)
         {
             var results =
                 new List<ProductionRunScenarioResult>();
@@ -680,6 +1051,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine(
                     $"[{logPrefix}][OBSERVABILITY DEBUG] ExecutionId='{executionId}', LedgerCount='{ledgerCount}', TraceCount='{traceCount}', HasLedger='{hasLedger}', HasTrace='{hasTrace}', ReplaySuccess='{replaySuccess}', ReplayMessage='{replayMessage}', HasReplayReport='{hasReplayReport}', HasReplayLedger='{hasReplayLedger}', HasReplayTrace='{hasReplayTrace}'.");
 
+                var childDagExecutions =
+                    tenant.Run.ChildDepth == 0
+                        ? Array.Empty<ProductionChildDagScenarioResult>()
+                        : childRelationStore is not null
+                            ? await ProductionChildDagScenarioHelpers
+                                .WaitForNestedRelationsAsync(
+                                    childRelationStore,
+                                    tenant.TenantId,
+                                    executionId!,
+                                    pipelineName,
+                                    tenant.Run.ChildDepth,
+                                    childRelationTimeout,
+                                    cancellationToken)
+                                .ConfigureAwait(false)
+                            : throw new InvalidOperationException(
+                                "Child DAG scenario results require an authoritative child execution relation store.");
+
                 results.Add(
                     new ProductionRunScenarioResult
                     {
@@ -692,7 +1080,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         HasTrace = hasTrace,
                         HasReplayReport = hasReplayReport,
                         HasReplayLedger = hasReplayLedger,
-                        HasReplayTrace = hasReplayTrace
+                        HasReplayTrace = hasReplayTrace,
+                        ChildDagExecutions = childDagExecutions,
+                        ChildDagRuntimeFailure = childRuntimeFailureResult
                     });
             }
 
@@ -831,5 +1221,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             ProductionTenantScenarioDefinition Tenant,
             HttpClient HttpClient,
             McpTestClient Mcp);
+
+        private sealed record ChildDagRuntimeFailureServices(
+            IConnectionMultiplexer ConnectionMultiplexer,
+            IAiRuntimeHostProcessControl ProcessControl,
+            IAiRuntimeInstanceRegistry Registry,
+            IAiRuntimeRunExecutionIndex RunExecutionIndex);
     }
 }

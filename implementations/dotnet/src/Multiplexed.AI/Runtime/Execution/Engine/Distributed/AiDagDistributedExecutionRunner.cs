@@ -30,7 +30,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
     /// <para>
     /// Distributed claiming is concurrency-aware. The claim service may acquire a distributed
     /// concurrency lease before the DAG step is actually claimed. Once the claimed step has
-    /// completed, failed, or thrown, this runner releases the corresponding concurrency lease.
+    /// completed, parked, failed, or thrown, this runner releases the corresponding concurrency lease.
     /// </para>
     ///
     /// <para>
@@ -195,8 +195,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
 
             await loadContextAndSetAsync(record.ContextKey).ConfigureAwait(false);
 
-            var resolvedPipeline = await _engineServices.PipelineExecutor.PrepareAsync(
-                record.PipelineName!,
+            var resolvedPipeline = await AiExecutionBoundPipelineResolver.PrepareAsync(
+                _engineServices,
+                record,
                 cancellationToken).ConfigureAwait(false);
 
             if (resolvedPipeline is null)
@@ -283,6 +284,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
 
                     return record;
                 }
+
+                var concurrencyLeaseReleased = false;
 
                 try
                 {
@@ -434,7 +437,54 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                         throw;
                     }
 
-                    if (!stepResult.Success)
+                    if (stepResult.EffectiveOutcome == AiStepExecutionOutcome.Park)
+                    {
+                        var parked = await _engineServices.ObservabilityService.Tracer.TraceStorageAsync(
+                            new AiStorageTraceContext
+                            {
+                                ExecutionId = executionId,
+                                StepId = claimed.StepName,
+                                Backend = "Redis",
+                                Operation = "TryParkStep"
+                            },
+                            async trace =>
+                            {
+                                var result = await _engineServices.DagStore.TryParkStepAsync(
+                                    executionId,
+                                    claimed.StepName,
+                                    claimed.ClaimToken,
+                                    cancellationToken).ConfigureAwait(false);
+
+                                trace.SetTag("parked", result);
+                                trace.SetTag("workerId", workerId);
+                                trace.SetTag("claimToken", claimed.ClaimToken);
+
+                                return result;
+                            }).ConfigureAwait(false);
+
+                        if (!parked)
+                        {
+                            throw new InvalidOperationException(
+                                $"Failed to park claimed step '{claimed.StepName}' for execution '{executionId}'.");
+                        }
+
+                        _engineServices.Logger.Engine.LogInformation(
+                            $"[AI DAG] Step parked for external wait. ExecutionId='{record.ExecutionId}', StepName='{claimed.StepName}', Worker='{workerId}'.");
+
+                        concurrencyLeaseReleased = await TryReleaseConcurrencyLeaseAsync(
+                            executionId,
+                            pipelineKey,
+                            claimed.StepName,
+                            claimed.ClaimToken,
+                            workerId,
+                            state,
+                            resolvedPipeline).ConfigureAwait(false);
+
+                        state = await _engineServices.DagStore.GetStateAsync(
+                            executionId,
+                            cancellationToken).ConfigureAwait(false) ?? state;
+                    }
+                    else if (!stepResult.Success)
                     {
                         await _engineServices.ObservabilityService.Tracer.TraceStorageAsync(
                             new AiStorageTraceContext
@@ -649,15 +699,18 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                 }
                 finally
                 {
-                    await TryReleaseConcurrencyLeaseAsync(
-                        executionId,
-                        pipelineKey,
-                        claimed.StepName,
-                        claimed.ClaimToken,
-                        workerId,
-                        state,
-                        resolvedPipeline)
-                        .ConfigureAwait(false);
+                    if (!concurrencyLeaseReleased)
+                    {
+                        await TryReleaseConcurrencyLeaseAsync(
+                            executionId,
+                            pipelineKey,
+                            claimed.StepName,
+                            claimed.ClaimToken,
+                            workerId,
+                            state,
+                            resolvedPipeline)
+                            .ConfigureAwait(false);
+                    }
                 }
             }
             finally
@@ -804,24 +857,23 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
         }
 
         /// <summary>
-        /// Releases the distributed concurrency lease associated with a claimed step.
+        /// Releases a claimed-step concurrency lease without allowing release or ledger
+        /// failures to invalidate an already-persisted step transition.
         /// </summary>
         /// <param name="executionId">The execution identifier.</param>
         /// <param name="pipelineKey">The stable pipeline key used during admission.</param>
         /// <param name="stepName">The claimed step name.</param>
+        /// <param name="claimToken">The claim token associated with the physical step attempt.</param>
         /// <param name="workerId">The worker identifier used during admission.</param>
         /// <param name="state">The execution state containing the step configuration.</param>
-        /// <param name="cancellationToken">The cancellation token.</param>
-        /// <returns>A task representing the asynchronous release operation.</returns>
+        /// <param name="pipeline">The resolved pipeline used for concurrency definition resolution.</param>
+        /// <returns><c>true</c> when release completed successfully; otherwise <c>false</c>.</returns>
         /// <remarks>
         /// Release is best-effort. If release cannot complete, the Redis ZSET lease model
-        /// still recovers capacity after lease expiration.
+        /// still recovers capacity after lease expiration. Parked steps attempt release before
+        /// convergence so durable suspension returns capacity as early as safely possible.
         /// </remarks>
-        /// <summary>
-        /// Releases a claimed-step concurrency lease without allowing release or ledger
-        /// failures to invalidate an already-persisted step transition.
-        /// </summary>
-        private async Task TryReleaseConcurrencyLeaseAsync(
+        private async Task<bool> TryReleaseConcurrencyLeaseAsync(
             string executionId,
             string pipelineKey,
             string stepName,
@@ -848,11 +900,15 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
 
                 Console.WriteLine(
                     $"[AI DAG DISTRIBUTED PHASE] Phase='lease-release-completed', ExecutionId='{executionId}', StepName='{stepName}', ClaimToken='{claimToken}', WorkerId='{workerId}', PipelineKey='{pipelineKey}'.");
+
+                return true;
             }
             catch (Exception exception)
             {
                 Console.WriteLine(
                     $"[AI DAG DISTRIBUTED PHASE] Phase='lease-release-failed', ExecutionId='{executionId}', StepName='{stepName}', ClaimToken='{claimToken}', WorkerId='{workerId}', PipelineKey='{pipelineKey}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+
+                return false;
             }
         }
 

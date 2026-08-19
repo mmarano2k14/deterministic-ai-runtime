@@ -62,6 +62,8 @@ These include:
 - WorkerId;
 - CorrelationId;
 - decision ledger foundation;
+- existing lifecycle-event infrastructure and Runtime Lifecycle Journal foundations;
+- recovery/execution Forensics foundations;
 - replay and audit foundation;
 - policy decision events;
 - queue and dispatch direction;
@@ -79,6 +81,28 @@ These include:
 The roadmap is not to invent observability from zero.
 
 The roadmap is to harden, structure, export, visualize, and productize the observability foundation.
+
+---
+
+## Near-Term Hardening: Complete Engine Lifecycle Observation
+
+The near-term observability priority is to make the **engine lifecycle** directly observable using the existing event and durable evidence mechanisms.
+
+The target is not a new event bus. It is one aligned contract:
+
+```text
+Existing Lifecycle Events
+        +
+Existing Durable Ledger
+        +
+Existing Forensics
+        =
+One correlated engine lifecycle
+```
+
+This work is a promotion gate for Experimental Child DAG composition because nested execution must make child completion, continuation scheduling/delivery/consumption, and parent resume directly visible and durable.
+
+See [Durable Child DAG Composition](../ai/child-dag-composition.md).
 
 ---
 

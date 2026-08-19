@@ -2127,6 +2127,31 @@ The P5 Kubernetes gate remains compatibility evidence for the existing one-runti
 
 ---
 
+## Experimental Child DAG Validation
+
+Child DAG composition is validated as an extension of the existing production runtime scenarios rather than through a separate test runtime.
+
+Current evidence includes:
+
+- historical `ChildDepth = 0` compatibility;
+- nominal Child DAG execution;
+- durable parent suspension through `WaitingForExternal`;
+- child completion and deterministic parent continuation;
+- ProcessHost HTTP/gRPC parity;
+- Kubernetes Runtime Pool execution;
+- real in-Pod child process failure and same-`ExecutionId` recovery;
+- full Pod failure recovery;
+- replay, Ledger, trace, lifecycle, and recovery Forensics evidence;
+- a full `ChildDepth = 1` 5-Pod × 5-runtime, 2-cycle gRPC Kubernetes warm-reuse production proof.
+
+The capability remains **Experimental** because complete engine lifecycle observation is still being aligned across existing Lifecycle Events, the durable Ledger, and Forensics, and the full bounded `ChildDepth = 2` warm-reuse closure is not yet complete.
+
+Deeper tests must not be made green by extending watchdogs or timeouts. A stalled nested execution must first identify the missing durable lifecycle transition.
+
+See [Durable Child DAG Composition](child-dag-composition.md).
+
+---
+
 ## Test Evidence and Documentation
 
 Tests are part of the project evidence.

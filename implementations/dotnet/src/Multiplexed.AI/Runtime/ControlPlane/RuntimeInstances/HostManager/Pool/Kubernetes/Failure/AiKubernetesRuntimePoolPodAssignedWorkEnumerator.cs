@@ -264,6 +264,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             }
         }
 
+        /// <summary>
+        /// Validates physical local-run identity uniqueness across the exact failed-Pod inventory.
+        /// </summary>
+        /// <remarks>
+        /// A durable ExecutionId may legitimately appear on more than one physical LocalRunId
+        /// after deterministic continuation redrive or another superseded execution attempt.
+        /// All such attempts remain part of the claimed deterministic inventory; the existing
+        /// shared-run ownership resolver and recovery transition service decide which attempt,
+        /// if any, still owns recoverable work.
+        /// </remarks>
+        /// <param name="failureId">The immutable failure identifier.</param>
+        /// <param name="poolId">The logical Runtime Pool identifier.</param>
+        /// <param name="podUid">The immutable failed Kubernetes Pod UID.</param>
+        /// <param name="candidates">The aggregate durable work candidates.</param>
         private static void ValidateCandidateUniqueness(
             string failureId,
             string poolId,
@@ -283,24 +297,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                     AiKubernetesRuntimePoolPodAssignedWorkFailure
                         .DuplicateLocalRunIdentity,
                     $"Kubernetes Pod UID '{podUid}' exposes the same LocalRunId under more than one failed child runtime.");
-            }
-
-            if (candidates
-                .Where(
-                    candidate =>
-                        !string.IsNullOrWhiteSpace(candidate.ExecutionId))
-                .GroupBy(
-                    candidate => candidate.ExecutionId!,
-                    StringComparer.Ordinal)
-                .Any(group => group.Count() != 1))
-            {
-                throw CreateException(
-                    failureId,
-                    poolId,
-                    podUid,
-                    AiKubernetesRuntimePoolPodAssignedWorkFailure
-                        .DuplicateExecutionIdentity,
-                    $"Kubernetes Pod UID '{podUid}' exposes the same durable ExecutionId under more than one failed child runtime.");
             }
         }
 

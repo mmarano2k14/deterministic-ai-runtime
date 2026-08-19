@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Resolvers;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Stores;
 using Multiplexed.Abstractions.AI.Execution.State;
 using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.Abstractions.AI.Steps;
@@ -12,6 +13,7 @@ using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.AI.Rag.Normalization;
 using Multiplexed.AI.Runtime.Configuration;
 using Multiplexed.AI.Runtime.Execution;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Execution.Normalization;
 using Multiplexed.AI.Stores;
@@ -105,6 +107,194 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
                 Assert.Equal(AiStepExecutionStatus.Completed, stateWriter.GetOrCreateStep(state, "a1").Status);
                 Assert.Equal(AiStepExecutionStatus.Completed, stateWriter.GetOrCreateStep(state, "a2").Status);
                 Assert.Equal(AiStepExecutionStatus.Completed, stateWriter.GetOrCreateStep(state, "merge").Status);
+            }
+            finally
+            {
+                await CleanupDagExecutionAsync(created.ExecutionId);
+            }
+        }
+
+        /// <summary>
+        /// Verifies that concurrent exact-id creation attempts converge on one Redis-backed DAG execution.
+        /// </summary>
+        [RedisFact]
+        public async Task CreateIfAbsentAsync_Should_Converge_On_One_Exact_Dag_Execution()
+        {
+            await using var host = await CreateHostAsync("dag-parallel-basic.json");
+            var executionId = Guid.NewGuid().ToString("N");
+            var definition = new AiPipelineDefinition
+            {
+                Name = "dag-parallel-basic",
+                Version = "frozen-child-v1",
+                ExecutionMode = AiExecutionMode.Dag,
+                Steps =
+                [
+                    new AiPipelineStepDefinition
+                    {
+                        Name = "frozen-only",
+                        StepKey = "hello-world",
+                        Order = 1
+                    }
+                ]
+            };
+
+            try
+            {
+                var snapshotService = new AiChildDagSnapshotService(
+                    host.ServiceProvider.GetRequiredService<IAiPayloadStoreResolver>(),
+                    host.ServiceProvider.GetRequiredService<IOptions<AiPayloadStoreOptions>>());
+                var definitionSnapshot = await snapshotService
+                    .FreezeDefinitionAsync(definition, "exact-create-if-absent-test");
+
+                var attempts = Enumerable.Range(0, 8)
+                    .Select(_ => host.Engine.CreateIfAbsentAsync(
+                        executionId,
+                        definition,
+                        definitionSnapshot,
+                        "Marco"))
+                    .ToArray();
+
+                var results = await Task.WhenAll(attempts);
+
+                Assert.All(results, result => Assert.Equal(executionId, result.ExecutionId));
+
+                var dagStore = host.ServiceProvider.GetRequiredService<IAiDagExecutionStore>();
+                var record = await dagStore.GetRecordAsync(executionId);
+                var state = await dagStore.GetStateAsync(executionId);
+
+                Assert.NotNull(record);
+                Assert.NotNull(state);
+                Assert.Equal("dag-parallel-basic", record!.PipelineName);
+                Assert.Equal(definitionSnapshot.ContentHash, record.PipelineDefinitionSnapshot?.ContentHash);
+                Assert.Equal("dag-parallel-basic", state!.PipelineName);
+                Assert.Equal(
+                    "frozen-child-v1",
+                    AiResultDataAssertions.ExtractString(
+                        state.Metadata["pipeline.definition.version"],
+                        "pipeline.definition.version"));
+                Assert.Single(state.Steps);
+                Assert.Equal(new[] { "frozen-only" }, record.Steps);
+
+                var completed = await host.Engine.ExecuteAllAsync(executionId);
+
+                Assert.Equal(AiExecutionStatus.Completed, completed.Status);
+                Assert.Equal(new[] { "frozen-only" }, completed.CompletedSteps);
+            }
+            finally
+            {
+                await CleanupDagExecutionAsync(executionId);
+            }
+        }
+
+        /// <summary>
+        /// Verifies that Redis atomically parks an owned running step without consuming retry or recovery budget.
+        /// </summary>
+        [RedisFact]
+        public async Task TryParkStepAsync_Should_Commit_WaitingForExternal_And_Clear_Claim_Without_Counters()
+        {
+            await using var host = await CreateHostAsync("dag-parallel-basic.json");
+            var created = await host.Engine.CreateAsync("dag-parallel-basic", "Marco");
+
+            try
+            {
+                var dagStore = host.ServiceProvider.GetRequiredService<IAiDagExecutionStore>();
+                var claimed = await dagStore.TryClaimNextReadyStepAsync(
+                    created.ExecutionId,
+                    "park-worker");
+
+                Assert.NotNull(claimed);
+
+                var claimedState = await dagStore.GetStateAsync(created.ExecutionId);
+                Assert.NotNull(claimedState);
+                var before = claimedState!.Steps[claimed!.StepName];
+                Assert.Equal(AiStepExecutionStatus.Running, before.Status);
+
+                var retryCount = before.RetryState?.RetryCount ?? 0;
+                var recoveryCount = before.RecoveryCount;
+
+                var parked = await dagStore.TryParkStepAsync(
+                    created.ExecutionId,
+                    claimed.StepName,
+                    claimed.ClaimToken);
+
+                Assert.True(parked);
+
+                var parkedState = await dagStore.GetStateAsync(created.ExecutionId);
+                Assert.NotNull(parkedState);
+                var step = parkedState!.Steps[claimed.StepName];
+
+                Assert.Equal(AiStepExecutionStatus.WaitingForExternal, step.Status);
+                Assert.Null(step.ClaimedBy);
+                Assert.Null(step.ClaimToken);
+                Assert.Null(step.ClaimedAtUtc);
+                Assert.Null(step.LeaseExpiresAtUtc);
+                Assert.Equal(retryCount, step.RetryState?.RetryCount ?? 0);
+                Assert.Equal(recoveryCount, step.RecoveryCount);
+                Assert.Null(step.CompletedAtUtc);
+                Assert.False(step.IsTerminal);
+
+                var duplicatePark = await dagStore.TryParkStepAsync(
+                    created.ExecutionId,
+                    claimed.StepName,
+                    claimed.ClaimToken);
+
+                Assert.False(duplicatePark);
+            }
+            finally
+            {
+                await CleanupDagExecutionAsync(created.ExecutionId);
+            }
+        }
+
+        /// <summary>
+        /// Verifies that Redis atomically reactivates one externally waiting step without changing retry or recovery counters.
+        /// </summary>
+        [RedisFact]
+        public async Task TryResumeExternalWaitingStepAsync_Should_Commit_Ready_And_Remain_Idempotent()
+        {
+            await using var host = await CreateHostAsync("dag-parallel-basic.json");
+            var created = await host.Engine.CreateAsync("dag-parallel-basic", "Marco");
+
+            try
+            {
+                var dagStore = host.ServiceProvider.GetRequiredService<IAiDagExecutionStore>();
+                var claimed = await dagStore.TryClaimNextReadyStepAsync(
+                    created.ExecutionId,
+                    "external-wait-worker");
+
+                Assert.NotNull(claimed);
+                var claimedState = await dagStore.GetStateAsync(created.ExecutionId);
+                Assert.NotNull(claimedState);
+                var before = claimedState!.Steps[claimed!.StepName];
+                var retryCount = before.RetryState?.RetryCount ?? 0;
+                var recoveryCount = before.RecoveryCount;
+
+                Assert.True(await dagStore.TryParkStepAsync(
+                    created.ExecutionId,
+                    claimed.StepName,
+                    claimed.ClaimToken));
+
+                var resumed = await dagStore.TryResumeExternalWaitingStepAsync(
+                    created.ExecutionId,
+                    claimed.StepName);
+
+                Assert.True(resumed);
+
+                var resumedState = await dagStore.GetStateAsync(created.ExecutionId);
+                Assert.NotNull(resumedState);
+                var step = resumedState!.Steps[claimed.StepName];
+                Assert.Equal(AiStepExecutionStatus.Ready, step.Status);
+                Assert.Null(step.ClaimedBy);
+                Assert.Null(step.ClaimToken);
+                Assert.Null(step.ClaimedAtUtc);
+                Assert.Null(step.LeaseExpiresAtUtc);
+                Assert.Equal(retryCount, step.RetryState?.RetryCount ?? 0);
+                Assert.Equal(recoveryCount, step.RecoveryCount);
+                Assert.Null(step.CompletedAtUtc);
+
+                Assert.False(await dagStore.TryResumeExternalWaitingStepAsync(
+                    created.ExecutionId,
+                    claimed.StepName));
             }
             finally
             {

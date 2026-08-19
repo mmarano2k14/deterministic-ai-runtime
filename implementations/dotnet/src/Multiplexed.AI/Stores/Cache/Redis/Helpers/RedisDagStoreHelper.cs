@@ -46,7 +46,8 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Helpers
             return status == AiStepExecutionStatus.None ||
                    status == AiStepExecutionStatus.Ready ||
                    status == AiStepExecutionStatus.Running ||
-                   status == AiStepExecutionStatus.WaitingForRetry;
+                   status == AiStepExecutionStatus.WaitingForRetry ||
+                   status == AiStepExecutionStatus.WaitingForExternal;
         }
 
         /// <summary>

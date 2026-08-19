@@ -50,6 +50,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             "mcp-grpc-kubernetes-pool-pod-failure-p5";
 
         /// <inheritdoc />
+        public KubernetesRuntimePoolScenarioTopology Topology => Plan.Topology;
+
+        /// <inheritdoc />
+        public bool EnableDagExecutionResume => true;
+
+        /// <inheritdoc />
         public RuntimePoolCrashRecoveryScenarioPlan CrashRecoveryPlan => Plan;
 
         /// <inheritdoc />

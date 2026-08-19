@@ -112,6 +112,12 @@ namespace Multiplexed.AI.Runtime.Pipeline.Steps.Execution
                     context,
                     cancellationToken);
 
+                if (result.EffectiveOutcome == AiStepExecutionOutcome.Park)
+                {
+                    throw new InvalidOperationException(
+                        $"Step '{stepName}' returned a Park outcome outside DAG orchestration.");
+                }
+
                 if (!result.Success)
                 {
                     metadata.Status = AiStepExecutionStatus.Failed;

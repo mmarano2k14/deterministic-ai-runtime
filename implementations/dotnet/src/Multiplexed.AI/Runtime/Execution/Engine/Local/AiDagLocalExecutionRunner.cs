@@ -120,8 +120,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Local
                 state,
                 cancellationToken);
 
-            var resolvedPipeline = await _engineServices.PipelineExecutor.PrepareAsync(
-                record.PipelineName!,
+            var resolvedPipeline = await AiExecutionBoundPipelineResolver.PrepareAsync(
+                _engineServices,
+                record,
                 cancellationToken);
 
             try
@@ -228,9 +229,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Local
                                 stepContext,
                                 cancellationToken);
 
-                            await _engineServices.PayloadCompactor.CompactAsync(
-                                result,
-                                cancellationToken);
+                            if (result.EffectiveOutcome != AiStepExecutionOutcome.Park)
+                            {
+                                await _engineServices.PayloadCompactor.CompactAsync(
+                                    result,
+                                    cancellationToken);
+                            }
 
                             return result;
                         });
@@ -315,7 +319,14 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Local
                     throw;
                 }
 
-                if (!stepResult.Success)
+                if (stepResult.EffectiveOutcome == AiStepExecutionOutcome.Park)
+                {
+                    stepState.MarkWaitingForExternal();
+
+                    _engineServices.Logger.Engine.LogInformation(
+                        $"[AI DAG] Local step parked for external wait. ExecutionId='{record.ExecutionId}', StepName='{nextStep.Name}'.");
+                }
+                else if (!stepResult.Success)
                 {
                     await _engineServices.PolicyEngineFactory
                         .Create<IAiRetryEngine>(AiPolicyKind.Retry, stepContext)
@@ -397,7 +408,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Local
                     state,
                     cancellationToken);
 
-                if (stepResult.Success)
+                if (stepResult.EffectiveOutcome == AiStepExecutionOutcome.Complete &&
+                    stepResult.Success)
                 {
                     await PublishDagProgressChangedAsync(
                             record,

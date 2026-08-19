@@ -71,6 +71,11 @@
             public const string Completed = "run.completed";
 
             /// <summary>
+            /// Indicates that a run released runtime capacity while its execution remains durably waiting.
+            /// </summary>
+            public const string Suspended = "run.suspended";
+
+            /// <summary>
             /// Indicates that a run failed.
             /// </summary>
             public const string Failed = "run.failed";
@@ -183,6 +188,11 @@
             /// Indicates that a step failed.
             /// </summary>
             public const string Failed = "step.failed";
+
+            /// <summary>
+            /// Indicates that a step voluntarily entered a durable external wait.
+            /// </summary>
+            public const string Parked = "step.parked";
 
             /// <summary>
             /// Indicates that a step timed out.

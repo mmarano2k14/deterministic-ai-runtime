@@ -26,7 +26,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 ?? "mongodb://localhost:27017";
 
             this.databaseName =
-                $"multiplexed_runtime_pool_failures_{Guid.NewGuid():N}";
+                CreateDatabaseName("authority");
             this.client = new MongoClient(this.connectionString);
             this.database = this.client.GetDatabase(this.databaseName);
             this.options = Options.Create(
@@ -54,6 +54,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             await this.client
                 .DropDatabaseAsync(this.databaseName)
                 .ConfigureAwait(false);
+        }
+
+        private static string CreateDatabaseName(string role)
+        {
+            return $"multiplexed_rpf_{role}_{Guid.NewGuid():N}";
         }
 
         [Fact]
@@ -151,7 +156,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
         public async Task ExplicitRegistration_Should_Ignore_Ambient_Database_And_Write_To_Configured_Authority()
         {
             var ambientDatabaseName =
-                $"multiplexed_runtime_pool_failures_ambient_{Guid.NewGuid():N}";
+                CreateDatabaseName("ambient");
             var ambientDatabase = this.client.GetDatabase(ambientDatabaseName);
             var ambientCollection =
                 ambientDatabase.GetCollection<BsonDocument>(

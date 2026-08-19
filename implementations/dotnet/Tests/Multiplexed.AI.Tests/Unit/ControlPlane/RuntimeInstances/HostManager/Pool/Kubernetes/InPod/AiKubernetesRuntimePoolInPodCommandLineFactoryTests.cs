@@ -89,11 +89,17 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                         }
                 };
 
+            hostOptions.ChildEnvironmentVariables[
+                "AiChildDagComposition__Enabled"] = "true";
+
             var arguments =
                 new AiKubernetesRuntimePoolInPodCommandLineFactory(
                     hostOptions)
                     .Create(spec, request);
 
+            Assert.Contains(
+                "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiChildDagComposition__Enabled=true",
+                arguments);
             Assert.Contains(
                 "--AiKubernetesRuntimePoolInPod:RuntimeInstances:0:RuntimeInstanceId=runtime-a1",
                 arguments);

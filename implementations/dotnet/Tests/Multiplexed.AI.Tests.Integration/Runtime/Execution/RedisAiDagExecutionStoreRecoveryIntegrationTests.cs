@@ -520,6 +520,56 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
             reloadedStep.ClaimedBy.Should().NotBeNullOrWhiteSpace();
         }
 
+        /// <summary>
+        /// Verifies that concurrent exact-id DAG creation attempts produce one atomic Redis execution bundle.
+        /// </summary>
+        [Fact]
+        public async Task TryCreateIfAbsentAsync_Should_Allow_Only_One_Distributed_Dag_Winner()
+        {
+            var executionId = Guid.NewGuid().ToString("N");
+            var attempts = Enumerable.Range(0, 16)
+                .Select(index =>
+                {
+                    var record = new AiExecutionRecord
+                    {
+                        ExecutionId = executionId,
+                        PipelineName = "child-analysis",
+                        ExecutionMode = AiExecutionMode.Dag,
+                        Steps = ["step-1"]
+                    };
+                    var state = new AiExecutionState
+                    {
+                        ExecutionId = executionId,
+                        PipelineName = "child-analysis",
+                        Data = new Dictionary<string, object?>
+                        {
+                            ["attempt"] = index
+                        },
+                        Steps = new Dictionary<string, AiStepState>(StringComparer.Ordinal)
+                        {
+                            ["step-1"] = CreateReadyStep("step-1", claimTimeoutSeconds: 30)
+                        }
+                    };
+
+                    return _store.TryCreateIfAbsentAsync(record, state);
+                })
+                .ToArray();
+
+            var results = await Task.WhenAll(attempts);
+
+            results.Count(created => created).Should().Be(1);
+
+            var persistedRecord = await _store.GetRecordAsync(executionId);
+            var persistedState = await _store.GetStateAsync(executionId);
+
+            persistedRecord.Should().NotBeNull();
+            persistedState.Should().NotBeNull();
+            persistedRecord!.PipelineName.Should().Be("child-analysis");
+            persistedState!.PipelineName.Should().Be("child-analysis");
+            persistedState.Steps.Should().ContainSingle();
+            persistedState.Steps.Should().ContainKey("step-1");
+        }
+
         // ---------------------------------------------------------------------
         // TEST HELPERS
         // ---------------------------------------------------------------------

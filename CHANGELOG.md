@@ -6,6 +6,101 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.8.3 - 2026-08-14  — Child DAG & Runtime Pool
+
+## 2026-08-14
+
+### Added
+- Added typed Child DAG composition contracts, invocation identity, relation state and deterministic child identity foundations.
+- Added durable Child DAG relation persistence with frozen DAG definition and invocation input snapshots.
+- Integrated delegation authorization with the existing Policy Engine.
+- Added deterministic `ChildExecutionId` allocation before child-side effects.
+- Added exact child execution create-if-absent semantics using the existing execution store and shared queue.
+
+### Fixed
+- Isolated MongoDB `_id` persistence from the shared Child DAG relation contract.
+- Corrected duplicate-convergence exception handling in the shared runtime controller.
+- Preserved typed placement directives through admission and shared-run persistence.
+- Normalized persisted JSON string values in targeted tests.
+
+## 2026-08-15
+
+### Added
+- Added durable `WaitingForExternal` suspension with claim, lease and runtime-capacity release.
+- Added durable child completion and parent continuation scheduling through the existing shared queue.
+- Added explicit Child DAG retry-generation semantics without changing identity for ordinary retries or recovery.
+- Added the native `ExecuteChildDag` runtime step composing snapshot, policy, allocation, dispatch, wait and result consumption.
+- Added initial HTTP ProcessHost production coverage with `ChildDepth=0` backward compatibility and `ChildDepth=1` composition.
+- Added real child runtime process-kill recovery coverage for the ProcessHost topology.
+
+### Fixed
+- Kept test fixtures compatible with the new waiting transition without duplicating fake implementations.
+- Corrected non-nullable completion timestamps in test doubles.
+- Preserved legacy serialized results when `Outcome` is absent.
+- Shortened Mongo test database names to remain within server limits.
+- Corrected continuation reconciler logging against the existing engine logger contract.
+
+## 2026-08-16
+
+### Added
+- Added nominal `ChildDepth=2` ProcessHost cascading convergence: `P -> C1 -> C2 -> C1 -> P`.
+- Added intermediate-child runtime kill and recovery for nested Child DAG execution.
+- Added gRPC ProcessHost parity for nominal and runtime-failure Child DAG scenarios.
+- Added HTTP Kubernetes Runtime Pool nominal Child DAG execution for depths 1 and 2.
+- Added real in-Pod child runtime process-kill recovery.
+- Added complete Kubernetes Pod-kill recovery while preserving durable Child DAG identity.
+- Added parent-Pod deletion while the child continues on a distinct Pod.
+- Added final replay, ledger, trace and recovery-forensics production assertions.
+- Extended the gRPC Kubernetes Runtime Pool full-failure scenario to nested Child DAG execution while preserving `ChildDepth=0` defaults.
+
+### Fixed
+- Kept the durable continuation reconciler on the stable control-plane failure boundary.
+- Persisted the parent pipeline definition snapshot so continuations can migrate across runtimes.
+- Restored parent definition snapshots from durable invocation preparation after crash boundaries.
+- Separated nominal Kubernetes topology settings from crash-plan topology requirements.
+- Preserved Kubernetes-authoritative Redis, Mongo and physical identity settings for in-Pod child processes.
+- Made parent/child Pod separation deterministic in the production harness without changing admission policy.
+
+## 2026-08-17
+
+### Fixed
+- Stabilized kubectl-managed Kubernetes gateway transport endpoints.
+- Preserved durable execution context across controller and recovery boundaries.
+- Preserved execution-context TTL semantics instead of rebuilding shorter-lived context.
+- Corrected RBAC TTL propagation at ingress.
+- Added targeted TTL-boundary diagnostics and local scale-out coverage.
+- Restored RBAC scope for background Child DAG work.
+- Kept Child DAG liveness/reconciliation available on the stable control plane.
+- Released runtime capacity while parents remain durably parked.
+- Made continuation handoff idempotent with deterministic continuation identity.
+
+## 2026-08-18
+
+### Fixed
+- Added deterministic redrive for post-binding continuation delivery.
+- Aligned queue-claim authority with deterministic shared-run redrive.
+- Prevented provider timeout/cancellation from stopping the control plane.
+- Retried observed scale-out requests after provider cancellation.
+- Made the production watchdog aware of nested Child DAG durable progress.
+- Kept continuation relations scheduled until terminal continuation consumption is proven.
+- Removed repeated Redis script-load pressure from the hot path.
+- Rehydrated expired execution RBAC context from the durable execution snapshot.
+- Switched convergence checks to the lightweight step-status path.
+- Refreshed MCP RBAC context during long-running submission phases.
+- Retired stale physical continuation queue delivery after terminal relation resolution.
+- Made bounded-capacity convergence progress-aware while retaining a hard deadline.
+- Started the existing recovery observation timeout from durable runtime-registry disappearance rather than process-kill time.
+
+## 2026-08-19
+
+### Fixed
+- Allowed multiple physical `LocalRunId` recovery attempts to reference the same durable `ExecutionId` during Pod recovery.
+- Kept `LocalRunId` uniqueness strict while leaving recovery ownership resolution to the existing authority.
+- Preserved warm-reuse recovery for nested Child DAG workloads without introducing a new recovery path.
+
+
+---
+
 ## 1.0.8.3 - 2026-08-13 — Runtime Pool External Failure Proofs, Routing Hardening, and Final Scale Validation
 
 ## Delivered objective

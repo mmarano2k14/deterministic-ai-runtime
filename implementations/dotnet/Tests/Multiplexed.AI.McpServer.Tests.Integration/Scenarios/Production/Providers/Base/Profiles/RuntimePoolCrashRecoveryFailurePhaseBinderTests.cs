@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc.Profiles;
@@ -141,6 +142,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             public string Source => "integration-test";
 
+            public AiRuntimeCapacityTopologyMode CapacityTopologyMode =>
+                AiRuntimeCapacityTopologyMode.KubernetesPool;
+
             public string PoolIdPrefix => "runtime-pool-plan-binding";
 
             public RuntimePoolCrashRecoveryScenarioPlan CrashRecoveryPlan =>
@@ -149,6 +153,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     maximumPodCount: 3,
                     initialRuntimeCountPerPod: 3,
                     maximumRuntimeCountPerPod: 4);
+
+            public KubernetesRuntimePoolScenarioTopology Topology =>
+                CrashRecoveryPlan.Topology;
+
+            public bool EnableDagExecutionResume => true;
 
             public Dictionary<string, string?> BuildSettings(
                 ProductionRuntimeScenarioDefinition scenario,

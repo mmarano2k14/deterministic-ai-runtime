@@ -267,6 +267,113 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
             """);
 
         /// <summary>
+        /// Parks a claimed step atomically while it waits for an external durable condition.
+        /// </summary>
+        /// <remarks>
+        /// The script requires matching running claim ownership, transitions the step to
+        /// WaitingForExternal, and clears the claim. It intentionally leaves retry state,
+        /// recovery count, completion timestamps, result, and failure data unchanged.
+        /// </remarks>
+        public static readonly LuaScript ParkPreparedScript = LuaScript.Prepare(
+            """
+            local function normalize_array(value)
+                if value == nil or value == cjson.null then
+                    return cjson.decode('[]')
+                end
+
+                local count = 0
+                for _, _ in ipairs(value) do
+                    count = count + 1
+                end
+
+                if count == 0 then
+                    return cjson.decode('[]')
+                end
+
+                return value
+            end
+
+            local raw = redis.call('GET', @stepKey)
+            if not raw then
+                return 0
+            end
+
+            local step = cjson.decode(raw)
+            if not step then
+                return 0
+            end
+
+            if step.Status ~= "Running" then
+                return 0
+            end
+
+            if step.ClaimToken ~= @claimToken then
+                return 0
+            end
+
+            step.Status = "WaitingForExternal"
+            step.UpdatedAtUtc = tonumber(@nowUnix)
+            step.ClaimedBy = cjson.null
+            step.ClaimToken = cjson.null
+            step.ClaimedAtUtc = cjson.null
+            step.LeaseExpiresAtUtc = cjson.null
+            step.Version = (step.Version or 0) + 1
+            step.DependsOn = normalize_array(step.DependsOn)
+
+            redis.call('SET', @stepKey, cjson.encode(step))
+            return 1
+            """);
+
+        /// <summary>
+        /// Reactivates one externally waiting DAG step atomically.
+        /// </summary>
+        /// <remarks>
+        /// The script accepts only WaitingForExternal and moves the step to Ready. It clears any stale claim fields
+        /// defensively and deliberately leaves retry count, recovery count, result, failure, and terminal data intact.
+        /// </remarks>
+        public static readonly LuaScript ResumeExternalWaitPreparedScript = LuaScript.Prepare(
+            """
+            local function normalize_array(value)
+                if value == nil or value == cjson.null then
+                    return cjson.decode('[]')
+                end
+
+                local count = 0
+                for _, _ in ipairs(value) do
+                    count = count + 1
+                end
+
+                if count == 0 then
+                    return cjson.decode('[]')
+                end
+
+                return value
+            end
+
+            local raw = redis.call('GET', @stepKey)
+            if not raw then
+                return 0
+            end
+
+            local step = cjson.decode(raw)
+            if not step or step.Status ~= "WaitingForExternal" then
+                return 0
+            end
+
+            step.Status = "Ready"
+            step.UpdatedAtUtc = tonumber(@nowUnix)
+            step.ClaimedBy = cjson.null
+            step.ClaimToken = cjson.null
+            step.ClaimedAtUtc = cjson.null
+            step.LeaseExpiresAtUtc = cjson.null
+            step.Version = (step.Version or 0) + 1
+            step.DependsOn = normalize_array(step.DependsOn)
+
+            redis.call('SET', @stepKey, cjson.encode(step))
+            return 1
+            """);
+
+        /// <summary>
         /// Fails a claimed step atomically.
         ///
         /// RULES:

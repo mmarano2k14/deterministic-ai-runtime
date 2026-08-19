@@ -77,7 +77,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var runner = new HttpProcessHostProductionScenarioRunner(this.output);
             var result = await runner.RunAsync(scenario).ConfigureAwait(false);
 
-            AssertScenarioResult(scenario, result);
+            ProductionRuntimeScenarioAssertions.AssertConfiguredScenario(scenario, result);
         }
 
         /// <summary>
@@ -90,7 +90,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var runner = new HttpProcessHostProductionScenarioRunner(this.output);
             var result = await runner.RunAsync(scenario).ConfigureAwait(false);
 
-            AssertScenarioResult(scenario, result);
+            ProductionRuntimeScenarioAssertions.AssertConfiguredScenario(scenario, result);
         }
 
         /// <summary>
@@ -103,7 +103,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var runner = new HttpProcessHostProductionScenarioRunner(this.output);
             var result = await runner.RunAsync(scenario).ConfigureAwait(false);
 
-            AssertScenarioResult(scenario, result);
+            ProductionRuntimeScenarioAssertions.AssertConfiguredScenario(scenario, result);
         }
 
         /// <summary>
@@ -116,7 +116,74 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var runner = new HttpProcessHostProductionScenarioRunner(this.output);
             var result = await runner.RunAsync(scenario).ConfigureAwait(false);
 
-            AssertScenarioResult(scenario, result);
+            ProductionRuntimeScenarioAssertions.AssertConfiguredScenario(scenario, result);
+        }
+
+        /// <summary>
+        /// Verifies that the existing single-tenant Shared process-host scenario can opt in to exactly one nested
+        /// child DAG without changing the historical zero-depth scenario contract.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Run_SingleTenant_Shared_Runtime_Mode_With_Child_Dag_Depth_One()
+        {
+            var scenario = ProductionChildDagScenarioFactory.CreateDepthOneScenario();
+
+            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
+            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
+
+            ProductionRuntimeScenarioAssertions.AssertConfiguredScenario(scenario, result);
+            ProductionChildDagAssertions.AssertNestedComposition(scenario, result);
+        }
+
+        /// <summary>
+        /// Verifies that the existing single-tenant Shared process-host scenario composes exactly two nested child
+        /// DAG levels and deterministically converges both durable continuations back to the submitted parent.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Run_SingleTenant_Shared_Runtime_Mode_With_Child_Dag_Depth_Two()
+        {
+            var scenario = ProductionChildDagScenarioFactory.CreateDepthTwoScenario();
+
+            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
+            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
+
+            ProductionRuntimeScenarioAssertions.AssertConfiguredScenario(scenario, result);
+            ProductionChildDagAssertions.AssertNestedComposition(scenario, result);
+        }
+
+        /// <summary>
+        /// Verifies that a depth-one child execution survives a real external process kill while its parent is
+        /// durably parked, preserving the same ChildExecutionId and resuming on different physical runtime capacity.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Recover_Child_Dag_Depth_One_After_Real_Child_Runtime_Process_Kill()
+        {
+            var scenario = ProductionChildDagScenarioFactory.CreateDepthOneRuntimeCrashRecoveryScenario();
+
+            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
+            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
+
+            ProductionRuntimeScenarioAssertions.AssertConfiguredScenario(scenario, result);
+            ProductionChildDagAssertions.AssertNestedComposition(scenario, result);
+            ProductionChildDagAssertions.AssertRuntimeFailureRecovery(scenario, result);
+        }
+
+        /// <summary>
+        /// Verifies that a depth-two child chain survives a real process kill of the intermediate first-level child,
+        /// preserves that child execution identity on replacement runtime capacity, then composes the second-level
+        /// child and deterministically cascades both durable continuations back to the submitted parent.
+        /// </summary>
+        [Fact]
+        public async Task Http_ProcessHost_Should_Recover_Intermediate_Child_Dag_Depth_Two_After_Real_Runtime_Process_Kill()
+        {
+            var scenario = ProductionChildDagScenarioFactory.CreateDepthTwoIntermediateRuntimeCrashRecoveryScenario();
+
+            var runner = new HttpProcessHostProductionScenarioRunner(this.output);
+            var result = await runner.RunAsync(scenario).ConfigureAwait(false);
+
+            ProductionRuntimeScenarioAssertions.AssertConfiguredScenario(scenario, result);
+            ProductionChildDagAssertions.AssertNestedComposition(scenario, result);
+            ProductionChildDagAssertions.AssertRuntimeFailureRecovery(scenario, result);
         }
 
         /// <summary>
@@ -129,7 +196,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var runner = new HttpProcessHostProductionScenarioRunner(this.output);
             var result = await runner.RunAsync(scenario).ConfigureAwait(false);
 
-            AssertScenarioResult(scenario, result);
+            ProductionRuntimeScenarioAssertions.AssertConfiguredScenario(scenario, result);
         }
 
         /// <summary>
@@ -142,45 +209,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var runner = new HttpProcessHostProductionScenarioRunner(this.output);
             var result = await runner.RunAsync(scenario).ConfigureAwait(false);
 
-            AssertScenarioResult(scenario, result);
+            ProductionRuntimeScenarioAssertions.AssertConfiguredScenario(scenario, result);
         }
 
-        
-
-        /// <summary>
-        /// Asserts a production runtime scenario result according to the scenario assertion options.
-        /// </summary>
-        /// <param name="scenario">The scenario definition.</param>
-        /// <param name="result">The scenario result.</param>
-        private static void AssertScenarioResult(
-            ProductionRuntimeScenarioDefinition scenario,
-            Results.ProductionRuntimeScenarioResult result)
-        {
-            ProductionRuntimeScenarioAssertions.AssertScenarioShape(scenario, result);
-
-            if (scenario.Assertions.AssertAllRunsCompleted)
-            {
-                ProductionRuntimeScenarioAssertions.AssertAllRunsCompleted(scenario, result);
-            }
-
-            if (scenario.Assertions.AssertMaxRuntimeInstances)
-            {
-                ProductionCapacityAssertions.AssertMaxRuntimeInstancesWereRespected(scenario, result);
-            }
-
-            if (scenario.Assertions.AssertScaleOut)
-            {
-                ProductionCapacityAssertions.AssertFulfilledScaleOutRequestsHaveRuntimeInstanceIds(result);
-                ProductionTenantRuntimeModeAssertions.AssertTenantRuntimeModesWerePropagated(scenario, result);
-            }
-
-            if (scenario.Assertions.AssertTenantIsolation)
-            {
-                ProductionTenantIsolationAssertions.AssertTenantRuntimePrefixesWereRespected(scenario, result);
-                ProductionTenantIsolationAssertions.AssertNoCrossTenantRuntimePrefixUsage(scenario, result);
-            }
-
-            ProductionReplayLedgerAssertions.AssertReplayLedgerTraceAvailable(scenario, result);
-        }
     }
 }

@@ -348,14 +348,44 @@ namespace Multiplexed.AI.Runtime.Execution
                     .ConfigureAwait(false);
             }
             catch (InvalidOperationException exception) when (
-                IsRbacExecutionContextNotFound(exception) &&
-                TryGetRestoredExecutionContext(
-                    executionId,
-                    out var restoredContext))
+                IsRbacExecutionContextNotFound(exception))
             {
+                ExecutionContext sourceContext;
+                string source;
+
+                if (TryGetRestoredExecutionContext(
+                        executionId,
+                        out var restoredContext))
+                {
+                    sourceContext = restoredContext;
+                    source = "restored-execution-context";
+                }
+                else
+                {
+                    var record =
+                        await Store
+                            .GetRecordAsync(executionId)
+                            .ConfigureAwait(false);
+
+                    var snapshot = record?.ExecutionContextSnapshot;
+
+                    if (snapshot is null ||
+                        string.IsNullOrWhiteSpace(snapshot.TenantId))
+                    {
+                        throw new InvalidOperationException(
+                            $"RBAC execution context not found and durable execution context snapshot is unavailable. ExecutionId='{executionId}', ContextKey='{contextKey}'.",
+                            exception);
+                    }
+
+                    sourceContext =
+                        ExecutionContextSnapshotMapper
+                            .ToExecutionContext(snapshot);
+                    source = "durable-execution-snapshot";
+                }
+
                 var reboundContext =
                     CloneExecutionContext(
-                        restoredContext,
+                        sourceContext,
                         contextKey);
 
                 await ContextStore
@@ -366,7 +396,7 @@ namespace Multiplexed.AI.Runtime.Execution
                     reboundContext);
 
                 Logger.Engine.LogInformation(
-                    $"[AI EXECUTION] Restored RBAC execution context rebound to execution context key. ExecutionId='{executionId}', RequestedContextKey='{contextKey}', RestoredContextKey='{restoredContext.ContextKey}', TenantId='{reboundContext.TenantId}', UserId='{reboundContext.UserId}'.");
+                    $"[AI EXECUTION] RBAC execution context rebound to execution context key. ExecutionId='{executionId}', RequestedContextKey='{contextKey}', Source='{source}', SourceContextKey='{sourceContext.ContextKey}', TenantId='{reboundContext.TenantId}', UserId='{reboundContext.UserId}'.");
 
                 return reboundContext;
             }

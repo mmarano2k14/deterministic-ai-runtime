@@ -844,6 +844,17 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             }
 
             /// <inheritdoc />
+            public override Task MarkWaitingAsync(
+                string runId,
+                string executionId,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return Task.CompletedTask;
+            }
+
+            /// <inheritdoc />
             public override Task MarkCompletedAsync(
                 string runId,
                 string executionId,
@@ -1360,6 +1371,23 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             }
 
             /// <inheritdoc />
+            public Task<bool> TryParkStepAsync(
+                string executionId,
+                string stepName,
+                string claimToken,
+                CancellationToken cancellationToken = default)
+            {
+                return Task.FromResult(true);
+            }
+
+            public Task<bool> TryResumeExternalWaitingStepAsync(
+                string executionId,
+                string stepName,
+                CancellationToken cancellationToken = default)
+            {
+                return Task.FromResult(false);
+            }
+
             public Task<bool> TryFailStepAsync(
                 string executionId,
                 string stepName,

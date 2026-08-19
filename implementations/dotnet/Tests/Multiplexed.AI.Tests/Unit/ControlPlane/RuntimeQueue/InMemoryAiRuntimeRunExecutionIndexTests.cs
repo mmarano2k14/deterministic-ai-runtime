@@ -126,6 +126,76 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
         }
 
         /// <summary>
+        /// Verifies that a durably waiting run releases active runtime ownership and is not crash-recoverable.
+        /// </summary>
+        [Fact]
+        public async Task MarkWaitingAsync_Should_Exclude_Run_From_Active_And_Recovery_Scans()
+        {
+            var index = new InMemoryAiRuntimeRunExecutionIndex();
+
+            await index.RegisterQueuedAsync(CreateEntry(
+                "run-waiting",
+                "runtime-1",
+                "queued"));
+
+            await index.MarkStartedAsync(
+                "run-waiting",
+                "execution-waiting");
+
+            await index.MarkWaitingAsync(
+                "run-waiting",
+                "execution-waiting");
+
+            var entry = await index.GetAsync("run-waiting");
+            var unfinished = await index.ListUnfinishedByRuntimeInstanceAsync("runtime-1");
+            var recoverable = await index.ListRecoverableByRuntimeInstanceAsync("runtime-1");
+            var requeued = await index.MarkRequeuedForRecoveryAsync(
+                "run-waiting",
+                "execution-waiting",
+                "should-not-requeue");
+
+            Assert.NotNull(entry);
+            Assert.Equal("waiting", entry!.Status);
+            Assert.Null(entry.FailureReason);
+            Assert.Null(entry.CompletedAtUtc);
+            Assert.DoesNotContain(unfinished, item => item.RunId == "run-waiting");
+            Assert.DoesNotContain(recoverable, item => item.RunId == "run-waiting");
+            Assert.False(requeued);
+        }
+
+        /// <summary>
+        /// Verifies that a late durable-wait notification cannot regress a terminal runtime run.
+        /// </summary>
+        [Fact]
+        public async Task MarkWaitingAsync_Should_Not_Overwrite_Terminal_Run()
+        {
+            var index = new InMemoryAiRuntimeRunExecutionIndex();
+
+            await index.RegisterQueuedAsync(CreateEntry(
+                "run-terminal-before-wait",
+                "runtime-1",
+                "queued"));
+
+            await index.MarkStartedAsync(
+                "run-terminal-before-wait",
+                "execution-terminal-before-wait");
+
+            await index.MarkCompletedAsync(
+                "run-terminal-before-wait",
+                "execution-terminal-before-wait");
+
+            await index.MarkWaitingAsync(
+                "run-terminal-before-wait",
+                "execution-terminal-before-wait");
+
+            var entry = await index.GetAsync("run-terminal-before-wait");
+
+            Assert.NotNull(entry);
+            Assert.Equal("completed", entry!.Status);
+            Assert.NotNull(entry.CompletedAtUtc);
+        }
+
+        /// <summary>
         /// Verifies that a running runtime run can be marked as requeued for recovery.
         /// </summary>
         [Fact]

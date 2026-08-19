@@ -40,6 +40,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
     {
         private readonly IAiRuntimeQueueControlPlane _runtimeQueue;
 
+        /// <summary>
+        /// Defines the short observation cadence used while a local external-wait continuation crosses from queued
+        /// acceptance to durable execution binding. The overall wait remains bounded by the dispatch cancellation
+        /// token; this value is not an independent timeout.
+        /// </summary>
+        private static readonly TimeSpan ExternalWaitAcceptanceObservationInterval =
+            TimeSpan.FromMilliseconds(25);
+
         public LocalAiSharedRuntimeInstance(
             string runtimeInstanceId,
             IAiRuntimeQueueControlPlane runtimeQueue)
@@ -161,6 +169,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                 var executionId =
                     result.RunState?.ExecutionId ??
                     result.ExecutionId;
+
+                if (runRequest.ExternalWaitContinuation is not null)
+                {
+                    executionId = await AwaitExternalWaitContinuationAcceptanceAsync(
+                            result,
+                            localRunId,
+                            runRequest.ExternalWaitContinuation,
+                            request,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
 
                 var acceptedRuntimeInstanceId =
                     string.IsNullOrWhiteSpace(result.RuntimeInstanceId)
@@ -292,6 +311,186 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
             }
         }
 
+        /// <summary>
+        /// Waits until a normal external-wait continuation has crossed the durable local execution acceptance
+        /// boundary before acknowledging the shared dispatch.
+        /// </summary>
+        /// <remarks>
+        /// A channel enqueue alone is not sufficient for an external-wait continuation. If background processing
+        /// fails before the local run is bound to the expected execution id, the shared queue must observe a failed
+        /// dispatch so it can requeue the same durable item. This method first observes the in-process run handle,
+        /// then confirms the execution binding through the existing runtime run execution index exposed by the queue
+        /// control plane. No second continuation scheduler or ownership store is introduced.
+        /// </remarks>
+        /// <param name="enqueueResult">The accepted local queue result.</param>
+        /// <param name="localRunId">The accepted local runtime run id.</param>
+        /// <param name="continuation">The expected normal external-wait continuation identity.</param>
+        /// <param name="dispatchRequest">The originating shared runtime dispatch request.</param>
+        /// <param name="cancellationToken">The dispatch cancellation token.</param>
+        /// <returns>The durable execution id bound to the accepted local continuation run.</returns>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when the local continuation fails before execution binding, binds to a different execution, or
+        /// cannot expose the durable run status required to acknowledge dispatch.
+        /// </exception>
+        private async Task<string> AwaitExternalWaitContinuationAcceptanceAsync(
+            AiRuntimeQueueControlPlaneResult enqueueResult,
+            string localRunId,
+            AiRuntimeExternalWaitContinuation continuation,
+            AiSharedRuntimeInstanceDispatchRequest dispatchRequest,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(enqueueResult);
+            ArgumentException.ThrowIfNullOrWhiteSpace(localRunId);
+            ArgumentNullException.ThrowIfNull(continuation);
+            ArgumentNullException.ThrowIfNull(dispatchRequest);
+
+            var handle = enqueueResult.RunHandle
+                ?? throw new InvalidOperationException(
+                    $"External-wait continuation '{continuation.ContinuationId}' was enqueued without a local run handle.");
+
+            var acceptedExecutionId = handle.ExecutionId;
+
+            while (string.IsNullOrWhiteSpace(acceptedExecutionId))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (handle.Completion.IsCompleted)
+                {
+                    try
+                    {
+                        var completed = await handle.Completion.ConfigureAwait(false);
+                        acceptedExecutionId = handle.ExecutionId ?? completed.ExecutionId;
+
+                        EnsureExternalWaitExecutionIdentity(
+                            continuation,
+                            acceptedExecutionId,
+                            localRunId);
+
+                        break;
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception exception)
+                    {
+                        throw new InvalidOperationException(
+                            $"External-wait continuation '{continuation.ContinuationId}' failed before durable local execution acceptance. " +
+                            $"LocalRunId='{localRunId}', ExpectedExecutionId='{continuation.ExecutionId}', " +
+                            $"ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.",
+                            exception);
+                    }
+                }
+
+                await Task.WhenAny(
+                        handle.Completion,
+                        Task.Delay(ExternalWaitAcceptanceObservationInterval, cancellationToken))
+                    .ConfigureAwait(false);
+
+                acceptedExecutionId = handle.ExecutionId;
+            }
+
+            EnsureExternalWaitExecutionIdentity(
+                continuation,
+                acceptedExecutionId,
+                localRunId);
+
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var status = await _runtimeQueue
+                    .GetRunStatusAsync(
+                        new AiRuntimeQueueControlPlaneRequest
+                        {
+                            Operation = AiRuntimeQueueControlPlaneOperation.GetRunStatus,
+                            RunId = localRunId,
+                            CorrelationId = dispatchRequest.CorrelationId ?? dispatchRequest.SharedRun.CorrelationId,
+                            RequestedBy = dispatchRequest.RequestedBy,
+                            Source = "local-shared-runtime-external-wait-acceptance",
+                            Reason = "Confirm durable external-wait continuation execution binding before shared dispatch acknowledgement.",
+                            Metadata = new Dictionary<string, string>
+                            {
+                                ["runtime.instance.id"] = RuntimeInstanceId,
+                                ["shared.run.id"] = dispatchRequest.SharedRun.SharedRunId,
+                                ["local.run.id"] = localRunId,
+                                ["external.wait.continuation.id"] = continuation.ContinuationId,
+                                ["external.wait.execution.id"] = continuation.ExecutionId,
+                                ["external.wait.step"] = continuation.StepName
+                            }
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (!status.Success)
+                {
+                    throw new InvalidOperationException(
+                        status.FailureReason ??
+                        $"External-wait continuation '{continuation.ContinuationId}' durable local acceptance status could not be read.");
+                }
+
+                var runState = status.RunState;
+                if (runState is not null)
+                {
+                    var normalizedStatus = runState.Status?.Trim().ToLowerInvariant() ?? string.Empty;
+
+                    if (normalizedStatus is "failed" or "cancelled" or "requeued-for-recovery")
+                    {
+                        throw new InvalidOperationException(
+                            runState.FailureReason ??
+                            runState.Reason ??
+                            $"External-wait continuation '{continuation.ContinuationId}' became terminal before durable local acceptance. " +
+                            $"LocalRunId='{localRunId}', Status='{runState.Status}'.");
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(runState.ExecutionId))
+                    {
+                        EnsureExternalWaitExecutionIdentity(
+                            continuation,
+                            runState.ExecutionId,
+                            localRunId);
+
+                        return runState.ExecutionId;
+                    }
+                }
+
+                await Task.Delay(
+                        ExternalWaitAcceptanceObservationInterval,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// Validates that one accepted local continuation is bound to the expected durable execution.
+        /// </summary>
+        /// <param name="continuation">The expected continuation identity.</param>
+        /// <param name="executionId">The observed durable execution id.</param>
+        /// <param name="localRunId">The local run id used for diagnostics.</param>
+        /// <exception cref="InvalidOperationException">Thrown when the durable execution id is missing or different.</exception>
+        private static void EnsureExternalWaitExecutionIdentity(
+            AiRuntimeExternalWaitContinuation continuation,
+            string? executionId,
+            string localRunId)
+        {
+            ArgumentNullException.ThrowIfNull(continuation);
+            ArgumentException.ThrowIfNullOrWhiteSpace(localRunId);
+
+            if (string.IsNullOrWhiteSpace(executionId))
+            {
+                throw new InvalidOperationException(
+                    $"External-wait continuation '{continuation.ContinuationId}' completed local processing without binding an execution id. " +
+                    $"LocalRunId='{localRunId}', ExpectedExecutionId='{continuation.ExecutionId}'.");
+            }
+
+            if (!string.Equals(executionId, continuation.ExecutionId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"External-wait continuation '{continuation.ContinuationId}' bound to an unexpected execution. " +
+                    $"LocalRunId='{localRunId}', ExpectedExecutionId='{continuation.ExecutionId}', ActualExecutionId='{executionId}'.");
+            }
+        }
+
         private static AiRuntimePipelineRunRequest AttachExecutionContextSnapshot(
             AiRuntimePipelineRunRequest request,
             ExecutionContextSnapshot executionContextSnapshot)
@@ -302,6 +501,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
             return new AiRuntimePipelineRunRequest
             {
                 PipelineName = request.PipelineName,
+                RequestedExecutionId = request.RequestedExecutionId,
+                ExternalWaitContinuation = request.ExternalWaitContinuation,
+                PipelineDefinitionSnapshot = request.PipelineDefinitionSnapshot,
                 ExecutionContextSnapshot = executionContextSnapshot,
                 PipelineJson = request.PipelineJson,
                 PipelineJsonFilePath = request.PipelineJsonFilePath,

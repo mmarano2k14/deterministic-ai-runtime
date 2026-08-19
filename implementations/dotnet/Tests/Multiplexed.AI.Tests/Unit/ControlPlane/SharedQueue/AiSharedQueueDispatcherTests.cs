@@ -125,6 +125,73 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
         }
 
         [Fact]
+        public async Task DispatchNextAsync_Should_Release_Failed_ExternalWait_Ownership_And_Redispatch_Same_Shared_Run()
+        {
+            const string sharedRunId = "child-continuation-child-invocation-1";
+            const string failedRuntimeInstanceId = "runtime-failed";
+            const string failedLocalRunId = "local-continuation-failed";
+
+            var queue = new InMemoryAiSharedQueue();
+            var store = new InMemoryAiSharedRunStore();
+            var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["external.wait.continuation"] = "true",
+                ["recovery.failedRuntimeInstanceId"] = failedRuntimeInstanceId,
+                ["recovery.failedLocalRunId"] = failedLocalRunId
+            };
+
+            await store.CreateAsync(
+                CreateSharedRun(
+                    sharedRunId,
+                    AiSharedRunStatus.Dispatched,
+                    metadata: metadata,
+                    assignedRuntimeInstanceId: failedRuntimeInstanceId,
+                    localRunId: failedLocalRunId,
+                    externalWaitContinuation: new AiRuntimeExternalWaitContinuation
+                    {
+                        ExecutionId = "parent-execution-1",
+                        StepName = "research-call-site",
+                        ContinuationId = "child-continuation:child-invocation-1"
+                    }));
+
+            await queue.EnqueueAsync(
+                CreateQueueItem(
+                    sharedRunId,
+                    metadata: metadata));
+
+            var runDispatcher = new FakeSharedRunDispatcher();
+            var dispatcher = new AiSharedQueueDispatcher(
+                queue,
+                store,
+                runDispatcher,
+                new FakeRunAdmissionController(),
+                new InMemoryAiRuntimeAdmissionReservationStore(),
+                await CreateReadyRuntimeRegistryAsync("runtime-1"),
+                new FakeRuntimeScaleOutRequestPublisher(),
+                new HardcodedAiTenantRuntimeSettingsProvider(),
+                new StaticAiControlPlaneIdResolver("control-plane-1"),
+                new FakeExecutionContextAccessor(),
+                NullLogger<AiSharedQueueDispatcher>.Instance);
+
+            var result = await dispatcher.DispatchNextAsync(
+                new AiSharedQueueDispatchRequest
+                {
+                    RuntimeInstanceId = "runtime-1",
+                    WorkerId = "worker-1"
+                });
+
+            Assert.True(result.Success);
+            Assert.Equal(1, runDispatcher.CallCount);
+
+            var current = await store.GetAsync(sharedRunId);
+            Assert.NotNull(current);
+            Assert.Equal(AiSharedRunStatus.Dispatched, current!.Status);
+            Assert.Equal("runtime-1", current.AssignedRuntimeInstanceId);
+            Assert.Equal("local-run-1", current.LocalRunId);
+            Assert.False(current.Metadata.ContainsKey("recovery.mode"));
+        }
+
+        [Fact]
         public async Task DispatchNextAsync_Should_Forward_Durable_Required_Placement_To_QueueFirst_Readmission()
         {
             var queue = new InMemoryAiSharedQueue();
@@ -1318,7 +1385,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             string? assignedRuntimeInstanceId = null,
             string? localRunId = null,
             string? executionId = null,
-            AiRunPlacementDirective? placement = null)
+            AiRunPlacementDirective? placement = null,
+            AiRuntimeExternalWaitContinuation? externalWaitContinuation = null)
         {
             var now = DateTimeOffset.UtcNow;
 
@@ -1328,7 +1396,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
                 Status = status,
                 RunRequest = new AiRuntimePipelineRunRequest
                 {
-                    PipelineName = pipelineKey ?? "pipeline-1"
+                    PipelineName = pipelineKey ?? "pipeline-1",
+                    ExternalWaitContinuation = externalWaitContinuation
                 },
                 ExecutionContextSnapshot = AiExecutionContextSnapshotTestFactory.Create(tenantId: tenantId),
                 PipelineKey = pipelineKey,

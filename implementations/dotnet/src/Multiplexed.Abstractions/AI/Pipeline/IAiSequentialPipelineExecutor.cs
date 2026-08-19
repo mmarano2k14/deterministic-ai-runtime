@@ -16,6 +16,20 @@ namespace Multiplexed.Abstractions.AI.Pipeline
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Resolves the supplied declarative pipeline definition into an executable runtime pipeline.
+        /// </summary>
+        /// <remarks>
+        /// This overload is used when a caller already owns an immutable declarative definition and must not
+        /// re-resolve a newer provider definition by pipeline name.
+        /// </remarks>
+        /// <param name="definition">The exact declarative pipeline definition to resolve.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The resolved runtime pipeline.</returns>
+        Task<ResolvedAiPipeline> PrepareAsync(
+            AiPipelineDefinition definition,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Executes the next sequential step of the supplied resolved pipeline.
         /// </summary>
         Task<PipelineExecutionResult> ExecuteNextAsync(

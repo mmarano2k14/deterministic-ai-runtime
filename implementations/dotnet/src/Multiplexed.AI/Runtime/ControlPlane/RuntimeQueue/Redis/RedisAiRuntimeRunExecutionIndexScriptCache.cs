@@ -22,6 +22,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         private byte[]? _registerQueuedSha;
         private byte[]? _tryRegisterQueuedSha;
         private byte[]? _markStartedSha;
+        private byte[]? _markWaitingSha;
         private byte[]? _markCompletedSha;
         private byte[]? _markFailedSha;
         private byte[]? _markCancelledSha;
@@ -80,6 +81,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 database,
                 ScriptKind.MarkStarted,
                 RedisAiRuntimeRunExecutionIndexScripts.MarkStarted,
+                keys,
+                values);
+        }
+
+        /// <summary>
+        /// Executes the atomic mark-waiting script.
+        /// </summary>
+        public Task<RedisResult> ExecuteMarkWaitingAsync(
+            IDatabase database,
+            RedisKey[] keys,
+            RedisValue[] values)
+        {
+            return ExecuteAsync(
+                database,
+                ScriptKind.MarkWaiting,
+                RedisAiRuntimeRunExecutionIndexScripts.MarkWaiting,
                 keys,
                 values);
         }
@@ -262,6 +279,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 ScriptKind.RegisterQueued => _registerQueuedSha,
                 ScriptKind.TryRegisterQueued => _tryRegisterQueuedSha,
                 ScriptKind.MarkStarted => _markStartedSha,
+                ScriptKind.MarkWaiting => _markWaitingSha,
                 ScriptKind.MarkCompleted => _markCompletedSha,
                 ScriptKind.MarkFailed => _markFailedSha,
                 ScriptKind.MarkCancelled => _markCancelledSha,
@@ -287,6 +305,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                     _markStartedSha = sha;
                     break;
 
+                case ScriptKind.MarkWaiting:
+                    _markWaitingSha = sha;
+                    break;
+
                 case ScriptKind.MarkCompleted:
                     _markCompletedSha = sha;
                     break;
@@ -306,9 +328,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             RegisterQueued = 0,
             TryRegisterQueued = 1,
             MarkStarted = 2,
-            MarkCompleted = 3,
-            MarkFailed = 4,
-            MarkCancelled = 5
+            MarkWaiting = 3,
+            MarkCompleted = 4,
+            MarkFailed = 5,
+            MarkCancelled = 6
         }
     }
 }

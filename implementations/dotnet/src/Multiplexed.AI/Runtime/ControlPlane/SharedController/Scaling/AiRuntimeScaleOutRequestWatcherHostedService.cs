@@ -204,20 +204,53 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     "Scale-out request watcher control-plane id cannot be resolved.");
             }
 
-            var pendingRequests =
+            var observedRequests =
                 await this.store
-                    .ListPendingAsync(
+                    .ListAsync(
                         new AiRuntimeScaleOutRequestQuery
                         {
                             ControlPlaneId = controlPlaneId,
-                            MaxResults = this.options.MaxRequestsPerCycle
+                            MaxResults = this.options.MaxRequestsPerCycle,
+                            Statuses = new HashSet<AiRuntimeScaleOutRequestStatus>
+                            {
+                                AiRuntimeScaleOutRequestStatus.Observed
+                            }
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
 
+            var resumableObservedRequests =
+                observedRequests
+                    .Where(request =>
+                        string.Equals(
+                            request.ObservedBy,
+                            this.options.WatcherId,
+                            StringComparison.Ordinal))
+                    .OrderBy(request => request.CreatedAtUtc)
+                    .Take(this.options.MaxRequestsPerCycle)
+                    .ToArray();
+
+            var remainingRequestCapacity =
+                Math.Max(
+                    this.options.MaxRequestsPerCycle - resumableObservedRequests.Length,
+                    0);
+
+            var pendingRequests =
+                remainingRequestCapacity == 0
+                    ? Array.Empty<AiRuntimeScaleOutRequestRecord>()
+                    : await this.store
+                        .ListPendingAsync(
+                            new AiRuntimeScaleOutRequestQuery
+                            {
+                                ControlPlaneId = controlPlaneId,
+                                MaxResults = remainingRequestCapacity
+                            },
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
             this.MarkReady(controlPlaneId);
 
-            foreach (var request in pendingRequests)
+            foreach (var request in resumableObservedRequests.Concat(pendingRequests))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 await this.ProcessRequestAsync(request, cancellationToken).ConfigureAwait(false);
@@ -273,12 +306,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             try
             {
                 var observed =
-                    await this.store
-                        .MarkObservedAsync(
-                            request.RequestId,
-                            this.options.WatcherId,
-                            cancellationToken)
-                        .ConfigureAwait(false);
+                    request.Status == AiRuntimeScaleOutRequestStatus.Observed &&
+                    string.Equals(
+                        request.ObservedBy,
+                        this.options.WatcherId,
+                        StringComparison.Ordinal)
+                        ? true
+                        : await this.store
+                            .MarkObservedAsync(
+                                request.RequestId,
+                                this.options.WatcherId,
+                                cancellationToken)
+                            .ConfigureAwait(false);
 
                 if (!observed)
                 {
@@ -329,6 +368,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         request,
                         providerResult,
                         startedAtUtc,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                await this.RecordScaleOutWatcherEventAsync(
+                        AiControlPlaneEventType.OperationFailed,
+                        request,
+                        AiControlPlaneOperationOutcome.Failed,
+                        "scale-out-provider-operation-cancelled-retryable",
+                        null,
+                        CalculateDurationMs(startedAtUtc, DateTimeOffset.UtcNow),
+                        new Dictionary<string, object?>
+                        {
+                            ["watcherId"] = this.options.WatcherId,
+                            ["rejectOnProviderFailure"] = this.options.RejectOnProviderFailure,
+                            ["storeMarkedRejected"] = false,
+                            ["retryable"] = true,
+                            ["requestStatus"] = AiRuntimeScaleOutRequestStatus.Observed.ToString(),
+                            ["exception.type"] = exception.GetType().FullName,
+                            ["exception.message"] = exception.Message,
+                            ["requeueSucceeded"] = false
+                        },
                         cancellationToken)
                     .ConfigureAwait(false);
             }

@@ -407,6 +407,102 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeQueue
         }
 
         /// <summary>
+        /// Verifies that a durably waiting run remains non-terminal but is excluded from active and crash-recovery scans.
+        /// </summary>
+        [Fact]
+        public async Task MarkWaitingAsync_Should_Exclude_Run_From_Active_And_Recovery_Scans()
+        {
+            var runId = $"run-waiting-{Guid.NewGuid():N}";
+            var executionId = $"execution-waiting-{Guid.NewGuid():N}";
+
+            await tenantAStore!
+                .RegisterQueuedAsync(
+                    CreateEntry(
+                        runId,
+                        "tenant-a",
+                        runtimeInstanceId: "runtime-waiting"))
+                .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkStartedAsync(
+                    runId,
+                    executionId)
+                .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkWaitingAsync(
+                    runId,
+                    executionId)
+                .ConfigureAwait(false);
+
+            var entry = await tenantAStore
+                .GetAsync(runId)
+                .ConfigureAwait(false);
+
+            var unfinished = await tenantAStore
+                .ListUnfinishedAsync()
+                .ConfigureAwait(false);
+
+            var recoverable = await tenantAStore
+                .ListRecoverableByRuntimeInstanceAsync("runtime-waiting")
+                .ConfigureAwait(false);
+
+            var recoveryClaimed = await tenantAStore
+                .MarkRequeuedForRecoveryAsync(
+                    runId,
+                    executionId,
+                    "runtime-recovery-owner")
+                .ConfigureAwait(false);
+
+            Assert.NotNull(entry);
+            Assert.Equal("waiting", entry!.Status);
+            Assert.Equal(executionId, entry.ExecutionId);
+            Assert.Null(entry.FailureReason);
+            Assert.Null(entry.CompletedAtUtc);
+            Assert.DoesNotContain(unfinished, item => item.RunId == runId);
+            Assert.DoesNotContain(recoverable, item => item.RunId == runId);
+            Assert.False(recoveryClaimed);
+        }
+
+        /// <summary>
+        /// Verifies that a late durable-wait notification cannot regress a terminal Redis runtime run.
+        /// </summary>
+        [Fact]
+        public async Task MarkWaitingAsync_Should_Not_Overwrite_Terminal_Run()
+        {
+            var runId = $"run-terminal-before-wait-{Guid.NewGuid():N}";
+            var executionId = $"execution-terminal-before-wait-{Guid.NewGuid():N}";
+
+            await tenantAStore!
+                .RegisterQueuedAsync(
+                    CreateEntry(
+                        runId,
+                        "tenant-a",
+                        runtimeInstanceId: "runtime-terminal-before-wait"))
+                .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkStartedAsync(runId, executionId)
+                .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkCompletedAsync(runId, executionId)
+                .ConfigureAwait(false);
+
+            await tenantAStore
+                .MarkWaitingAsync(runId, executionId)
+                .ConfigureAwait(false);
+
+            var entry = await tenantAStore
+                .GetAsync(runId)
+                .ConfigureAwait(false);
+
+            Assert.NotNull(entry);
+            Assert.Equal("completed", entry!.Status);
+            Assert.NotNull(entry.CompletedAtUtc);
+        }
+
+        /// <summary>
         /// Verifies that a running Redis runtime run can be marked as requeued for recovery.
         /// </summary>
         [Fact]

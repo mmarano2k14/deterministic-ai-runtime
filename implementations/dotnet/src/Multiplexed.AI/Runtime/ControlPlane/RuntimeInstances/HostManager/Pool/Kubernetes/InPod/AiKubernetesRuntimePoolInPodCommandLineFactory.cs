@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.InPod
@@ -170,6 +171,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 Setting(string.Concat(section, ":SnapshotTtlSeconds"),
                     request.ExecutionContextSnapshot.TtlSeconds)
             };
+
+            foreach (var pair in this.hostOptions.ChildEnvironmentVariables
+                         .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                arguments.Add(
+                    Setting(
+                        string.Concat(
+                            section,
+                            ":ChildEnvironmentVariables:",
+                            pair.Key),
+                        pair.Value));
+            }
 
             for (var index = 0;
                  index < podSpec.Bootstrap.RuntimeInstances.Count;

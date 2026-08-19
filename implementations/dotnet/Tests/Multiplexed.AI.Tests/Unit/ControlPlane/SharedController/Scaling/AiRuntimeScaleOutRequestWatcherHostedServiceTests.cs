@@ -216,6 +216,84 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
         }
 
         /// <summary>
+        /// Verifies that a provider-side timeout remains retryable when the caller
+        /// cancellation token has not been cancelled, and that the same observed
+        /// request is resumed on the next watcher cycle.
+        /// </summary>
+        [Fact]
+        public async Task ProcessCycleAsync_Should_Retry_Observed_Request_When_Provider_Times_Out_Without_Caller_Cancellation()
+        {
+            var store =
+                CreateStore();
+
+            await store
+                .CreateAsync(
+                    CreateRequest("request-timeout-1"))
+                .ConfigureAwait(false);
+
+            var providerSelector =
+                new TestScaleOutProviderSelector(
+                    new SimulatedAiRuntimeScaleOutProvider(
+                        Options.Create(new SimulatedAiRuntimeScaleOutProviderOptions
+                        {
+                            Succeed = true,
+                            RuntimeInstanceIdPrefix = "simulated-runtime"
+                        })),
+                    new TaskCanceledException("simulated provider timeout"));
+
+            var watcher =
+                new AiRuntimeScaleOutRequestWatcherHostedService(
+                    store,
+                    providerSelector,
+                    new TestScaleOutFulfilledRunRequeueService(),
+                    new StaticAiControlPlaneIdResolver("cp-test"),
+                    Options.Create(new AiRuntimeScaleOutRequestWatcherOptions
+                    {
+                        Enabled = true,
+                        ControlPlaneId = "cp-test",
+                        WatcherId = "watcher-test",
+                        Interval = TimeSpan.FromSeconds(1),
+                        MaxRequestsPerCycle = 10,
+                        RejectOnProviderFailure = true
+                    }));
+
+            await watcher
+                .ProcessCycleAsync()
+                .ConfigureAwait(false);
+
+            var observed =
+                await store
+                    .GetAsync("request-timeout-1")
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(observed);
+            Assert.Equal(
+                AiRuntimeScaleOutRequestStatus.Observed,
+                observed!.Status);
+            Assert.Equal(
+                "watcher-test",
+                observed.ObservedBy);
+            Assert.Null(observed.RejectedBy);
+            Assert.Null(observed.RejectionReason);
+            Assert.Equal(1, providerSelector.CallCount);
+
+            await watcher
+                .ProcessCycleAsync()
+                .ConfigureAwait(false);
+
+            var fulfilled =
+                await store
+                    .GetAsync("request-timeout-1")
+                    .ConfigureAwait(false);
+
+            Assert.NotNull(fulfilled);
+            Assert.Equal(
+                AiRuntimeScaleOutRequestStatus.Fulfilled,
+                fulfilled!.Status);
+            Assert.Equal(2, providerSelector.CallCount);
+        }
+
+        /// <summary>
         /// Verifies that the watcher respects the maximum number of requests processed per cycle.
         /// </summary>
         [Fact]
@@ -830,15 +908,29 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
             private readonly IAiRuntimeScaleOutProvider provider;
 
             /// <summary>
+            /// Optional exception thrown once before invoking the provider.
+            /// </summary>
+            private Exception? exception;
+
+            /// <summary>
+            /// Gets the number of selector invocations.
+            /// </summary>
+            public int CallCount { get; private set; }
+
+            /// <summary>
             /// Initializes a new instance of the <see cref="TestScaleOutProviderSelector" /> class.
             /// </summary>
             /// <param name="provider">The provider to invoke.</param>
+            /// <param name="exception">Optional exception to throw instead of invoking the provider.</param>
             public TestScaleOutProviderSelector(
-                IAiRuntimeScaleOutProvider provider)
+                IAiRuntimeScaleOutProvider provider,
+                Exception? exception = null)
             {
                 this.provider =
                     provider
                     ?? throw new ArgumentNullException(nameof(provider));
+
+                this.exception = exception;
             }
 
             /// <inheritdoc />
@@ -846,6 +938,19 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Scaling
                 AiRuntimeScaleOutProviderRequest request,
                 CancellationToken cancellationToken = default)
             {
+                this.CallCount++;
+
+                if (this.exception is not null)
+                {
+                    var exception =
+                        this.exception;
+
+                    this.exception = null;
+
+                    return Task.FromException<AiRuntimeScaleOutProviderResult>(
+                        exception);
+                }
+
                 return this.provider
                     .RequestScaleOutAsync(
                         request,

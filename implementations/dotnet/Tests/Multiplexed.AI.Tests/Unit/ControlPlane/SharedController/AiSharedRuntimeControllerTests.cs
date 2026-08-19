@@ -4,13 +4,16 @@ using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
@@ -811,16 +814,452 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                 getResult.Run.FailureReason);
         }
 
+        [Fact]
+        public async Task SubmitRunAsync_Should_Converge_Duplicate_ExternalWait_QueueFirst_Physical_Submission()
+        {
+            var admission = new FakeRunAdmissionController(
+                new AiRunAdmissionDecision
+                {
+                    DecisionType = AiRunAdmissionDecisionType.QueueGlobally,
+                    Reason = "Queue parent continuation."
+                });
+            var store = new InMemoryAiSharedRunStore();
+            var queue = new InMemoryAiSharedQueue();
+            var controller = CreateController(admission, store: store, sharedQueue: queue);
+            var request = new AiSharedRuntimeControllerRequest
+            {
+                Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                RequestedSharedRunId = "child-continuation-physical-1",
+                SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                PipelineKey = "parent-pipeline",
+                RunRequest = CreateExternalWaitContinuationRunRequest("continuation-1"),
+                Source = "unit-test"
+            };
+
+            var first = await controller.SubmitRunAsync(request);
+            var second = await controller.SubmitRunAsync(request);
+
+            Assert.True(first.Success);
+            Assert.True(second.Success);
+            Assert.Equal(first.SharedRunId, second.SharedRunId);
+            Assert.Equal(
+                "continuation-1",
+                second.Run?.RunRequest.ExternalWaitContinuation?.ContinuationId);
+            Assert.Single(await store.ListAsync(includeCancelled: true, includeCompleted: true, includeFailed: true));
+            Assert.Single(await queue.ListAsync(includeTerminal: true));
+            Assert.Equal(1, admission.AdmitCallCount);
+        }
+
+        [Fact]
+        public async Task SubmitRunAsync_Should_Requeue_Same_Deterministic_ExternalWait_Run_When_Bound_Local_Attempt_Failed()
+        {
+            const string sharedRunId = "child-continuation-physical-redrive-1";
+            const string failedRuntimeInstanceId = "runtime-failed-1";
+            const string failedLocalRunId = "local-continuation-failed-1";
+            const string executionId = "parent-execution-1";
+
+            var admission = new FakeRunAdmissionController(
+                new AiRunAdmissionDecision
+                {
+                    DecisionType = AiRunAdmissionDecisionType.QueueGlobally,
+                    Reason = "Queue parent continuation."
+                });
+            var store = new InMemoryAiSharedRunStore();
+            var queue = new InMemoryAiSharedQueue();
+            var runExecutionIndex = new FakeRuntimeRunExecutionIndex();
+            var controller = CreateController(
+                admission,
+                store: store,
+                sharedQueue: queue,
+                runtimeRunExecutionIndex: runExecutionIndex);
+            var request = new AiSharedRuntimeControllerRequest
+            {
+                Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                RequestedSharedRunId = sharedRunId,
+                SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                PipelineKey = "parent-pipeline",
+                RunRequest = CreateExternalWaitContinuationRunRequest("continuation-redrive-1"),
+                Source = "unit-test"
+            };
+
+            var first = await controller.SubmitRunAsync(request);
+            Assert.True(first.Success);
+
+            var claimed = await queue.ClaimAsync(
+                sharedRunId,
+                new AiSharedQueueClaimRequest
+                {
+                    RuntimeInstanceId = "mcp-control-plane",
+                    ControlPlaneId = "test-control-plane",
+                    TenantId = "tenant-1",
+                    PipelineKey = "parent-pipeline",
+                    WorkerId = "mcp-background-pump"
+                });
+
+            Assert.NotNull(claimed);
+            Assert.NotNull(
+                await queue.MarkDispatchedAsync(
+                    sharedRunId,
+                    claimed!.ClaimToken!));
+            Assert.NotNull(
+                await store.MarkDispatchedAsync(
+                    sharedRunId,
+                    failedRuntimeInstanceId,
+                    failedLocalRunId,
+                    executionId));
+
+            runExecutionIndex.RegisteredEntries.Add(
+                new AiRuntimeRunExecutionIndexEntry
+                {
+                    RunId = failedLocalRunId,
+                    ExecutionId = executionId,
+                    RuntimeInstanceId = failedRuntimeInstanceId,
+                    Status = "failed",
+                    FailureReason = "continuation-failed-after-binding",
+                    ExecutionContextSnapshot = first.Run!.ExecutionContextSnapshot,
+                    CreatedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-30),
+                    StartedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-20),
+                    CompletedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-10)
+                });
+
+            var second = await controller.SubmitRunAsync(request);
+
+            Assert.True(second.Success);
+            Assert.Equal(sharedRunId, second.SharedRunId);
+
+            var requeued = await queue.GetAsync(sharedRunId);
+            Assert.NotNull(requeued);
+            Assert.Equal(AiSharedQueueItemStatus.Pending, requeued!.Status);
+            Assert.Null(requeued.ClaimToken);
+            Assert.Equal(
+                failedRuntimeInstanceId,
+                requeued.Metadata["recovery.failedRuntimeInstanceId"]);
+            Assert.Equal(
+                failedLocalRunId,
+                requeued.Metadata["recovery.failedLocalRunId"]);
+            Assert.False(requeued.Metadata.ContainsKey("recovery.mode"));
+            Assert.Equal(1, admission.AdmitCallCount);
+
+            var durableRun = await store.GetAsync(sharedRunId);
+            Assert.NotNull(durableRun);
+            Assert.Equal(AiSharedRunStatus.Dispatched, durableRun!.Status);
+            Assert.Equal(failedRuntimeInstanceId, durableRun.AssignedRuntimeInstanceId);
+            Assert.Equal(failedLocalRunId, durableRun.LocalRunId);
+        }
+
+        [Fact]
+        public async Task SubmitRunAsync_Should_Reject_Conflicting_ExternalWait_Physical_Duplicate()
+        {
+            var admission = new FakeRunAdmissionController(
+                new AiRunAdmissionDecision
+                {
+                    DecisionType = AiRunAdmissionDecisionType.QueueGlobally,
+                    Reason = "Queue parent continuation."
+                });
+            var store = new InMemoryAiSharedRunStore();
+            var queue = new InMemoryAiSharedQueue();
+            var controller = CreateController(admission, store: store, sharedQueue: queue);
+            const string sharedRunId = "child-continuation-physical-2";
+
+            var first = await controller.SubmitRunAsync(
+                new AiSharedRuntimeControllerRequest
+                {
+                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                    RequestedSharedRunId = sharedRunId,
+                    SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                    PipelineKey = "parent-pipeline",
+                    RunRequest = CreateExternalWaitContinuationRunRequest("continuation-1")
+                });
+
+            var conflict = await controller.SubmitRunAsync(
+                new AiSharedRuntimeControllerRequest
+                {
+                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                    RequestedSharedRunId = sharedRunId,
+                    SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                    PipelineKey = "parent-pipeline",
+                    RunRequest = CreateExternalWaitContinuationRunRequest("different-continuation")
+                });
+
+            Assert.True(first.Success);
+            Assert.False(conflict.Success);
+            Assert.Contains("incompatible", conflict.FailureReason, StringComparison.OrdinalIgnoreCase);
+            Assert.Single(await store.ListAsync(includeCancelled: true, includeCompleted: true, includeFailed: true));
+            Assert.Single(await queue.ListAsync(includeTerminal: true));
+        }
+
+        [Fact]
+        public async Task SubmitRunAsync_Should_Converge_Duplicate_Preallocated_QueueFirst_Submissions()
+        {
+            var admission = new FakeRunAdmissionController(
+                new AiRunAdmissionDecision
+                {
+                    DecisionType = AiRunAdmissionDecisionType.QueueGlobally,
+                    Reason = "Queue deterministic child run."
+                });
+            var store = new InMemoryAiSharedRunStore();
+            var queue = new InMemoryAiSharedQueue();
+            var controller = CreateController(admission, store: store, sharedQueue: queue);
+            var request = new AiSharedRuntimeControllerRequest
+            {
+                Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                RequestedSharedRunId = "child-execution-execution-42",
+                SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                PipelineKey = "child-analysis",
+                RunRequest = CreatePreallocatedRunRequest("execution-42"),
+                Source = "unit-test"
+            };
+
+            var first = await controller.SubmitRunAsync(request);
+            var second = await controller.SubmitRunAsync(request);
+
+            Assert.True(first.Success);
+            Assert.True(second.Success);
+            Assert.Equal(first.SharedRunId, second.SharedRunId);
+            Assert.Equal("execution-42", second.Run?.RunRequest.RequestedExecutionId);
+            Assert.Single(await store.ListAsync(includeCancelled: true, includeCompleted: true, includeFailed: true));
+            Assert.Single(await queue.ListAsync(includeTerminal: true));
+            Assert.Equal(1, admission.AdmitCallCount);
+        }
+
+        [Fact]
+        public async Task SubmitRunAsync_Should_Converge_Concurrent_Preallocated_QueueFirst_Submissions()
+        {
+            var admission = new FakeRunAdmissionController(
+                new AiRunAdmissionDecision
+                {
+                    DecisionType = AiRunAdmissionDecisionType.QueueGlobally,
+                    Reason = "Queue deterministic child run."
+                });
+            var store = new InMemoryAiSharedRunStore();
+            var queue = new InMemoryAiSharedQueue();
+            var controller = CreateController(admission, store: store, sharedQueue: queue);
+            var request = new AiSharedRuntimeControllerRequest
+            {
+                Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                RequestedSharedRunId = "child-execution-execution-47",
+                SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                PipelineKey = "child-analysis",
+                RunRequest = CreatePreallocatedRunRequest("execution-47"),
+                Source = "unit-test"
+            };
+
+            var results = await Task.WhenAll(
+                Enumerable.Range(0, 16)
+                    .Select(_ => controller.SubmitRunAsync(request)));
+
+            Assert.All(results, result => Assert.True(result.Success));
+            Assert.All(results, result => Assert.Equal("child-execution-execution-47", result.SharedRunId));
+            Assert.All(results, result => Assert.Equal("execution-47", result.Run?.RunRequest.RequestedExecutionId));
+            Assert.Single(await store.ListAsync(includeCancelled: true, includeCompleted: true, includeFailed: true));
+            Assert.Single(await queue.ListAsync(includeTerminal: true));
+        }
+
+        [Fact]
+        public async Task SubmitRunAsync_Should_Repair_Missing_Queue_Item_For_Preallocated_Shared_Run()
+        {
+            var admissionDecision = new AiRunAdmissionDecision
+            {
+                DecisionType = AiRunAdmissionDecisionType.QueueGlobally,
+                Reason = "Queue deterministic child run."
+            };
+            var admission = new FakeRunAdmissionController(admissionDecision);
+            var store = new InMemoryAiSharedRunStore();
+            var queue = new InMemoryAiSharedQueue();
+            var snapshot = AiExecutionContextSnapshotTestFactory.Create(tenantId: "tenant-1");
+            var sharedRunId = "child-execution-execution-43";
+            var runRequest = CreatePreallocatedRunRequest("execution-43");
+
+            await store.CreateAsync(
+                new AiSharedRunRecord
+                {
+                    SharedRunId = sharedRunId,
+                    Status = AiSharedRunStatus.QueuedGlobally,
+                    RunRequest = new AiRuntimePipelineRunRequest
+                    {
+                        PipelineName = runRequest.PipelineName,
+                        RequestedExecutionId = runRequest.RequestedExecutionId,
+                        PipelineDefinitionSnapshot = runRequest.PipelineDefinitionSnapshot,
+                        PipelineJson = runRequest.PipelineJson,
+                        ExecutionContextSnapshot = snapshot
+                    },
+                    ExecutionContextSnapshot = snapshot,
+                    AdmissionDecision = admissionDecision,
+                    PipelineKey = "child-analysis",
+                    SubmittedAtUtc = DateTimeOffset.UtcNow,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                });
+
+            var controller = CreateController(admission, store: store, sharedQueue: queue);
+            var result = await controller.SubmitRunAsync(
+                new AiSharedRuntimeControllerRequest
+                {
+                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                    RequestedSharedRunId = sharedRunId,
+                    SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                    PipelineKey = "child-analysis",
+                    RunRequest = runRequest,
+                    Source = "unit-test"
+                });
+
+            Assert.True(result.Success);
+            var queued = Assert.Single(await queue.ListAsync(includeTerminal: true));
+            Assert.Equal(sharedRunId, queued.SharedRunId);
+        }
+
+        [Fact]
+        public async Task SubmitRunAsync_Should_Reject_Conflicting_Preallocated_Duplicate()
+        {
+            var admission = new FakeRunAdmissionController(
+                new AiRunAdmissionDecision
+                {
+                    DecisionType = AiRunAdmissionDecisionType.QueueGlobally,
+                    Reason = "Queue deterministic child run."
+                });
+            var store = new InMemoryAiSharedRunStore();
+            var queue = new InMemoryAiSharedQueue();
+            var controller = CreateController(admission, store: store, sharedQueue: queue);
+            const string sharedRunId = "child-execution-execution-44";
+
+            var first = await controller.SubmitRunAsync(
+                new AiSharedRuntimeControllerRequest
+                {
+                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                    RequestedSharedRunId = sharedRunId,
+                    SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                    PipelineKey = "child-analysis",
+                    RunRequest = CreatePreallocatedRunRequest("execution-44")
+                });
+
+            var conflict = await controller.SubmitRunAsync(
+                new AiSharedRuntimeControllerRequest
+                {
+                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                    RequestedSharedRunId = sharedRunId,
+                    SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                    PipelineKey = "child-analysis",
+                    RunRequest = CreatePreallocatedRunRequest("different-execution")
+                });
+
+            Assert.True(first.Success);
+            Assert.False(conflict.Success);
+            Assert.Contains("incompatible", conflict.FailureReason, StringComparison.OrdinalIgnoreCase);
+            Assert.Single(await store.ListAsync(includeCancelled: true, includeCompleted: true, includeFailed: true));
+            Assert.Single(await queue.ListAsync(includeTerminal: true));
+        }
+
+        [Fact]
+        public async Task SubmitRunAsync_Should_Reject_Conflicting_Frozen_Definition_Snapshot_For_Preallocated_Duplicate()
+        {
+            var admission = new FakeRunAdmissionController(
+                new AiRunAdmissionDecision
+                {
+                    DecisionType = AiRunAdmissionDecisionType.QueueGlobally,
+                    Reason = "Queue deterministic child run."
+                });
+            var store = new InMemoryAiSharedRunStore();
+            var queue = new InMemoryAiSharedQueue();
+            var controller = CreateController(admission, store: store, sharedQueue: queue);
+            const string sharedRunId = "child-execution-execution-46";
+
+            var first = await controller.SubmitRunAsync(
+                new AiSharedRuntimeControllerRequest
+                {
+                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                    RequestedSharedRunId = sharedRunId,
+                    SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                    PipelineKey = "child-analysis",
+                    RunRequest = CreatePreallocatedRunRequest("execution-46")
+                });
+
+            var conflict = await controller.SubmitRunAsync(
+                new AiSharedRuntimeControllerRequest
+                {
+                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                    RequestedSharedRunId = sharedRunId,
+                    SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                    PipelineKey = "child-analysis",
+                    RunRequest = new AiRuntimePipelineRunRequest
+                    {
+                        PipelineName = "child-analysis",
+                        RequestedExecutionId = "execution-46",
+                        PipelineDefinitionSnapshot = AiStoredPayload.Inline(
+                            "{}",
+                            contentType: "application/json",
+                            contentHash: "definition-hash-v2"),
+                        PipelineJson = "{\"Name\":\"child-analysis\",\"Version\":\"v1\",\"ExecutionMode\":1,\"Steps\":[]}"
+                    }
+                });
+
+            Assert.True(first.Success);
+            Assert.False(conflict.Success);
+            Assert.Contains("incompatible", conflict.FailureReason, StringComparison.OrdinalIgnoreCase);
+            Assert.Single(await store.ListAsync(includeCancelled: true, includeCompleted: true, includeFailed: true));
+            Assert.Single(await queue.ListAsync(includeTerminal: true));
+        }
+
+        [Fact]
+        public async Task SubmitRunAsync_Should_Reject_Conflicting_Frozen_Input_Digest_For_Preallocated_Duplicate()
+        {
+            var admission = new FakeRunAdmissionController(
+                new AiRunAdmissionDecision
+                {
+                    DecisionType = AiRunAdmissionDecisionType.QueueGlobally,
+                    Reason = "Queue deterministic child run."
+                });
+            var store = new InMemoryAiSharedRunStore();
+            var queue = new InMemoryAiSharedQueue();
+            var controller = CreateController(admission, store: store, sharedQueue: queue);
+            const string sharedRunId = "child-execution-execution-45";
+
+            var first = await controller.SubmitRunAsync(
+                new AiSharedRuntimeControllerRequest
+                {
+                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                    RequestedSharedRunId = sharedRunId,
+                    SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                    PipelineKey = "child-analysis",
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["child.input.digest"] = "digest-a"
+                    },
+                    RunRequest = CreatePreallocatedRunRequest("execution-45")
+                });
+
+            var conflict = await controller.SubmitRunAsync(
+                new AiSharedRuntimeControllerRequest
+                {
+                    Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                    RequestedSharedRunId = sharedRunId,
+                    SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                    PipelineKey = "child-analysis",
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["child.input.digest"] = "digest-b"
+                    },
+                    RunRequest = CreatePreallocatedRunRequest("execution-45")
+                });
+
+            Assert.True(first.Success);
+            Assert.False(conflict.Success);
+            Assert.Contains("incompatible", conflict.FailureReason, StringComparison.OrdinalIgnoreCase);
+            Assert.Single(await store.ListAsync(includeCancelled: true, includeCompleted: true, includeFailed: true));
+            Assert.Single(await queue.ListAsync(includeTerminal: true));
+        }
+
         private static AiSharedRuntimeController CreateController(
             IAiRunAdmissionController admissionController,
             AiSharedRuntimeControllerOptions? options = null,
             IAiSharedRunDispatcher? dispatcher = null,
-            IAiRuntimeScaleOutRequestPublisher? scaleOutPublisher = null)
+            IAiRuntimeScaleOutRequestPublisher? scaleOutPublisher = null,
+            IAiSharedRunStore? store = null,
+            IAiSharedQueue? sharedQueue = null,
+            IAiRuntimeRunExecutionIndex? runtimeRunExecutionIndex = null)
         {
             return new AiSharedRuntimeController(
                 admissionController,
-                new InMemoryAiSharedRunStore(),
-                new InMemoryAiSharedQueue(),
+                store ?? new InMemoryAiSharedRunStore(),
+                sharedQueue ?? new InMemoryAiSharedQueue(),
                 dispatcher ?? new FakeSharedRunDispatcher(),
                 scaleOutPublisher ?? new NoopAiRuntimeScaleOutRequestPublisher(),
                 new StaticAiControlPlaneIdResolver("test-control-plane"),
@@ -829,7 +1268,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                 new NoopAiControlPlaneObserver(),
                 new FakeExecutionContextSnapshotProvider(
                     AiExecutionContextSnapshotTestFactory.Create(
-                        tenantId: "tenant-1")));
+                        tenantId: "tenant-1")),
+                runtimeRunExecutionIndex: runtimeRunExecutionIndex);
         }
 
         private static AiRuntimePipelineRunRequest CreateRunRequest()
@@ -837,6 +1277,34 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             return new AiRuntimePipelineRunRequest
             {
                 PipelineName = "pipeline-1"
+            };
+        }
+
+        private static AiRuntimePipelineRunRequest CreateExternalWaitContinuationRunRequest(string continuationId)
+        {
+            return new AiRuntimePipelineRunRequest
+            {
+                PipelineName = "parent-pipeline",
+                ExternalWaitContinuation = new AiRuntimeExternalWaitContinuation
+                {
+                    ExecutionId = "parent-execution-1",
+                    StepName = "research-call-site",
+                    ContinuationId = continuationId
+                }
+            };
+        }
+
+        private static AiRuntimePipelineRunRequest CreatePreallocatedRunRequest(string executionId)
+        {
+            return new AiRuntimePipelineRunRequest
+            {
+                PipelineName = "child-analysis",
+                RequestedExecutionId = executionId,
+                PipelineDefinitionSnapshot = AiStoredPayload.Inline(
+                    "{}",
+                    contentType: "application/json",
+                    contentHash: "definition-hash-v1"),
+                PipelineJson = "{\"Name\":\"child-analysis\",\"Version\":\"v1\",\"ExecutionMode\":1,\"Steps\":[]}"
             };
         }
 
@@ -890,6 +1358,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
 
             public bool AdmitCalled { get; private set; }
 
+            public int AdmitCallCount { get; private set; }
+
             public AiRunAdmissionRequest? LastRequest { get; private set; }
 
             public Task<AiRunAdmissionDecision> AdmitAsync(
@@ -897,6 +1367,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
                 CancellationToken cancellationToken = default)
             {
                 AdmitCalled = true;
+                AdmitCallCount++;
                 LastRequest = request;
 
                 return Task.FromResult(_decision);

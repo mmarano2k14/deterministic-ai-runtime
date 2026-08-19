@@ -3,6 +3,7 @@ using Multiplexed.Abstractions.AI.Execution.Scheduling;
 using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Runtime.Execution.Engine.Models;
 using Multiplexed.AI.Runtime.Execution.Retention.Models;
+using Multiplexed.AI.Stores.Creation;
 using StackExchange.Redis;
 
 namespace Multiplexed.AI.Stores.Cache.Redis
@@ -17,13 +18,13 @@ namespace Multiplexed.AI.Stores.Cache.Redis
     /// - StateReader for record/state reads.
     /// - StateWriter for record/state writes, restore, and deletion.
     /// - ClaimService for step discovery and claim operations.
-    /// - TransitionService for completion, failure, and finalization.
+    /// - TransitionService for completion, parking, failure, and finalization.
     /// - RecoveryService for timed-out running step recovery.
     ///
     /// DAG execution uses step-level Redis coordination, Lua-backed atomic mutations,
     /// deterministic step indexes, and explicit lease expiration timestamps.
     /// </remarks>
-    public sealed class RedisAiDagExecutionStore : IAiDagExecutionStore
+    public sealed class RedisAiDagExecutionStore : IAiDagExecutionStore, IAiExecutionCreateIfAbsentStore
     {
         private readonly IRedisDagStoreServices _services;
         private readonly IConnectionMultiplexer _multiplexer;
@@ -53,6 +54,21 @@ namespace Multiplexed.AI.Stores.Cache.Redis
             CancellationToken cancellationToken = default)
         {
             await _services.StateWriter.CreateAsync(record, state, cancellationToken);
+        }
+
+        /// <summary>
+        /// Atomically creates one exact distributed DAG execution bundle when it is absent.
+        /// </summary>
+        /// <param name="record">The execution record carrying the exact identifier.</param>
+        /// <param name="state">The initial distributed DAG state.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when this caller created the execution; otherwise <c>false</c>.</returns>
+        public Task<bool> TryCreateIfAbsentAsync(
+            AiExecutionRecord record,
+            AiExecutionState state,
+            CancellationToken cancellationToken = default)
+        {
+            return _services.StateWriter.TryCreateIfAbsentAsync(record, state, cancellationToken);
         }
 
         /// <summary>
@@ -202,6 +218,45 @@ namespace Multiplexed.AI.Stores.Cache.Redis
             CancellationToken cancellationToken = default)
         {
             return await _services.TransitionService.TryCompleteStepAsync(executionId, stepName, claimToken, result, cancellationToken);
+        }
+
+        /// <summary>
+        /// Attempts to atomically park a claimed DAG step while it waits for an external condition.
+        /// </summary>
+        /// <param name="executionId">The unique execution identifier.</param>
+        /// <param name="stepName">The step name to park.</param>
+        /// <param name="claimToken">The claim token that owns the running step.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when the park transition was accepted; otherwise <c>false</c>.</returns>
+        public Task<bool> TryParkStepAsync(
+            string executionId,
+            string stepName,
+            string claimToken,
+            CancellationToken cancellationToken = default)
+        {
+            return _services.TransitionService.TryParkStepAsync(
+                executionId,
+                stepName,
+                claimToken,
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Attempts to atomically reactivate one DAG step that is waiting for an external durable condition.
+        /// </summary>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="stepName">The externally waiting step name.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when the transition to Ready was committed; otherwise <c>false</c>.</returns>
+        public Task<bool> TryResumeExternalWaitingStepAsync(
+            string executionId,
+            string stepName,
+            CancellationToken cancellationToken = default)
+        {
+            return _services.TransitionService.TryResumeExternalWaitingStepAsync(
+                executionId,
+                stepName,
+                cancellationToken);
         }
 
         /// <summary>

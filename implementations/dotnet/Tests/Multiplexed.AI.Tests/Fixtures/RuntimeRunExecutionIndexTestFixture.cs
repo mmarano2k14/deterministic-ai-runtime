@@ -37,6 +37,18 @@ namespace Multiplexed.AI.Tests.Fixtures
             CancellationToken cancellationToken = default);
 
         /// <inheritdoc />
+        public virtual Task MarkWaitingAsync(
+            string runId,
+            string executionId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            throw new NotSupportedException(
+                "This test double does not support transitioning a runtime run to waiting.");
+        }
+
+        /// <inheritdoc />
         public abstract Task MarkCompletedAsync(
             string runId,
             string executionId,

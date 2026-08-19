@@ -94,6 +94,16 @@ namespace Multiplexed.AI.Tests.Fixtures
         }
 
         /// <inheritdoc />
+        public override Task MarkWaitingAsync(
+            string runId,
+            string executionId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+
+        /// <inheritdoc />
         public override Task MarkCompletedAsync(
             string runId,
             string executionId,

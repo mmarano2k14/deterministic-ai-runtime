@@ -149,6 +149,7 @@ This roadmap should not present the platform as idea-stage only.
 |---|---|
 | Deterministic runtime execution | Foundation exists |
 | DAG-based workflow execution | Foundation exists |
+| Durable Child DAG composition | **Experimental** — native durable composition and Depth 1 production proof exist; complete engine lifecycle observation and deeper nested closure pending |
 | Execution state management | Foundation exists |
 | Step lifecycle tracking | Foundation exists |
 | Replay and audit | Foundation exists |

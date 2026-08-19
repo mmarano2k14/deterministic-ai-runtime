@@ -162,17 +162,16 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
             return 1
             """);
 
-        private readonly IConnectionMultiplexer _multiplexer;
         private readonly IDatabase _database;
 
-        private LoadedLuaScript _acquireLoadedScript;
-        private LoadedLuaScript _releaseLoadedScript;
+        private LuaScript _acquireScript;
+        private LuaScript _releaseScript;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RedisAiConcurrencyGate"/> class.
         /// </summary>
         /// <param name="multiplexer">
-        /// The Redis connection multiplexer used to access the Redis database and load Lua scripts.
+        /// The Redis connection multiplexer used to access the Redis database.
         /// </param>
         /// <exception cref="ArgumentNullException">
         /// Thrown when <paramref name="multiplexer"/> is <see langword="null"/>.
@@ -181,11 +180,10 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
         {
             ArgumentNullException.ThrowIfNull(multiplexer);
 
-            _multiplexer = multiplexer;
             _database = multiplexer.GetDatabase();
 
-            _acquireLoadedScript = LoadScript(AcquirePreparedScript);
-            _releaseLoadedScript = LoadScript(ReleasePreparedScript);
+            _acquireScript = AcquirePreparedScript;
+            _releaseScript = ReleasePreparedScript;
         }
 
         /// <summary>
@@ -265,7 +263,7 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
             }
             catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
             {
-                _acquireLoadedScript = LoadScript(AcquirePreparedScript);
+                _acquireScript = AcquirePreparedScript;
 
                 return await TryAcquireAsync(
                         scopesJson,
@@ -339,7 +337,7 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
             }
             catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
             {
-                _releaseLoadedScript = LoadScript(ReleasePreparedScript);
+                _releaseScript = ReleasePreparedScript;
                 await ReleaseAsync(scopesJson, context.LeaseId).ConfigureAwait(false);
             }
         }
@@ -373,7 +371,7 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
             long expiresAtMs,
             AiConcurrencyDefinition definition)
         {
-            var result = await _acquireLoadedScript.EvaluateAsync(
+            var result = await _acquireScript.EvaluateAsync(
                 _database,
                 new
                 {
@@ -411,7 +409,7 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
             string scopesJson,
             string leaseId)
         {
-            await _releaseLoadedScript.EvaluateAsync(
+            await _releaseScript.EvaluateAsync(
                 _database,
                 new
                 {
@@ -654,38 +652,6 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
             return
                 $"Concurrency limit reached for scope '{gateResult.BlockedKey}'. " +
                 $"Current='{gateResult.Current}', Limit='{gateResult.Limit}'.";
-        }
-
-        /// <summary>
-        /// Gets a connected Redis server endpoint used for Lua script loading.
-        /// </summary>
-        /// <returns>
-        /// A connected Redis server.
-        /// </returns>
-        /// <remarks>
-        /// StackExchange.Redis requires scripts to be loaded against a server endpoint before
-        /// they can be evaluated as loaded Lua scripts.
-        /// </remarks>
-        private IServer GetServer()
-        {
-            return _multiplexer.GetEndPoints()
-                .Select(endpoint => _multiplexer.GetServer(endpoint))
-                .First(server => server.IsConnected);
-        }
-
-        /// <summary>
-        /// Loads a prepared Lua script onto a connected Redis server.
-        /// </summary>
-        /// <param name="script">
-        /// The prepared Lua script to load.
-        /// </param>
-        /// <returns>
-        /// The loaded Lua script ready for evaluation.
-        /// </returns>
-        private LoadedLuaScript LoadScript(LuaScript script)
-        {
-            var server = GetServer();
-            return script.Load(server);
         }
 
         /// <summary>

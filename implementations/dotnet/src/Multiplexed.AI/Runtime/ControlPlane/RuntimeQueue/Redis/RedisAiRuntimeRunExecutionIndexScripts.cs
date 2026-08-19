@@ -131,6 +131,48 @@
             """;
 
         /// <summary>
+        /// Atomically marks a runtime run as durably waiting unless recovery already owns it.
+        /// </summary>
+        public const string MarkWaiting = """
+            local itemKey = KEYS[1]
+
+            local executionId = ARGV[1]
+            local nowUtc = ARGV[2]
+
+            if redis.call('EXISTS', itemKey) == 0 then
+                return 'missing'
+            end
+
+            local currentStatus =
+                redis.call('HGET', itemKey, 'status') or ''
+
+            if currentStatus == 'requeued-for-recovery' then
+                return 'ignored-requeued-for-recovery'
+            end
+
+            if currentStatus == 'completed' or
+               currentStatus == 'failed' or
+               currentStatus == 'cancelled' then
+                return 'ignored-terminal'
+            end
+
+            local existingStartedAtUtc =
+                redis.call('HGET', itemKey, 'startedAtUtc') or ''
+
+            redis.call('HSET', itemKey, 'executionId', executionId)
+            redis.call('HSET', itemKey, 'status', 'waiting')
+            redis.call('HSET', itemKey, 'failureReason', '')
+            redis.call(
+                'HSET',
+                itemKey,
+                'startedAtUtc',
+                existingStartedAtUtc ~= '' and existingStartedAtUtc or nowUtc)
+            redis.call('HSET', itemKey, 'completedAtUtc', '')
+
+            return 'waiting'
+            """;
+
+        /// <summary>
         /// Atomically marks a runtime run as completed unless recovery has already
         /// taken ownership of the runtime run.
         /// </summary>
@@ -149,6 +191,12 @@
 
             if currentStatus == 'requeued-for-recovery' then
                 return 'ignored-requeued-for-recovery'
+            end
+
+            if currentStatus == 'completed' or
+               currentStatus == 'failed' or
+               currentStatus == 'cancelled' then
+                return 'ignored-terminal'
             end
 
             local existingStartedAtUtc =

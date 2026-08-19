@@ -19,6 +19,7 @@ using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Failure;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.DI;
 using Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata;
 using Multiplexed.AI.Runtime.Execution.Retention.Policies;
 using Multiplexed.AI.Runtime.Observability.Ledger.DI;
@@ -154,6 +155,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 services.AddAiExecutionSnapshots(options);
             }
 
+            ConfigureChildDagComposition(
+                services,
+                configuration,
+                options);
+
             services.AddAiExecutionReplay();
 
             ConfigureReplayMetadataStore(
@@ -167,6 +173,35 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             ConfigureRuntimePoolFailureJournal(
                 services,
                 configuration);
+        }
+
+        /// <summary>
+        /// Enables deterministic child DAG composition when explicitly requested by host configuration.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <param name="configuration">The application configuration.</param>
+        /// <param name="options">The resolved AI engine options.</param>
+        /// <remarks>
+        /// Child DAG composition requires shared durable MongoDB state. The feature therefore fails fast when it is
+        /// enabled without Mongo-backed execution snapshots instead of silently falling back to process-local state.
+        /// </remarks>
+        private static void ConfigureChildDagComposition(
+            IServiceCollection services,
+            IConfiguration configuration,
+            AiEngineOptions options)
+        {
+            if (!configuration.GetValue<bool>("AiChildDagComposition:Enabled"))
+            {
+                return;
+            }
+
+            if (!options.Snapshots.Enabled || !options.Snapshots.Mongo.Enabled)
+            {
+                throw new InvalidOperationException(
+                    "AiChildDagComposition requires Mongo-backed execution snapshots so parent-child relations and immutable invocation preparation share durable infrastructure.");
+            }
+
+            services.AddAiChildDagComposition();
         }
 
         /// <summary>

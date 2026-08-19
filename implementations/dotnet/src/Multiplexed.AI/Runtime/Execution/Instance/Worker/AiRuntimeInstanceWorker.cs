@@ -17,7 +17,8 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
     /// A runtime instance worker provides a higher-level orchestration loop on top
     /// of the DAG execution engine. It repeatedly advances a target execution by
     /// invoking bounded batch execution cycles until the execution reaches a terminal
-    /// state or cancellation is requested.
+    /// state, reaches an external durable waiting state that can release runtime capacity,
+    /// or cancellation is requested.
     /// </para>
     /// <para>
     /// The worker does not implement distributed correctness itself. Correctness is
@@ -115,14 +116,15 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         }
 
         /// <summary>
-        /// Runs the internal worker loop until the execution reaches a terminal state
+        /// Runs the internal worker loop until the execution reaches a terminal state,
+        /// reaches an external durable waiting state that can release runtime capacity,
         /// or cancellation is requested.
         /// </summary>
         /// <param name="executionId">The execution identifier.</param>
         /// <param name="runtimeInstanceId">The runtime instance identifier.</param>
         /// <param name="workerId">The logical worker identifier.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
-        /// <returns>The terminal execution record.</returns>
+        /// <returns>The terminal or durably suspended execution record.</returns>
         private async Task<AiExecutionRecord> RunExecutionLoopAsync(
             string executionId,
             string runtimeInstanceId,
@@ -206,6 +208,18 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
                         _logger.Engine.LogInformation(
                             $"[AI WORKER] Runtime instance worker reached terminal execution. ExecutionId='{executionId}', RuntimeInstanceId='{runtimeInstanceId}', WorkerId='{workerId}', Status='{record.Status}', Cycles='{cycle}'.");
+
+                        return record;
+                    }
+
+                    if (record.Status == AiExecutionStatus.Waiting &&
+                        await _engine.ShouldReleaseForExternalWaitAsync(
+                                executionId,
+                                cancellationToken)
+                            .ConfigureAwait(false))
+                    {
+                        _logger.Engine.LogInformation(
+                            $"[AI WORKER] Runtime instance worker released an externally waiting execution. ExecutionId='{executionId}', RuntimeInstanceId='{runtimeInstanceId}', WorkerId='{workerId}', Cycles='{cycle}'.");
 
                         return record;
                     }
