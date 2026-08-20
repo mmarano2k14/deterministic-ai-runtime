@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance
 {
@@ -165,10 +166,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance
         {
             return new Dictionary<string, string>
             {
-                ["execution.id"] = lease.ExecutionId,
+                [AiExecutionMetadataKeys.ExecutionId] = lease.ExecutionId,
                 ["assistance.lease.id"] = lease.LeaseId,
-                ["primary.runtime.instance.id"] = lease.PrimaryRuntimeInstanceId,
-                ["helper.runtime.instance.id"] = lease.HelperRuntimeInstanceId,
+                [AiExecutionAssistanceMetadataKeys.PrimaryRuntimeInstanceId] = lease.PrimaryRuntimeInstanceId,
+                [AiExecutionAssistanceMetadataKeys.HelperRuntimeInstanceId] = lease.HelperRuntimeInstanceId,
                 ["assistance.max.workers"] = lease.MaxWorkers.ToString(),
                 ["assistance.started.worker.count"] = startedWorkerCount.ToString()
             };

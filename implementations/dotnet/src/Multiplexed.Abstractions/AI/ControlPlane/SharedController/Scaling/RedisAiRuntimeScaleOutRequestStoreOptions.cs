@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Redis;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 {
@@ -22,7 +23,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// <summary>
         /// Gets or sets the Redis key prefix used by the scale-out request store.
         /// </summary>
-        public string KeyPrefix { get; set; } = "ai";
+        public string KeyPrefix { get; set; } = AiRedisControlPlaneDefaults.DefaultKeyPrefix;
 
         /// <summary>
         /// Gets or sets the Redis database index to use.

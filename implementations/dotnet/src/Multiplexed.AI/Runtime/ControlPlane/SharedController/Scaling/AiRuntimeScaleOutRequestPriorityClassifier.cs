@@ -1,3 +1,5 @@
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
+
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 {
     /// <summary>
@@ -59,9 +61,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             return key.StartsWith("failed.", StringComparison.OrdinalIgnoreCase) ||
                    key.StartsWith("recovery.failed", StringComparison.OrdinalIgnoreCase) ||
-                   key.Equals("recovery.mode", StringComparison.OrdinalIgnoreCase) ||
-                   key.Equals("recovery.reason", StringComparison.OrdinalIgnoreCase) ||
-                   key.Equals("recovery.forensicsId", StringComparison.OrdinalIgnoreCase) ||
+                   key.Equals(AiRuntimeRecoveryMetadataKeys.Mode, StringComparison.OrdinalIgnoreCase) ||
+                   key.Equals(AiRuntimeRecoveryMetadataKeys.Reason, StringComparison.OrdinalIgnoreCase) ||
+                   key.Equals(AiRuntimeRecoveryMetadataKeys.ForensicsId, StringComparison.OrdinalIgnoreCase) ||
                    key.Equals("recovery.runtimeFailureIncidentId", StringComparison.OrdinalIgnoreCase);
         }
 

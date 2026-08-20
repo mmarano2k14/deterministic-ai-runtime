@@ -6,6 +6,7 @@ using System.Text;
 using k8s.Models;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Client
@@ -277,16 +278,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         podSpec.PodName,
                     [AiKubernetesRuntimeHostMetadataKeys.ContainerName] =
                         podSpec.ContainerName,
-                    ["kubernetes.namespace"] = podSpec.Namespace,
-                    ["kubernetes.pod.name"] = podSpec.PodName,
-                    ["kubernetes.container.name"] =
-                        podSpec.ContainerName,
-                    ["runtime.pool.id"] = podSpec.PoolId,
-                    ["runtime.pool.podRequestId"] =
+                    [AiRuntimePoolMetadataKeys.PoolId] = podSpec.PoolId,
+                    [AiRuntimePoolMetadataKeys.PodRequestId] =
                         podSpec.PodRequestId,
-                    ["runtime.pool.plannedRuntimeCount"] =
+                    [AiRuntimePoolMetadataKeys.PlannedRuntimeCount] =
                         podSpec.Bootstrap.RuntimeInstances.Count.ToString(),
-                    ["runtime.pool.plannedRuntimeInstanceIds"] =
+                    [AiRuntimePoolMetadataKeys.PlannedRuntimeInstanceIds] =
                         string.Join(
                             ",",
                             podSpec.Bootstrap.RuntimeInstances
@@ -297,7 +294,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             var podUid = pod?.Metadata?.Uid;
             if (!string.IsNullOrWhiteSpace(podUid))
             {
-                metadata["kubernetes.pod.uid"] = podUid;
+                metadata[AiKubernetesRuntimeHostMetadataKeys.PodUid] = podUid;
                 metadata[AiRuntimeHostMetadataKeys.HostId] = podUid;
             }
 
@@ -319,12 +316,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
                 metadata[AiKubernetesRuntimeHostMetadataKeys.ServiceName] =
                     serviceName;
-                metadata["kubernetes.service.name"] = serviceName;
-                metadata["kubernetes.service.dns"] = serviceDnsName;
-                metadata["kubernetes.service.endpoint"] =
+                metadata[AiKubernetesRuntimeHostMetadataKeys.ServiceDns] = serviceDnsName;
+                metadata[AiKubernetesRuntimeHostMetadataKeys.ServiceEndpoint] =
                     serviceEndpoint;
-                metadata["transport.endpoint"] = serviceEndpoint;
-                metadata["transportEndpoint"] = serviceEndpoint;
+                metadata[AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = serviceEndpoint;
                 metadata[
                     AiRuntimeInstanceCommandTransportMetadataKeys
                         .TransportEndpoint] = serviceEndpoint;
@@ -350,15 +345,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                             ":",
                             nodePort.Value);
 
-                    metadata["kubernetes.nodePort"] =
+                    metadata[AiKubernetesRuntimeHostMetadataKeys.NodePort] =
                         nodePort.Value.ToString();
-                    metadata["kubernetes.nodePort.host"] =
+                    metadata[AiKubernetesRuntimeHostMetadataKeys.NodePortHost] =
                         this.options.NodePortHost;
-                    metadata["kubernetes.nodePort.endpoint"] =
+                    metadata[AiKubernetesRuntimeHostMetadataKeys.NodePortEndpoint] =
                         nodePortEndpoint;
-                    metadata["transport.endpoint"] =
-                        nodePortEndpoint;
-                    metadata["transportEndpoint"] =
+                    metadata[AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] =
                         nodePortEndpoint;
                     metadata[
                         AiRuntimeInstanceCommandTransportMetadataKeys

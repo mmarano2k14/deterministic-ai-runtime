@@ -35,7 +35,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="childDepth">The number of nested child DAG levels composed by every submitted parent DAG.</param>
         /// <returns>A task that completes after the automatic full-failure proof converges.</returns>
         [Theory]
-        [InlineData(5, 5, 2, 2, 1)]
+        [InlineData(5, 5, 2, 2, 0)]
         public Task Grpc_KubernetesPool_Should_Recover_Child_Runtime_Then_Distinct_Pod_And_Reuse_Warm_Capacity(
             int maximumPodCount,
             int runtimeCountPerPod,

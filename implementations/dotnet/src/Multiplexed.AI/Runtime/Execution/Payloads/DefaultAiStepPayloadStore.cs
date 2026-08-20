@@ -236,7 +236,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads
                     "Step payload was rehydrated.",
                     new Dictionary<string, string>
                     {
-                        ["step.name"] = stepName,
+                        [AiStepMetadataKeys.StepName] = stepName,
                         ["payload.source"] = source,
                         ["payload.inline"] = payload.IsInline.ToString(),
                         ["payload.artifact.id"] = payload.ArtifactId ?? string.Empty,
@@ -286,7 +286,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads
                     reason,
                     new Dictionary<string, string>
                     {
-                        ["step.name"] = stepName,
+                        [AiStepMetadataKeys.StepName] = stepName,
                         ["payload.inline"] = payload.IsInline.ToString(),
                         ["payload.artifact.id"] = payload.ArtifactId ?? string.Empty,
                         ["payload.content.type"] = payload.ContentType ?? string.Empty,

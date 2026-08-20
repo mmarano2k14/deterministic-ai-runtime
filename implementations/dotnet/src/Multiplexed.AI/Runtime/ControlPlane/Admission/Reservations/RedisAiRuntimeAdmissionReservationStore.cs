@@ -3,6 +3,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using StackExchange.Redis;
 using System.Globalization;
+using Multiplexed.AI.Runtime.ControlPlane.Redis;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
 {
@@ -36,8 +37,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
     public sealed class RedisAiRuntimeAdmissionReservationStore :
         IAiRuntimeAtomicAdmissionReservationStore
     {
-        private const string ControlPlaneKeySegment =
-            "control-plane";
 
         private const string ReservationKeySegment =
             "runtime-admission-reservations";
@@ -882,7 +881,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations
             return string.Concat(
                 NormalizeKeyPrefix(options.KeyPrefix),
                 ":",
-                ControlPlaneKeySegment,
+                AiRedisControlPlaneKeySegments.ControlPlane,
                 ":",
                 NormalizeKeySegment(controlPlaneId),
                 ":",

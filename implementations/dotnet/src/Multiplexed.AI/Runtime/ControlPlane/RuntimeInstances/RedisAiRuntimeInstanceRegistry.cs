@@ -7,6 +7,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using StackExchange.Redis;
+using Multiplexed.AI.Runtime.ControlPlane.Redis;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 {
@@ -32,7 +33,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
     /// </remarks>
     public sealed class RedisAiRuntimeInstanceRegistry : IAiRuntimeInstanceRegistry, IAiRuntimePoolMembershipReader
     {
-        private const string KeyPrefix = "ai:control-plane";
         private const string InstanceSetSegment = "runtime-instances";
         private const string InstanceKeySegment = "runtime-instance";
 
@@ -961,7 +961,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
         private static string GetInstanceSetKey(
             string controlPlaneId)
         {
-            return $"{KeyPrefix}:{NormalizeKeySegment(controlPlaneId)}:{InstanceSetSegment}";
+            return $"{AiRedisControlPlaneKeySegments.LegacyControlPlanePrefix}:{NormalizeKeySegment(controlPlaneId)}:{InstanceSetSegment}";
         }
 
         /// <summary>
@@ -974,7 +974,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             string controlPlaneId,
             string runtimeInstanceId)
         {
-            return $"{KeyPrefix}:{NormalizeKeySegment(controlPlaneId)}:{InstanceKeySegment}:{NormalizeKeySegment(runtimeInstanceId)}";
+            return $"{AiRedisControlPlaneKeySegments.LegacyControlPlanePrefix}:{NormalizeKeySegment(controlPlaneId)}:{InstanceKeySegment}:{NormalizeKeySegment(runtimeInstanceId)}";
         }
 
         /// <summary>

@@ -150,9 +150,9 @@ namespace Multiplexed.AI.Runtime.Pipeline.Steps.Prompt
         {
             return new Dictionary<string, object?>(StringComparer.Ordinal)
             {
-                ["executionId"] = helper.ExecutionId,
-                ["stepName"] = helper.StepName,
-                ["stepKey"] = helper.StepKey
+                [AiExecutionMetadataKeys.CamelCaseExecutionId] = helper.ExecutionId,
+                [AiStepMetadataKeys.CamelCaseStepName] = helper.StepName,
+                [AiStepMetadataKeys.CamelCaseStepKey] = helper.StepKey
             };
         }
     }

@@ -5,6 +5,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Claims;
@@ -684,7 +686,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             AiRuntimeHostStartResult startResult)
         {
             if (!startResult.Metadata.TryGetValue(
-                    "runtime.pool.id",
+                    AiRuntimePoolMetadataKeys.PoolId,
                     out var metadataPoolId) ||
                 !StringComparer.Ordinal.Equals(
                     metadataPoolId,
@@ -698,7 +700,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             }
 
             if (startResult.Metadata.TryGetValue(
-                    "kubernetes.pod.uid",
+                    AiKubernetesRuntimeHostMetadataKeys.PodUid,
                     out var metadataPodUid) &&
                 !StringComparer.Ordinal.Equals(
                     metadataPodUid,

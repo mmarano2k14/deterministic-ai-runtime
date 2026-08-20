@@ -1,3 +1,5 @@
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Gateway
 {
     /// <summary>
@@ -84,7 +86,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// <summary>
         /// Gets the default runtime routing header name.
         /// </summary>
-        public const string DefaultRoutingHeaderName = "x-ai-runtime-instance-id";
+        public const string DefaultRoutingHeaderName =
+            AiRuntimeInstanceCommandTransportDefaults.DefaultGatewayRoutingHeaderName;
 
         /// <summary>
         /// Gets the label used by Gateway API implementations to associate infrastructure
@@ -115,14 +118,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         public const string ComponentLabel = "multiplexed.ai/component";
 
         /// <summary>
+        /// Gets the shared Kubernetes metadata name containing a control-plane identity.
+        /// </summary>
+        public const string ControlPlaneIdMetadataName = "multiplexed.ai/control-plane-id";
+
+        /// <summary>
         /// Gets the label containing a Kubernetes-safe control-plane identity.
         /// </summary>
-        public const string ControlPlaneIdLabel = "multiplexed.ai/control-plane-id";
+        public const string ControlPlaneIdLabel = ControlPlaneIdMetadataName;
+
+        /// <summary>
+        /// Gets the shared Kubernetes metadata name containing a runtime instance identity.
+        /// </summary>
+        public const string RuntimeInstanceIdMetadataName = "multiplexed.ai/runtime-instance-id";
 
         /// <summary>
         /// Gets the label containing a Kubernetes-safe runtime instance identity.
         /// </summary>
-        public const string RuntimeInstanceIdLabel = "multiplexed.ai/runtime-instance-id";
+        public const string RuntimeInstanceIdLabel = RuntimeInstanceIdMetadataName;
 
         /// <summary>
         /// Gets the label identifying the runtime transport.
@@ -132,12 +145,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// <summary>
         /// Gets the annotation preserving the full control-plane identity.
         /// </summary>
-        public const string ControlPlaneIdAnnotation = "multiplexed.ai/control-plane-id";
+        public const string ControlPlaneIdAnnotation = ControlPlaneIdMetadataName;
 
         /// <summary>
         /// Gets the annotation preserving the full runtime instance identity.
         /// </summary>
-        public const string RuntimeInstanceIdAnnotation = "multiplexed.ai/runtime-instance-id";
+        public const string RuntimeInstanceIdAnnotation = RuntimeInstanceIdMetadataName;
 
         /// <summary>
         /// Gets the Gateway API Accepted condition type.

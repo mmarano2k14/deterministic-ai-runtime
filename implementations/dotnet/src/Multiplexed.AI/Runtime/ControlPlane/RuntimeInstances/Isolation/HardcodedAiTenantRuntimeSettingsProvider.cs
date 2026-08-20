@@ -9,6 +9,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
     /// </summary>
     public sealed class HardcodedAiTenantRuntimeSettingsProvider : IAiTenantRuntimeSettingsProvider
     {
+        private const string HardcodedSettingsSource = "hardcoded";
+
         private const string TenantA = "tenant-a";
         private const string TenantB = "tenant-b";
         private const string TenantTest = "tenant-test";
@@ -121,8 +123,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
                 RuntimeInstanceIdPrefix = $"{tenantId}-runtime",
                 Metadata = new Dictionary<string, string>
                 {
-                    ["runtime.settings.source"] = "hardcoded",
-                    ["runtime.tenant"] = tenantId
+                    [AiRuntimeInstanceIsolationMetadataKeys.SettingsSource] = HardcodedSettingsSource,
+                    [AiRuntimeInstanceIsolationMetadataKeys.RuntimeTenant] = tenantId
                 }
             };
         }
@@ -151,8 +153,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
                 RuntimeInstanceIdPrefix = $"{tenantId}-runtime",
                 Metadata = new Dictionary<string, string>
                 {
-                    ["runtime.settings.source"] = "hardcoded",
-                    ["runtime.tenant"] = tenantId
+                    [AiRuntimeInstanceIsolationMetadataKeys.SettingsSource] = HardcodedSettingsSource,
+                    [AiRuntimeInstanceIsolationMetadataKeys.RuntimeTenant] = tenantId
                 }
             };
         }
@@ -186,8 +188,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
                 RuntimeInstanceIdPrefix = "runtime-instance",
                 Metadata = new Dictionary<string, string>
                 {
-                    ["runtime.settings.source"] = "hardcoded",
-                    ["runtime.tenant"] = resolvedTenantId
+                    [AiRuntimeInstanceIsolationMetadataKeys.SettingsSource] = HardcodedSettingsSource,
+                    [AiRuntimeInstanceIsolationMetadataKeys.RuntimeTenant] = resolvedTenantId
                 }
             };
         }

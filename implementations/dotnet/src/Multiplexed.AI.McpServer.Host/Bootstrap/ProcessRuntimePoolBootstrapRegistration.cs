@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.InPod;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 
 namespace Multiplexed.AI.McpServer.Host.Bootstrap
 {
@@ -73,9 +74,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 .AddHostMetadata(
                     runtimeOptions.EnvironmentVariables,
                     hostProvider: "process",
-                    hostCreationMode: "ProcessPool",
-                    hostType: "runtime-instance-process-pool",
-                    deployment: "process-pool",
+                    hostCreationMode: AiRuntimeHostCreationModeNames.ProcessPool,
+                    hostType: AiRuntimeHostTypeNames.ProcessPool,
+                    deployment: AiRuntimeHostDeploymentNames.ProcessPool,
                     transportEndpointScope: "host-local");
 
             RuntimePoolBootstrapHostedServiceRegistration

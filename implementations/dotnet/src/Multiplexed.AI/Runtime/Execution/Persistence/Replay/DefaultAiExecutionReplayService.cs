@@ -27,6 +27,8 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
     /// </remarks>
     public sealed class DefaultAiExecutionReplayService<TContext> : IAiExecutionReplayService
     {
+        private const string ReplayModeMetadataKey = "replay.mode";
+
         private const string ReplayPipelineKey = "execution-replay";
         private const string ReplayStepName = "_replay";
         private const string ReplayWorkerId = "replay-service";
@@ -102,7 +104,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
                                     "Replay request received.",
                                     new Dictionary<string, string>
                                     {
-                                        ["replay.mode"] = request.Mode.ToString()
+                                        [ReplayModeMetadataKey] = request.Mode.ToString()
                                     },
                                     cancellationToken)
                                 .ConfigureAwait(false);
@@ -125,7 +127,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
                                         "Replay failed because snapshot was not found.",
                                         new Dictionary<string, string>
                                         {
-                                            ["replay.mode"] = request.Mode.ToString(),
+                                            [ReplayModeMetadataKey] = request.Mode.ToString(),
                                             ["snapshot.found"] = false.ToString()
                                         },
                                         cancellationToken)
@@ -146,7 +148,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
                                     "Replay snapshot loaded.",
                                     new Dictionary<string, string>
                                     {
-                                        ["replay.mode"] = request.Mode.ToString(),
+                                        [ReplayModeMetadataKey] = request.Mode.ToString(),
                                         ["snapshot.found"] = true.ToString()
                                     },
                                     cancellationToken)
@@ -169,7 +171,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
                                         validationError,
                                         new Dictionary<string, string>
                                         {
-                                            ["replay.mode"] = request.Mode.ToString(),
+                                            [ReplayModeMetadataKey] = request.Mode.ToString(),
                                             ["snapshot.found"] = true.ToString(),
                                             ["snapshot.valid"] = false.ToString()
                                         },
@@ -215,7 +217,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
                                         : replayReport.FailureReason,
                                     new Dictionary<string, string>
                                     {
-                                        ["replay.mode"] = request.Mode.ToString(),
+                                        [ReplayModeMetadataKey] = request.Mode.ToString(),
                                         ["replay.valid"] = replayReport.ReplayValid.ToString(),
                                         ["fingerprint.matches"] = replayReport.FingerprintMatches.ToString(),
                                         ["issues.count"] = replayReport.Issues.Count.ToString()
@@ -242,7 +244,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
                                         "Replay completed without restore because a compatible runtime execution already exists.",
                                         new Dictionary<string, string>
                                         {
-                                            ["replay.mode"] = request.Mode.ToString(),
+                                            [ReplayModeMetadataKey] = request.Mode.ToString(),
                                             ["replay.valid"] = replayReport.ReplayValid.ToString(),
                                             ["restore.applied"] = false.ToString(),
                                             ["existing.execution"] = true.ToString()
@@ -268,7 +270,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
                                         "Replay audit completed without restoring runtime state.",
                                         new Dictionary<string, string>
                                         {
-                                            ["replay.mode"] = request.Mode.ToString(),
+                                            [ReplayModeMetadataKey] = request.Mode.ToString(),
                                             ["replay.valid"] = replayReport.ReplayValid.ToString(),
                                             ["restore.applied"] = false.ToString()
                                         },
@@ -314,7 +316,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
                                     "Replay completed and runtime state was restored.",
                                     new Dictionary<string, string>
                                     {
-                                        ["replay.mode"] = request.Mode.ToString(),
+                                        [ReplayModeMetadataKey] = request.Mode.ToString(),
                                         ["replay.valid"] = replayReport.ReplayValid.ToString(),
                                         ["restore.applied"] = true.ToString()
                                     },
@@ -340,8 +342,8 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
                         exception.Message,
                         new Dictionary<string, string>
                         {
-                            ["replay.mode"] = request.Mode.ToString(),
-                            ["exception.type"] = exception.GetType().FullName ?? exception.GetType().Name
+                            [ReplayModeMetadataKey] = request.Mode.ToString(),
+                            [AiExceptionMetadataKeys.ExceptionType] = exception.GetType().FullName ?? exception.GetType().Name
                         },
                         CancellationToken.None)
                     .ConfigureAwait(false);

@@ -1221,7 +1221,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
             {
                 ["status"] = state.Status.ToString(),
                 ["pending.action"] = state.PendingAction.ToString(),
-                ["requested.by"] = state.RequestedBy ?? string.Empty,
+                [AiExecutionControlMetadataKeys.RequestedBy] = state.RequestedBy ?? string.Empty,
                 ["owner.kind"] = IsRuntimeRecoveryOwned(state)
                     ? "runtime-recovery"
                     : "requester",
@@ -1243,7 +1243,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
             {
                 ["status"] = state.Status.ToString(),
                 ["pending.action"] = state.PendingAction.ToString(),
-                ["requested.by"] = state.RequestedBy ?? string.Empty,
+                [AiExecutionControlMetadataKeys.RequestedBy] = state.RequestedBy ?? string.Empty,
                 ["waiting.key"] = state.WaitingKey ?? string.Empty,
                 ["waiting.step.name"] = state.WaitingStepName ?? string.Empty,
                 ["input.keys.count"] = state.Input.Count.ToString(),

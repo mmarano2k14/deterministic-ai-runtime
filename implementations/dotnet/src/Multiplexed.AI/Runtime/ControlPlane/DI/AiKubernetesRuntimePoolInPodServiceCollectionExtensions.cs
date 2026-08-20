@@ -8,6 +8,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kube
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.InPod;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
 {
@@ -114,9 +115,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                 .AddHostMetadata(
                     childEnvironment,
                     hostProvider: "kubernetes",
-                    hostCreationMode: "KubernetesPool",
-                    hostType: "runtime-instance-kubernetes-pool",
-                    deployment: "kubernetes-pool",
+                    hostCreationMode: AiRuntimeHostCreationModeNames.KubernetesPool,
+                    hostType: AiRuntimeHostTypeNames.KubernetesPool,
+                    deployment: AiRuntimeHostDeploymentNames.KubernetesPool,
                     transportEndpointScope: "pod-internal");
 
             var runtimeOptions =

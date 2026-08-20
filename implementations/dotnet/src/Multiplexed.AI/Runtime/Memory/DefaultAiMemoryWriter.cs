@@ -89,8 +89,8 @@ namespace Multiplexed.AI.Runtime.Memory
                 },
                 Metadata = new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
-                    ["stepName"] = stepName,
-                    ["executionId"] = record.ExecutionId,
+                    [AiStepMetadataKeys.CamelCaseStepName] = stepName,
+                    [AiExecutionMetadataKeys.CamelCaseExecutionId] = record.ExecutionId,
                     ["hasPayload"] = result.Payload != null,
                     ["hasDataPayloads"] = result.DataPayloads != null && result.DataPayloads.Count > 0
                 }
@@ -141,7 +141,7 @@ namespace Multiplexed.AI.Runtime.Memory
         {
             var content = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
-                ["stepName"] = stepName,
+                [AiStepMetadataKeys.CamelCaseStepName] = stepName,
                 ["output"] = result.Output,
                 ["value"] = result.Value,
                 ["data"] = result.Data,

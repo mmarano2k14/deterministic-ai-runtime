@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -7,6 +8,9 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.Observability
 {
@@ -89,33 +93,33 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                 ["operation"] = controlPlaneEvent.Operation,
                 ["outcome"] = controlPlaneEvent.Outcome?.ToString(),
                 ["duration.ms"] = controlPlaneEvent.DurationMs?.ToString(),
-                ["durationMs"] = controlPlaneEvent.DurationMs?.ToString(),
+                [AiObservabilityMetadataKeys.DurationMs] = controlPlaneEvent.DurationMs?.ToString(),
                 ["failure.reason"] = controlPlaneEvent.FailureReason,
-                ["failureReason"] = controlPlaneEvent.FailureReason,
+                [AiObservabilityMetadataKeys.FailureReason] = controlPlaneEvent.FailureReason,
 
-                ["correlation.id"] = controlPlaneEvent.Correlation.CorrelationId,
-                ["correlationId"] = controlPlaneEvent.Correlation.CorrelationId,
+                [AiObservabilityMetadataKeys.CorrelationId] = controlPlaneEvent.Correlation.CorrelationId,
+                [AiObservabilityMetadataKeys.CamelCaseCorrelationId] = controlPlaneEvent.Correlation.CorrelationId,
 
-                ["run.id"] = controlPlaneEvent.Correlation.RunId,
-                ["runId"] = controlPlaneEvent.Correlation.RunId,
+                [AiRunMetadataKeys.RunId] = controlPlaneEvent.Correlation.RunId,
+                [AiRunMetadataKeys.CamelCaseRunId] = controlPlaneEvent.Correlation.RunId,
 
-                ["execution.id"] = controlPlaneEvent.Correlation.ExecutionId,
-                ["executionId"] = controlPlaneEvent.Correlation.ExecutionId,
+                [AiExecutionMetadataKeys.ExecutionId] = controlPlaneEvent.Correlation.ExecutionId,
+                [AiExecutionMetadataKeys.CamelCaseExecutionId] = controlPlaneEvent.Correlation.ExecutionId,
 
-                ["pipeline.name"] = controlPlaneEvent.Correlation.PipelineName,
-                ["pipelineName"] = controlPlaneEvent.Correlation.PipelineName,
+                [AiPipelineMetadataKeys.Name] = controlPlaneEvent.Correlation.PipelineName,
+                [AiPipelineMetadataKeys.CamelCasePipelineName] = controlPlaneEvent.Correlation.PipelineName,
 
-                ["pipeline.version"] = controlPlaneEvent.Correlation.PipelineVersion,
-                ["pipelineVersion"] = controlPlaneEvent.Correlation.PipelineVersion,
+                [AiPipelineMetadataKeys.Version] = controlPlaneEvent.Correlation.PipelineVersion,
+                [AiPipelineMetadataKeys.CamelCasePipelineVersion] = controlPlaneEvent.Correlation.PipelineVersion,
 
-                ["pipeline.key"] = controlPlaneEvent.Correlation.PipelineKey,
-                ["pipelineKey"] = controlPlaneEvent.Correlation.PipelineKey,
+                [AiPipelineMetadataKeys.Key] = controlPlaneEvent.Correlation.PipelineKey,
+                [AiPipelineMetadataKeys.CamelCasePipelineKey] = controlPlaneEvent.Correlation.PipelineKey,
 
-                ["runtime.instance.id"] = controlPlaneEvent.Correlation.RuntimeInstanceId,
-                ["runtimeInstanceId"] = controlPlaneEvent.Correlation.RuntimeInstanceId,
+                [AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] = controlPlaneEvent.Correlation.RuntimeInstanceId,
+                [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = controlPlaneEvent.Correlation.RuntimeInstanceId,
 
-                ["worker.id"] = controlPlaneEvent.Correlation.WorkerId,
-                ["workerId"] = controlPlaneEvent.Correlation.WorkerId
+                [AiWorkerMetadataKeys.WorkerId] = controlPlaneEvent.Correlation.WorkerId,
+                [AiWorkerMetadataKeys.CamelCaseWorkerId] = controlPlaneEvent.Correlation.WorkerId
             };
 
             foreach (var property in controlPlaneEvent.Properties)
@@ -124,16 +128,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                 metadata["property." + property.Key] = property.Value?.ToString();
             }
 
-            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "tenantId", "tenant.id");
-            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "tenant.id", "tenant.id");
-            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "controlPlaneId", "control.plane.id");
-            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "control.plane.id", "control.plane.id");
-            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "runtimeInstanceId", "runtime.instance.id");
-            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "runtime.instance.id", "runtime.instance.id");
-            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "workerId", "worker.id");
-            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "worker.id", "worker.id");
-            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "pipelineKey", "pipeline.key");
-            TryAddMetadataFromProperty(metadata, controlPlaneEvent, "pipeline.key", "pipeline.key");
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId, AiRuntimeInstanceIsolationMetadataKeys.TenantId);
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, AiRuntimeInstanceIsolationMetadataKeys.TenantId, AiRuntimeInstanceIsolationMetadataKeys.TenantId);
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, AiControlPlaneMetadataKeys.ControlPlaneId, AiControlPlaneMetadataKeys.LegacyDottedControlPlaneId);
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, AiControlPlaneMetadataKeys.LegacyDottedControlPlaneId, AiControlPlaneMetadataKeys.LegacyDottedControlPlaneId);
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId, AiRuntimeInstanceMetadataKeys.RuntimeInstanceId);
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, AiRuntimeInstanceMetadataKeys.RuntimeInstanceId, AiRuntimeInstanceMetadataKeys.RuntimeInstanceId);
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, AiWorkerMetadataKeys.CamelCaseWorkerId, AiWorkerMetadataKeys.WorkerId);
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, AiWorkerMetadataKeys.WorkerId, AiWorkerMetadataKeys.WorkerId);
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, AiPipelineMetadataKeys.CamelCasePipelineKey, AiPipelineMetadataKeys.Key);
+            TryAddMetadataFromProperty(metadata, controlPlaneEvent, AiPipelineMetadataKeys.Key, AiPipelineMetadataKeys.Key);
 
             return metadata;
         }

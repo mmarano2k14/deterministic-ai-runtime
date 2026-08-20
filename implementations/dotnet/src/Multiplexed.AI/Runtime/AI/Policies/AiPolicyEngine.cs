@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Multiplexed.Abstractions.AI.Policies;
 
 namespace Multiplexed.AI.Runtime.AI.Policies
 {
@@ -165,7 +166,7 @@ namespace Multiplexed.AI.Runtime.AI.Policies
                     scope?.SetTag("policy", policyName);
                     scope?.SetTag("kind", Kind.ToString());
                     scope?.SetTag("success", result.IsSuccess);
-                    scope?.SetTag("durationMs", duration.TotalMilliseconds);
+                    scope?.SetTag(AiObservabilityMetadataKeys.DurationMs, duration.TotalMilliseconds);
                     scope?.SetTag("result.kind", result.Kind.ToString());
                     scope?.SetTag("result.message", result.Message);
 
@@ -220,7 +221,7 @@ namespace Multiplexed.AI.Runtime.AI.Policies
                             ex.Message,
                             new Dictionary<string, string>
                             {
-                                ["exception.type"] = ex.GetType().Name
+                                [AiExceptionMetadataKeys.ExceptionType] = ex.GetType().Name
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
@@ -254,11 +255,11 @@ namespace Multiplexed.AI.Runtime.AI.Policies
 
             var metadata = new Dictionary<string, string>
             {
-                ["policy.name"] = policyName,
+                [AiPolicyMetadataKeys.Name] = policyName,
                 ["policy.kind"] = Kind.ToString(),
-                ["pipeline.key"] = pipelineKey,
-                ["step.name"] = stepName,
-                ["worker.id"] = workerId
+                [AiPipelineMetadataKeys.Key] = pipelineKey,
+                [AiStepMetadataKeys.StepName] = stepName,
+                [AiWorkerMetadataKeys.WorkerId] = workerId
             };
 
             if (additionalMetadata is not null)

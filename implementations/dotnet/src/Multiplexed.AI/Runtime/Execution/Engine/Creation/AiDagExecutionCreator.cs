@@ -13,6 +13,7 @@ using Multiplexed.AI.Runtime.Execution.Engine.Helpers;
 using Multiplexed.AI.Runtime.Execution.Payloads.Serialization;
 using Multiplexed.AI.Runtime.Execution.Payloads.Immutable;
 using Multiplexed.AI.Stores.Creation;
+using Multiplexed.Abstractions.AI.Execution.Context;
 
 namespace Multiplexed.AI.Runtime.Execution.Engine.Creation
 {
@@ -391,11 +392,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Creation
                     "DAG execution created and persisted.",
                     new Dictionary<string, string>
                     {
-                        ["pipeline.name"] = record.PipelineName ?? string.Empty,
-                        ["pipeline.version"] = preparedPipeline.Version ?? string.Empty,
+                        [AiPipelineMetadataKeys.Name] = record.PipelineName ?? string.Empty,
+                        [AiPipelineMetadataKeys.Version] = preparedPipeline.Version ?? string.Empty,
                         ["execution.mode"] = record.ExecutionMode.ToString(),
-                        ["step.count"] = preparedPipeline.Steps.Count.ToString(),
-                        ["context.key"] = record.ContextKey ?? string.Empty
+                        [AiStepMetadataKeys.StepCount] = preparedPipeline.Steps.Count.ToString(),
+                        [AiExecutionContextMetadataKeys.ContextKey] = record.ContextKey ?? string.Empty
                     },
                     cancellationToken)
                 .ConfigureAwait(false);

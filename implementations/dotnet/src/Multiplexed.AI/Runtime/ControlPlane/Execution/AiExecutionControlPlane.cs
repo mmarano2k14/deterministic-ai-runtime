@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.Execution.Control;
 using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.Abstractions.AI.ControlPlane;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.Execution
 {
@@ -287,7 +288,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Execution
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request.Source,
-                        ["requestedBy"] = request.RequestedBy,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy,
                         ["reason"] = request.Reason,
                         ["waitingKey"] = request.WaitingKey,
                         ["waitingStepName"] = request.WaitingStepName,
@@ -318,7 +319,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Execution
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request.Source,
-                        ["requestedBy"] = request.RequestedBy
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy
                     }
                 },
                 cancellationToken).ConfigureAwait(false);
@@ -346,7 +347,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Execution
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request?.Source,
-                        ["requestedBy"] = request?.RequestedBy,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request?.RequestedBy,
                         ["exceptionType"] = exception.GetType().Name
                     }
                 },

@@ -7,6 +7,12 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.ControlPlane;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 {
@@ -31,11 +37,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
     {
         private const string RuntimeScaleOutRequestWatchOperation = "runtime-scale-out-request-watch";
 
-        private const string ScaleOutIntentMetadataKey =
-            "scaleout.intent";
-
-        private const string SharedQueueRedispatchReplacementIntent =
-            "shared-queue-redispatch-replacement";
         private readonly IAiRuntimeScaleOutRequestStore store;
         private readonly IAiRuntimeScaleOutProviderSelector providerSelector;
         private readonly IAiScaleOutFulfilledRunRequeueService fulfilledRunRequeueService;
@@ -387,8 +388,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                             ["storeMarkedRejected"] = false,
                             ["retryable"] = true,
                             ["requestStatus"] = AiRuntimeScaleOutRequestStatus.Observed.ToString(),
-                            ["exception.type"] = exception.GetType().FullName,
-                            ["exception.message"] = exception.Message,
+                            [AiExceptionMetadataKeys.ExceptionType] = exception.GetType().FullName,
+                            [AiExceptionMetadataKeys.ExceptionMessage] = exception.Message,
                             ["requeueSucceeded"] = false
                         },
                         cancellationToken)
@@ -419,8 +420,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                             ["watcherId"] = this.options.WatcherId,
                             ["rejectOnProviderFailure"] = this.options.RejectOnProviderFailure,
                             ["storeMarkedRejected"] = this.options.RejectOnProviderFailure,
-                            ["exception.type"] = exception.GetType().FullName,
-                            ["exception.message"] = exception.Message,
+                            [AiExceptionMetadataKeys.ExceptionType] = exception.GetType().FullName,
+                            [AiExceptionMetadataKeys.ExceptionMessage] = exception.Message,
                             ["requeueSucceeded"] = false
                         },
                         cancellationToken)
@@ -629,13 +630,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         item =>
                             string.Equals(
                                 item.Key,
-                                ScaleOutIntentMetadataKey,
+                                AiRuntimeScaleOutMetadataKeys.Intent,
                                 StringComparison.OrdinalIgnoreCase))
                     .Value;
 
             return string.Equals(
                 intent,
-                SharedQueueRedispatchReplacementIntent,
+                AiRuntimeScaleOutIntents.SharedQueueRedispatchReplacement,
                 StringComparison.OrdinalIgnoreCase);
         }
 
@@ -786,24 +787,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         {
             var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                ["requestId"] = request.RequestId,
-                ["scaleOutRequestId"] = request.RequestId,
-                ["sharedRunId"] = request.SharedRunId,
-                ["controlPlaneId"] = request.ControlPlaneId,
-                ["tenantId"] = request.TenantId,
-                ["tenantGroupId"] = request.TenantGroupId,
-                ["pipelineKey"] = request.PipelineKey,
-                ["providerHint"] = request.ProviderHint,
-                ["runtimeInstanceId"] = runtimeInstanceId,
+                [AiRuntimeScaleOutMetadataKeys.CamelCaseRequestId] = request.RequestId,
+                [AiRuntimeScaleOutMetadataKeys.CamelCaseScaleOutRequestId] = request.RequestId,
+                [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId,
+                [AiControlPlaneMetadataKeys.ControlPlaneId] = request.ControlPlaneId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.TenantId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.TenantGroupId,
+                [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey,
+                [AiRuntimeScaleOutMetadataKeys.ProviderHint] = request.ProviderHint,
+                [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = runtimeInstanceId,
                 ["requestedTargetInstanceCount"] = request.RequestedTargetInstanceCount,
                 ["visibleInstanceCount"] = request.VisibleInstanceCount,
                 ["availableInstanceCount"] = request.AvailableInstanceCount,
                 ["currentInstanceCount"] = request.CurrentInstanceCount,
                 ["maxInstanceCount"] = request.MaxInstanceCount,
-                ["requestedBy"] = request.RequestedBy,
+                [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy,
                 ["source"] = request.Source,
                 ["reason"] = request.Reason,
-                ["durationMs"] = durationMs
+                [AiObservabilityMetadataKeys.DurationMs] = durationMs
             };
 
             foreach (var item in request.Metadata)

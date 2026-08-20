@@ -4,7 +4,9 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Grpc.Core;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Pool;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc;
+using Multiplexed.Abstractions.AI.Observability;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Grpc
 {
@@ -131,13 +133,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 new Dictionary<string, string>(
                     StringComparer.OrdinalIgnoreCase)
                 {
-                    ["runtime.pool.routing.failure"] = "true",
-                    ["transport.name"] = "grpc"
+                    [AiRuntimePoolMetadataKeys.RoutingFailure] = "true",
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] =
+                        AiRuntimeInstanceCommandTransportMetadataKeys.GrpcTransportName
                 };
 
             if (exception is not null)
             {
-                metadata["exception.type"] =
+                metadata[AiExceptionMetadataKeys.ExceptionType] =
                     exception.GetType().FullName ??
                     exception.GetType().Name;
             }

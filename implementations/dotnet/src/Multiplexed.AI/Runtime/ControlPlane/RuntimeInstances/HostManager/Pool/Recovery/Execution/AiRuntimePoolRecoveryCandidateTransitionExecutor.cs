@@ -7,6 +7,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.Observability.Context;
@@ -14,6 +15,12 @@ using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Pool;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Execution
 {
@@ -29,24 +36,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             "runtime-pool-claimed-local-queued-recovery";
         private const string UnsupportedCandidateReason =
             "unsupported-recovery-candidate-kind";
-        private const string RecoveryReconciliationOperation =
-            "runtime-execution-recovery-reconcile";
-        private const string RecoveryForensicsIdMetadataKey =
-            "recovery.forensicsId";
-        private const string RecoveryModeMetadataKey =
-            "recovery.mode";
-        private const string RecoveryReasonMetadataKey =
-            "recovery.reason";
-        private const string RecoveryFailedRuntimeInstanceIdMetadataKey =
-            "recovery.failedRuntimeInstanceId";
-        private const string RecoveryFailedLocalRunIdMetadataKey =
-            "recovery.failedLocalRunId";
-        private const string RecoveryFailedExecutionIdMetadataKey =
-            "recovery.failedExecutionId";
-        private const string RecoveryModeResumeExistingExecution =
-            "resume-existing-execution";
-        private const string RecoveryModeRequeueLocalQueuedRun =
-            "requeue-local-queued-run";
 
         private readonly IAiSharedRunOwnershipResolver ownershipResolver;
         private readonly IAiRuntimeExecutionRecoveryTransitionService
@@ -308,8 +297,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                             AiRuntimeRecoveryForensicsEventType
                                 .ExecutionRecoveryCandidateDetected,
                         Outcome = ownership.CanRecover
-                            ? "recoverable"
-                            : "not-recoverable",
+                            ? AiRuntimeRecoveryOutcomeCodes.Recoverable
+                            : AiRuntimeRecoveryOutcomeCodes.NotRecoverable,
                         Reason = ownership.Reason,
                         ExecutionId = candidate.ExecutionId,
                         SharedRunId = ownership.SharedRunId,
@@ -320,10 +309,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                             new Dictionary<string, string>(
                                 StringComparer.OrdinalIgnoreCase)
                             {
-                                ["tenant.id"] =
+                                [AiRuntimeInstanceIsolationMetadataKeys.TenantId] =
                                     candidate.TenantId ??
                                     string.Empty,
-                                ["tenant.group.id"] =
+                                [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] =
                                     candidate.TenantGroupId ??
                                     string.Empty,
                                 ["candidate.canRecover"] =
@@ -364,7 +353,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                             EventType =
                                 AiControlPlaneEventType.OperationCompleted,
                             Area = AiControlPlaneArea.Recovery,
-                            Operation = RecoveryReconciliationOperation,
+                            Operation = AiRuntimeRecoveryOperationNames.ExecutionRecoveryReconcile,
                             Outcome =
                                 AiControlPlaneOperationOutcome.Succeeded,
                             Correlation =
@@ -382,35 +371,35 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                                 new Dictionary<string, object?>
                                 {
                                     ["failureId"] = failureId,
-                                    ["poolId"] = candidate.PoolId,
-                                    ["hostId"] = candidate.HostId,
+                                    [AiRuntimePoolMetadataKeys.CamelCasePoolId] = candidate.PoolId,
+                                    [AiRuntimeHostMetadataKeys.CamelCaseHostId] = candidate.HostId,
                                     ["routeId"] = candidate.RouteId,
-                                    ["tenantId"] = candidate.TenantId,
-                                    ["tenant.id"] = candidate.TenantId,
-                                    ["tenantGroupId"] =
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = candidate.TenantId,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = candidate.TenantId,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] =
                                         candidate.TenantGroupId,
-                                    ["tenant.group.id"] =
+                                    [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] =
                                         candidate.TenantGroupId,
-                                    ["sharedRunId"] = sharedRunId,
-                                    ["localRunId"] = candidate.LocalRunId,
-                                    ["executionId"] = candidate.ExecutionId,
-                                    ["runtimeInstanceId"] =
+                                    [AiRunMetadataKeys.CamelCaseSharedRunId] = sharedRunId,
+                                    [AiRunMetadataKeys.CamelCaseLocalRunId] = candidate.LocalRunId,
+                                    [AiExecutionMetadataKeys.CamelCaseExecutionId] = candidate.ExecutionId,
+                                    [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] =
                                         candidate.RuntimeInstanceId,
-                                    [RecoveryForensicsIdMetadataKey] =
+                                    [AiRuntimeRecoveryMetadataKeys.ForensicsId] =
                                         forensicsId,
-                                    [RecoveryModeMetadataKey] =
+                                    [AiRuntimeRecoveryMetadataKeys.Mode] =
                                         candidate.Kind ==
                                             AiRuntimePoolAssignedWorkKind
                                                 .InFlight
-                                            ? RecoveryModeResumeExistingExecution
-                                            : RecoveryModeRequeueLocalQueuedRun,
-                                    [RecoveryReasonMetadataKey] =
+                                            ? AiRuntimeRecoveryModes.ResumeExistingExecution
+                                            : AiRuntimeRecoveryModes.RequeueLocalQueuedRun,
+                                    [AiRuntimeRecoveryMetadataKeys.Reason] =
                                         transition.Reason,
-                                    [RecoveryFailedRuntimeInstanceIdMetadataKey] =
+                                    [AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId] =
                                         candidate.RuntimeInstanceId,
-                                    [RecoveryFailedLocalRunIdMetadataKey] =
+                                    [AiRuntimeRecoveryMetadataKeys.FailedLocalRunId] =
                                         candidate.LocalRunId,
-                                    [RecoveryFailedExecutionIdMetadataKey] =
+                                    [AiRuntimeRecoveryMetadataKeys.FailedExecutionId] =
                                         candidate.ExecutionId
                                 }
                         },
@@ -476,7 +465,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         ForensicsId = forensicsId,
                         CorrelationId = forensicsId,
                         PreviousStatus = "assigned",
-                        CurrentStatus = "released-for-recovery",
+                        CurrentStatus = AiRuntimeRecoveryTransitionStatuses.ReleasedForRecovery,
                         Reason = transition.Reason,
                         Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                         {

@@ -161,11 +161,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
                 RuntimeInstanceIdPrefix = runtimeInstanceIdPrefix,
                 Metadata = new Dictionary<string, string>
                 {
-                    ["runtime.settings.source"] = "configuration",
-                    ["runtime.tenant"] = resolvedTenantId,
-                    ["runtime.isolationMode"] = configuredTenant.IsolationMode.ToString(),
-                    ["runtime.preferDedicatedCapacity"] = configuredTenant.PreferDedicatedCapacity.ToString(),
-                    ["runtime.allowSharedFallback"] = configuredTenant.AllowSharedFallback.ToString()
+                    [AiRuntimeInstanceIsolationMetadataKeys.SettingsSource] = "configuration",
+                    [AiRuntimeInstanceIsolationMetadataKeys.RuntimeTenant] = resolvedTenantId,
+                    [AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = configuredTenant.IsolationMode.ToString(),
+                    [AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = configuredTenant.PreferDedicatedCapacity.ToString(),
+                    [AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = configuredTenant.AllowSharedFallback.ToString()
                 }
             };
         }
@@ -198,9 +198,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
                 RuntimeInstanceIdPrefix = "runtime-instance",
                 Metadata = new Dictionary<string, string>
                 {
-                    ["runtime.settings.source"] = "configuration-fallback",
-                    ["runtime.tenant"] = resolvedTenantId,
-                    ["runtime.isolationMode"] = AiRuntimeInstanceIsolationMode.Shared.ToString()
+                    [AiRuntimeInstanceIsolationMetadataKeys.SettingsSource] = "configuration-fallback",
+                    [AiRuntimeInstanceIsolationMetadataKeys.RuntimeTenant] = resolvedTenantId,
+                    [AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = AiRuntimeInstanceIsolationMode.Shared.ToString()
                 }
             };
         }

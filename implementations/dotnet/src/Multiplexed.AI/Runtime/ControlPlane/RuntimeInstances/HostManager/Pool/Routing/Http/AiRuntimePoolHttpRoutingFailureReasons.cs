@@ -1,4 +1,6 @@
-﻿namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Http
+﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Pool;
+
+namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Http
 {
     /// <summary>
     /// Defines stable failure reasons returned by the Runtime Pool HTTP router.
@@ -9,37 +11,37 @@
         /// The exact runtime route was not found.
         /// </summary>
         public const string RouteNotFound =
-            "runtime-pool-route-not-found";
+            AiRuntimePoolRoutingFailureReasons.RouteNotFound;
 
         /// <summary>
         /// The route belongs to another pool.
         /// </summary>
         public const string PoolMismatch =
-            "runtime-pool-route-pool-mismatch";
+            AiRuntimePoolRoutingFailureReasons.PoolMismatch;
 
         /// <summary>
         /// The route belongs to another host incarnation.
         /// </summary>
         public const string HostMismatch =
-            "runtime-pool-route-host-mismatch";
+            AiRuntimePoolRoutingFailureReasons.HostMismatch;
 
         /// <summary>
         /// The exact route is not an HTTP route.
         /// </summary>
         public const string TransportMismatch =
-            "runtime-pool-route-transport-mismatch";
+            AiRuntimePoolRoutingFailureReasons.TransportMismatch;
 
         /// <summary>
         /// The exact route is draining.
         /// </summary>
         public const string RouteDraining =
-            "runtime-pool-route-draining";
+            AiRuntimePoolRoutingFailureReasons.RouteDraining;
 
         /// <summary>
         /// The exact runtime capacity has been suppressed as unsafe.
         /// </summary>
         public const string CapacitySuppressed =
-            "runtime-pool-capacity-suppressed";
+            AiRuntimePoolRoutingFailureReasons.CapacitySuppressed;
 
         /// <summary>
         /// The exact HTTP child transport failed.
@@ -51,6 +53,6 @@
         /// The exact target runtime identity is missing.
         /// </summary>
         public const string RuntimeInstanceIdMissing =
-            "runtime-pool-runtime-instance-id-missing";
+            AiRuntimePoolRoutingFailureReasons.RuntimeInstanceIdMissing;
     }
 }

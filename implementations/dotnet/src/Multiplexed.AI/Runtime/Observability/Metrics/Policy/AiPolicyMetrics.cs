@@ -1,6 +1,8 @@
-﻿using Multiplexed.Abstractions.AI.Observability.Metrics;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Metrics.Policy;
 using Multiplexed.AI.Abstractions.AI.Policies;
+using Multiplexed.Abstractions.AI.Policies;
 
 namespace Multiplexed.AI.Runtime.Observability.Metrics.Policy
 {
@@ -224,8 +226,8 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Policy
             var tags = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
-                ["execution.id"] = executionId ?? string.Empty,
-                ["policy.name"] = policyName ?? string.Empty
+                [AiExecutionMetadataKeys.ExecutionId] = executionId ?? string.Empty,
+                [AiPolicyMetadataKeys.Name] = policyName ?? string.Empty
             };
 
             if (additionalTags is not null)

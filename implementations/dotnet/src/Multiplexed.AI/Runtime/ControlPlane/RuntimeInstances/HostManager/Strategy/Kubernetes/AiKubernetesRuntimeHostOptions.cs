@@ -1,3 +1,4 @@
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using System;
 using System.Collections.Generic;
@@ -217,7 +218,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// to select the target runtime instance.
         /// </summary>
         public string GatewayRouteHeaderName { get; set; } =
-            "x-ai-runtime-instance-id";
+            AiRuntimeInstanceCommandTransportDefaults.DefaultGatewayRoutingHeaderName;
 
         /// <summary>
         /// Gets or sets a value indicating whether the shared Kubernetes Gateway should be created when missing.

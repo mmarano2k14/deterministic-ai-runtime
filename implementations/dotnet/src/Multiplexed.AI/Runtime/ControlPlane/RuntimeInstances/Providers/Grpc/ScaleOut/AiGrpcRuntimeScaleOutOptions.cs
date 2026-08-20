@@ -1,5 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.ScaleOut
 {
@@ -48,7 +49,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.Sc
         /// <remarks>
         /// Supported tokens: {runtimeInstanceId}, {runtimeInstanceIdPrefix}, {tenantId}, {tenantGroupId}, {controlPlaneId}.
         /// </remarks>
-        public string EndpointTemplate { get; set; } = "http://localhost";
+        public string EndpointTemplate { get; set; } =
+            AiRuntimeInstanceCommandTransportDefaults.DefaultLoopbackEndpointBase;
 
         /// <summary>
         /// Gets or sets a value indicating whether readiness must be validated in host-manager mode.

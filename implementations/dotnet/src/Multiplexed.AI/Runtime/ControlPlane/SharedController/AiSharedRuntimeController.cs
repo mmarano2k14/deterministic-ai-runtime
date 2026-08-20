@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
@@ -7,17 +8,22 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
+using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 {
@@ -723,8 +729,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 
             if (!string.IsNullOrWhiteSpace(dispatchedRun.PipelineKey))
             {
-                metadata["pipeline.key"] = dispatchedRun.PipelineKey;
-                metadata["pipeline.name"] = dispatchedRun.PipelineKey;
+                metadata[AiPipelineMetadataKeys.Key] = dispatchedRun.PipelineKey;
+                metadata[AiPipelineMetadataKeys.Name] = dispatchedRun.PipelineKey;
             }
 
             await _lifecycleWriter
@@ -801,29 +807,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                         new Dictionary<string, string>(),
                     new Dictionary<string, string>
                     {
-                        ["sharedRunId"] =
+                        [AiRunMetadataKeys.CamelCaseSharedRunId] =
                             sharedRun.SharedRunId,
 
-                        ["shared.run.id"] =
+                        [AiRunMetadataKeys.SharedRunId] =
                             sharedRun.SharedRunId,
 
-                        ["runtimeInstanceId"] =
+                        [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] =
                             runtimeInstanceId,
 
-                        ["runtime.instance.id"] =
+                        [AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] =
                             runtimeInstanceId,
 
-                        ["localRunId"] =
+                        [AiRunMetadataKeys.CamelCaseLocalRunId] =
                             localRunId,
 
-                        ["local.run.id"] =
+                        [AiRunMetadataKeys.LocalRunId] =
                             localRunId,
 
-                        ["executionId"] =
+                        [AiExecutionMetadataKeys.CamelCaseExecutionId] =
                             executionId ??
                             string.Empty,
 
-                        ["execution.id"] =
+                        [AiExecutionMetadataKeys.ExecutionId] =
                             executionId ??
                             string.Empty,
 
@@ -1201,8 +1207,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     queueItem.Metadata,
                     new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                     {
-                        ["recovery.failedRuntimeInstanceId"] = sharedRun.AssignedRuntimeInstanceId,
-                        ["recovery.failedLocalRunId"] = sharedRun.LocalRunId
+                        [AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId] = sharedRun.AssignedRuntimeInstanceId,
+                        [AiRuntimeRecoveryMetadataKeys.FailedLocalRunId] = sharedRun.LocalRunId
                     });
 
             var requeued =
@@ -1264,10 +1270,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 !string.Equals(existing.RunRequest.PipelineJson, candidate.RunRequest.PipelineJson, StringComparison.Ordinal) ||
                 !string.Equals(existing.ExecutionContextSnapshot.TenantId, candidate.ExecutionContextSnapshot.TenantId, StringComparison.Ordinal) ||
                 !string.Equals(existing.ExecutionContextSnapshot.TenantGroupId, candidate.ExecutionContextSnapshot.TenantGroupId, StringComparison.Ordinal) ||
-                !MatchesDeterministicMetadata(existing.Metadata, candidate.Metadata, "child.invocation.key") ||
-                !MatchesDeterministicMetadata(existing.Metadata, candidate.Metadata, "child.invocation.generation") ||
-                !MatchesDeterministicMetadata(existing.Metadata, candidate.Metadata, "child.definition.digest") ||
-                !MatchesDeterministicMetadata(existing.Metadata, candidate.Metadata, "child.input.digest"))
+                !MatchesDeterministicMetadata(existing.Metadata, candidate.Metadata, AiChildDagMetadataKeys.InvocationKey) ||
+                !MatchesDeterministicMetadata(existing.Metadata, candidate.Metadata, AiChildDagMetadataKeys.InvocationGeneration) ||
+                !MatchesDeterministicMetadata(existing.Metadata, candidate.Metadata, AiChildDagMetadataKeys.DefinitionDigest) ||
+                !MatchesDeterministicMetadata(existing.Metadata, candidate.Metadata, AiChildDagMetadataKeys.InputDigest))
             {
                 throw new InvalidOperationException(
                     $"Shared run '{candidate.SharedRunId}' already exists with incompatible deterministic execution data.");
@@ -1622,9 +1628,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request.Source,
-                        ["requestedBy"] = request.RequestedBy,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy,
                         ["reason"] = request.Reason,
-                        ["sharedRunId"] = request.SharedRunId ?? request.RequestedSharedRunId,
+                        [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId ?? request.RequestedSharedRunId,
                         ["preferredRuntimeInstanceId"] = request.PreferredRuntimeInstanceId,
                         ["placementRuntimeInstanceId"] = request.Placement?.Target.RuntimeInstanceId,
                         ["placementHostId"] = request.Placement?.Target.HostId,
@@ -1637,7 +1643,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                         ["project"] = executionContextSnapshot.Project,
                         ["userId"] = executionContextSnapshot.UserId,
                         ["contextKey"] = executionContextSnapshot.ContextKey,
-                        ["pipelineKey"] = request.PipelineKey
+                        [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey
                     }
                 },
                 cancellationToken).ConfigureAwait(false);
@@ -1677,14 +1683,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request.Source,
-                        ["requestedBy"] = request.RequestedBy,
-                        ["controlPlaneId"] = operationResult.Run?.ControlPlaneId,
-                        ["sharedRunId"] = operationResult.Run?.SharedRunId ?? request.SharedRunId ?? request.RequestedSharedRunId,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy,
+                        [AiControlPlaneMetadataKeys.ControlPlaneId] = operationResult.Run?.ControlPlaneId,
+                        [AiRunMetadataKeys.CamelCaseSharedRunId] = operationResult.Run?.SharedRunId ?? request.SharedRunId ?? request.RequestedSharedRunId,
                         ["status"] = operationResult.Run?.Status.ToString(),
                         ["assignedRuntimeInstanceId"] = operationResult.Run?.AssignedRuntimeInstanceId,
-                        ["localRunId"] = operationResult.Run?.LocalRunId,
-                        ["executionId"] = operationResult.Run?.ExecutionId,
-                        ["failureReason"] = operationResult.Run?.FailureReason,
+                        [AiRunMetadataKeys.CamelCaseLocalRunId] = operationResult.Run?.LocalRunId,
+                        [AiExecutionMetadataKeys.CamelCaseExecutionId] = operationResult.Run?.ExecutionId,
+                        [AiObservabilityMetadataKeys.FailureReason] = operationResult.Run?.FailureReason,
                         [AiRuntimeInstanceIsolationMetadataKeys.TenantId] =
                             operationResult.Run?.ExecutionContextSnapshot.TenantId
                             ?? executionContextSnapshot.TenantId,
@@ -1737,8 +1743,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request?.Source,
-                        ["requestedBy"] = request?.RequestedBy,
-                        ["sharedRunId"] = request?.SharedRunId ?? request?.RequestedSharedRunId,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request?.RequestedBy,
+                        [AiRunMetadataKeys.CamelCaseSharedRunId] = request?.SharedRunId ?? request?.RequestedSharedRunId,
                         ["exceptionType"] = exception.GetType().Name
                     }
                 },

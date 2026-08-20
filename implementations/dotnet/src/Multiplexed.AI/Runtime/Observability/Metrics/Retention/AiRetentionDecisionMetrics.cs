@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.Observability.Metrics;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Metrics.Retention;
 
 namespace Multiplexed.AI.Runtime.Metrics.Retention
@@ -79,7 +80,7 @@ namespace Multiplexed.AI.Runtime.Metrics.Retention
                 executionId,
                 new Dictionary<string, string>
                 {
-                    ["step.count"] = safeStepCount.ToString(),
+                    [AiStepMetadataKeys.StepCount] = safeStepCount.ToString(),
                     ["compaction.threshold"] = safeThreshold.ToString(),
                     ["decision"] = "compaction_required"
                 },
@@ -110,7 +111,7 @@ namespace Multiplexed.AI.Runtime.Metrics.Retention
                 executionId,
                 new Dictionary<string, string>
                 {
-                    ["step.count"] = safeStepCount.ToString(),
+                    [AiStepMetadataKeys.StepCount] = safeStepCount.ToString(),
                     ["eviction.max.steps"] = safeMaxSteps.ToString(),
                     ["decision"] = "eviction_required"
                 },
@@ -135,7 +136,7 @@ namespace Multiplexed.AI.Runtime.Metrics.Retention
                 executionId,
                 new Dictionary<string, string>
                 {
-                    ["step.count"] = safeStepCount.ToString(),
+                    [AiStepMetadataKeys.StepCount] = safeStepCount.ToString(),
                     ["decision"] = "no_action_required"
                 },
                 value: safeStepCount);
@@ -187,7 +188,7 @@ namespace Multiplexed.AI.Runtime.Metrics.Retention
             var tags = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
-                ["execution.id"] = executionId ?? string.Empty
+                [AiExecutionMetadataKeys.ExecutionId] = executionId ?? string.Empty
             };
 
             if (additionalTags is not null)

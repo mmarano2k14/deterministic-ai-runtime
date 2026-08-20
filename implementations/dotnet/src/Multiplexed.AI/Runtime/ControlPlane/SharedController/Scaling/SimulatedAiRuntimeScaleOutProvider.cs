@@ -2,6 +2,9 @@
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.Execution;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 {
@@ -118,11 +121,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     StringComparer.OrdinalIgnoreCase)
                 {
                     [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName,
-                    ["provider"] = ProviderName,
-                    ["providerStatus"] = status,
-                    ["scaleOutRequestId"] = request.RequestId,
-                    ["sharedRunId"] = request.SharedRunId,
-                    ["controlPlaneId"] = request.ControlPlaneId
+                    [AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName] = ProviderName,
+                    [AiRuntimeInstanceProviderMetadataKeys.ProviderStatus] = status,
+                    [AiRuntimeScaleOutMetadataKeys.CamelCaseScaleOutRequestId] = request.RequestId,
+                    [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId,
+                    [AiControlPlaneMetadataKeys.ControlPlaneId] = request.ControlPlaneId
                 };
 
             return metadata;

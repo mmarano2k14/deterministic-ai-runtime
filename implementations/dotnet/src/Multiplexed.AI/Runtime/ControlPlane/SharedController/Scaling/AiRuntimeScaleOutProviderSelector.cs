@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
@@ -9,6 +10,10 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 {
@@ -27,7 +32,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
     public sealed class AiRuntimeScaleOutProviderSelector :
         IAiRuntimeScaleOutProviderSelector
     {
-        private const string DefaultProviderName = "local";
         private const string ScaleOutProviderSelectionOperation = "runtime-scale-out-provider-selection";
 
         private readonly IAiRuntimeInstanceProviderRouter providerRouter;
@@ -96,13 +100,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     null,
                     new Dictionary<string, object?>
                     {
-                        ["requestId"] = request.RequestId,
-                        ["sharedRunId"] = request.SharedRunId,
-                        ["controlPlaneId"] = request.ControlPlaneId,
-                        ["tenantId"] = request.TenantId,
-                        ["tenantGroupId"] = request.TenantGroupId,
-                        ["pipelineKey"] = request.PipelineKey,
-                        ["providerHint"] = request.ProviderHint,
+                        [AiRuntimeScaleOutMetadataKeys.CamelCaseRequestId] = request.RequestId,
+                        [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId,
+                        [AiControlPlaneMetadataKeys.ControlPlaneId] = request.ControlPlaneId,
+                        [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.TenantId,
+                        [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.TenantGroupId,
+                        [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey,
+                        [AiRuntimeScaleOutMetadataKeys.ProviderHint] = request.ProviderHint,
                         ["resolvedProviderName"] = providerName,
                         ["requestedTargetInstanceCount"] = request.RequestedTargetInstanceCount,
                         ["source"] = request.Source,
@@ -170,18 +174,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         durationMs,
                         new Dictionary<string, object?>
                         {
-                            ["requestId"] = request.RequestId,
-                            ["sharedRunId"] = request.SharedRunId,
-                            ["controlPlaneId"] = request.ControlPlaneId,
-                            ["tenantId"] = request.TenantId,
-                            ["tenantGroupId"] = request.TenantGroupId,
-                            ["pipelineKey"] = request.PipelineKey,
-                            ["providerHint"] = request.ProviderHint,
+                            [AiRuntimeScaleOutMetadataKeys.CamelCaseRequestId] = request.RequestId,
+                            [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId,
+                            [AiControlPlaneMetadataKeys.ControlPlaneId] = request.ControlPlaneId,
+                            [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.TenantId,
+                            [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.TenantGroupId,
+                            [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey,
+                            [AiRuntimeScaleOutMetadataKeys.ProviderHint] = request.ProviderHint,
                             ["resolvedProviderName"] = providerName,
                             ["requestedTargetInstanceCount"] = request.RequestedTargetInstanceCount,
-                            ["durationMs"] = durationMs,
-                            ["exception.type"] = exception.GetType().FullName,
-                            ["exception.message"] = exception.Message
+                            [AiObservabilityMetadataKeys.DurationMs] = durationMs,
+                            [AiExceptionMetadataKeys.ExceptionType] = exception.GetType().FullName,
+                            [AiExceptionMetadataKeys.ExceptionMessage] = exception.Message
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -278,15 +282,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                                 properties,
                                 new Dictionary<string, object?>
                                 {
-                                    ["requestId"] = request.RequestId,
-                                    ["sharedRunId"] = request.SharedRunId,
-                                    ["controlPlaneId"] = request.ControlPlaneId,
-                                    ["tenantId"] = request.TenantId,
-                                    ["tenantGroupId"] = request.TenantGroupId,
-                                    ["pipelineKey"] = request.PipelineKey,
-                                    ["providerHint"] = request.ProviderHint,
+                                    [AiRuntimeScaleOutMetadataKeys.CamelCaseRequestId] = request.RequestId,
+                                    [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId,
+                                    [AiControlPlaneMetadataKeys.ControlPlaneId] = request.ControlPlaneId,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.TenantId,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.TenantGroupId,
+                                    [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey,
+                                    [AiRuntimeScaleOutMetadataKeys.ProviderHint] = request.ProviderHint,
                                     ["resolvedProviderName"] = providerName,
-                                    ["runtimeInstanceId"] = result?.RuntimeInstanceId,
+                                    [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = result?.RuntimeInstanceId,
                                     ["providerOperationId"] = result?.ProviderOperationId,
                                     ["success"] = result?.Success,
                                     ["rejected"] = result?.Rejected
@@ -317,22 +321,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         {
             var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                ["requestId"] = request.RequestId,
-                ["sharedRunId"] = request.SharedRunId,
-                ["controlPlaneId"] = request.ControlPlaneId,
-                ["tenantId"] = request.TenantId,
-                ["tenantGroupId"] = request.TenantGroupId,
-                ["pipelineKey"] = request.PipelineKey,
-                ["providerHint"] = request.ProviderHint,
+                [AiRuntimeScaleOutMetadataKeys.CamelCaseRequestId] = request.RequestId,
+                [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId,
+                [AiControlPlaneMetadataKeys.ControlPlaneId] = request.ControlPlaneId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.TenantId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.TenantGroupId,
+                [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey,
+                [AiRuntimeScaleOutMetadataKeys.ProviderHint] = request.ProviderHint,
                 ["resolvedProviderName"] = providerName,
-                ["runtimeInstanceId"] = result.RuntimeInstanceId,
+                [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = result.RuntimeInstanceId,
                 ["providerOperationId"] = result.ProviderOperationId,
                 ["success"] = result.Success,
                 ["rejected"] = result.Rejected,
-                ["failureReason"] = result.FailureReason,
+                [AiObservabilityMetadataKeys.FailureReason] = result.FailureReason,
                 ["message"] = result.Message,
                 ["requestedTargetInstanceCount"] = request.RequestedTargetInstanceCount,
-                ["durationMs"] = durationMs
+                [AiObservabilityMetadataKeys.DurationMs] = durationMs
             };
 
             foreach (var item in result.Metadata)
@@ -383,7 +387,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 return this.registrationOptions.ProviderName.Trim();
             }
 
-            return DefaultProviderName;
+            return AiRuntimeInstanceProviderNames.Local;
         }
 
         /// <summary>
@@ -420,13 +424,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] =
                 providerName;
 
-            metadata["provider"] =
+            metadata[AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName] =
                 providerName;
 
-            metadata["scaleout.request.id"] =
+            metadata[AiRuntimeScaleOutMetadataKeys.LegacyRequestId] =
                 request.RequestId;
 
-            metadata["scaleout.shared.run.id"] =
+            metadata[AiRuntimeScaleOutMetadataKeys.LegacySharedRunId] =
                 request.SharedRunId;
 
             if (!string.IsNullOrWhiteSpace(request.TenantId))
@@ -443,13 +447,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             if (!string.IsNullOrWhiteSpace(request.PipelineKey))
             {
-                metadata["pipeline.key"] =
+                metadata[AiPipelineMetadataKeys.Key] =
                     request.PipelineKey;
             }
 
             if (!string.IsNullOrWhiteSpace(request.CorrelationId))
             {
-                metadata["correlation.id"] =
+                metadata[AiObservabilityMetadataKeys.CorrelationId] =
                     request.CorrelationId;
             }
 

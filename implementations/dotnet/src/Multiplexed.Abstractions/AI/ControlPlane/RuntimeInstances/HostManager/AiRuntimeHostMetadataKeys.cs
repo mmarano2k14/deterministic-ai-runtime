@@ -16,6 +16,11 @@
         public const string HostCreationMode = "host.creation.mode";
 
         /// <summary>
+        /// Identifies the legacy host creation mode metadata key retained for compatibility.
+        /// </summary>
+        public const string LegacyHostCreationMode = "hostCreation.mode";
+
+        /// <summary>
         /// Identifies the host creation strategy that produced the runtime instance.
         /// </summary>
         public const string HostCreationStrategy = "host.creation.strategy";
@@ -38,5 +43,25 @@
         /// recovery remain governed by their typed fields.
         /// </remarks>
         public const string LifecycleCorrelationId = "host.lifecycle.correlation-id";
+
+        /// <summary>
+        /// Gets the camel-case host identifier metadata key used by compatibility and diagnostic payloads.
+        /// </summary>
+        public const string CamelCaseHostId = "hostId";
+
+        /// <summary>
+        /// Gets the camel-case host creation mode metadata key used by compatibility and diagnostic payloads.
+        /// </summary>
+        public const string CamelCaseHostCreationMode = "hostCreationMode";
+
+        /// <summary>
+        /// Gets the camel-case host type metadata key used by compatibility and diagnostic payloads.
+        /// </summary>
+        public const string CamelCaseHostType = "hostType";
+
+        /// <summary>
+        /// Gets the host deployment metadata key used by runtime registration and compatibility payloads.
+        /// </summary>
+        public const string Deployment = "deployment";
     }
 }

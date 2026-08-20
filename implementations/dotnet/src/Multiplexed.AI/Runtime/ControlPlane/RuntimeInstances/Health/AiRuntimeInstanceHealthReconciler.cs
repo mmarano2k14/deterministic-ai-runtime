@@ -3,6 +3,8 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health
 {
@@ -94,7 +96,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health
                     decisions.Add(CreateDecision(
                         snapshot,
                         snapshot.Status,
-                        "runtime-status-not-included",
+                        AiRuntimeInstanceFailureReasons.RuntimeStatusNotIncluded,
                         now,
                         changed: false));
 
@@ -187,7 +189,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health
         {
             var incidentId = string.Join(
                 ":",
-                "runtime-failure",
+                AiRuntimeFailureIdentifiers.RuntimeFailureIncidentPrefix,
                 current.RuntimeInstanceId);
             var context = await this.lifecycleWriter
                 .ResolveContextAsync(

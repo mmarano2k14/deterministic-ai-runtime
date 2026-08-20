@@ -16,6 +16,8 @@ using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Identity;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Suspension;
 using Multiplexed.AI.Runtime.Execution.Context;
+using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag;
+
 
 namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
 {
@@ -583,7 +585,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
             return new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["childInvocationKey"] = relation.ChildInvocationKey,
-                ["childExecutionId"] = relation.ChildExecutionId,
+                [AiChildDagMetadataKeys.CamelCaseChildExecutionId] = relation.ChildExecutionId,
                 ["childInvocationGeneration"] = relation.InvocationGeneration,
                 ["childDagId"] = relation.ChildDagId,
                 ["childDagDefinitionVersion"] = relation.ChildDagDefinitionVersion,

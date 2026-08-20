@@ -5,6 +5,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes
 {
     /// <summary>
@@ -109,7 +111,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     ["AiRuntimeInstanceRegistration__WorkerCount"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture),
                     ["AiRuntimeInstanceRegistration__MaxConcurrentRuns"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture),
                     ["AiRuntimeInstanceRegistration__QueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture),
-                    ["AiRuntimeInstanceRegistration__RuntimeVersion"] = "kubernetes-host",
+                    ["AiRuntimeInstanceRegistration__RuntimeVersion"] = AiRuntimeHostDeploymentNames.KubernetesHost,
                     ["AiRuntimeInstanceRegistration__HeartbeatInterval"] = "00:00:02",
 
                     ["AiRuntimeInstanceRegistration__Metadata__host.provider"] = AiRuntimeHostProviderNames.Kubernetes,
@@ -121,8 +123,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     ["AiRuntimeInstanceRegistration__Metadata__transport.name"] = transportName,
                     //["AiRuntimeInstanceRegistration__Metadata__transport.endpoint"] = request.TransportEndpoint ?? string.Empty,
                     ["AiRuntimeInstanceRegistration__Metadata__runtime.instance.id"] = request.RuntimeInstanceId,
-                    ["AiRuntimeInstanceRegistration__Metadata__hostType"] = "runtime-instance-kubernetes",
-                    ["AiRuntimeInstanceRegistration__Metadata__deployment"] = "kubernetes-host",
+                    ["AiRuntimeInstanceRegistration__Metadata__hostType"] = AiRuntimeHostTypeNames.Kubernetes,
+                    ["AiRuntimeInstanceRegistration__Metadata__deployment"] = AiRuntimeHostDeploymentNames.KubernetesHost,
 
                     ["AiRuntimeInstanceRegistration__ProviderMetadata__host.provider"] = AiRuntimeHostProviderNames.Kubernetes,
                     ["AiRuntimeInstanceRegistration__ProviderMetadata__host.creation.mode"] = AiRuntimeHostCreationMode.Kubernetes.ToString(),
@@ -371,11 +373,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             environmentVariables[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity}"] = request.PreferDedicatedCapacity.ToString();
             environmentVariables[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback}"] = request.AllowSharedFallback.ToString();
 
-            environmentVariables["AiRuntimeInstanceRegistration__Metadata__runtime.maxRuntimeInstances"] = request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-            environmentVariables["AiRuntimeInstanceRegistration__Metadata__runtime.instanceIdPrefix"] = request.RuntimeInstanceIdPrefix ?? string.Empty;
-            environmentVariables["AiRuntimeInstanceRegistration__Metadata__runtime.workerCountPerInstance"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture);
-            environmentVariables["AiRuntimeInstanceRegistration__Metadata__runtime.maxConcurrentRunsPerInstance"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture);
-            environmentVariables["AiRuntimeInstanceRegistration__Metadata__runtime.localQueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture);
+            environmentVariables[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.MaxRuntimeInstances}"] = request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            environmentVariables[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.RuntimeInstanceIdPrefix}"] = request.RuntimeInstanceIdPrefix ?? string.Empty;
+            environmentVariables[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.WorkerCountPerInstance}"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture);
+            environmentVariables[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.MaxConcurrentRunsPerInstance}"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture);
+            environmentVariables[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.LocalQueueCapacity}"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture);
 
             environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.TenantId}"] = tenantId ?? string.Empty;
             environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId}"] = tenantGroupId ?? string.Empty;
@@ -383,11 +385,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity}"] = request.PreferDedicatedCapacity.ToString();
             environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback}"] = request.AllowSharedFallback.ToString();
 
-            environmentVariables["AiLocalRuntimeInstancePool__Metadata__runtime.maxRuntimeInstances"] = request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-            environmentVariables["AiLocalRuntimeInstancePool__Metadata__runtime.instanceIdPrefix"] = request.RuntimeInstanceIdPrefix ?? string.Empty;
-            environmentVariables["AiLocalRuntimeInstancePool__Metadata__runtime.workerCountPerInstance"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture);
-            environmentVariables["AiLocalRuntimeInstancePool__Metadata__runtime.maxConcurrentRunsPerInstance"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture);
-            environmentVariables["AiLocalRuntimeInstancePool__Metadata__runtime.localQueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture);
+            environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.MaxRuntimeInstances}"] = request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.RuntimeInstanceIdPrefix}"] = request.RuntimeInstanceIdPrefix ?? string.Empty;
+            environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.WorkerCountPerInstance}"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture);
+            environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.MaxConcurrentRunsPerInstance}"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture);
+            environmentVariables[$"AiLocalRuntimeInstancePool__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.LocalQueueCapacity}"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture);
         }
 
         /// <summary>

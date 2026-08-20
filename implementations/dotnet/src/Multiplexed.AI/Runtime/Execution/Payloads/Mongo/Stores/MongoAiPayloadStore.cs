@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.Execution.Payloads.Stores;
 using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Documents;
 using Multiplexed.AI.Runtime.Metrics;
+using Multiplexed.AI.Runtime.Execution.Payloads;
 
 namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
 {
@@ -28,7 +29,6 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
     /// </summary>
     public sealed class MongoAiPayloadStore : IAiImmutablePayloadStore
     {
-        private const string UnknownExecutionId = "unknown-execution";
         private const string MongoStorageKind = "mongo";
 
         private readonly IMongoCollection<MongoAiPayloadDocument> _collection;
@@ -121,7 +121,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
                     cancellationToken: cancellationToken);
 
                 _runtimeMetrics?.Storage.RecordPayloadStored(
-                    UnknownExecutionId,
+                    AiPayloadIdentifiers.UnknownExecutionId,
                     id,
                     MongoStorageKind,
                     document.SizeBytes);
@@ -131,7 +131,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
             catch (Exception ex)
             {
                 _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
-                    UnknownExecutionId,
+                    AiPayloadIdentifiers.UnknownExecutionId,
                     id,
                     MongoStorageKind,
                     ex);
@@ -171,7 +171,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
                     cancellationToken: cancellationToken);
 
                 _runtimeMetrics?.Storage.RecordPayloadStored(
-                    metadata.ExecutionId ?? UnknownExecutionId,
+                    metadata.ExecutionId ?? AiPayloadIdentifiers.UnknownExecutionId,
                     key,
                     MongoStorageKind,
                     document.SizeBytes);
@@ -197,7 +197,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
             catch (Exception ex)
             {
                 _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
-                    metadata.ExecutionId ?? UnknownExecutionId,
+                    metadata.ExecutionId ?? AiPayloadIdentifiers.UnknownExecutionId,
                     key,
                     MongoStorageKind,
                     ex);
@@ -245,7 +245,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
                 if (document is null)
                 {
                     _runtimeMetrics?.Storage.RecordPayloadStoreMiss(
-                        UnknownExecutionId,
+                        AiPayloadIdentifiers.UnknownExecutionId,
                         key,
                         MongoStorageKind);
 
@@ -253,7 +253,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
                 }
 
                 _runtimeMetrics?.Storage.RecordPayloadLoaded(
-                    UnknownExecutionId,
+                    AiPayloadIdentifiers.UnknownExecutionId,
                     key,
                     MongoStorageKind);
 
@@ -262,7 +262,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
             catch (Exception ex)
             {
                 _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
-                    UnknownExecutionId,
+                    AiPayloadIdentifiers.UnknownExecutionId,
                     key,
                     MongoStorageKind,
                     ex);
@@ -289,7 +289,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
             catch (Exception ex)
             {
                 _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
-                    UnknownExecutionId,
+                    AiPayloadIdentifiers.UnknownExecutionId,
                     key,
                     MongoStorageKind,
                     ex);

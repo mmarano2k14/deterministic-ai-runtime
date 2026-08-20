@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
@@ -12,13 +13,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
     /// </remarks>
     public sealed class InMemoryAiRuntimeScaleOutRequestStore : IAiRuntimeScaleOutRequestStore
     {
-        private const string ScaleOutIntentMetadataKey = "scaleout.intent";
-        private const string ScaleOutReplacementForRuntimeInstanceIdMetadataKey = "scaleout.replacementForRuntimeInstanceId";
-        private const string ScaleOutExcludedRuntimeInstanceIdMetadataKey = "scaleout.excludedRuntimeInstanceId";
-        private const string RecoveryReplacementMetadataKey = "recovery.replacement";
-        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
-        private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
-        private const string ScaleOutDedupScopeMetadataKey = "scaleout.dedup.scope";
 
         /// <summary>
         /// Synchronizes access to the in-memory request collection.
@@ -370,12 +364,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         {
             return HasEquivalentBaseDeduplicationIdentity(candidate, request) &&
                    string.Equals(candidate.SharedRunId, request.SharedRunId, StringComparison.Ordinal) &&
-                   MetadataValueEquals(candidate, request, ScaleOutIntentMetadataKey) &&
+                   MetadataValueEquals(candidate, request, AiRuntimeScaleOutMetadataKeys.Intent) &&
                    string.Equals(
                        GetFailedRuntimeInstanceId(candidate),
                        GetFailedRuntimeInstanceId(request),
                        StringComparison.Ordinal) &&
-                   MetadataValueEquals(candidate, request, RecoveryForensicsIdMetadataKey) &&
+                   MetadataValueEquals(candidate, request, AiRuntimeRecoveryMetadataKeys.ForensicsId) &&
                    string.Equals(
                        GetDeduplicationScope(candidate),
                        GetDeduplicationScope(request),
@@ -403,9 +397,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             AiRuntimeScaleOutRequestRecord request)
         {
             return FirstNonEmpty(
-                GetMetadataValue(request.Metadata, ScaleOutReplacementForRuntimeInstanceIdMetadataKey),
-                GetMetadataValue(request.Metadata, ScaleOutExcludedRuntimeInstanceIdMetadataKey),
-                GetMetadataValue(request.Metadata, RecoveryFailedRuntimeInstanceIdMetadataKey));
+                GetMetadataValue(request.Metadata, AiRuntimeScaleOutMetadataKeys.ReplacementForRuntimeInstanceId),
+                GetMetadataValue(request.Metadata, AiRuntimeScaleOutMetadataKeys.ExcludedRuntimeInstanceId),
+                GetMetadataValue(request.Metadata, AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId));
         }
 
         /// <summary>
@@ -415,9 +409,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             AiRuntimeScaleOutRequestRecord request)
         {
             return FirstNonEmpty(
-                       GetMetadataValue(request.Metadata, ScaleOutDedupScopeMetadataKey),
-                       "recovery-replacement")
-                   ?? "recovery-replacement";
+                       GetMetadataValue(request.Metadata, AiRuntimeScaleOutMetadataKeys.DeduplicationScope),
+                       AiRuntimeScaleOutDeduplicationScopes.RecoveryReplacement)
+                   ?? AiRuntimeScaleOutDeduplicationScopes.RecoveryReplacement;
         }
 
         /// <summary>
@@ -426,13 +420,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         private static bool IsRecoveryReplacementRequest(
             AiRuntimeScaleOutRequestRecord request)
         {
-            return IsTrue(GetMetadataValue(request.Metadata, RecoveryReplacementMetadataKey)) ||
+            return IsTrue(GetMetadataValue(request.Metadata, AiRuntimeRecoveryMetadataKeys.Replacement)) ||
                    !string.IsNullOrWhiteSpace(
-                       GetMetadataValue(request.Metadata, ScaleOutReplacementForRuntimeInstanceIdMetadataKey)) ||
+                       GetMetadataValue(request.Metadata, AiRuntimeScaleOutMetadataKeys.ReplacementForRuntimeInstanceId)) ||
                    !string.IsNullOrWhiteSpace(
-                       GetMetadataValue(request.Metadata, ScaleOutExcludedRuntimeInstanceIdMetadataKey)) ||
+                       GetMetadataValue(request.Metadata, AiRuntimeScaleOutMetadataKeys.ExcludedRuntimeInstanceId)) ||
                    !string.IsNullOrWhiteSpace(
-                       GetMetadataValue(request.Metadata, RecoveryFailedRuntimeInstanceIdMetadataKey));
+                       GetMetadataValue(request.Metadata, AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId));
         }
 
         /// <summary>

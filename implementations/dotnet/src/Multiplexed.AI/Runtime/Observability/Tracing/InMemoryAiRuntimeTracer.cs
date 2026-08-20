@@ -2,6 +2,9 @@
 using Multiplexed.Abstractions.AI.Observability.Tracing;
 using Multiplexed.AI.Runtime.Observability.Tracing.Stores;
 using System;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Scheduling;
+
 
 namespace Multiplexed.AI.Runtime.Observability.Tracing
 {
@@ -83,7 +86,7 @@ namespace Multiplexed.AI.Runtime.Observability.Tracing
                     record.Tags["pipelineId"] = context.PipelineId;
                     record.Tags["executionMode"] = context.ExecutionMode;
                     record.Tags["status"] = context.Status;
-                    record.Tags["workerId"] = context.WorkerId;
+                    record.Tags[AiWorkerMetadataKeys.CamelCaseWorkerId] = context.WorkerId;
                 });
         }
 
@@ -111,12 +114,12 @@ namespace Multiplexed.AI.Runtime.Observability.Tracing
                 configure: record =>
                 {
                     record.Tags["stepType"] = context.StepType;
-                    record.Tags["stepKey"] = context.StepKey;
+                    record.Tags[AiStepMetadataKeys.CamelCaseStepKey] = context.StepKey;
                     record.Tags["status"] = context.Status;
                     record.Tags["retryCount"] = context.RetryCount;
                     record.Tags["recoveryCount"] = context.RecoveryCount;
-                    record.Tags["workerId"] = context.WorkerId;
-                    record.Tags["claimToken"] = context.ClaimToken;
+                    record.Tags[AiWorkerMetadataKeys.CamelCaseWorkerId] = context.WorkerId;
+                    record.Tags[AiExecutionClaimMetadataKeys.CamelCaseClaimToken] = context.ClaimToken;
                 });
         }
 

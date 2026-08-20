@@ -1,5 +1,8 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Control;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
+using Multiplexed.Abstractions.AI.Observability;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance
 {
@@ -168,9 +171,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance
                 Reason = reason,
                 Metadata = new Dictionary<string, string>
                 {
-                    ["execution.id"] = request.ExecutionId,
-                    ["primary.runtime.instance.id"] = request.PrimaryRuntimeInstanceId,
-                    ["helper.runtime.instance.id"] = request.HelperRuntimeInstanceId,
+                    [AiExecutionMetadataKeys.ExecutionId] = request.ExecutionId,
+                    [AiExecutionAssistanceMetadataKeys.PrimaryRuntimeInstanceId] = request.PrimaryRuntimeInstanceId,
+                    [AiExecutionAssistanceMetadataKeys.HelperRuntimeInstanceId] = request.HelperRuntimeInstanceId,
                     ["assistance.allowed"] = "false",
                     ["assistance.reason"] = reason
                 }
@@ -185,9 +188,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance
                 request.Metadata,
                 StringComparer.Ordinal)
             {
-                ["execution.id"] = request.ExecutionId,
-                ["primary.runtime.instance.id"] = request.PrimaryRuntimeInstanceId,
-                ["helper.runtime.instance.id"] = request.HelperRuntimeInstanceId,
+                [AiExecutionMetadataKeys.ExecutionId] = request.ExecutionId,
+                [AiExecutionAssistanceMetadataKeys.PrimaryRuntimeInstanceId] = request.PrimaryRuntimeInstanceId,
+                [AiExecutionAssistanceMetadataKeys.HelperRuntimeInstanceId] = request.HelperRuntimeInstanceId,
                 ["assistance.allowed"] = "true",
                 ["assistance.max.workers"] = maxWorkersForLease.ToString(),
                 ["ready.step.count"] = request.ReadyStepCount.ToString(),
@@ -201,12 +204,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance
 
             if (!string.IsNullOrWhiteSpace(request.CorrelationId))
             {
-                metadata["correlation.id"] = request.CorrelationId;
+                metadata[AiObservabilityMetadataKeys.CorrelationId] = request.CorrelationId;
             }
 
             if (!string.IsNullOrWhiteSpace(request.RequestedBy))
             {
-                metadata["requested.by"] = request.RequestedBy;
+                metadata[AiExecutionControlMetadataKeys.RequestedBy] = request.RequestedBy;
             }
 
             if (!string.IsNullOrWhiteSpace(request.Source))

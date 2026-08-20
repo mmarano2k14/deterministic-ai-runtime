@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
@@ -11,6 +13,11 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Http;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
+using Multiplexed.Abstractions.AI.Execution;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 {
@@ -37,7 +44,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
     /// worker pool, and DAG execution engine.
     /// </para>
     /// </remarks>
-    [AiRuntimeInstanceProvider("http")]
+    [AiRuntimeInstanceProvider(AiRuntimeInstanceProviderNames.Http)]
     public sealed class HttpAiRuntimeInstanceProvider :
         IAiRuntimeInstanceDispatchProvider,
         IAiRuntimeInstanceStatusProvider,
@@ -48,27 +55,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         /// <summary>
         /// The provider name used by this HTTP runtime instance provider.
         /// </summary>
-        private const string ProviderName = "http";
-
-        /// <summary>
-        /// The default relative endpoint used to send runtime instance commands.
-        /// </summary>
-        private const string DefaultCommandEndpointPath = "/runtime-instance/commands";
-
-        /// <summary>
-        /// The default routing header understood by Kubernetes HTTPRoute resources.
-        /// </summary>
-        private const string DefaultGatewayRoutingHeaderName = "x-ai-runtime-instance-id";
-
-        /// <summary>
-        /// The runtime descriptor metadata key that can override the Gateway routing header name.
-        /// </summary>
-        private const string GatewayRoutingHeaderNameMetadataKey = "gateway.routing.header";
-
-        /// <summary>
-        /// The runtime descriptor metadata key that can override the Gateway routing header value.
-        /// </summary>
-        private const string GatewayRoutingValueMetadataKey = "gateway.routing.value";
 
         /// <summary>
         /// The HTTP client used to send runtime instance commands.
@@ -149,7 +135,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 var canHandle =
                     string.Equals(
                         providerName.Trim(),
-                        ProviderName,
+                        AiRuntimeInstanceProviderNames.Http,
                         StringComparison.OrdinalIgnoreCase);
 
                 logger.LogInformation(
@@ -190,11 +176,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                         Metadata = new Dictionary<string, string>(
                             StringComparer.OrdinalIgnoreCase)
                         {
-                            [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName,
-                            ["provider.name"] = ProviderName,
-                            ["scaleOutRequestId"] = request.RequestId,
-                            ["sharedRunId"] = request.SharedRunId,
-                            ["controlPlaneId"] = request.ControlPlaneId
+                            [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = AiRuntimeInstanceProviderNames.Http,
+                            [AiRuntimeScaleOutMetadataKeys.CamelCaseScaleOutRequestId] = request.RequestId,
+                            [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId,
+                            [AiControlPlaneMetadataKeys.ControlPlaneId] = request.ControlPlaneId
                         }
                     });
             }
@@ -236,7 +221,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 return CreateFailedDispatchResult(
                     request,
                     string.Empty,
-                    "runtime-instance-id-missing",
+                    AiRuntimeInstanceFailureReasons.RuntimeInstanceIdMissing,
                     "Runtime instance id is missing.");
             }
 
@@ -447,7 +432,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     request,
                     queueOperation,
                     string.Empty,
-                    "runtime-instance-id-missing",
+                    AiRuntimeInstanceFailureReasons.RuntimeInstanceIdMissing,
                     "Runtime instance id is missing.");
             }
 
@@ -936,7 +921,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                         (long)(completedAtUtc - startedAtUtc).TotalMilliseconds),
                     Metadata = new Dictionary<string, string>
                     {
-                        ["exception.type"] =
+                        [AiExceptionMetadataKeys.ExceptionType] =
                             exception.GetType().FullName ??
                             exception.GetType().Name
                     }
@@ -973,7 +958,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                         (long)(completedAtUtc - startedAtUtc).TotalMilliseconds),
                     Metadata = new Dictionary<string, string>
                     {
-                        ["exception.type"] =
+                        [AiExceptionMetadataKeys.ExceptionType] =
                             exception.GetType().FullName ??
                             exception.GetType().Name
                     }
@@ -994,13 +979,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             var configuredHeaderName =
                 GetMetadataValue(
                     request.Descriptor?.Metadata,
-                    GatewayRoutingHeaderNameMetadataKey) ??
+                    AiRuntimeInstanceCommandTransportMetadataKeys.GatewayRoutingHeader) ??
                 GetMetadataValue(
                     request.Metadata,
-                    GatewayRoutingHeaderNameMetadataKey);
+                    AiRuntimeInstanceCommandTransportMetadataKeys.GatewayRoutingHeader);
 
             return string.IsNullOrWhiteSpace(configuredHeaderName)
-                ? DefaultGatewayRoutingHeaderName
+                ? AiRuntimeInstanceCommandTransportDefaults.DefaultGatewayRoutingHeaderName
                 : configuredHeaderName.Trim();
         }
 
@@ -1020,10 +1005,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             var configuredRoutingValue =
                 GetMetadataValue(
                     request.Descriptor?.Metadata,
-                    GatewayRoutingValueMetadataKey) ??
+                    AiRuntimeInstanceCommandTransportMetadataKeys.GatewayRoutingValue) ??
                 GetMetadataValue(
                     request.Metadata,
-                    GatewayRoutingValueMetadataKey);
+                    AiRuntimeInstanceCommandTransportMetadataKeys.GatewayRoutingValue);
 
             return string.IsNullOrWhiteSpace(configuredRoutingValue)
                 ? request.RuntimeInstanceId
@@ -1327,7 +1312,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint) ??
                 GetMetadataValue(
                     descriptor.Metadata,
-                    "transport.endpoint");
+                    AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint);
 
             if (string.IsNullOrWhiteSpace(endpoint))
             {
@@ -1353,7 +1338,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 UsesRuntimePoolCommandEndpoint(descriptor)
                     ? AiRuntimePoolHttpCommandEndpointRouteBuilderExtensions
                         .DefaultCommandEndpointPath
-                    : DefaultCommandEndpointPath;
+                    : AiRuntimeInstanceCommandTransportDefaults.DefaultHttpCommandEndpointPath;
 
             var commandEndpoint =
                 new Uri(
@@ -1381,7 +1366,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 !string.IsNullOrWhiteSpace(
                     GetMetadataValue(
                         descriptor.Metadata,
-                        "runtime.pool.id")))
+                        AiRuntimePoolMetadataKeys.PoolId)))
             {
                 return true;
             }
@@ -1389,15 +1374,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             var hostCreationMode =
                 GetMetadataValue(
                     descriptor.Metadata,
-                    "host.creation.mode");
+                    AiRuntimeHostMetadataKeys.HostCreationMode);
 
             if (string.Equals(
                     hostCreationMode,
-                    "KubernetesPool",
+                    AiRuntimeHostCreationModeNames.KubernetesPool,
                     StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(
                     hostCreationMode,
-                    "ProcessPool",
+                    AiRuntimeHostCreationModeNames.ProcessPool,
                     StringComparison.OrdinalIgnoreCase))
             {
                 return true;
@@ -1406,15 +1391,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             var hostType =
                 GetMetadataValue(
                     descriptor.Metadata,
-                    "hostType");
+                    AiRuntimeHostMetadataKeys.CamelCaseHostType);
 
             return string.Equals(
                        hostType,
-                       "runtime-instance-kubernetes-pool",
+                       AiRuntimeHostTypeNames.KubernetesPool,
                        StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(
                        hostType,
-                       "runtime-instance-process-pool",
+                       AiRuntimeHostTypeNames.ProcessPool,
                        StringComparison.OrdinalIgnoreCase);
         }
 
@@ -1498,10 +1483,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
             }
 
             result[AiRuntimeInstanceProviderMetadataKeys.ProviderName] =
-                ProviderName;
+                AiRuntimeInstanceProviderNames.Http;
 
-            result["provider"] =
-                ProviderName;
+            result[AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName] =
+                AiRuntimeInstanceProviderNames.Http;
 
             result[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] =
                 AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName;
@@ -1560,7 +1545,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 Metadata = new Dictionary<string, string>(
                     StringComparer.OrdinalIgnoreCase)
                 {
-                    [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName
+                    [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = AiRuntimeInstanceProviderNames.Http
                 }
             };
         }

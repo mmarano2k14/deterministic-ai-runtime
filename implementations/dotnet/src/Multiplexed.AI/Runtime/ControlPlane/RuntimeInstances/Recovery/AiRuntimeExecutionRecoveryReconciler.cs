@@ -17,6 +17,12 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
 {
@@ -43,24 +49,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
     /// </remarks>
     public sealed class AiRuntimeExecutionRecoveryReconciler : IAiRuntimeExecutionRecoveryReconciler
     {
-        private const string RecoveryReconciliationOperation = "runtime-execution-recovery-reconcile";
-        private const string RecoveryForensicsIdMetadataKey =
-            "recovery.forensicsId";
-        private const string RecoveryModeMetadataKey =
-            "recovery.mode";
-        private const string RecoveryReasonMetadataKey =
-            "recovery.reason";
-        private const string RecoveryFailedRuntimeInstanceIdMetadataKey =
-            "recovery.failedRuntimeInstanceId";
-        private const string RecoveryFailedLocalRunIdMetadataKey =
-            "recovery.failedLocalRunId";
-        private const string RecoveryFailedExecutionIdMetadataKey =
-            "recovery.failedExecutionId";
-        private const string RecoveryModeResumeExistingExecution =
-            "resume-existing-execution";
-        private const string RecoveryModeRequeueLocalQueuedRun =
-            "requeue-local-queued-run";
-        private const string RuntimeStatusNotIncludedReason = "runtime-status-not-included";
         private const string NoRecoverableRuntimeRunsReason = "no-recoverable-runtime-runs";
         private const string OrphanedRuntimeInstanceReason = "orphaned-runtime-instance";
         private const string OrphanedRuntimeInstanceUnconfirmedReason =
@@ -262,7 +250,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         ignoredRuntimeInstanceCount++;
 
                         Console.WriteLine(
-                            $"[EXECUTION RECOVERY RUNTIME SKIP] RuntimeInstanceId='{runtimeInstance.RuntimeInstanceId}', Status='{runtimeInstance.Status}', Reason='{RuntimeStatusNotIncludedReason}'.");
+                            $"[EXECUTION RECOVERY RUNTIME SKIP] RuntimeInstanceId='{runtimeInstance.RuntimeInstanceId}', Status='{runtimeInstance.Status}', Reason='{AiRuntimeInstanceFailureReasons.RuntimeStatusNotIncluded}'.");
 
                         decisions.Add(new AiRuntimeExecutionRecoveryDecision
                         {
@@ -270,7 +258,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                             TenantId = runtimeInstance.TenantId,
                             TenantGroupId = runtimeInstance.TenantGroupId,
                             Action = "ignore-runtime-instance",
-                            Reason = RuntimeStatusNotIncludedReason,
+                            Reason = AiRuntimeInstanceFailureReasons.RuntimeStatusNotIncluded,
                             Changed = false
                         });
 
@@ -471,8 +459,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         exception.GetType().Name,
                         new Dictionary<string, object?>
                         {
-                            ["exception.type"] = exception.GetType().FullName,
-                            ["exception.message"] = exception.Message
+                            [AiExceptionMetadataKeys.ExceptionType] = exception.GetType().FullName,
+                            [AiExceptionMetadataKeys.ExceptionMessage] = exception.Message
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -536,8 +524,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             var sharedRunId =
                 TryGetMetadataValue(
                     unfinishedRun.Metadata,
-                    "sharedRunId",
-                    "shared.run.id",
+                    AiRunMetadataKeys.CamelCaseSharedRunId,
+                    AiRunMetadataKeys.SharedRunId,
                     "sharedRun.id",
                     "recovery.sharedRunId",
                     "recovery.shared.run.id");
@@ -684,7 +672,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                             EventType =
                                 AiControlPlaneEventType.OperationCompleted,
                             Area = AiControlPlaneArea.Recovery,
-                            Operation = RecoveryReconciliationOperation,
+                            Operation = AiRuntimeRecoveryOperationNames.ExecutionRecoveryReconcile,
                             Outcome =
                                 AiControlPlaneOperationOutcome.Succeeded,
                             Correlation =
@@ -700,27 +688,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                             Properties =
                                 new Dictionary<string, object?>
                                 {
-                                    ["tenantId"] = tenantId,
-                                    ["tenant.id"] = tenantId,
-                                    ["tenantGroupId"] = tenantGroupId,
-                                    ["tenant.group.id"] = tenantGroupId,
-                                    ["sharedRunId"] = sharedRunId,
-                                    ["localRunId"] = unfinishedRun.RunId,
-                                    ["executionId"] = unfinishedRun.ExecutionId,
-                                    ["runtimeInstanceId"] = runtimeInstanceId,
-                                    [RecoveryForensicsIdMetadataKey] =
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = tenantId,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = tenantId,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = tenantGroupId,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = tenantGroupId,
+                                    [AiRunMetadataKeys.CamelCaseSharedRunId] = sharedRunId,
+                                    [AiRunMetadataKeys.CamelCaseLocalRunId] = unfinishedRun.RunId,
+                                    [AiExecutionMetadataKeys.CamelCaseExecutionId] = unfinishedRun.ExecutionId,
+                                    [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = runtimeInstanceId,
+                                    [AiRuntimeRecoveryMetadataKeys.ForensicsId] =
                                         forensicsId,
-                                    [RecoveryModeMetadataKey] =
+                                    [AiRuntimeRecoveryMetadataKeys.Mode] =
                                         localQueued
-                                            ? RecoveryModeRequeueLocalQueuedRun
-                                            : RecoveryModeResumeExistingExecution,
-                                    [RecoveryReasonMetadataKey] =
+                                            ? AiRuntimeRecoveryModes.RequeueLocalQueuedRun
+                                            : AiRuntimeRecoveryModes.ResumeExistingExecution,
+                                    [AiRuntimeRecoveryMetadataKeys.Reason] =
                                         transition.Reason,
-                                    [RecoveryFailedRuntimeInstanceIdMetadataKey] =
+                                    [AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId] =
                                         runtimeInstanceId,
-                                    [RecoveryFailedLocalRunIdMetadataKey] =
+                                    [AiRuntimeRecoveryMetadataKeys.FailedLocalRunId] =
                                         unfinishedRun.RunId,
-                                    [RecoveryFailedExecutionIdMetadataKey] =
+                                    [AiRuntimeRecoveryMetadataKeys.FailedExecutionId] =
                                         unfinishedRun.ExecutionId
                                 }
                         },
@@ -756,7 +744,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         {
                             EventType = eventType,
                             Area = AiControlPlaneArea.Recovery,
-                            Operation = RecoveryReconciliationOperation,
+                            Operation = AiRuntimeRecoveryOperationNames.ExecutionRecoveryReconcile,
                             Outcome = outcome,
                             FailureReason = failureReason,
                             Correlation = new AiRuntimeExecutionCorrelationContext
@@ -790,12 +778,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             {
                 return dryRun
                     ? "dry-run-runtime-local-queued-recovery"
-                    : "runtime-local-queued-recovery-requeue";
+                    : AiRuntimeRecoveryOperationNames.LocalQueuedRecoveryRequeue;
             }
 
             return dryRun
                 ? "dry-run-runtime-execution-recovery"
-                : "runtime-execution-recovery-requeue";
+                : AiRuntimeRecoveryOperationNames.ExecutionRecoveryRequeue;
         }
 
         /// <summary>
@@ -945,7 +933,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         ForensicsId = forensicsId,
                         TimestampUtc = DateTimeOffset.UtcNow,
                         EventType = AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected,
-                        Outcome = canRecover ? "recoverable" : "not-recoverable",
+                        Outcome = canRecover ? AiRuntimeRecoveryOutcomeCodes.Recoverable : AiRuntimeRecoveryOutcomeCodes.NotRecoverable,
                         Reason = reason,
                         ExecutionId = executionId,
                         SharedRunId = sharedRunId,
@@ -953,8 +941,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                         RuntimeInstanceId = runtimeInstanceId,
                         Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                         {
-                            ["tenant.id"] = tenantId ?? string.Empty,
-                            ["tenant.group.id"] = tenantGroupId ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = tenantId ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = tenantGroupId ?? string.Empty,
                             ["candidate.canRecover"] = canRecover.ToString()
                         }
                     },
@@ -1030,7 +1018,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             return string.Join(
                 "|",
                 entries.Select(entry =>
-                    $"localRunId={entry.RunId},executionId={entry.ExecutionId},status={entry.Status},runtimeInstanceId={entry.RuntimeInstanceId},tenantId={entry.ExecutionContextSnapshot?.TenantId},sharedRunId={TryGetMetadataValue(entry.Metadata, "sharedRunId", "shared.run.id", "sharedRun.id", "recovery.sharedRunId", "recovery.shared.run.id")}"));
+                    $"localRunId={entry.RunId},executionId={entry.ExecutionId},status={entry.Status},runtimeInstanceId={entry.RuntimeInstanceId},tenantId={entry.ExecutionContextSnapshot?.TenantId},sharedRunId={TryGetMetadataValue(entry.Metadata, AiRunMetadataKeys.CamelCaseSharedRunId, AiRunMetadataKeys.SharedRunId, "sharedRun.id", "recovery.sharedRunId", "recovery.shared.run.id")}"));
         }
 
         /// <summary>

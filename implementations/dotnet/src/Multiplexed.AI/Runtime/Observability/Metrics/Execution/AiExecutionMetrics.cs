@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Metrics.Execution;
@@ -119,7 +120,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Execution
                 executionId,
                 new Dictionary<string, string>
                 {
-                    ["step.id"] = stepId ?? string.Empty
+                    [AiStepMetadataKeys.StepId] = stepId ?? string.Empty
                 });
         }
 
@@ -146,7 +147,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Execution
                 executionId,
                 new Dictionary<string, string>
                 {
-                    ["step.id"] = stepId ?? string.Empty
+                    [AiStepMetadataKeys.StepId] = stepId ?? string.Empty
                 });
         }
 
@@ -162,7 +163,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Execution
                 executionId,
                 new Dictionary<string, string>
                 {
-                    ["step.id"] = stepId ?? string.Empty
+                    [AiStepMetadataKeys.StepId] = stepId ?? string.Empty
                 });
         }
 
@@ -182,7 +183,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Execution
                 executionId,
                 new Dictionary<string, string>
                 {
-                    ["step.id"] = stepId ?? string.Empty
+                    [AiStepMetadataKeys.StepId] = stepId ?? string.Empty
                 });
         }
 
@@ -202,7 +203,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Execution
                 executionId,
                 new Dictionary<string, string>
                 {
-                    ["step.id"] = stepId ?? string.Empty
+                    [AiStepMetadataKeys.StepId] = stepId ?? string.Empty
                 });
         }
 
@@ -362,7 +363,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Execution
             var tags = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
-                ["execution.id"] = executionId ?? string.Empty
+                [AiExecutionMetadataKeys.ExecutionId] = executionId ?? string.Empty
             };
 
             if (additionalTags is not null)

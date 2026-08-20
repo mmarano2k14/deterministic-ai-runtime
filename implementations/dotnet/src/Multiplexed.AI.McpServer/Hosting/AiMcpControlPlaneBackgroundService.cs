@@ -343,10 +343,10 @@ namespace Multiplexed.AI.McpServer.Hosting
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["controlPlaneId"] = controlPlaneId,
+                [AiControlPlaneMetadataKeys.ControlPlaneId] = controlPlaneId,
                 ["logicalControlPlaneId"] = controlPlaneId,
-                ["runtime.controlPlaneId"] = controlPlaneId,
-                ["mcp.controlPlaneId"] = controlPlaneId,
+                [AiControlPlaneMetadataKeys.RuntimeControlPlaneId] = controlPlaneId,
+                [AiControlPlaneMetadataKeys.McpControlPlaneId] = controlPlaneId,
                 ["pump.runtimeInstanceId"] = runtimeInstanceId,
                 ["pump.workerId"] = workerId ?? string.Empty
             };

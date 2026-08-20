@@ -412,8 +412,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Helpers
                     "Retry decision evaluated after step failure.",
                     new Dictionary<string, string>
                     {
-                        ["step.name"] = stepName,
-                        ["step.key"] = resolvedStepKey,
+                        [AiStepMetadataKeys.StepName] = stepName,
+                        [AiStepMetadataKeys.StepKey] = resolvedStepKey,
                         ["failure.source"] = failureSource,
                         ["error"] = error ?? string.Empty,
                         ["step.status"] = stepState?.Status.ToString() ?? "unknown",
@@ -440,8 +440,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Helpers
                         "Retry decision could not be resolved because the step state was not found after failure persistence.",
                         new Dictionary<string, string>
                         {
-                            ["step.name"] = stepName,
-                            ["step.key"] = resolvedStepKey,
+                            [AiStepMetadataKeys.StepName] = stepName,
+                            [AiStepMetadataKeys.StepKey] = resolvedStepKey,
                             ["failure.source"] = failureSource,
                             ["error"] = error ?? string.Empty
                         },
@@ -468,8 +468,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Helpers
                         stepState.RetryState?.RetryReason ?? "Step retry scheduled.",
                         new Dictionary<string, string>
                         {
-                            ["step.name"] = stepName,
-                            ["step.key"] = resolvedStepKey,
+                            [AiStepMetadataKeys.StepName] = stepName,
+                            [AiStepMetadataKeys.StepKey] = resolvedStepKey,
                             ["failure.source"] = failureSource,
                             ["error"] = error ?? string.Empty,
                             ["retry.count"] = (stepState.RetryState?.RetryCount ?? 0).ToString(),
@@ -512,8 +512,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Helpers
                         : "Retry was denied or the failure was not retryable.",
                     new Dictionary<string, string>
                     {
-                        ["step.name"] = stepName,
-                        ["step.key"] = resolvedStepKey,
+                        [AiStepMetadataKeys.StepName] = stepName,
+                        [AiStepMetadataKeys.StepKey] = resolvedStepKey,
                         ["failure.source"] = failureSource,
                         ["error"] = error ?? string.Empty,
                         ["step.status"] = stepState.Status.ToString(),

@@ -2,8 +2,12 @@
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment
 {
@@ -98,11 +102,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Environment
                     {
                         ["machineName"] = hostName,
                         ["processId"] = processId.ToString(),
-                        ["hostId"] = hostId,
+                        [AiRuntimeHostMetadataKeys.CamelCaseHostId] = hostId,
                         ["runtimeId"] = runtimeId,
-                        ["runtimeInstanceId"] = runtimeInstanceId,
+                        [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = runtimeInstanceId,
                         ["controlPlaneHostId"] = controlPlaneHostId,
-                        ["provider.name"] = providerName
+                        [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = providerName
                     }
                 });
         }

@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.Execution.Persistence.Replay.Reports;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
+using Multiplexed.Abstractions.AI.ControlPlane;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.Replay
 {
@@ -282,7 +283,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Replay
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request.Source,
-                        ["requestedBy"] = request.RequestedBy,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy,
                         ["reason"] = request.Reason,
                         ["includeReport"] = request.IncludeReport,
                         ["includeLedger"] = request.IncludeLedger,
@@ -322,7 +323,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Replay
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request.Source,
-                        ["requestedBy"] = request.RequestedBy,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy,
                         ["replayValid"] = replayValid,
                         ["strictDeterminism"] = request.StrictDeterminism
                     }
@@ -352,7 +353,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Replay
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request?.Source,
-                        ["requestedBy"] = request?.RequestedBy,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request?.RequestedBy,
                         ["exceptionType"] = exception.GetType().Name
                     }
                 },

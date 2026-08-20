@@ -15,7 +15,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
         /// <summary>
         /// Gets the default runtime instance command endpoint path.
         /// </summary>
-        public const string DefaultCommandEndpointPath = "/runtime-instance/commands";
+        public const string DefaultCommandEndpointPath =
+            AiRuntimeInstanceCommandTransportDefaults.DefaultHttpCommandEndpointPath;
 
         /// <summary>
         /// Maps the runtime instance HTTP command endpoint.

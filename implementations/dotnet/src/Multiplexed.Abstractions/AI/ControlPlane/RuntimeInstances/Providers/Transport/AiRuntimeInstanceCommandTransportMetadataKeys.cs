@@ -1,4 +1,6 @@
-﻿namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport
+﻿using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+
+namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport
 {
     /// <summary>
     /// Defines metadata keys used by runtime instance command transports.
@@ -50,6 +52,31 @@
         public const string TransportEndpoint = "transport.endpoint";
 
         /// <summary>
+        /// Gets the metadata key that identifies the internal transport endpoint.
+        /// </summary>
+        public const string InternalTransportEndpoint = "transport.endpoint.internal";
+
+        /// <summary>
+        /// Gets the legacy metadata key that identifies the runtime command endpoint.
+        /// </summary>
+        public const string RuntimeCommandEndpoint = "runtime.command.endpoint";
+
+        /// <summary>
+        /// Gets the legacy metadata key that identifies the gRPC endpoint.
+        /// </summary>
+        public const string GrpcEndpoint = "grpc.endpoint";
+
+        /// <summary>
+        /// Gets the metadata key that identifies how the transport endpoint was resolved.
+        /// </summary>
+        public const string TransportEndpointSource = "transport.endpoint.source";
+
+        /// <summary>
+        /// Gets the metadata key that identifies the visibility scope of the transport endpoint.
+        /// </summary>
+        public const string TransportEndpointScope = "transport.endpoint.scope";
+
+        /// <summary>
         /// Gets the metadata key that identifies the command queue key.
         /// </summary>
         public const string CommandQueueKey = "transport.command.queue.key";
@@ -77,7 +104,22 @@
         /// <summary>
         /// Gets the metadata key that identifies the target runtime instance id used by command transports.
         /// </summary>
-        public const string RuntimeInstanceId = "runtime.instance.id";
+        public const string RuntimeInstanceId = AiRuntimeInstanceMetadataKeys.RuntimeInstanceId;
+
+        /// <summary>
+        /// Gets the metadata key that identifies the explicit target runtime instance id for a command.
+        /// </summary>
+        public const string TargetRuntimeInstanceId = "target.runtime.instance.id";
+
+        /// <summary>
+        /// Gets the metadata key that identifies the gateway routing header name.
+        /// </summary>
+        public const string GatewayRoutingHeader = "gateway.routing.header";
+
+        /// <summary>
+        /// Gets the metadata key that identifies the gateway routing header value.
+        /// </summary>
+        public const string GatewayRoutingValue = "gateway.routing.value";
 
         /// <summary>
         /// Gets the metadata key that indicates the command is routed through a remote command provider.
@@ -103,5 +145,15 @@
         /// Gets the metadata value that identifies Kubernetes as the command transport.
         /// </summary>
         public const string KubernetesTransportName = "kubernetes";
+
+        /// <summary>
+        /// Gets the camel-case transport endpoint metadata key used by compatibility payloads.
+        /// </summary>
+        public const string CamelCaseTransportEndpoint = "transportEndpoint";
+
+        /// <summary>
+        /// Gets the camel-case transport name metadata key used by compatibility and diagnostic payloads.
+        /// </summary>
+        public const string CamelCaseTransportName = "transportName";
     }
 }

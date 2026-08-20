@@ -7,6 +7,9 @@ using Multiplexed.Abstractions.Core.ExecutionContext;
 using StackExchange.Redis;
 using System.Globalization;
 using System.Text.Json;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Scheduling;
+using Multiplexed.AI.Runtime.ControlPlane.Redis;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 {
@@ -40,28 +43,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
     /// </remarks>
     public sealed class RedisAiSharedQueue : IAiSharedQueue
     {
-        private const string QueuePriorityMetadataKey = "queue.priority";
-
-        private const string DefaultKeyPrefix =
-            "ai";
-
-        private const string ControlPlaneKeySegment =
-            "control-plane";
 
         private const string SharedQueueKeySegment =
             "shared-queue";
 
-        private const string TenantKeySegment =
-            "tenant";
-
-        private const string ItemKeySegment =
-            "item";
-
         private const string PendingIndexKeySegment =
             "pending";
-
-        private const string AllIndexKeySegment =
-            "all";
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
@@ -1296,15 +1283,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                 expireSeconds
             };
 
-            AddField(values, "sharedRunId", item.SharedRunId);
-            AddField(values, "controlPlaneId", item.ControlPlaneId);
+            AddField(values, AiRunMetadataKeys.CamelCaseSharedRunId, item.SharedRunId);
+            AddField(values, AiControlPlaneMetadataKeys.ControlPlaneId, item.ControlPlaneId);
             AddField(values, "status", item.Status.ToString());
             AddField(values, "executionContextSnapshotJson", Serialize(item.ExecutionContextSnapshot));
-            AddField(values, "pipelineKey", item.PipelineKey);
+            AddField(values, AiPipelineMetadataKeys.CamelCasePipelineKey, item.PipelineKey);
             AddField(values, "priority", item.Priority.ToString(CultureInfo.InvariantCulture));
             AddField(values, "claimedByRuntimeInstanceId", item.ClaimedByRuntimeInstanceId);
             AddField(values, "claimedByWorkerId", item.ClaimedByWorkerId);
-            AddField(values, "claimToken", item.ClaimToken);
+            AddField(values, AiExecutionClaimMetadataKeys.CamelCaseClaimToken, item.ClaimToken);
             AddField(values, "enqueuedAtUtc", FormatDate(item.EnqueuedAtUtc));
             AddField(values, "updatedAtUtc", FormatDate(item.UpdatedAtUtc));
             AddField(values, "claimedAtUtc", FormatOptionalDate(item.ClaimedAtUtc));
@@ -1343,15 +1330,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
 
             return new AiSharedQueueItem
             {
-                SharedRunId = GetRequired(fields, "sharedRunId"),
-                ControlPlaneId = GetOptional(fields, "controlPlaneId"),
+                SharedRunId = GetRequired(fields, AiRunMetadataKeys.CamelCaseSharedRunId),
+                ControlPlaneId = GetOptional(fields, AiControlPlaneMetadataKeys.ControlPlaneId),
                 Status = ParseStatus(GetRequired(fields, "status")),
                 ExecutionContextSnapshot = executionContextSnapshot,
-                PipelineKey = GetOptional(fields, "pipelineKey"),
+                PipelineKey = GetOptional(fields, AiPipelineMetadataKeys.CamelCasePipelineKey),
                 Priority = ParseInt(GetOptional(fields, "priority")),
                 ClaimedByRuntimeInstanceId = GetOptional(fields, "claimedByRuntimeInstanceId"),
                 ClaimedByWorkerId = GetOptional(fields, "claimedByWorkerId"),
-                ClaimToken = GetOptional(fields, "claimToken"),
+                ClaimToken = GetOptional(fields, AiExecutionClaimMetadataKeys.CamelCaseClaimToken),
                 EnqueuedAtUtc = ParseDateTimeOffset(GetRequired(fields, "enqueuedAtUtc")),
                 UpdatedAtUtc = ParseDateTimeOffset(GetRequired(fields, "updatedAtUtc")),
                 ClaimedAtUtc = ParseOptionalDateTimeOffset(GetOptional(fields, "claimedAtUtc")),
@@ -1375,7 +1362,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             {
                 if (!string.Equals(
                         pair.Key,
-                        QueuePriorityMetadataKey,
+                        AiSharedQueueMetadataKeys.Priority,
                         StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
@@ -1568,7 +1555,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             return string.Concat(
                 NormalizeBaseKeyPrefix(_options.KeyPrefix),
                 ":",
-                ControlPlaneKeySegment,
+                AiRedisControlPlaneKeySegments.ControlPlane,
                 ":",
                 NormalizeKeySegment(controlPlaneId),
                 ":",
@@ -1582,11 +1569,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             return string.Concat(
                 NormalizeBaseKeyPrefix(_options.KeyPrefix),
                 ":",
-                ControlPlaneKeySegment,
+                AiRedisControlPlaneKeySegments.ControlPlane,
                 ":",
                 NormalizeKeySegment(controlPlaneId),
                 ":",
-                TenantKeySegment,
+                AiRedisControlPlaneKeySegments.Tenant,
                 ":",
                 NormalizeKeySegment(tenantId),
                 ":",
@@ -1600,7 +1587,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             return string.Concat(
                 BuildQueueKeyPrefix(controlPlaneId),
                 ":",
-                ItemKeySegment,
+                AiRedisControlPlaneKeySegments.Item,
                 ":",
                 NormalizeKeySegment(sharedRunId));
         }
@@ -1620,7 +1607,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             return string.Concat(
                 BuildQueueKeyPrefix(controlPlaneId),
                 ":",
-                AllIndexKeySegment);
+                AiRedisControlPlaneKeySegments.All);
         }
 
         private RedisKey BuildTenantPendingIndexKey(
@@ -1644,7 +1631,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                     controlPlaneId,
                     tenantId),
                 ":",
-                AllIndexKeySegment);
+                AiRedisControlPlaneKeySegments.All);
         }
 
         private static string NormalizeBaseKeyPrefix(
@@ -1652,7 +1639,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
         {
             if (string.IsNullOrWhiteSpace(keyPrefix))
             {
-                return DefaultKeyPrefix;
+                return AiRedisControlPlaneKeySegments.DefaultKeyPrefix;
             }
 
             var normalized =
@@ -1670,7 +1657,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
             }
 
             return string.IsNullOrWhiteSpace(normalized)
-                ? DefaultKeyPrefix
+                ? AiRedisControlPlaneKeySegments.DefaultKeyPrefix
                 : normalized;
         }
 

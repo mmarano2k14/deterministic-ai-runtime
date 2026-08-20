@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
@@ -19,6 +20,12 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Observability;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Process
 {
@@ -353,16 +360,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                                 properties,
                                 new Dictionary<string, object?>
                                 {
-                                    ["runtimeInstanceId"] = result?.RuntimeInstanceId ?? request.RuntimeInstanceId,
-                                    ["providerName"] = result?.ProviderName ?? request.ProviderName,
-                                    ["transportName"] = result?.TransportName ?? request.TransportName,
-                                    ["transportEndpoint"] = result?.TransportEndpoint ?? request.TransportEndpoint,
-                                    ["hostCreationMode"] = AiRuntimeHostCreationMode.Process.ToString(),
-                                    ["tenantId"] = request.ExecutionContextSnapshot?.TenantId ?? request.TenantId,
-                                    ["tenantGroupId"] = request.ExecutionContextSnapshot?.TenantGroupId ?? request.TenantGroupId,
-                                    ["pipelineKey"] = request.ExecutionContextSnapshot?.ContextKey,
+                                    [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = result?.RuntimeInstanceId ?? request.RuntimeInstanceId,
+                                    [AiRuntimeInstanceProviderMetadataKeys.CamelCaseProviderName] = result?.ProviderName ?? request.ProviderName,
+                                    [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportName] = result?.TransportName ?? request.TransportName,
+                                    [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = result?.TransportEndpoint ?? request.TransportEndpoint,
+                                    [AiRuntimeHostMetadataKeys.CamelCaseHostCreationMode] = AiRuntimeHostCreationMode.Process.ToString(),
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.ExecutionContextSnapshot?.TenantId ?? request.TenantId,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.ExecutionContextSnapshot?.TenantGroupId ?? request.TenantGroupId,
+                                    [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.ExecutionContextSnapshot?.ContextKey,
                                     ["success"] = result?.Success,
-                                    ["failureReason"] = result?.FailureReason
+                                    [AiObservabilityMetadataKeys.FailureReason] = result?.FailureReason
                                 })
                         },
                         cancellationToken)
@@ -379,20 +386,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         {
             return new Dictionary<string, object?>
             {
-                ["runtimeInstanceId"] = request.RuntimeInstanceId,
-                ["providerName"] = request.ProviderName,
-                ["transportName"] = request.TransportName,
-                ["transportEndpoint"] = request.TransportEndpoint,
-                ["hostCreationMode"] = AiRuntimeHostCreationMode.Process.ToString(),
+                [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = request.RuntimeInstanceId,
+                [AiRuntimeInstanceProviderMetadataKeys.CamelCaseProviderName] = request.ProviderName,
+                [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportName] = request.TransportName,
+                [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = request.TransportEndpoint,
+                [AiRuntimeHostMetadataKeys.CamelCaseHostCreationMode] = AiRuntimeHostCreationMode.Process.ToString(),
                 ["enabled"] = this.options.Enabled,
                 ["runtimeHostAssemblyPath"] = this.options.RuntimeHostAssemblyPath,
                 ["dotnetExecutablePath"] = this.options.DotnetExecutablePath,
                 ["basePort"] = this.options.BasePort,
                 ["maxPort"] = this.options.MaxPort,
                 ["redirectOutput"] = this.options.RedirectOutput,
-                ["tenantId"] = request.TenantId,
-                ["tenantGroupId"] = request.TenantGroupId,
-                ["pipelineKey"] = request.ExecutionContextSnapshot?.ContextKey
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.TenantId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.TenantGroupId,
+                [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.ExecutionContextSnapshot?.ContextKey
             };
         }
 
@@ -403,17 +410,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         {
             return new Dictionary<string, object?>
             {
-                ["runtimeInstanceId"] = result.RuntimeInstanceId ?? request.RuntimeInstanceId,
-                ["providerName"] = result.ProviderName ?? request.ProviderName,
-                ["transportName"] = result.TransportName ?? request.TransportName,
-                ["transportEndpoint"] = result.TransportEndpoint ?? request.TransportEndpoint,
-                ["hostCreationMode"] = AiRuntimeHostCreationMode.Process.ToString(),
+                [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = result.RuntimeInstanceId ?? request.RuntimeInstanceId,
+                [AiRuntimeInstanceProviderMetadataKeys.CamelCaseProviderName] = result.ProviderName ?? request.ProviderName,
+                [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportName] = result.TransportName ?? request.TransportName,
+                [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = result.TransportEndpoint ?? request.TransportEndpoint,
+                [AiRuntimeHostMetadataKeys.CamelCaseHostCreationMode] = AiRuntimeHostCreationMode.Process.ToString(),
                 ["success"] = result.Success,
-                ["failureReason"] = result.FailureReason,
-                ["durationMs"] = durationMs,
-                ["tenantId"] = request.TenantId,
-                ["tenantGroupId"] = request.TenantGroupId,
-                ["pipelineKey"] = request.ExecutionContextSnapshot?.ContextKey
+                [AiObservabilityMetadataKeys.FailureReason] = result.FailureReason,
+                [AiObservabilityMetadataKeys.DurationMs] = durationMs,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.TenantId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.TenantGroupId,
+                [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.ExecutionContextSnapshot?.ContextKey
             };
         }
 
@@ -646,7 +653,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__transport.name"] = request.TransportName ?? AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName;
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__transport.endpoint"] = endpoint;
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.instance.id"] = request.RuntimeInstanceId;
-            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__hostType"] = "runtime-instance-process";
+            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__hostType"] = AiRuntimeHostTypeNames.Process;
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__deployment"] = "process-host";
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__hostCreation.mode"] = AiRuntimeHostCreationMode.Process.ToString();
 
@@ -660,11 +667,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             startInfo.Environment[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity}"] = request.PreferDedicatedCapacity.ToString();
             startInfo.Environment[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback}"] = request.AllowSharedFallback.ToString();
 
-            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.maxRuntimeInstances"] = request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.instanceIdPrefix"] = request.RuntimeInstanceIdPrefix ?? string.Empty;
-            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.workerCountPerInstance"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture);
-            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.maxConcurrentRunsPerInstance"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture);
-            startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__runtime.localQueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture);
+            startInfo.Environment[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.MaxRuntimeInstances}"] = request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            startInfo.Environment[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.RuntimeInstanceIdPrefix}"] = request.RuntimeInstanceIdPrefix ?? string.Empty;
+            startInfo.Environment[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.WorkerCountPerInstance}"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture);
+            startInfo.Environment[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.MaxConcurrentRunsPerInstance}"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture);
+            startInfo.Environment[$"AiRuntimeInstanceRegistration__Metadata__{AiRuntimeInstanceProvisioningMetadataKeys.LocalQueueCapacity}"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture);
             startInfo.Environment["AiRuntimeInstanceRegistration__Metadata__hostCreation.mode"] = AiRuntimeHostCreationMode.Process.ToString();
 
             startInfo.Environment["ASPNETCORE_ENVIRONMENT"] = "Test";
@@ -733,21 +740,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         {
             var metadata = new Dictionary<string, string>(request.Metadata, StringComparer.OrdinalIgnoreCase)
             {
-                ["provider.name"] = request.ProviderName,
-                ["transport.name"] = request.TransportName ?? AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
-                ["transport.endpoint"] = endpoint,
-                ["runtime.instance.id"] = request.RuntimeInstanceId,
-                ["hostCreation.mode"] = AiRuntimeHostCreationMode.Process.ToString(),
+                [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = request.ProviderName,
+                [AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] = request.TransportName ?? AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
+                [AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = endpoint,
+                [AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeInstanceId] = request.RuntimeInstanceId,
+                [AiRuntimeHostMetadataKeys.LegacyHostCreationMode] = AiRuntimeHostCreationMode.Process.ToString(),
                 ["hostCreation.strategy"] = nameof(ProcessAiRuntimeHostCreationStrategy),
                 ["process.port"] = port.ToString(CultureInfo.InvariantCulture),
                 [AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = request.IsolationMode,
                 [AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = request.PreferDedicatedCapacity.ToString(),
                 [AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = request.AllowSharedFallback.ToString(),
-                ["runtime.maxRuntimeInstances"] = request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-                ["runtime.instanceIdPrefix"] = request.RuntimeInstanceIdPrefix,
-                ["runtime.workerCountPerInstance"] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture),
-                ["runtime.maxConcurrentRunsPerInstance"] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture),
-                ["runtime.localQueueCapacity"] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture)
+                [AiRuntimeInstanceProvisioningMetadataKeys.MaxRuntimeInstances] = request.MaxRuntimeInstances?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                [AiRuntimeInstanceProvisioningMetadataKeys.RuntimeInstanceIdPrefix] = request.RuntimeInstanceIdPrefix,
+                [AiRuntimeInstanceProvisioningMetadataKeys.WorkerCountPerInstance] = request.WorkerCountPerInstance.ToString(CultureInfo.InvariantCulture),
+                [AiRuntimeInstanceProvisioningMetadataKeys.MaxConcurrentRunsPerInstance] = request.MaxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture),
+                [AiRuntimeInstanceProvisioningMetadataKeys.LocalQueueCapacity] = request.LocalQueueCapacity.ToString(CultureInfo.InvariantCulture)
             };
 
             if (!string.IsNullOrWhiteSpace(request.TenantId))

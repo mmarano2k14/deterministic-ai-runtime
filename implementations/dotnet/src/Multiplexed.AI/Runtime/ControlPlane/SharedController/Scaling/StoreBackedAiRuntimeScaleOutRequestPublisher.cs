@@ -9,6 +9,10 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using System.Globalization;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.ControlPlane;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 {
@@ -24,12 +28,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         /// <summary>
         /// The default runtime provider name used when no provider name is configured.
         /// </summary>
-        private const string DefaultProviderName = "local";
-
-        /// <summary>
-        /// Metadata key used to override the generated scale-out request id.
-        /// </summary>
-        private const string ScaleOutRequestIdMetadataKey = "scaleout.requestId";
 
         /// <summary>
         /// The control-plane operation name used for scale-out request publication events.
@@ -303,13 +301,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                                 properties,
                                 new Dictionary<string, object?>
                                 {
-                                    ["scaleOutRequestId"] = scaleOutRequestId,
-                                    ["controlPlaneId"] = controlPlaneId ?? string.Empty,
-                                    ["providerHint"] = providerHint,
-                                    ["tenantId"] = request.TenantId,
-                                    ["tenantGroupId"] = request.TenantGroupId,
-                                    ["pipelineKey"] = request.PipelineKey,
-                                    ["sharedRunId"] = request.SharedRunId
+                                    [AiRuntimeScaleOutMetadataKeys.CamelCaseScaleOutRequestId] = scaleOutRequestId,
+                                    [AiControlPlaneMetadataKeys.ControlPlaneId] = controlPlaneId ?? string.Empty,
+                                    [AiRuntimeScaleOutMetadataKeys.ProviderHint] = providerHint,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.TenantId,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.TenantGroupId,
+                                    [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey,
+                                    [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId
                                 })
                         },
                         cancellationToken)
@@ -341,14 +339,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         {
             var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                ["scaleOutRequestId"] = scaleOutRequestId,
-                ["controlPlaneId"] = controlPlaneId ?? string.Empty,
-                ["providerHint"] = providerHint,
-                ["sharedRunId"] = request.SharedRunId,
-                ["tenantId"] = request.TenantId,
-                ["tenantGroupId"] = request.TenantGroupId,
-                ["pipelineKey"] = request.PipelineKey,
-                ["requestedBy"] = request.RequestedBy,
+                [AiRuntimeScaleOutMetadataKeys.CamelCaseScaleOutRequestId] = scaleOutRequestId,
+                [AiControlPlaneMetadataKeys.ControlPlaneId] = controlPlaneId ?? string.Empty,
+                [AiRuntimeScaleOutMetadataKeys.ProviderHint] = providerHint,
+                [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.TenantId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.TenantGroupId,
+                [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey,
+                [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy,
                 ["source"] = request.Source,
                 ["reason"] = GetReason(request),
                 ["visibleInstanceCount"] = request.VisibleInstanceCount,
@@ -372,9 +370,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             if (exception is not null)
             {
-                properties["exception.type"] = exception.GetType().FullName;
-                properties["exception.message"] = exception.Message;
-                properties["failureReason"] = exception.GetType().Name;
+                properties[AiExceptionMetadataKeys.ExceptionType] = exception.GetType().FullName;
+                properties[AiExceptionMetadataKeys.ExceptionMessage] = exception.Message;
+                properties[AiObservabilityMetadataKeys.FailureReason] = exception.GetType().Name;
             }
 
             foreach (var pair in request.Metadata)
@@ -467,7 +465,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 return this.registrationOptions.ProviderName.Trim();
             }
 
-            return DefaultProviderName;
+            return AiRuntimeInstanceProviderNames.Local;
         }
 
         /// <summary>
@@ -484,7 +482,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         private static string CreateRequestId(
             AiRuntimeScaleOutRequest request)
         {
-            if (request.Metadata.TryGetValue(ScaleOutRequestIdMetadataKey, out var requestId) &&
+            if (request.Metadata.TryGetValue(AiRuntimeScaleOutMetadataKeys.RequestId, out var requestId) &&
                 !string.IsNullOrWhiteSpace(requestId))
             {
                 return requestId.Trim();
@@ -577,8 +575,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 metadata[pair.Key] = pair.Value;
             }
 
-            metadata["sharedRunId"] = request.SharedRunId;
-            metadata["providerHint"] = providerHint;
+            metadata[AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId;
+            metadata[AiRuntimeScaleOutMetadataKeys.ProviderHint] = providerHint;
 
             if (!string.IsNullOrWhiteSpace(request.TenantId))
             {
@@ -592,7 +590,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             if (!string.IsNullOrWhiteSpace(request.PipelineKey))
             {
-                metadata["pipelineKey"] = request.PipelineKey;
+                metadata[AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey;
             }
 
             metadata[AiRuntimeInstanceIsolationMetadataKeys.IsolationMode] = request.IsolationMode.ToString();
@@ -601,31 +599,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             if (request.MaxRuntimeInstances.HasValue)
             {
-                metadata["runtime.maxRuntimeInstances"] =
+                metadata[AiRuntimeInstanceProvisioningMetadataKeys.MaxRuntimeInstances] =
                     request.MaxRuntimeInstances.Value.ToString(CultureInfo.InvariantCulture);
             }
 
             if (!string.IsNullOrWhiteSpace(request.RuntimeInstanceIdPrefix))
             {
-                metadata["runtime.instanceIdPrefix"] =
+                metadata[AiRuntimeInstanceProvisioningMetadataKeys.RuntimeInstanceIdPrefix] =
                     request.RuntimeInstanceIdPrefix;
             }
 
             if (request.WorkerCountPerInstance.HasValue)
             {
-                metadata["runtime.workerCountPerInstance"] =
+                metadata[AiRuntimeInstanceProvisioningMetadataKeys.WorkerCountPerInstance] =
                     request.WorkerCountPerInstance.Value.ToString(CultureInfo.InvariantCulture);
             }
 
             if (request.MaxConcurrentRunsPerInstance.HasValue)
             {
-                metadata["runtime.maxConcurrentRunsPerInstance"] =
+                metadata[AiRuntimeInstanceProvisioningMetadataKeys.MaxConcurrentRunsPerInstance] =
                     request.MaxConcurrentRunsPerInstance.Value.ToString(CultureInfo.InvariantCulture);
             }
 
             if (request.LocalQueueCapacity.HasValue)
             {
-                metadata["runtime.localQueueCapacity"] =
+                metadata[AiRuntimeInstanceProvisioningMetadataKeys.LocalQueueCapacity] =
                     request.LocalQueueCapacity.Value.ToString(CultureInfo.InvariantCulture);
             }
 
@@ -646,7 +644,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             if (!string.IsNullOrWhiteSpace(request.CorrelationId))
             {
-                metadata["correlationId"] = request.CorrelationId;
+                metadata[AiObservabilityMetadataKeys.CamelCaseCorrelationId] = request.CorrelationId;
             }
 
             return metadata;

@@ -25,6 +25,9 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using DiagnosticsProcess = System.Diagnostics.Process;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes
 {
@@ -41,8 +44,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     /// </remarks>
     public sealed class KubernetesAiRuntimeHostCreationStrategy : IAiRuntimeHostCreationStrategy, IAiRuntimeHostProcessControl, IDisposable
     {
-        private const string DefaultGatewayRoutingHeaderName = "x-ai-runtime-instance-id";
-        private const string DefaultHttpCommandEndpointPath = "/runtime-instance/commands";
         private static readonly JsonSerializerOptions GatewayGrpcProbeJsonOptions = new(JsonSerializerDefaults.Web);
         private static readonly TimeSpan MaximumGatewayGrpcProbeAttemptTimeout = TimeSpan.FromSeconds(5);
         private static readonly TimeSpan MaximumGatewayHttpProbeAttemptTimeout = TimeSpan.FromSeconds(5);
@@ -872,35 +873,34 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     StringComparer.OrdinalIgnoreCase)
                 {
                     [AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = transportEndpoint.Endpoint,
-                    ["transport.endpoint"] = transportEndpoint.Endpoint,
-                    ["transportEndpoint"] = transportEndpoint.Endpoint,
-                    ["kubernetes.transport.endpoint.source"] =
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = transportEndpoint.Endpoint,
+                    [AiKubernetesRuntimeHostMetadataKeys.TransportEndpointSource] =
                         transportEndpoint.UsesPortForward
                             ? "gateway-port-forward"
                             : "gateway-service",
-                    ["kubernetes.gateway.name"] = gatewayEndpoint.GatewayName,
-                    ["kubernetes.gateway.namespace"] = gatewayEndpoint.Namespace,
-                    ["kubernetes.gateway.class.name"] = gatewayEndpoint.GatewayClassName,
-                    ["kubernetes.gateway.listener.name"] = gatewayEndpoint.ListenerName,
-                    ["kubernetes.gateway.listener.port"] = gatewayEndpoint.ListenerPort.ToString(),
-                    ["kubernetes.gateway.service.name"] = gatewayEndpoint.ServiceName,
-                    ["kubernetes.gateway.service.namespace"] = gatewayEndpoint.ServiceNamespace,
-                    ["kubernetes.gateway.service.port"] = gatewayEndpoint.ServicePort.ToString(),
-                    ["kubernetes.gateway.internalEndpoint"] = gatewayEndpoint.InternalEndpoint,
-                    ["kubernetes.gateway.transport.endpoint"] = transportEndpoint.Endpoint,
-                    ["kubernetes.gateway.transport.internalEndpoint"] = transportEndpoint.InternalEndpoint,
-                    ["kubernetes.gateway.transport.usesPortForward"] = transportEndpoint.UsesPortForward.ToString(),
-                    ["kubernetes.gateway.route.name"] = routeResult.RouteName,
-                    ["kubernetes.gateway.route.kind"] = routeResult.RouteKind.ToString(),
-                    ["kubernetes.runtime.service.name"] = routeResult.RuntimeServiceName,
-                    ["kubernetes.runtime.service.port"] = routeResult.BackendPort.ToString(),
-                    ["gateway.routing.header"] = routeResult.RoutingHeaderName,
-                    ["gateway.routing.value"] = routeResult.RoutingHeaderValue
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayName] = gatewayEndpoint.GatewayName,
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayNamespace] = gatewayEndpoint.Namespace,
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayClassName] = gatewayEndpoint.GatewayClassName,
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayListenerName] = gatewayEndpoint.ListenerName,
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayListenerPort] = gatewayEndpoint.ListenerPort.ToString(),
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayServiceName] = gatewayEndpoint.ServiceName,
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayServiceNamespace] = gatewayEndpoint.ServiceNamespace,
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayServicePort] = gatewayEndpoint.ServicePort.ToString(),
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayInternalEndpoint] = gatewayEndpoint.InternalEndpoint,
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayTransportEndpoint] = transportEndpoint.Endpoint,
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayTransportInternalEndpoint] = transportEndpoint.InternalEndpoint,
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayTransportUsesPortForward] = transportEndpoint.UsesPortForward.ToString(),
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayRouteName] = routeResult.RouteName,
+                    [AiKubernetesRuntimeHostMetadataKeys.GatewayRouteKind] = routeResult.RouteKind.ToString(),
+                    [AiKubernetesRuntimeHostMetadataKeys.RuntimeServiceName] = routeResult.RuntimeServiceName,
+                    [AiKubernetesRuntimeHostMetadataKeys.RuntimeServicePort] = routeResult.BackendPort.ToString(),
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.GatewayRoutingHeader] = routeResult.RoutingHeaderName,
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.GatewayRoutingValue] = routeResult.RoutingHeaderValue
                 };
 
             if (transportEndpoint.LocalPort is int localPort)
             {
-                metadata["kubernetes.gateway.transport.localPort"] =
+                metadata[AiKubernetesRuntimeHostMetadataKeys.GatewayTransportLocalPort] =
                     localPort.ToString();
             }
 
@@ -1197,9 +1197,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
                     ["kubernetes.gateway.grpc.probe"] = "true",
-                    ["runtime.instance.id"] = request.RuntimeInstanceId,
-                    ["gateway.routing.header"] = routingHeaderName,
-                    ["gateway.routing.value"] = request.RuntimeInstanceId
+                    [AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] = request.RuntimeInstanceId,
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.GatewayRoutingHeader] = routingHeaderName,
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.GatewayRoutingValue] = request.RuntimeInstanceId
                 };
 
             var commandRequest =
@@ -1427,7 +1427,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             var commandEndpoint =
                 new Uri(
                     baseEndpoint.ToString().TrimEnd('/') +
-                    DefaultHttpCommandEndpointPath);
+                    AiRuntimeInstanceCommandTransportDefaults.DefaultHttpCommandEndpointPath);
 
             var routingHeaderName =
                 ResolveGatewayProbeRoutingHeaderName(metadata);
@@ -1456,9 +1456,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
                     ["kubernetes.gateway.http.probe"] = "true",
-                    ["runtime.instance.id"] = request.RuntimeInstanceId,
-                    ["gateway.routing.header"] = routingHeaderName,
-                    ["gateway.routing.value"] = request.RuntimeInstanceId
+                    [AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] = request.RuntimeInstanceId,
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.GatewayRoutingHeader] = routingHeaderName,
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.GatewayRoutingValue] = request.RuntimeInstanceId
                 };
 
             var commandRequest =
@@ -1785,7 +1785,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         {
             if (TryGetMetadataValue(
                     metadata,
-                    "gateway.routing.header",
+                    AiRuntimeInstanceCommandTransportMetadataKeys.GatewayRoutingHeader,
                     out var metadataHeaderName) &&
                 !string.IsNullOrWhiteSpace(metadataHeaderName))
             {
@@ -1797,7 +1797,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 return this.options.GatewayRouteHeaderName.Trim().ToLowerInvariant();
             }
 
-            return DefaultGatewayRoutingHeaderName;
+            return AiRuntimeInstanceCommandTransportDefaults.DefaultGatewayRoutingHeaderName;
         }
 
         /// <summary>
@@ -1834,19 +1834,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         private static bool ShouldRequireTransportEndpoint(
             IReadOnlyDictionary<string, string> metadata)
         {
-            if (TryGetMetadataValue(metadata, "transport.name", out var transportName) &&
+            if (TryGetMetadataValue(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportName, out var transportName) &&
                 string.Equals(transportName, "grpc", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
 
-            if (TryGetMetadataValue(metadata, "provider.name", out var providerName) &&
+            if (TryGetMetadataValue(metadata, AiRuntimeInstanceProviderMetadataKeys.ProviderName, out var providerName) &&
                 string.Equals(providerName, "grpc", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
 
-            if (TryGetMetadataValue(metadata, "provider", out var providerAlias) &&
+            if (TryGetMetadataValue(metadata, AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName, out var providerAlias) &&
                 string.Equals(providerAlias, "grpc", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
@@ -2203,7 +2203,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 return serviceName;
             }
 
-            if (TryGetMetadataValue(metadata, "kubernetes.service.name", out var metadataServiceName))
+            if (TryGetMetadataValue(metadata, AiKubernetesRuntimeHostMetadataKeys.ServiceName, out var metadataServiceName))
             {
                 return metadataServiceName;
             }
@@ -2226,12 +2226,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             return new Dictionary<string, string>
             {
                 [AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = transportEndpoint,
-                ["transport.endpoint"] = transportEndpoint,
-                ["transportEndpoint"] = transportEndpoint,
+                [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = transportEndpoint,
                 ["kubernetes.portForward.endpoint"] = transportEndpoint,
                 ["kubernetes.portForward.localPort"] = localPort.ToString(),
                 ["kubernetes.portForward.serviceName"] = serviceName,
-                ["kubernetes.transport.endpoint.source"] = "port-forward"
+                [AiKubernetesRuntimeHostMetadataKeys.TransportEndpointSource] = "port-forward"
             };
         }
 
@@ -2278,7 +2277,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             if (TryGetBooleanMetadataValue(
                     metadata,
-                    "kubernetes.pod.alreadyExists",
+                    AiKubernetesRuntimeHostMetadataKeys.PodAlreadyExists,
                     out var podAlreadyExists) &&
                 podAlreadyExists)
             {
@@ -2287,7 +2286,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             if (TryGetBooleanMetadataValue(
                     metadata,
-                    "kubernetes.service.alreadyExists",
+                    AiKubernetesRuntimeHostMetadataKeys.ServiceAlreadyExists,
                     out var serviceAlreadyExists) &&
                 serviceAlreadyExists)
             {
@@ -2471,12 +2470,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 return transportEndpoint;
             }
 
-            if (TryGetMetadataValue(metadata, "transport.endpoint", out transportEndpoint))
-            {
-                return transportEndpoint;
-            }
-
-            if (TryGetMetadataValue(metadata, "transportEndpoint", out transportEndpoint))
+            if (TryGetMetadataValue(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint, out transportEndpoint))
             {
                 return transportEndpoint;
             }
@@ -2486,17 +2480,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 return transportEndpoint;
             }
 
-            if (TryGetMetadataValue(metadata, "kubernetes.nodePort.endpoint", out transportEndpoint))
+            if (TryGetMetadataValue(metadata, AiKubernetesRuntimeHostMetadataKeys.NodePortEndpoint, out transportEndpoint))
             {
                 return transportEndpoint;
             }
 
-            if (TryGetMetadataValue(metadata, "kubernetes.service.endpoint", out transportEndpoint))
+            if (TryGetMetadataValue(metadata, AiKubernetesRuntimeHostMetadataKeys.ServiceEndpoint, out transportEndpoint))
             {
                 return transportEndpoint;
             }
 
-            if (TryGetMetadataValue(metadata, "kubernetes.service.url", out transportEndpoint))
+            if (TryGetMetadataValue(metadata, AiKubernetesRuntimeHostMetadataKeys.ServiceUrl, out transportEndpoint))
             {
                 return transportEndpoint;
             }
@@ -2520,8 +2514,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             return new Dictionary<string, string>
             {
                 [AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = transportEndpoint,
-                ["transport.endpoint"] = transportEndpoint,
-                ["transportEndpoint"] = transportEndpoint
+                [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = transportEndpoint
             };
         }
 

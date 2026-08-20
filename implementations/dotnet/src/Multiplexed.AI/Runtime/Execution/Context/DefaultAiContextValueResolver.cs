@@ -530,10 +530,10 @@ namespace Multiplexed.AI.Runtime.Execution.Context
 
             return parts[1] switch
             {
-                "id" or "executionId" => (true, context.ExecutionId),
-                "stepName" or "currentStep" => (true, context.StepName),
-                "stepKey" or "currentStepKey" => (true, context.StepKey),
-                "pipelineName" => (true, context.State.PipelineName),
+                "id" or AiExecutionMetadataKeys.CamelCaseExecutionId => (true, context.ExecutionId),
+                AiStepMetadataKeys.CamelCaseStepName or "currentStep" => (true, context.StepName),
+                AiStepMetadataKeys.CamelCaseStepKey or "currentStepKey" => (true, context.StepKey),
+                AiPipelineMetadataKeys.CamelCasePipelineName => (true, context.State.PipelineName),
                 _ => (false, null)
             };
         }

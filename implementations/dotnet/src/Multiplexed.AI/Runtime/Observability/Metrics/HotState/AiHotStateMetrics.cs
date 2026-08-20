@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.Observability.Metrics;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Metrics.HotState;
 
 namespace Multiplexed.AI.Runtime.Observability.Metrics.HotState
@@ -68,7 +69,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.HotState
                 executionId,
                 new Dictionary<string, string>
                 {
-                    ["step.id"] = stepId ?? string.Empty
+                    [AiStepMetadataKeys.StepId] = stepId ?? string.Empty
                 });
         }
 
@@ -84,7 +85,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.HotState
                 executionId,
                 new Dictionary<string, string>
                 {
-                    ["step.id"] = stepId ?? string.Empty
+                    [AiStepMetadataKeys.StepId] = stepId ?? string.Empty
                 });
         }
 
@@ -150,7 +151,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.HotState
                 executionId,
                 new Dictionary<string, string>
                 {
-                    ["step.count"] = safeStepCount.ToString(),
+                    [AiStepMetadataKeys.StepCount] = safeStepCount.ToString(),
                     ["estimated.bytes"] = estimatedBytes?.ToString() ?? string.Empty
                 },
                 value: safeStepCount);
@@ -217,7 +218,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.HotState
             var tags = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
-                ["execution.id"] = executionId ?? string.Empty
+                [AiExecutionMetadataKeys.ExecutionId] = executionId ?? string.Empty
             };
 
             if (additionalTags is not null)

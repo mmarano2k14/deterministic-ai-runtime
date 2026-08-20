@@ -167,9 +167,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     [AiKubernetesRuntimeHostMetadataKeys.Namespace] = podSpec.Namespace,
                     [AiKubernetesRuntimeHostMetadataKeys.PodName] = podSpec.PodName,
                     [AiKubernetesRuntimeHostMetadataKeys.ContainerName] = podSpec.ContainerName,
-                    ["kubernetes.namespace"] = podSpec.Namespace,
-                    ["kubernetes.pod.name"] = podSpec.PodName,
-                    ["kubernetes.container.name"] = podSpec.ContainerName,
                     ["kubernetes.container.port"] = podSpec.ContainerPort.ToString()
                 };
 
@@ -182,15 +179,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     $"http://{serviceDnsName}:{podSpec.ContainerPort}";
 
                 metadata[AiKubernetesRuntimeHostMetadataKeys.ServiceName] = serviceName;
-                metadata["kubernetes.service.name"] = serviceName;
-                metadata["kubernetes.service.dns"] = serviceDnsName;
-                metadata["kubernetes.service.endpoint"] = serviceEndpoint;
-                metadata["kubernetes.service.url"] = serviceEndpoint;
+                metadata[AiKubernetesRuntimeHostMetadataKeys.ServiceDns] = serviceDnsName;
+                metadata[AiKubernetesRuntimeHostMetadataKeys.ServiceEndpoint] = serviceEndpoint;
+                metadata[AiKubernetesRuntimeHostMetadataKeys.ServiceUrl] = serviceEndpoint;
 
                 if (!this.options.UseGatewayTransportEndpoint)
                 {
-                    metadata["transport.endpoint"] = serviceEndpoint;
-                    metadata["transportEndpoint"] = serviceEndpoint;
+                    metadata[AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = serviceEndpoint;
                     metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = serviceEndpoint;
                 }
             }
@@ -239,11 +234,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     $"http://{nodePortHost}:{nodePort.Value}";
 
                 metadata["kubernetes.service.type"] = service?.Spec?.Type ?? "NodePort";
-                metadata["kubernetes.nodePort"] = nodePort.Value.ToString();
-                metadata["kubernetes.nodePort.host"] = nodePortHost;
-                metadata["kubernetes.nodePort.endpoint"] = nodePortEndpoint;
-                metadata["transport.endpoint"] = nodePortEndpoint;
-                metadata["transportEndpoint"] = nodePortEndpoint;
+                metadata[AiKubernetesRuntimeHostMetadataKeys.NodePort] = nodePort.Value.ToString();
+                metadata[AiKubernetesRuntimeHostMetadataKeys.NodePortHost] = nodePortHost;
+                metadata[AiKubernetesRuntimeHostMetadataKeys.NodePortEndpoint] = nodePortEndpoint;
+                metadata[AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = nodePortEndpoint;
                 metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = nodePortEndpoint;
             }
 

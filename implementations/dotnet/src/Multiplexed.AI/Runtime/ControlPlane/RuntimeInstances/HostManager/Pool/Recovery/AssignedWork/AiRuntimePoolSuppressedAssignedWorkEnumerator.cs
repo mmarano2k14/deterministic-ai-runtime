@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Capacity;
+using Multiplexed.Abstractions.AI.Execution;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork
 {
@@ -16,8 +17,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
     {
         private static readonly string[] SharedRunMetadataKeys =
         {
-            "sharedRunId",
-            "shared.run.id",
+            AiRunMetadataKeys.CamelCaseSharedRunId,
+            AiRunMetadataKeys.SharedRunId,
             "sharedRun.id",
             "recovery.sharedRunId",
             "recovery.shared.run.id"

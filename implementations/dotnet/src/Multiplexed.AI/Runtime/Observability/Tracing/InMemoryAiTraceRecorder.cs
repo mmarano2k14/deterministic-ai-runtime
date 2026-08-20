@@ -6,6 +6,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
 using Multiplexed.Abstractions.AI.Observability.Tracing.Store;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.Execution.Scheduling;
+
 
 namespace Multiplexed.AI.Runtime.Observability.Tracing
 {
@@ -269,7 +274,7 @@ namespace Multiplexed.AI.Runtime.Observability.Tracing
                 ["name"] = ResolveEventName(record),
                 ["startedAtUtc"] = record.StartedAtUtc,
                 ["completedAtUtc"] = record.CompletedAtUtc,
-                ["durationMs"] = record.Duration?.TotalMilliseconds,
+                [AiObservabilityMetadataKeys.DurationMs] = record.Duration?.TotalMilliseconds,
                 ["succeeded"] = record.Succeeded,
                 ["failed"] = record.Failed
             };
@@ -320,18 +325,18 @@ namespace Multiplexed.AI.Runtime.Observability.Tracing
                 return;
             }
 
-            AddTagIfMissing(tags, "correlationId", correlation.Runtime?.CorrelationId);
-            AddTagIfMissing(tags, "runId", correlation.Runtime?.RunId);
-            AddTagIfMissing(tags, "executionId", correlation.Runtime?.ExecutionId);
-            AddTagIfMissing(tags, "pipelineName", correlation.Runtime?.PipelineName);
-            AddTagIfMissing(tags, "pipelineVersion", correlation.Runtime?.PipelineVersion);
-            AddTagIfMissing(tags, "pipelineKey", correlation.Runtime?.PipelineKey);
-            AddTagIfMissing(tags, "runtimeInstanceId", correlation.Runtime?.RuntimeInstanceId);
-            AddTagIfMissing(tags, "workerId", correlation.Runtime?.WorkerId);
+            AddTagIfMissing(tags, AiObservabilityMetadataKeys.CamelCaseCorrelationId, correlation.Runtime?.CorrelationId);
+            AddTagIfMissing(tags, AiRunMetadataKeys.CamelCaseRunId, correlation.Runtime?.RunId);
+            AddTagIfMissing(tags, AiExecutionMetadataKeys.CamelCaseExecutionId, correlation.Runtime?.ExecutionId);
+            AddTagIfMissing(tags, AiPipelineMetadataKeys.CamelCasePipelineName, correlation.Runtime?.PipelineName);
+            AddTagIfMissing(tags, AiPipelineMetadataKeys.CamelCasePipelineVersion, correlation.Runtime?.PipelineVersion);
+            AddTagIfMissing(tags, AiPipelineMetadataKeys.CamelCasePipelineKey, correlation.Runtime?.PipelineKey);
+            AddTagIfMissing(tags, AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId, correlation.Runtime?.RuntimeInstanceId);
+            AddTagIfMissing(tags, AiWorkerMetadataKeys.CamelCaseWorkerId, correlation.Runtime?.WorkerId);
 
-            AddTagIfMissing(tags, "stepId", correlation.StepId);
-            AddTagIfMissing(tags, "stepKey", correlation.StepKey);
-            AddTagIfMissing(tags, "claimToken", correlation.ClaimToken);
+            AddTagIfMissing(tags, AiStepMetadataKeys.CamelCaseStepId, correlation.StepId);
+            AddTagIfMissing(tags, AiStepMetadataKeys.CamelCaseStepKey, correlation.StepKey);
+            AddTagIfMissing(tags, AiExecutionClaimMetadataKeys.CamelCaseClaimToken, correlation.ClaimToken);
             AddTagIfMissing(tags, "policyKey", correlation.PolicyKey);
             AddTagIfMissing(tags, "provider", correlation.Provider);
             AddTagIfMissing(tags, "model", correlation.Model);

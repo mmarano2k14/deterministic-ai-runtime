@@ -1,4 +1,6 @@
-﻿namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue.Redis
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Redis;
+
+namespace Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue.Redis
 {
     /// <summary>
     /// Provides Redis storage options for the runtime run execution index.
@@ -23,7 +25,7 @@
         /// The default prefix produces keys such as:
         /// ai:control-plane:{controlPlaneId}:runtime-run-index:item:{runId}
         /// </remarks>
-        public string KeyPrefix { get; set; } = "ai";
+        public string KeyPrefix { get; set; } = AiRedisControlPlaneDefaults.DefaultKeyPrefix;
 
         /// <summary>
         /// Gets or sets a value indicating whether Redis records should expire automatically.
