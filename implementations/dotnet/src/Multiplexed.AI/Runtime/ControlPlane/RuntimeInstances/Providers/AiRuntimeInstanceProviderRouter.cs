@@ -9,7 +9,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
     /// </summary>
     public sealed class AiRuntimeInstanceProviderRouter : IAiRuntimeInstanceProviderRouter
     {
-        private const string DefaultProviderName = "local";
 
         private readonly IReadOnlyDictionary<string, IAiRuntimeInstanceProvider> providers;
 
@@ -116,7 +115,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
                 return providerName.Trim();
             }
 
-            return DefaultProviderName;
+            return AiRuntimeInstanceProviderNames.Local;
         }
     }
 }

@@ -7,9 +7,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
     /// </summary>
     public sealed class AiRuntimeInstanceVisibilityEvaluator : IAiRuntimeInstanceVisibilityEvaluator
     {
-        private const string LegacyTenantIdKey = "tenantId";
-        private const string LegacyTenantGroupIdKey = "tenantGroupId";
-        private const string LegacyTenantGroupDottedCamelKey = "tenant.groupId";
+        private const string LegacyTenantIdKey = AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId;
+        private const string LegacyTenantGroupIdKey = AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId;
 
         private readonly IAiTenantRuntimeSettingsProvider tenantRuntimeSettingsProvider;
 
@@ -82,7 +81,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation
                     safeMetadata,
                     AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId,
                     LegacyTenantGroupIdKey,
-                    LegacyTenantGroupDottedCamelKey),
+                    AiRuntimeInstanceIsolationMetadataKeys.LegacyTenantGroupId),
                 IsolationMode = ParseIsolationMode(
                     GetValue(
                         safeMetadata,

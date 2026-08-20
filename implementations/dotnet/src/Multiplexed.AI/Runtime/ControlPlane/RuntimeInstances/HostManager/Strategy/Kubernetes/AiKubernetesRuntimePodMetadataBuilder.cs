@@ -8,6 +8,8 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes
 {
@@ -79,24 +81,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
 
             if (!string.IsNullOrWhiteSpace(request.TransportName))
             {
-                annotations["transport.name"] = request.TransportName;
+                annotations[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] = request.TransportName;
             }
 
             if (!string.IsNullOrWhiteSpace(request.TransportEndpoint))
             {
-                annotations["transport.endpoint"] = request.TransportEndpoint;
+                annotations[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = request.TransportEndpoint;
             }
 
             if (!string.IsNullOrWhiteSpace(request.ExecutionContextSnapshot.TenantId))
             {
                 labels["multiplexed.ai/tenant-id"] = SanitizeLabelValue(request.ExecutionContextSnapshot.TenantId);
-                annotations["tenant.id"] = request.ExecutionContextSnapshot.TenantId;
+                annotations[AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.ExecutionContextSnapshot.TenantId;
             }
 
             if (!string.IsNullOrWhiteSpace(request.ExecutionContextSnapshot.TenantGroupId))
             {
                 labels["multiplexed.ai/tenant-group-id"] = SanitizeLabelValue(request.ExecutionContextSnapshot.TenantGroupId);
-                annotations["tenant.groupId"] = request.ExecutionContextSnapshot.TenantGroupId;
+                annotations[AiRuntimeInstanceIsolationMetadataKeys.LegacyTenantGroupId] = request.ExecutionContextSnapshot.TenantGroupId;
             }
 
             foreach (var label in this.options.Labels)

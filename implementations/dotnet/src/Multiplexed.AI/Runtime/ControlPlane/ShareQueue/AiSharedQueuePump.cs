@@ -8,6 +8,11 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 {
@@ -144,9 +149,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         "shared-queue-pump-disabled",
                         new Dictionary<string, object?>
                         {
-                            ["controlPlaneId"] = controlPlaneId,
+                            [AiControlPlaneMetadataKeys.ControlPlaneId] = controlPlaneId,
                             ["enabled"] = false,
-                            ["durationMs"] = CalculateDurationMs(startedAtUtc, disabledCompletedAtUtc)
+                            [AiObservabilityMetadataKeys.DurationMs] = CalculateDurationMs(startedAtUtc, disabledCompletedAtUtc)
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -176,7 +181,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     null,
                     new Dictionary<string, object?>
                     {
-                        ["controlPlaneId"] = controlPlaneId,
+                        [AiControlPlaneMetadataKeys.ControlPlaneId] = controlPlaneId,
                         ["maxDispatches"] = maxDispatches,
                         ["claimTtlMs"] = claimTtl.TotalMilliseconds,
                         ["source"] = source,
@@ -315,12 +320,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         failedDispatches > 0 ? "shared-queue-dispatch-failures-detected" : null,
                         new Dictionary<string, object?>
                         {
-                            ["controlPlaneId"] = controlPlaneId,
+                            [AiControlPlaneMetadataKeys.ControlPlaneId] = controlPlaneId,
                             ["attemptedDispatchCount"] = dispatchResults.Count,
                             ["successfulDispatchCount"] = successfulDispatches,
                             ["failedDispatchCount"] = failedDispatches,
                             ["stoppedBecauseNoItemAvailable"] = stoppedBecauseNoItemAvailable,
-                            ["durationMs"] = durationMs,
+                            [AiObservabilityMetadataKeys.DurationMs] = durationMs,
                             ["maxDispatches"] = maxDispatches,
                             ["claimTtlMs"] = claimTtl.TotalMilliseconds,
                             ["source"] = source
@@ -370,14 +375,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         exception.GetType().Name,
                         new Dictionary<string, object?>
                         {
-                            ["controlPlaneId"] = controlPlaneId,
+                            [AiControlPlaneMetadataKeys.ControlPlaneId] = controlPlaneId,
                             ["attemptedDispatchCount"] = dispatchResults.Count,
                             ["successfulDispatchCount"] = successfulDispatches,
                             ["failedDispatchCount"] = failedDispatches,
                             ["stoppedBecauseNoItemAvailable"] = stoppedBecauseNoItemAvailable,
-                            ["durationMs"] = durationMs,
-                            ["exception.type"] = exception.GetType().FullName,
-                            ["exception.message"] = exception.Message
+                            [AiObservabilityMetadataKeys.DurationMs] = durationMs,
+                            [AiExceptionMetadataKeys.ExceptionType] = exception.GetType().FullName,
+                            [AiExceptionMetadataKeys.ExceptionMessage] = exception.Message
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -458,10 +463,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                                 properties,
                                 new Dictionary<string, object?>
                                 {
-                                    ["tenantId"] = request.TenantId,
-                                    ["pipelineKey"] = request.PipelineKey,
-                                    ["runtimeInstanceId"] = request.PumpRuntimeInstanceId,
-                                    ["workerId"] = workerId
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.TenantId,
+                                    [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey,
+                                    [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = request.PumpRuntimeInstanceId,
+                                    [AiWorkerMetadataKeys.CamelCaseWorkerId] = workerId
                                 })
                         },
                         cancellationToken)

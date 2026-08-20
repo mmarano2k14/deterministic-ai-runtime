@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
@@ -10,6 +11,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
 using StackExchange.Redis;
+using Multiplexed.AI.Runtime.ControlPlane.Redis;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
 {
@@ -35,8 +37,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
     public sealed class RedisAiRuntimeInstanceCapacityStore :
         IAiRuntimeInstanceCapacityStore
     {
-        private const string KeyPrefix =
-            "ai:control-plane";
 
         private const string CapacitySetSegment =
             "runtime-instance-capacity";
@@ -482,9 +482,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
                 metadata,
                 existingTransportEndpoint);
 
-            metadata["transport.endpoint.source"] =
+            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpointSource] =
                 "preserved-existing-capacity-descriptor-compare-exchange";
-            metadata["transport.endpoint.scope"] =
+            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpointScope] =
                 "control-plane";
 
             return new AiRuntimeInstanceCapacityDescriptor
@@ -562,15 +562,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
                     AiRuntimeInstanceProviderMetadataKeys.ProviderName) ??
                 GetMetadataValue(
                     metadata,
-                    "provider");
+                    AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName);
 
             var transport =
                 GetMetadataValue(
                     metadata,
-                    "transport.name") ??
+                    AiRuntimeInstanceCommandTransportMetadataKeys.TransportName) ??
                 GetMetadataValue(
                     metadata,
-                    "transportName") ??
+                    AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportName) ??
                 provider;
 
             var isRemoteTransport =
@@ -582,22 +582,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
             var hostProvider =
                 GetMetadataValue(
                     metadata,
-                    "host.provider");
+                    AiRuntimeHostMetadataKeys.HostProvider);
 
             var hostType =
                 GetMetadataValue(
                     metadata,
-                    "hostType");
+                    AiRuntimeHostMetadataKeys.CamelCaseHostType);
 
             var deployment =
                 GetMetadataValue(
                     metadata,
-                    "deployment");
+                    AiRuntimeHostMetadataKeys.Deployment);
 
             var isKubernetes =
                 string.Equals(hostProvider, "kubernetes", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(hostType, "runtime-instance-kubernetes", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(deployment, "kubernetes-host", StringComparison.OrdinalIgnoreCase);
+                string.Equals(hostType, AiRuntimeHostTypeNames.Kubernetes, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(deployment, AiRuntimeHostDeploymentNames.KubernetesHost, StringComparison.OrdinalIgnoreCase);
 
             return isRemoteTransport &&
                    isKubernetes;
@@ -627,10 +627,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
             out string transportEndpoint)
         {
             transportEndpoint =
-                GetMetadataValue(metadata, "transport.endpoint") ??
-                GetMetadataValue(metadata, "transportEndpoint") ??
-                GetMetadataValue(metadata, "runtime.command.endpoint") ??
-                GetMetadataValue(metadata, "grpc.endpoint") ??
+                GetMetadataValue(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint) ??
+                GetMetadataValue(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint) ??
+                GetMetadataValue(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeCommandEndpoint) ??
+                GetMetadataValue(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.GrpcEndpoint) ??
                 string.Empty;
 
             return !string.IsNullOrWhiteSpace(transportEndpoint) &&
@@ -650,11 +650,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
         {
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] =
                 transportEndpoint;
-            metadata["transport.endpoint"] =
+            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] =
                 transportEndpoint;
-            metadata["transportEndpoint"] =
-                transportEndpoint;
-            metadata["grpc.endpoint"] =
+            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.GrpcEndpoint] =
                 transportEndpoint;
         }
 
@@ -698,16 +696,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
             IReadOnlyDictionary<string, string>? metadata)
         {
             return string.Equals(
-                       GetMetadataValue(metadata, "host.creation.mode"),
-                       "KubernetesPool",
+                       GetMetadataValue(metadata, AiRuntimeHostMetadataKeys.HostCreationMode),
+                       AiRuntimeHostCreationModeNames.KubernetesPool,
                        StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(
-                       GetMetadataValue(metadata, "hostType"),
-                       "runtime-instance-kubernetes-pool",
+                       GetMetadataValue(metadata, AiRuntimeHostMetadataKeys.CamelCaseHostType),
+                       AiRuntimeHostTypeNames.KubernetesPool,
                        StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(
-                       GetMetadataValue(metadata, "deployment"),
-                       "kubernetes-pool",
+                       GetMetadataValue(metadata, AiRuntimeHostMetadataKeys.Deployment),
+                       AiRuntimeHostDeploymentNames.KubernetesPool,
                        StringComparison.OrdinalIgnoreCase);
         }
 
@@ -718,19 +716,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
             IReadOnlyDictionary<string, string>? metadata)
         {
             return string.Equals(
-                       GetMetadataValue(metadata, "transport.endpoint.scope"),
+                       GetMetadataValue(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpointScope),
                        "control-plane",
                        StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(
-                       GetMetadataValue(metadata, "transport.endpoint.source"),
+                       GetMetadataValue(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpointSource),
                        "kubernetes-pool-service",
                        StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(
-                       GetMetadataValue(metadata, "transport.endpoint.source"),
+                       GetMetadataValue(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpointSource),
                        "preserved-existing-capacity-descriptor",
                        StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(
-                       GetMetadataValue(metadata, "transport.endpoint.source"),
+                       GetMetadataValue(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpointSource),
                        "preserved-existing-capacity-descriptor-compare-exchange",
                        StringComparison.OrdinalIgnoreCase);
         }
@@ -1025,7 +1023,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
                     descriptor.Metadata,
                     StringComparer.Ordinal)
                 {
-                    ["controlPlaneId"] = controlPlaneId
+                    [AiControlPlaneMetadataKeys.ControlPlaneId] = controlPlaneId
                 };
 
             return new AiRuntimeInstanceCapacityDescriptor
@@ -1096,7 +1094,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
         private static string GetCapacitySetKey(
             string controlPlaneId)
         {
-            return $"{KeyPrefix}:{NormalizeKeySegment(controlPlaneId)}:{CapacitySetSegment}";
+            return $"{AiRedisControlPlaneKeySegments.LegacyControlPlanePrefix}:{NormalizeKeySegment(controlPlaneId)}:{CapacitySetSegment}";
         }
 
         /// <summary>
@@ -1109,7 +1107,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
             string controlPlaneId,
             string runtimeInstanceId)
         {
-            return $"{KeyPrefix}:{NormalizeKeySegment(controlPlaneId)}:{CapacityKeySegment}:{NormalizeKeySegment(runtimeInstanceId)}";
+            return $"{AiRedisControlPlaneKeySegments.LegacyControlPlanePrefix}:{NormalizeKeySegment(controlPlaneId)}:{CapacityKeySegment}:{NormalizeKeySegment(runtimeInstanceId)}";
         }
 
         /// <summary>

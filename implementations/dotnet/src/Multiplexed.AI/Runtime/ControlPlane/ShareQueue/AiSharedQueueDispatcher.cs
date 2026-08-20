@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
@@ -20,6 +21,9 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Rbac.Core.ExecutionContext;
 using RbacExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 {
@@ -47,21 +51,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
     /// </remarks>
     public sealed class AiSharedQueueDispatcher : IAiSharedQueueDispatcher
     {
-        private const string ScaleOutRequestIdMetadataKey = "scaleout.requestId";
-        private const string ScaleOutIntentMetadataKey = "scaleout.intent";
-        private const string ScaleOutIntentSharedQueueRedispatchReplacement = "shared-queue-redispatch-replacement";
         private const string SharedQueueRedispatchReplacementReason = "Shared queue redispatch requested replacement runtime capacity.";
-        private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
-        private const string RecoveryFailureIncidentIdMetadataKey = "recovery.failureIncidentId";
-        private const string RecoveryLedgerEntryIdMetadataKey = "recovery.ledgerEntryId";
-        private const string RecoveryCorrelationIdMetadataKey = "recovery.correlationId";
-        private const string RecoveryCausationIdMetadataKey = "recovery.causationId";
-        private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
-        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
-        private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
-        private const string RecoveryModeMetadataKey = "recovery.mode";
-        private const string RecoveryModeResumeExistingExecution = "resume-existing-execution";
-        private const string RecoveryModeRequeueLocalQueuedRun = "requeue-local-queued-run";
         private static readonly TimeSpan ReservationHandoffPollInterval =
             TimeSpan.FromMilliseconds(100);
 
@@ -577,7 +567,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             QueueItem = queueItem,
                             SharedRun = sharedRun,
                             Message = "Shared queue item was requeued because admission selected an unsafe runtime instance.",
-                            FailureReason = "runtime-instance-not-routable",
+                            FailureReason = AiRuntimeInstanceFailureReasons.RuntimeInstanceNotRoutable,
                             StartedAtUtc = startedAtUtc,
                             CompletedAtUtc = completedAtUtc,
                             DurationMs = CalculateDurationMs(startedAtUtc, completedAtUtc),
@@ -1368,18 +1358,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
             var hasRecoveryMode = TryGetMetadataValue(
                 metadata,
-                RecoveryModeMetadataKey,
+                AiRuntimeRecoveryMetadataKeys.Mode,
                 out var recoveryMode);
 
             var supportedRecoveryRedispatch =
                 hasRecoveryMode &&
                 (string.Equals(
                      recoveryMode,
-                     RecoveryModeResumeExistingExecution,
+                     AiRuntimeRecoveryModes.ResumeExistingExecution,
                      StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(
                      recoveryMode,
-                     RecoveryModeRequeueLocalQueuedRun,
+                     AiRuntimeRecoveryModes.RequeueLocalQueuedRun,
                      StringComparison.OrdinalIgnoreCase));
 
             var normalExternalWaitContinuationRedrive =
@@ -1394,11 +1384,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
             return TryGetMetadataValue(
                        metadata,
-                       RecoveryFailedRuntimeInstanceIdMetadataKey,
+                       AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId,
                        out failedRuntimeInstanceId) &&
                    TryGetMetadataValue(
                        metadata,
-                       RecoveryFailedLocalRunIdMetadataKey,
+                       AiRuntimeRecoveryMetadataKeys.FailedLocalRunId,
                        out failedLocalRunId);
         }
 
@@ -1638,7 +1628,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
             var isRecovery = TryGetMetadataValue(
                 metadata,
-                RecoveryFailureIncidentIdMetadataKey,
+                AiRuntimeRecoveryMetadataKeys.FailureIncidentId,
                 out var runtimeFailureIncidentId);
             var eventType = isRecovery
                 ? AiRuntimeLifecycleEventType.WorkReassigned
@@ -1649,7 +1639,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 dispatchedRun.LocalRunId);
             var forensicsId = ResolveMetadataValue(
                 metadata,
-                RecoveryForensicsIdMetadataKey);
+                AiRuntimeRecoveryMetadataKeys.ForensicsId);
 
             await _lifecycleWriter
                 .AppendOnceAsync(
@@ -1683,18 +1673,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             : null,
                         LedgerEntryId = NullIfWhiteSpace(ResolveMetadataValue(
                             metadata,
-                            RecoveryLedgerEntryIdMetadataKey)),
+                            AiRuntimeRecoveryMetadataKeys.LedgerEntryId)),
                         ForensicsId = string.IsNullOrWhiteSpace(forensicsId)
                             ? null
                             : forensicsId,
                         CorrelationId = FirstNonEmpty(
-                            ResolveMetadataValue(metadata, RecoveryCorrelationIdMetadataKey),
+                            ResolveMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.CorrelationId),
                             dispatchedRun.CorrelationId),
                         CausationId = NullIfWhiteSpace(ResolveMetadataValue(
                             metadata,
-                            RecoveryCausationIdMetadataKey)),
+                            AiRuntimeRecoveryMetadataKeys.CausationId)),
                         PreviousStatus = isRecovery
-                            ? "released-for-recovery"
+                            ? AiRuntimeRecoveryTransitionStatuses.ReleasedForRecovery
                             : null,
                         CurrentStatus = "assigned",
                         Reason = isRecovery
@@ -1703,12 +1693,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                         {
                             ["queue.claimToken"] = queueItem.ClaimToken ?? string.Empty,
-                            ["failed.runtimeInstanceId"] = ResolveMetadataValue(
+                            [AiRuntimeRecoveryMetadataKeys.TransitionFailedRuntimeInstanceId] = ResolveMetadataValue(
                                 metadata,
-                                RecoveryFailedRuntimeInstanceIdMetadataKey),
-                            ["failed.localRunId"] = ResolveMetadataValue(
+                                AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId),
+                            [AiRuntimeRecoveryMetadataKeys.TransitionFailedLocalRunId] = ResolveMetadataValue(
                                 metadata,
-                                RecoveryFailedLocalRunIdMetadataKey)
+                                AiRuntimeRecoveryMetadataKeys.FailedLocalRunId)
                         }
                     },
                     cancellationToken)
@@ -1761,14 +1751,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                         RuntimeInstanceId = replacementRuntimeInstanceId,
                         Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                         {
-                            ["tenant.id"] = sharedRun.ExecutionContextSnapshot.TenantId ?? string.Empty,
-                            ["tenant.group.id"] = sharedRun.ExecutionContextSnapshot.TenantGroupId ?? string.Empty,
-                            ["replacement.runtimeInstanceId"] = replacementRuntimeInstanceId,
-                            ["replacement.executionId"] = executionId ?? string.Empty,
-                            ["failed.runtimeInstanceId"] = ResolveMetadataValue(metadata, RecoveryFailedRuntimeInstanceIdMetadataKey),
-                            ["failed.localRunId"] = failedLocalRunId ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = sharedRun.ExecutionContextSnapshot.TenantId ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = sharedRun.ExecutionContextSnapshot.TenantGroupId ?? string.Empty,
+                            [AiRuntimeRecoveryMetadataKeys.ReplacementRuntimeInstanceId] = replacementRuntimeInstanceId,
+                            [AiRuntimeRecoveryMetadataKeys.ReplacementExecutionId] = executionId ?? string.Empty,
+                            [AiRuntimeRecoveryMetadataKeys.TransitionFailedRuntimeInstanceId] = ResolveMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId),
+                            [AiRuntimeRecoveryMetadataKeys.TransitionFailedLocalRunId] = failedLocalRunId ?? string.Empty,
                             ["queue.claimToken"] = queueItem.ClaimToken ?? string.Empty,
-                            ["resume.contextKey"] = sharedRun.ExecutionContextSnapshot.ContextKey ?? string.Empty
+                            [AiRuntimeRecoveryMetadataKeys.ResumeContextKey] = sharedRun.ExecutionContextSnapshot.ContextKey ?? string.Empty
                         }
                     },
                     cancellationToken)
@@ -1795,21 +1785,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         {
             if (TryGetMetadataValue(
                     metadata,
-                    RecoveryForensicsIdMetadataKey,
+                    AiRuntimeRecoveryMetadataKeys.ForensicsId,
                     out var explicitForensicsId))
             {
                 forensicsId = explicitForensicsId;
-                executionId = ResolveMetadataValue(metadata, RecoveryFailedExecutionIdMetadataKey);
-                failedLocalRunId = ResolveMetadataValue(metadata, RecoveryFailedLocalRunIdMetadataKey);
+                executionId = ResolveMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.FailedExecutionId);
+                failedLocalRunId = ResolveMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.FailedLocalRunId);
 
                 return true;
             }
 
             executionId =
-                ResolveMetadataValue(metadata, RecoveryFailedExecutionIdMetadataKey);
+                ResolveMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.FailedExecutionId);
 
             failedLocalRunId =
-                ResolveMetadataValue(metadata, RecoveryFailedLocalRunIdMetadataKey);
+                ResolveMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.FailedLocalRunId);
 
             if (string.IsNullOrWhiteSpace(executionId) ||
                 string.IsNullOrWhiteSpace(failedLocalRunId))
@@ -1950,24 +1940,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 metadata,
                 operationMetadata);
 
-            metadata[ScaleOutIntentMetadataKey] =
-                ScaleOutIntentSharedQueueRedispatchReplacement;
+            metadata[AiRuntimeScaleOutMetadataKeys.Intent] =
+                AiRuntimeScaleOutIntents.SharedQueueRedispatchReplacement;
 
-            metadata[ScaleOutRequestIdMetadataKey] =
+            metadata[AiRuntimeScaleOutMetadataKeys.RequestId] =
                 $"scale-out-redispatch-{sharedRun.SharedRunId}-{Guid.NewGuid():N}";
 
             if (TryGetMetadataValue(
                     operationMetadata,
-                    RecoveryFailedRuntimeInstanceIdMetadataKey,
+                    AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId,
                     out var failedRuntimeInstanceId))
             {
-                metadata["scaleout.excludedRuntimeInstanceId"] =
+                metadata[AiRuntimeScaleOutMetadataKeys.ExcludedRuntimeInstanceId] =
                     failedRuntimeInstanceId;
 
-                metadata["scaleout.replacementForRuntimeInstanceId"] =
+                metadata[AiRuntimeScaleOutMetadataKeys.ReplacementForRuntimeInstanceId] =
                     failedRuntimeInstanceId;
 
-                metadata["recovery.replacement"] =
+                metadata[AiRuntimeRecoveryMetadataKeys.Replacement] =
                     "true";
             }
 
@@ -2002,10 +1992,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                     item.Value ?? string.Empty;
             }
 
-            metadata["runtimeInstanceId"] =
+            metadata[AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] =
                 targetRuntimeInstanceId;
 
-            metadata["runtime.instance.id"] =
+            metadata[AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] =
                 targetRuntimeInstanceId;
 
             return metadata;
@@ -2042,10 +2032,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             string key)
         {
             return string.Equals(key, "scaleOutRuntimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(key, "scaleout.runtimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, AiRuntimeScaleOutMetadataKeys.RuntimeInstanceId, StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(key, "scaleout.runtime.instance.id", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(key, "runtimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(key, "runtime.instance.id", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, AiRuntimeInstanceMetadataKeys.RuntimeInstanceId, StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(key, "runtime.instanceId", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(key, "host.runtimeInstanceId", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(key, "transport.runtimeInstanceId", StringComparison.OrdinalIgnoreCase);
@@ -2060,10 +2050,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private static bool IsStaleRuntimeTransportMetadataKey(
             string key)
         {
-            return string.Equals(key, "transport.endpoint", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(key, "transportEndpoint", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(key, "grpc.endpoint", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(key, "runtime.command.endpoint", StringComparison.OrdinalIgnoreCase);
+            return string.Equals(key, AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, AiRuntimeInstanceCommandTransportMetadataKeys.GrpcEndpoint, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeCommandEndpoint, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -2089,7 +2079,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 
             if (TryGetMetadataValue(
                     metadata,
-                    RecoveryFailedRuntimeInstanceIdMetadataKey,
+                    AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId,
                     out var failedRuntimeInstanceId) &&
                 string.Equals(
                     preferredRuntimeInstanceId,
@@ -2143,7 +2133,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             return !string.IsNullOrWhiteSpace(runtimeInstanceId) &&
                 TryGetMetadataValue(
                     metadata,
-                    RecoveryFailedRuntimeInstanceIdMetadataKey,
+                    AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId,
                     out var failedRuntimeInstanceId) &&
                 string.Equals(
                     runtimeInstanceId,

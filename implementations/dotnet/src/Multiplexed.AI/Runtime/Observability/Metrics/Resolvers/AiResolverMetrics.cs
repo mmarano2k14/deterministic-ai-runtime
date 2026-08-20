@@ -1,6 +1,8 @@
-﻿using System.Collections.Concurrent;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using System.Collections.Concurrent;
 using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Metrics.Resolvers;
+using Multiplexed.Abstractions.AI.Observability;
 
 namespace Multiplexed.AI.Runtime.Observability.Metrics.Resolvers
 {
@@ -135,8 +137,8 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Resolvers
                 path,
                 new Dictionary<string, string>
                 {
-                    ["exception.type"] = exceptionType,
-                    ["exception.message"] = exception?.Message ?? string.Empty
+                    [AiExceptionMetadataKeys.ExceptionType] = exceptionType,
+                    [AiExceptionMetadataKeys.ExceptionMessage] = exception?.Message ?? string.Empty
                 });
         }
 
@@ -188,8 +190,8 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Resolvers
             var tags = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
-                ["execution.id"] = executionId ?? string.Empty,
-                ["step.id"] = stepId ?? string.Empty,
+                [AiExecutionMetadataKeys.ExecutionId] = executionId ?? string.Empty,
+                [AiStepMetadataKeys.StepId] = stepId ?? string.Empty,
                 ["path"] = Normalize(path)
             };
 

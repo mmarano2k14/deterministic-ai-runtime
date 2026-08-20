@@ -7,6 +7,11 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.Observability
 {
@@ -127,7 +132,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                     null,
                     null,
                     null,
-                    new Dictionary<string, object?> { ["runtimeInstanceId"] = runtimeInstanceId },
+                    new Dictionary<string, object?> { [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = runtimeInstanceId },
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -156,7 +161,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                         failureReason,
                         durationMs,
                         descriptor is null
-                            ? new Dictionary<string, object?> { ["runtimeInstanceId"] = runtimeInstanceId, ["found"] = false, ["durationMs"] = durationMs }
+                            ? new Dictionary<string, object?> { [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = runtimeInstanceId, ["found"] = false, [AiObservabilityMetadataKeys.DurationMs] = durationMs }
                             : CreateDescriptorProperties(descriptor, durationMs),
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -177,7 +182,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                         AiControlPlaneOperationOutcome.Failed,
                         exception.GetType().Name,
                         durationMs,
-                        CreateFailureProperties(new Dictionary<string, object?> { ["runtimeInstanceId"] = runtimeInstanceId, ["durationMs"] = durationMs }, exception),
+                        CreateFailureProperties(new Dictionary<string, object?> { [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = runtimeInstanceId, [AiObservabilityMetadataKeys.DurationMs] = durationMs }, exception),
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -223,7 +228,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                         AiControlPlaneOperationOutcome.Succeeded,
                         null,
                         durationMs,
-                        new Dictionary<string, object?> { ["descriptorCount"] = descriptors.Count, ["durationMs"] = durationMs },
+                        new Dictionary<string, object?> { ["descriptorCount"] = descriptors.Count, [AiObservabilityMetadataKeys.DurationMs] = durationMs },
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -243,7 +248,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                         AiControlPlaneOperationOutcome.Failed,
                         exception.GetType().Name,
                         durationMs,
-                        CreateFailureProperties(new Dictionary<string, object?> { ["durationMs"] = durationMs }, exception),
+                        CreateFailureProperties(new Dictionary<string, object?> { [AiObservabilityMetadataKeys.DurationMs] = durationMs }, exception),
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -270,7 +275,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                     null,
                     null,
                     null,
-                    new Dictionary<string, object?> { ["runtimeInstanceId"] = runtimeInstanceId },
+                    new Dictionary<string, object?> { [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = runtimeInstanceId },
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -298,7 +303,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                         outcome,
                         failureReason,
                         durationMs,
-                        new Dictionary<string, object?> { ["runtimeInstanceId"] = runtimeInstanceId, ["removed"] = removed, ["durationMs"] = durationMs },
+                        new Dictionary<string, object?> { [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = runtimeInstanceId, ["removed"] = removed, [AiObservabilityMetadataKeys.DurationMs] = durationMs },
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -318,7 +323,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                         AiControlPlaneOperationOutcome.Failed,
                         exception.GetType().Name,
                         durationMs,
-                        CreateFailureProperties(new Dictionary<string, object?> { ["runtimeInstanceId"] = runtimeInstanceId, ["durationMs"] = durationMs }, exception),
+                        CreateFailureProperties(new Dictionary<string, object?> { [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = runtimeInstanceId, [AiObservabilityMetadataKeys.DurationMs] = durationMs }, exception),
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -363,10 +368,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                 var effectiveProperties = new Dictionary<string, object?>(properties, StringComparer.Ordinal)
                 {
                     ["operation"] = operation,
-                    ["runtimeInstanceId"] = runtimeInstanceId,
-                    ["controlPlaneId"] = controlPlaneId,
-                    ["tenantId"] = tenantId,
-                    ["tenantGroupId"] = tenantGroupId
+                    [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = runtimeInstanceId,
+                    [AiControlPlaneMetadataKeys.ControlPlaneId] = controlPlaneId,
+                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = tenantId,
+                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = tenantGroupId
                 };
 
                 await this.observer
@@ -407,10 +412,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
         {
             return new Dictionary<string, object?>
             {
-                ["runtimeInstanceId"] = descriptor.RuntimeInstanceId,
-                ["controlPlaneId"] = descriptor.ControlPlaneId,
-                ["tenantId"] = descriptor.TenantId,
-                ["tenantGroupId"] = descriptor.TenantGroupId,
+                [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = descriptor.RuntimeInstanceId,
+                [AiControlPlaneMetadataKeys.ControlPlaneId] = descriptor.ControlPlaneId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = descriptor.TenantId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = descriptor.TenantGroupId,
                 ["role"] = descriptor.Role.ToString(),
                 ["status"] = descriptor.Status.ToString(),
                 ["workerCount"] = descriptor.WorkerCount,
@@ -426,7 +431,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                 ["effectiveAvailableRunSlots"] = descriptor.EffectiveAvailableRunSlots,
                 ["isQueuePaused"] = descriptor.IsQueuePaused,
                 ["canAcceptRun"] = descriptor.CanAcceptRun,
-                ["durationMs"] = durationMs
+                [AiObservabilityMetadataKeys.DurationMs] = durationMs
             };
         }
 
@@ -442,8 +447,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
         {
             var result = new Dictionary<string, object?>(properties, StringComparer.Ordinal)
             {
-                ["exception.type"] = exception.GetType().FullName,
-                ["exception.message"] = exception.Message
+                [AiExceptionMetadataKeys.ExceptionType] = exception.GetType().FullName,
+                [AiExceptionMetadataKeys.ExceptionMessage] = exception.Message
             };
 
             return result;

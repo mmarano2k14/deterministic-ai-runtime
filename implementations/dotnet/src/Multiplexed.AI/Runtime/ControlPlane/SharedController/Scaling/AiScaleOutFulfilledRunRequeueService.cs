@@ -1,7 +1,9 @@
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.Execution;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 {
@@ -12,10 +14,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         IAiScaleOutFulfilledRunRequeueService
     {
         private const int MaxBacklogRequeueCount = 100;
-        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
-        private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
-        private const string FailedRuntimeInstanceIdMetadataKey = "failed.runtimeInstanceId";
-        private const string FailedLocalRunIdMetadataKey = "failed.localRunId";
         private readonly IAiSharedRunStore sharedRunStore;
         private readonly IAiSharedQueue sharedQueue;
 
@@ -419,14 +417,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     sharedRun.Metadata,
                     StringComparer.OrdinalIgnoreCase)
                 {
-                    ["scaleOutRequestId"] = request.RequestId,
+                    [AiRuntimeScaleOutMetadataKeys.CamelCaseScaleOutRequestId] = request.RequestId,
                     ["scaleOutRequeued"] = "true",
                     ["scaleOutRequestControlPlaneId"] = request.ControlPlaneId ?? string.Empty,
                     ["scaleOutOriginalSharedRunControlPlaneId"] = sharedRun.ControlPlaneId ?? string.Empty,
                     ["scaleOutQueueControlPlaneId"] = queueControlPlaneId ?? string.Empty,
                     [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = sharedRun.ExecutionContextSnapshot.TenantId ?? string.Empty,
                     [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = sharedRun.ExecutionContextSnapshot.TenantGroupId ?? string.Empty,
-                    ["pipelineKey"] = sharedRun.PipelineKey ?? string.Empty
+                    [AiPipelineMetadataKeys.CamelCasePipelineKey] = sharedRun.PipelineKey ?? string.Empty
                 };
 
             if (!string.IsNullOrWhiteSpace(runtimeInstanceId))
@@ -539,14 +537,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             var runtimeInstanceId =
                 GetMetadataValue(
                     metadata,
-                    RecoveryFailedRuntimeInstanceIdMetadataKey,
-                    FailedRuntimeInstanceIdMetadataKey);
+                    AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId,
+                    AiRuntimeRecoveryMetadataKeys.TransitionFailedRuntimeInstanceId);
 
             var localRunId =
                 GetMetadataValue(
                     metadata,
-                    RecoveryFailedLocalRunIdMetadataKey,
-                    FailedLocalRunIdMetadataKey);
+                    AiRuntimeRecoveryMetadataKeys.FailedLocalRunId,
+                    AiRuntimeRecoveryMetadataKeys.TransitionFailedLocalRunId);
 
             if (string.IsNullOrWhiteSpace(runtimeInstanceId) ||
                 string.IsNullOrWhiteSpace(localRunId))

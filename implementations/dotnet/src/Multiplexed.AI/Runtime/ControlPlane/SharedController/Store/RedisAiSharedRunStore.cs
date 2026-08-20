@@ -8,6 +8,10 @@ using Multiplexed.Abstractions.Core.ExecutionContext;
 using StackExchange.Redis;
 using System.Globalization;
 using System.Text.Json;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane;
+using Multiplexed.AI.Runtime.ControlPlane.Redis;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 {
@@ -21,11 +25,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
     /// </remarks>
     public sealed class RedisAiSharedRunStore : IAiSharedRunStore
     {
-        private const string DefaultKeyPrefix = "ai";
-        private const string ControlPlaneKeySegment = "control-plane";
         private const string SharedRunKeySegment = "shared-run";
         private const string SharedRunIndexSegment = "shared-runs:index";
-        private const string TenantKeySegment = "tenant";
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
@@ -490,9 +491,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                     new HashEntry[]
                     {
                 new("assignedRuntimeInstanceId", string.Empty),
-                new("localRunId", string.Empty),
+                new(AiRunMetadataKeys.CamelCaseLocalRunId, string.Empty),
                 new("reason", message ?? existing.Reason ?? string.Empty),
-                new("failureReason", failureReason ?? string.Empty),
+                new(AiObservabilityMetadataKeys.FailureReason, failureReason ?? string.Empty),
                 new("updatedAtUtc", updatedAtUtc)
                     })
                 .ConfigureAwait(false);
@@ -874,22 +875,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 expireSeconds
             };
 
-            AddField(values, "sharedRunId", record.SharedRunId);
-            AddField(values, "controlPlaneId", record.ControlPlaneId);
+            AddField(values, AiRunMetadataKeys.CamelCaseSharedRunId, record.SharedRunId);
+            AddField(values, AiControlPlaneMetadataKeys.ControlPlaneId, record.ControlPlaneId);
             AddField(values, "status", record.Status.ToString());
             AddField(values, "runRequestJson", Serialize(record.RunRequest));
             AddField(values, "executionContextSnapshotJson", Serialize(record.ExecutionContextSnapshot));
-            AddField(values, "localRunId", record.LocalRunId);
-            AddField(values, "executionId", record.ExecutionId);
+            AddField(values, AiRunMetadataKeys.CamelCaseLocalRunId, record.LocalRunId);
+            AddField(values, AiExecutionMetadataKeys.CamelCaseExecutionId, record.ExecutionId);
             AddField(values, "assignedRuntimeInstanceId", record.AssignedRuntimeInstanceId);
             AddField(values, "admissionDecisionJson", Serialize(record.AdmissionDecision));
             AddField(values, "placementJson", Serialize(record.Placement));
-            AddField(values, "pipelineKey", record.PipelineKey);
-            AddField(values, "correlationId", record.CorrelationId);
-            AddField(values, "requestedBy", record.RequestedBy);
+            AddField(values, AiPipelineMetadataKeys.CamelCasePipelineKey, record.PipelineKey);
+            AddField(values, AiObservabilityMetadataKeys.CamelCaseCorrelationId, record.CorrelationId);
+            AddField(values, AiControlPlaneRequestMetadataKeys.RequestedBy, record.RequestedBy);
             AddField(values, "source", record.Source);
             AddField(values, "reason", record.Reason);
-            AddField(values, "failureReason", record.FailureReason);
+            AddField(values, AiObservabilityMetadataKeys.FailureReason, record.FailureReason);
             AddField(values, "submittedAtUtc", record.SubmittedAtUtc.ToString("O", CultureInfo.InvariantCulture));
             AddField(values, "updatedAtUtc", record.UpdatedAtUtc.ToString("O", CultureInfo.InvariantCulture));
             AddField(values, "metadataJson", Serialize(record.Metadata));
@@ -928,24 +929,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
             return new AiSharedRunRecord
             {
-                SharedRunId = GetRequired(fields, "sharedRunId"),
-                ControlPlaneId = GetOptional(fields, "controlPlaneId"),
+                SharedRunId = GetRequired(fields, AiRunMetadataKeys.CamelCaseSharedRunId),
+                ControlPlaneId = GetOptional(fields, AiControlPlaneMetadataKeys.ControlPlaneId),
                 Status = ParseStatus(GetRequired(fields, "status")),
                 RunRequest = runRequest,
                 ExecutionContextSnapshot = executionContextSnapshot,
-                LocalRunId = GetOptional(fields, "localRunId"),
-                ExecutionId = GetOptional(fields, "executionId"),
+                LocalRunId = GetOptional(fields, AiRunMetadataKeys.CamelCaseLocalRunId),
+                ExecutionId = GetOptional(fields, AiExecutionMetadataKeys.CamelCaseExecutionId),
                 AssignedRuntimeInstanceId = GetOptional(fields, "assignedRuntimeInstanceId"),
                 AdmissionDecision = DeserializeOptional<AiRunAdmissionDecision>(
                     GetOptional(fields, "admissionDecisionJson")),
                 Placement = DeserializeOptional<Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement.AiRunPlacementDirective>(
                     GetOptional(fields, "placementJson")),
-                PipelineKey = GetOptional(fields, "pipelineKey"),
-                CorrelationId = GetOptional(fields, "correlationId"),
-                RequestedBy = GetOptional(fields, "requestedBy"),
+                PipelineKey = GetOptional(fields, AiPipelineMetadataKeys.CamelCasePipelineKey),
+                CorrelationId = GetOptional(fields, AiObservabilityMetadataKeys.CamelCaseCorrelationId),
+                RequestedBy = GetOptional(fields, AiControlPlaneRequestMetadataKeys.RequestedBy),
                 Source = GetOptional(fields, "source"),
                 Reason = GetOptional(fields, "reason"),
-                FailureReason = GetOptional(fields, "failureReason"),
+                FailureReason = GetOptional(fields, AiObservabilityMetadataKeys.FailureReason),
                 SubmittedAtUtc = ParseDateTimeOffset(GetRequired(fields, "submittedAtUtc")),
                 UpdatedAtUtc = ParseDateTimeOffset(GetRequired(fields, "updatedAtUtc")),
                 Metadata = metadata
@@ -1093,7 +1094,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             return string.Concat(
                 NormalizeBaseKeyPrefix(_options.KeyPrefix),
                 ":",
-                ControlPlaneKeySegment,
+                AiRedisControlPlaneKeySegments.ControlPlane,
                 ":",
                 NormalizeKeySegment(controlPlaneId),
                 ":",
@@ -1108,7 +1109,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             return string.Concat(
                 NormalizeBaseKeyPrefix(_options.KeyPrefix),
                 ":",
-                ControlPlaneKeySegment,
+                AiRedisControlPlaneKeySegments.ControlPlane,
                 ":",
                 NormalizeKeySegment(controlPlaneId),
                 ":",
@@ -1122,11 +1123,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             return string.Concat(
                 NormalizeBaseKeyPrefix(_options.KeyPrefix),
                 ":",
-                ControlPlaneKeySegment,
+                AiRedisControlPlaneKeySegments.ControlPlane,
                 ":",
                 NormalizeKeySegment(controlPlaneId),
                 ":",
-                TenantKeySegment,
+                AiRedisControlPlaneKeySegments.Tenant,
                 ":",
                 NormalizeKeySegment(tenantId),
                 ":",
@@ -1137,7 +1138,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
         {
             if (string.IsNullOrWhiteSpace(keyPrefix))
             {
-                return DefaultKeyPrefix;
+                return AiRedisControlPlaneKeySegments.DefaultKeyPrefix;
             }
 
             var normalized = keyPrefix.Trim().TrimEnd(':');
@@ -1149,7 +1150,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             }
 
             return string.IsNullOrWhiteSpace(normalized)
-                ? DefaultKeyPrefix
+                ? AiRedisControlPlaneKeySegments.DefaultKeyPrefix
                 : normalized;
         }
 

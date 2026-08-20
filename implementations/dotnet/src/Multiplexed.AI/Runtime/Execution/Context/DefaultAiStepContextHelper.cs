@@ -279,9 +279,9 @@ namespace Multiplexed.AI.Runtime.Execution.Context
 
             if (includeReservedVariables)
             {
-                result["executionId"] = ExecutionId;
-                result["stepName"] = StepName;
-                result["stepKey"] = StepKey;
+                result[AiExecutionMetadataKeys.CamelCaseExecutionId] = ExecutionId;
+                result[AiStepMetadataKeys.CamelCaseStepName] = StepName;
+                result[AiStepMetadataKeys.CamelCaseStepKey] = StepKey;
                 result["currentStep"] = StepName;
                 result["currentStepKey"] = StepKey;
             }

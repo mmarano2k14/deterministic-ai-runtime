@@ -12,8 +12,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
     /// </summary>
     public sealed class BestEffortAiRuntimeRecoveryForensicsRecorder : IAiRuntimeRecoveryForensicsRecorder
     {
-        private const string ResumeContextSeededEventType = "resume.context.seeded";
-
         private readonly IAiRuntimeRecoveryForensicsStore _store;
         private readonly AiRuntimeRecoveryForensicsOptions _options;
         private readonly ILogger<BestEffortAiRuntimeRecoveryForensicsRecorder> _logger;
@@ -96,7 +94,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 
             var diagnoseResumeContextSeeded = string.Equals(
                 evt.EventType,
-                ResumeContextSeededEventType,
+                AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded,
                 StringComparison.Ordinal);
 
             try

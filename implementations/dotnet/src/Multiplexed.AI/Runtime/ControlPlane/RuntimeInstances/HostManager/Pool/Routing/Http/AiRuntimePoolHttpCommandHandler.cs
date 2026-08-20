@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Pool;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
+using Multiplexed.Abstractions.AI.Observability;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Http
 {
@@ -196,24 +198,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 new Dictionary<string, string>(
                     StringComparer.OrdinalIgnoreCase)
                 {
-                    ["runtime.pool.routing.failure"] = "true",
-                    ["runtime.pool.id"] =
+                    [AiRuntimePoolMetadataKeys.RoutingFailure] = "true",
+                    [AiRuntimePoolMetadataKeys.PoolId] =
                         this.poolManager.Identity.PoolId,
-                    ["runtime.pool.host.id"] =
+                    [AiRuntimePoolMetadataKeys.HostId] =
                         this.poolManager.Identity.HostId,
-                    ["target.runtime.instance.id"] =
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.TargetRuntimeInstanceId] =
                         targetRuntimeInstanceId
                 };
 
             if (routeStatus.HasValue)
             {
-                metadata["runtime.pool.route.status"] =
+                metadata[AiRuntimePoolMetadataKeys.RouteStatus] =
                     routeStatus.Value.ToString();
             }
 
             if (exception is not null)
             {
-                metadata["exception.type"] =
+                metadata[AiExceptionMetadataKeys.ExceptionType] =
                     exception.GetType().FullName ??
                     exception.GetType().Name;
             }

@@ -126,7 +126,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
 
                             trace.SetTag("finalized", result);
                             trace.SetTag("status", finalStatus.ToString());
-                            trace.SetTag("workerId", runtimeInstanceId);
+                            trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, runtimeInstanceId);
                             trace.SetTag("expectedStepKey", expectedStepKey);
                             trace.SetTag("completedSteps", completedSteps.Count);
 
@@ -302,8 +302,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                     "Execution finalization started.",
                     new Dictionary<string, string>
                     {
-                        ["pipeline.name"] = resolvedPipeline.Name ?? string.Empty,
-                        ["pipeline.version"] = resolvedPipeline.Version ?? string.Empty,
+                        [AiPipelineMetadataKeys.Name] = resolvedPipeline.Name ?? string.Empty,
+                        [AiPipelineMetadataKeys.Version] = resolvedPipeline.Version ?? string.Empty,
                         ["converged.status"] = convergence.Status.ToString(),
                         ["final.status"] = finalStatus.ToString(),
                         ["expected.step.key"] = expectedStepKey ?? string.Empty,
@@ -338,8 +338,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                     "Final status overridden by execution control cancellation.",
                     new Dictionary<string, string>
                     {
-                        ["pipeline.name"] = resolvedPipeline.Name ?? string.Empty,
-                        ["pipeline.version"] = resolvedPipeline.Version ?? string.Empty,
+                        [AiPipelineMetadataKeys.Name] = resolvedPipeline.Name ?? string.Empty,
+                        [AiPipelineMetadataKeys.Version] = resolvedPipeline.Version ?? string.Empty,
                         ["converged.status"] = convergence.Status.ToString(),
                         ["final.status"] = finalStatus.ToString(),
                         ["expected.step.key"] = expectedStepKey ?? string.Empty
@@ -373,8 +373,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                     "Execution finalization completed.",
                     new Dictionary<string, string>
                     {
-                        ["pipeline.name"] = resolvedPipeline.Name ?? string.Empty,
-                        ["pipeline.version"] = resolvedPipeline.Version ?? string.Empty,
+                        [AiPipelineMetadataKeys.Name] = resolvedPipeline.Name ?? string.Empty,
+                        [AiPipelineMetadataKeys.Version] = resolvedPipeline.Version ?? string.Empty,
                         ["final.status"] = finalStatus.ToString(),
                         ["expected.step.key"] = expectedStepKey ?? string.Empty,
                         ["completed.steps.count"] = completedStepsCount.ToString()
@@ -409,8 +409,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                     reason,
                     new Dictionary<string, string>
                     {
-                        ["pipeline.name"] = resolvedPipeline.Name ?? string.Empty,
-                        ["pipeline.version"] = resolvedPipeline.Version ?? string.Empty,
+                        [AiPipelineMetadataKeys.Name] = resolvedPipeline.Name ?? string.Empty,
+                        [AiPipelineMetadataKeys.Version] = resolvedPipeline.Version ?? string.Empty,
                         ["final.status"] = finalStatus.ToString(),
                         ["expected.step.key"] = expectedStepKey ?? string.Empty,
                         ["completed.steps.count"] = completedStepsCount.ToString(),
@@ -446,8 +446,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                     reason,
                     new Dictionary<string, string>
                     {
-                        ["pipeline.name"] = resolvedPipeline.Name ?? string.Empty,
-                        ["pipeline.version"] = resolvedPipeline.Version ?? string.Empty,
+                        [AiPipelineMetadataKeys.Name] = resolvedPipeline.Name ?? string.Empty,
+                        [AiPipelineMetadataKeys.Version] = resolvedPipeline.Version ?? string.Empty,
                         ["final.status"] = finalStatus.ToString(),
                         ["expected.step.key"] = expectedStepKey ?? string.Empty,
                         ["completed.steps.count"] = completedStepsCount.ToString()
@@ -480,8 +480,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                     "Execution finalized.",
                     new Dictionary<string, string>
                     {
-                        ["pipeline.name"] = resolvedPipeline.Name ?? string.Empty,
-                        ["pipeline.version"] = resolvedPipeline.Version ?? string.Empty,
+                        [AiPipelineMetadataKeys.Name] = resolvedPipeline.Name ?? string.Empty,
+                        [AiPipelineMetadataKeys.Version] = resolvedPipeline.Version ?? string.Empty,
                         ["final.status"] = finalStatus.ToString(),
                         ["completed.steps.count"] = completedStepsCount.ToString()
                     },
@@ -503,8 +503,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                     $"Execution {finalStatus.ToString().ToLowerInvariant()}.",
                     new Dictionary<string, string>
                     {
-                        ["pipeline.name"] = resolvedPipeline.Name ?? string.Empty,
-                        ["pipeline.version"] = resolvedPipeline.Version ?? string.Empty,
+                        [AiPipelineMetadataKeys.Name] = resolvedPipeline.Name ?? string.Empty,
+                        [AiPipelineMetadataKeys.Version] = resolvedPipeline.Version ?? string.Empty,
                         ["final.status"] = finalStatus.ToString(),
                         ["completed.steps.count"] = completedStepsCount.ToString()
                     },

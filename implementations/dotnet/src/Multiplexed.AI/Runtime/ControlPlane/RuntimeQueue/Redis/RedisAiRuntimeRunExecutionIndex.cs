@@ -6,6 +6,10 @@ using Multiplexed.Abstractions.Core.ExecutionContext;
 using StackExchange.Redis;
 using System.Globalization;
 using System.Text.Json;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.AI.Runtime.ControlPlane.Redis;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
 {
@@ -27,44 +31,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
     /// </remarks>
     public sealed class RedisAiRuntimeRunExecutionIndex : IAiRuntimeRunExecutionIndex
     {
-        private const string DefaultKeyPrefix =
-            "ai";
-
-        private const string ControlPlaneKeySegment =
-            "control-plane";
 
         private const string RuntimeRunIndexKeySegment =
             "runtime-run-index";
-
-        private const string TenantKeySegment =
-            "tenant";
-
-        private const string ItemKeySegment =
-            "item";
-
-        private const string AllIndexKeySegment =
-            "all";
-
-        private const string StatusQueued =
-            "queued";
-
-        private const string StatusRunning =
-            "running";
-
-        private const string StatusWaiting =
-            "waiting";
-
-        private const string StatusCompleted =
-            "completed";
-
-        private const string StatusFailed =
-            "failed";
-
-        private const string StatusCancelled =
-            "cancelled";
-
-        private const string StatusRequeuedForRecovery =
-            "requeued-for-recovery";
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
@@ -147,7 +116,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 RunId = entry.RunId,
                 ExecutionId = entry.ExecutionId,
                 RuntimeInstanceId = entry.RuntimeInstanceId,
-                Status = string.IsNullOrWhiteSpace(entry.Status) ? StatusQueued : entry.Status,
+                Status = string.IsNullOrWhiteSpace(entry.Status) ? AiRuntimeRunExecutionIndexStatuses.Queued : entry.Status,
                 FailureReason = entry.FailureReason,
                 ExecutionContextSnapshot = executionContextSnapshot,
                 CreatedAtUtc = createdAtUtc,
@@ -217,7 +186,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 RunId = entry.RunId,
                 ExecutionId = entry.ExecutionId,
                 RuntimeInstanceId = entry.RuntimeInstanceId,
-                Status = string.IsNullOrWhiteSpace(entry.Status) ? StatusQueued : entry.Status,
+                Status = string.IsNullOrWhiteSpace(entry.Status) ? AiRuntimeRunExecutionIndexStatuses.Queued : entry.Status,
                 FailureReason = entry.FailureReason,
                 ExecutionContextSnapshot = executionContextSnapshot,
                 CreatedAtUtc = createdAtUtc,
@@ -362,7 +331,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             EnsureMutationResult(
                 result,
                 runId,
-                StatusWaiting,
+                AiRuntimeRunExecutionIndexStatuses.Waiting,
                 "wait");
         }
 
@@ -418,7 +387,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             EnsureMutationResult(
                 result,
                 runId,
-                StatusCompleted,
+                AiRuntimeRunExecutionIndexStatuses.Completed,
                 "complete");
         }
 
@@ -472,7 +441,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             EnsureMutationResult(
                 result,
                 runId,
-                StatusFailed,
+                AiRuntimeRunExecutionIndexStatuses.Failed,
                 "fail");
         }
 
@@ -514,7 +483,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             EnsureMutationResult(
                 result,
                 runId,
-                StatusCancelled,
+                AiRuntimeRunExecutionIndexStatuses.Cancelled,
                 "cancel");
         }
 
@@ -582,9 +551,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                     BuildItemKey(controlPlaneId, runId),
                     new HashEntry[]
                     {
-                new("executionId", effectiveExecutionId),
-                new("status", StatusRequeuedForRecovery),
-                new("failureReason", reason),
+                new(AiExecutionMetadataKeys.CamelCaseExecutionId, effectiveExecutionId),
+                new("status", AiRuntimeRunExecutionIndexStatuses.RequeuedForRecovery),
+                new(AiObservabilityMetadataKeys.FailureReason, reason),
                 new("completedAtUtc", FormatDate(now))
                     })
                 .ConfigureAwait(false);
@@ -606,7 +575,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
 
             if (!string.Equals(
                     existing.Status,
-                    StatusFailed,
+                    AiRuntimeRunExecutionIndexStatuses.Failed,
                     StringComparison.OrdinalIgnoreCase))
             {
                 return false;
@@ -631,7 +600,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
 
             if (string.Equals(
                     existing.Status,
-                    StatusRequeuedForRecovery,
+                    AiRuntimeRunExecutionIndexStatuses.RequeuedForRecovery,
                     StringComparison.OrdinalIgnoreCase))
             {
                 return ExecutionIdMatches(
@@ -646,9 +615,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 return false;
             }
 
-            return string.Equals(existing.Status, StatusQueued, StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(existing.Status, StatusRunning, StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(existing.Status, StatusFailed, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(existing.Status, AiRuntimeRunExecutionIndexStatuses.Queued, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(existing.Status, AiRuntimeRunExecutionIndexStatuses.Running, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(existing.Status, AiRuntimeRunExecutionIndexStatuses.Failed, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -1038,10 +1007,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         private static bool IsRecoverable(
             AiRuntimeRunExecutionIndexEntry entry)
         {
-            return !string.Equals(entry.Status, StatusCompleted, StringComparison.OrdinalIgnoreCase) &&
-                   !string.Equals(entry.Status, StatusWaiting, StringComparison.OrdinalIgnoreCase) &&
-                   !string.Equals(entry.Status, StatusCancelled, StringComparison.OrdinalIgnoreCase) &&
-                   !string.Equals(entry.Status, StatusRequeuedForRecovery, StringComparison.OrdinalIgnoreCase);
+            return !string.Equals(entry.Status, AiRuntimeRunExecutionIndexStatuses.Completed, StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(entry.Status, AiRuntimeRunExecutionIndexStatuses.Waiting, StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(entry.Status, AiRuntimeRunExecutionIndexStatuses.Cancelled, StringComparison.OrdinalIgnoreCase) &&
+                   !string.Equals(entry.Status, AiRuntimeRunExecutionIndexStatuses.RequeuedForRecovery, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -1149,11 +1118,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 expireSeconds
             };
 
-            AddField(values, "runId", entry.RunId);
-            AddField(values, "executionId", entry.ExecutionId);
-            AddField(values, "runtimeInstanceId", entry.RuntimeInstanceId);
+            AddField(values, AiRunMetadataKeys.CamelCaseRunId, entry.RunId);
+            AddField(values, AiExecutionMetadataKeys.CamelCaseExecutionId, entry.ExecutionId);
+            AddField(values, AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId, entry.RuntimeInstanceId);
             AddField(values, "status", entry.Status);
-            AddField(values, "failureReason", entry.FailureReason);
+            AddField(values, AiObservabilityMetadataKeys.FailureReason, entry.FailureReason);
             AddField(values, "executionContextSnapshotJson", Serialize(entry.ExecutionContextSnapshot));
             AddField(values, "createdAtUtc", FormatDate(entry.CreatedAtUtc));
             AddField(values, "startedAtUtc", FormatOptionalDate(entry.StartedAtUtc));
@@ -1185,11 +1154,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
 
             return new AiRuntimeRunExecutionIndexEntry
             {
-                RunId = GetRequired(fields, "runId"),
-                ExecutionId = GetOptional(fields, "executionId"),
-                RuntimeInstanceId = GetOptional(fields, "runtimeInstanceId"),
+                RunId = GetRequired(fields, AiRunMetadataKeys.CamelCaseRunId),
+                ExecutionId = GetOptional(fields, AiExecutionMetadataKeys.CamelCaseExecutionId),
+                RuntimeInstanceId = GetOptional(fields, AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId),
                 Status = GetOptional(fields, "status"),
-                FailureReason = GetOptional(fields, "failureReason"),
+                FailureReason = GetOptional(fields, AiObservabilityMetadataKeys.FailureReason),
                 ExecutionContextSnapshot = executionContextSnapshot,
                 CreatedAtUtc = ParseDateTimeOffset(GetRequired(fields, "createdAtUtc")),
                 StartedAtUtc = ParseOptionalDateTimeOffset(GetOptional(fields, "startedAtUtc")),
@@ -1313,7 +1282,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             AiRuntimeRunExecutionIndexEntry entry)
         {
             return !IsTerminal(entry) &&
-                   !string.Equals(entry.Status, StatusWaiting, StringComparison.OrdinalIgnoreCase);
+                   !string.Equals(entry.Status, AiRuntimeRunExecutionIndexStatuses.Waiting, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -1324,10 +1293,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         private static bool IsTerminal(
             AiRuntimeRunExecutionIndexEntry entry)
         {
-            return string.Equals(entry.Status, StatusCompleted, StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(entry.Status, StatusFailed, StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(entry.Status, StatusCancelled, StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(entry.Status, StatusRequeuedForRecovery, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(entry.Status, AiRuntimeRunExecutionIndexStatuses.Completed, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(entry.Status, AiRuntimeRunExecutionIndexStatuses.Failed, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(entry.Status, AiRuntimeRunExecutionIndexStatuses.Cancelled, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(entry.Status, AiRuntimeRunExecutionIndexStatuses.RequeuedForRecovery, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -1341,7 +1310,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             return string.Concat(
                 NormalizeBaseKeyPrefix(_options.KeyPrefix),
                 ":",
-                ControlPlaneKeySegment,
+                AiRedisControlPlaneKeySegments.ControlPlane,
                 ":",
                 NormalizeKeySegment(controlPlaneId),
                 ":",
@@ -1361,11 +1330,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             return string.Concat(
                 NormalizeBaseKeyPrefix(_options.KeyPrefix),
                 ":",
-                ControlPlaneKeySegment,
+                AiRedisControlPlaneKeySegments.ControlPlane,
                 ":",
                 NormalizeKeySegment(controlPlaneId),
                 ":",
-                TenantKeySegment,
+                AiRedisControlPlaneKeySegments.Tenant,
                 ":",
                 NormalizeKeySegment(tenantId),
                 ":",
@@ -1385,7 +1354,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             return string.Concat(
                 BuildIndexKeyPrefix(controlPlaneId),
                 ":",
-                ItemKeySegment,
+                AiRedisControlPlaneKeySegments.Item,
                 ":",
                 NormalizeKeySegment(runId));
         }
@@ -1401,7 +1370,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             return string.Concat(
                 BuildIndexKeyPrefix(controlPlaneId),
                 ":",
-                AllIndexKeySegment);
+                AiRedisControlPlaneKeySegments.All);
         }
 
         /// <summary>
@@ -1417,7 +1386,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
             return string.Concat(
                 BuildTenantIndexKeyPrefix(controlPlaneId, tenantId),
                 ":",
-                AllIndexKeySegment);
+                AiRedisControlPlaneKeySegments.All);
         }
 
         /// <summary>
@@ -1445,7 +1414,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
         {
             if (string.IsNullOrWhiteSpace(keyPrefix))
             {
-                return DefaultKeyPrefix;
+                return AiRedisControlPlaneKeySegments.DefaultKeyPrefix;
             }
 
             return keyPrefix

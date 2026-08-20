@@ -7,6 +7,8 @@ using k8s.Autorest;
 using k8s.Models;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client.Factory;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Pool;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Client
 {
@@ -17,7 +19,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         IAiKubernetesRuntimePoolHostClient,
         IAiKubernetesRuntimePoolPodInventory
     {
-        private const string ReadyConditionType = "Ready";
         private const string RuntimePoolLabelSelector =
             "multiplexed.ai/runtime-pool=true";
         private const string PoolIdAnnotation =
@@ -107,11 +108,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                                     service: null),
                                 StringComparer.OrdinalIgnoreCase)
                             {
-                                ["runtime.pool.physicalPodCount"] =
+                                [AiRuntimePoolMetadataKeys.PhysicalPodCount] =
                                     physicalPodCount.ToString(),
-                                ["runtime.pool.maximumPodCount"] =
+                                [AiRuntimePoolMetadataKeys.MaximumPodCount] =
                                     podSpec.MaximumPodCount.ToString(),
-                                ["runtime.pool.capacityAlreadySatisfied"] =
+                                [AiRuntimePoolMetadataKeys.CapacityAlreadySatisfied] =
                                     bool.TrueString
                             };
 
@@ -452,7 +453,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 condition =>
                     string.Equals(
                         condition.Type,
-                        ReadyConditionType,
+                        AiKubernetesRuntimeConditionTypes.Ready,
                         StringComparison.OrdinalIgnoreCase)
                     && string.Equals(
                         condition.Status,

@@ -1,6 +1,7 @@
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 
@@ -29,6 +30,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
         private const string ParkRepairSharedRunPrefix = "child-park-repair-";
         private const string ContinuationIdentityPrefix = "child-continuation:";
         private const string ParkRepairIdentityPrefix = "child-park-repair:";
+        private const string ContinuationReasonMetadataKey = "continuation.reason";
 
         private readonly IAiSharedRuntimeController sharedRuntimeController;
         private readonly IAiSharedQueue sharedQueue;
@@ -275,13 +277,13 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
 
             return new Dictionary<string, string>(relation.DelegatedMetadata, StringComparer.Ordinal)
             {
-                ["child.invocation.key"] = relation.ChildInvocationKey,
-                ["child.execution.id"] = relation.ChildExecutionId ?? string.Empty,
-                ["parent.execution.id"] = relation.ParentExecutionId,
-                ["parent.callsite.id"] = relation.ParentCallSiteId,
-                ["external.wait.continuation"] = "true",
-                ["external.wait.continuation.id"] = continuationId,
-                ["continuation.reason"] = reason
+                [AiChildDagMetadataKeys.InvocationKey] = relation.ChildInvocationKey,
+                [AiChildDagMetadataKeys.ExecutionId] = relation.ChildExecutionId ?? string.Empty,
+                [AiChildDagMetadataKeys.ParentExecutionId] = relation.ParentExecutionId,
+                [AiChildDagMetadataKeys.ParentCallSiteId] = relation.ParentCallSiteId,
+                [AiRuntimeExternalWaitMetadataKeys.Continuation] = "true",
+                [AiRuntimeExternalWaitMetadataKeys.ContinuationId] = continuationId,
+                [ContinuationReasonMetadataKey] = reason
             };
         }
     }

@@ -17,8 +17,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue
     /// </remarks>
     public sealed class InMemoryAiSharedQueue : IAiSharedQueue
     {
-        private const string QueuePriorityMetadataKey = "queue.priority";
-
         private readonly ConcurrentDictionary<string, AiSharedQueueItem> _items =
             new(StringComparer.Ordinal);
 
@@ -518,7 +516,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue
             {
                 if (!string.Equals(
                         pair.Key,
-                        QueuePriorityMetadataKey,
+                        AiSharedQueueMetadataKeys.Priority,
                         StringComparison.OrdinalIgnoreCase))
                 {
                     continue;

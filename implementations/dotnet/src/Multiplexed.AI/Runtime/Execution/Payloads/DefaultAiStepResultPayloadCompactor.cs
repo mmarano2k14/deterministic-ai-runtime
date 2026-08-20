@@ -170,7 +170,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads
             _payloadMetrics.RecordExternalizedPayload(sizeBytes);
 
             _runtimeMetrics?.Storage.RecordPayloadStored(
-                NormalizeMetricValue(executionId, "unknown-execution"),
+                NormalizeMetricValue(executionId, AiPayloadIdentifiers.UnknownExecutionId),
                 NormalizeMetricValue(stepId, "unknown-step"),
                 "externalized-payload",
                 sizeBytes);

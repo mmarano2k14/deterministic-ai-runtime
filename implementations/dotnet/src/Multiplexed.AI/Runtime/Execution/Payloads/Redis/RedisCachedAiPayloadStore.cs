@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.AI.Runtime.Metrics;
 using StackExchange.Redis;
 using System.Text;
+using Multiplexed.AI.Runtime.Execution.Payloads;
 
 namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
 {
@@ -28,7 +29,6 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
     /// </summary>
     public sealed class RedisCachedAiPayloadStore : IAiPayloadStore
     {
-        private const string UnknownExecutionId = "unknown-execution";
         private const string RedisCacheStorageKind = "redis-cache";
         private const string DurableStoreStorageKind = "durable-store";
 
@@ -89,7 +89,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
                 .ConfigureAwait(false);
 
             _runtimeMetrics?.Storage.RecordPayloadStored(
-                UnknownExecutionId,
+                AiPayloadIdentifiers.UnknownExecutionId,
                 id,
                 DurableStoreStorageKind,
                 Encoding.UTF8.GetByteCount(content));
@@ -118,7 +118,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
                     _payloadMetrics.RecordCacheHit();
 
                     _runtimeMetrics?.Storage.RecordPayloadStoreHit(
-                        UnknownExecutionId,
+                        AiPayloadIdentifiers.UnknownExecutionId,
                         key,
                         RedisCacheStorageKind);
 
@@ -128,7 +128,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
                 _payloadMetrics.RecordCacheMiss();
 
                 _runtimeMetrics?.Storage.RecordPayloadStoreMiss(
-                    UnknownExecutionId,
+                    AiPayloadIdentifiers.UnknownExecutionId,
                     key,
                     RedisCacheStorageKind);
             }
@@ -137,7 +137,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
                 _payloadMetrics.RecordCacheMiss();
 
                 _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
-                    UnknownExecutionId,
+                    AiPayloadIdentifiers.UnknownExecutionId,
                     key,
                     RedisCacheStorageKind,
                     ex);
@@ -151,7 +151,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
             if (content is null)
             {
                 _runtimeMetrics?.Storage.RecordPayloadStoreMiss(
-                    UnknownExecutionId,
+                    AiPayloadIdentifiers.UnknownExecutionId,
                     key,
                     DurableStoreStorageKind);
 
@@ -159,7 +159,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
             }
 
             _runtimeMetrics?.Storage.RecordPayloadLoaded(
-                UnknownExecutionId,
+                AiPayloadIdentifiers.UnknownExecutionId,
                 key,
                 DurableStoreStorageKind);
 
@@ -183,7 +183,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
             catch (Exception ex)
             {
                 _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
-                    UnknownExecutionId,
+                    AiPayloadIdentifiers.UnknownExecutionId,
                     key,
                     RedisCacheStorageKind,
                     ex);
@@ -227,7 +227,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
                 _payloadMetrics.RecordCacheWrite();
 
                 _runtimeMetrics?.Storage.RecordPayloadStored(
-                    UnknownExecutionId,
+                    AiPayloadIdentifiers.UnknownExecutionId,
                     key,
                     RedisCacheStorageKind,
                     sizeBytes);
@@ -235,7 +235,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
             catch (Exception ex)
             {
                 _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
-                    UnknownExecutionId,
+                    AiPayloadIdentifiers.UnknownExecutionId,
                     key,
                     RedisCacheStorageKind,
                     ex);

@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
@@ -10,6 +11,8 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.AI.Stores;
 using System.Globalization;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition
 {
@@ -33,22 +36,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
     /// </remarks>
     public sealed class AiRuntimeExecutionRecoveryTransitionService : IAiRuntimeExecutionRecoveryTransitionService
     {
-        private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
-        private const string RecoveryFailureIncidentIdMetadataKey = "recovery.failureIncidentId";
-        private const string RecoveryLedgerEntryIdMetadataKey = "recovery.ledgerEntryId";
-        private const string RecoveryCorrelationIdMetadataKey = "recovery.correlationId";
-        private const string RecoveryCausationIdMetadataKey = "recovery.causationId";
-        private const string RecoveryModeMetadataKey = "recovery.mode";
-        private const string RecoveryModeResumeExistingExecution = "resume-existing-execution";
-        private const string RecoveryModeRequeueLocalQueuedRun = "requeue-local-queued-run";
         private const string RecoveryKindInFlightExecutionResume = "in-flight-execution-resume";
-        private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
-        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
-        private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
-        private const string RecoveryReasonMetadataKey = "recovery.reason";
-        private const string FailedRuntimeInstanceIdMetadataKey = "failed.runtimeInstanceId";
-        private const string FailedLocalRunIdMetadataKey = "failed.localRunId";
-        private const string QueuePriorityMetadataKey = "queue.priority";
         private const int InFlightRecoveryQueuePriority = -100;
 
         private readonly IAiSharedQueue sharedQueue;
@@ -272,8 +260,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
 
             var reason =
                 request.Reason ?? (isLocalQueuedRecovery
-                    ? "runtime-local-queued-recovery-requeue"
-                    : "runtime-execution-recovery-requeue");
+                    ? AiRuntimeRecoveryOperationNames.LocalQueuedRecoveryRequeue
+                    : AiRuntimeRecoveryOperationNames.ExecutionRecoveryRequeue);
 
             var forensicsId =
                 CreateForensicsId(
@@ -527,25 +515,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         {
             var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                [RecoveryForensicsIdMetadataKey] = forensicsId ?? string.Empty,
-                [RecoveryFailureIncidentIdMetadataKey] = runtimeFailureIncidentId,
-                [RecoveryLedgerEntryIdMetadataKey] = ledgerEntryId ?? string.Empty,
-                [RecoveryCorrelationIdMetadataKey] = correlationId ?? forensicsId ?? string.Empty,
-                [RecoveryCausationIdMetadataKey] = causationId ?? string.Empty,
-                [RecoveryModeMetadataKey] = isLocalQueuedRecovery
-                    ? RecoveryModeRequeueLocalQueuedRun
-                    : RecoveryModeResumeExistingExecution,
-                [RecoveryFailedExecutionIdMetadataKey] = ownership.ExecutionId ?? string.Empty,
-                [RecoveryFailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
-                [RecoveryFailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty,
-                [RecoveryReasonMetadataKey] = reason,
-                [FailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
-                [FailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty
+                [AiRuntimeRecoveryMetadataKeys.ForensicsId] = forensicsId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.FailureIncidentId] = runtimeFailureIncidentId,
+                [AiRuntimeRecoveryMetadataKeys.LedgerEntryId] = ledgerEntryId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.CorrelationId] = correlationId ?? forensicsId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.CausationId] = causationId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.Mode] = isLocalQueuedRecovery
+                    ? AiRuntimeRecoveryModes.RequeueLocalQueuedRun
+                    : AiRuntimeRecoveryModes.ResumeExistingExecution,
+                [AiRuntimeRecoveryMetadataKeys.FailedExecutionId] = ownership.ExecutionId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId] = ownership.RuntimeInstanceId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.FailedLocalRunId] = ownership.LocalRunId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.Reason] = reason,
+                [AiRuntimeRecoveryMetadataKeys.TransitionFailedRuntimeInstanceId] = ownership.RuntimeInstanceId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.TransitionFailedLocalRunId] = ownership.LocalRunId ?? string.Empty
             };
 
             if (!isLocalQueuedRecovery)
             {
-                metadata[QueuePriorityMetadataKey] =
+                metadata[AiSharedQueueMetadataKeys.Priority] =
                     InFlightRecoveryQueuePriority.ToString(CultureInfo.InvariantCulture);
             }
 
@@ -584,8 +572,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 isLocalQueuedRecovery);
 
             var recoveryMode = isLocalQueuedRecovery
-                ? RecoveryModeRequeueLocalQueuedRun
-                : RecoveryModeResumeExistingExecution;
+                ? AiRuntimeRecoveryModes.RequeueLocalQueuedRun
+                : AiRuntimeRecoveryModes.ResumeExistingExecution;
 
             var recoveryKind = isLocalQueuedRecovery
                 ? "local-queued-run-requeue"
@@ -598,10 +586,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                     ForensicsId = forensicsId,
                     ExecutionId = ownership.ExecutionId ?? string.Empty,
                     SharedRunId = ownership.SharedRunId,
-                    TenantId = ResolveMetadataValue(metadata, "tenantId", "tenant.id"),
-                    TenantGroupId = ResolveMetadataValue(metadata, "tenantGroupId", "tenant.group.id"),
-                    ControlPlaneId = ResolveMetadataValue(metadata, "controlPlaneId", "control.plane.id"),
-                    PipelineName = ResolveMetadataValue(metadata, "pipelineName", "pipeline.name", "pipelineKey", "pipeline.key")
+                    TenantId = ResolveMetadataValue(metadata, AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId, AiRuntimeInstanceIsolationMetadataKeys.TenantId),
+                    TenantGroupId = ResolveMetadataValue(metadata, AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId, AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId),
+                    ControlPlaneId = ResolveMetadataValue(metadata, AiControlPlaneMetadataKeys.ControlPlaneId, AiControlPlaneMetadataKeys.LegacyDottedControlPlaneId),
+                    PipelineName = ResolveMetadataValue(metadata, AiPipelineMetadataKeys.CamelCasePipelineName, AiPipelineMetadataKeys.Name, AiPipelineMetadataKeys.CamelCasePipelineKey, AiPipelineMetadataKeys.Key)
                 },
                 Failure = new AiRuntimeRecoveryFailureInfo
                 {
@@ -729,7 +717,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
 
             return string.Join(
                 ":",
-                "runtime-failure",
+                AiRuntimeFailureIdentifiers.RuntimeFailureIncidentPrefix,
                 ownership.RuntimeInstanceId);
         }
 
@@ -753,20 +741,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                [RecoveryForensicsIdMetadataKey] = forensicsId,
-                [RecoveryFailureIncidentIdMetadataKey] = runtimeFailureIncidentId,
-                [RecoveryLedgerEntryIdMetadataKey] = ledgerEntryId ?? string.Empty,
-                [RecoveryCorrelationIdMetadataKey] = correlationId ?? forensicsId,
-                [RecoveryCausationIdMetadataKey] = causationId ?? string.Empty,
-                [RecoveryModeMetadataKey] = isLocalQueuedRecovery
-                    ? RecoveryModeRequeueLocalQueuedRun
-                    : RecoveryModeResumeExistingExecution,
-                [RecoveryFailedExecutionIdMetadataKey] = ownership.ExecutionId ?? string.Empty,
-                [RecoveryFailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
-                [RecoveryFailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty,
-                [RecoveryReasonMetadataKey] = reason,
-                [FailedRuntimeInstanceIdMetadataKey] = ownership.RuntimeInstanceId ?? string.Empty,
-                [FailedLocalRunIdMetadataKey] = ownership.LocalRunId ?? string.Empty
+                [AiRuntimeRecoveryMetadataKeys.ForensicsId] = forensicsId,
+                [AiRuntimeRecoveryMetadataKeys.FailureIncidentId] = runtimeFailureIncidentId,
+                [AiRuntimeRecoveryMetadataKeys.LedgerEntryId] = ledgerEntryId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.CorrelationId] = correlationId ?? forensicsId,
+                [AiRuntimeRecoveryMetadataKeys.CausationId] = causationId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.Mode] = isLocalQueuedRecovery
+                    ? AiRuntimeRecoveryModes.RequeueLocalQueuedRun
+                    : AiRuntimeRecoveryModes.ResumeExistingExecution,
+                [AiRuntimeRecoveryMetadataKeys.FailedExecutionId] = ownership.ExecutionId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId] = ownership.RuntimeInstanceId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.FailedLocalRunId] = ownership.LocalRunId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.Reason] = reason,
+                [AiRuntimeRecoveryMetadataKeys.TransitionFailedRuntimeInstanceId] = ownership.RuntimeInstanceId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.TransitionFailedLocalRunId] = ownership.LocalRunId ?? string.Empty
             };
         }
 

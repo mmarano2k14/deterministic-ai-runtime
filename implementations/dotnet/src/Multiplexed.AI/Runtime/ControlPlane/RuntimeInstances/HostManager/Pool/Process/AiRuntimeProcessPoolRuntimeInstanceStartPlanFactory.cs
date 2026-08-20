@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process
 {
@@ -260,7 +261,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             AddWhenMissing(
                 environment,
                 "AiRuntimeInstanceRegistration__Metadata__deployment",
-                "process-pool");
+                AiRuntimeHostDeploymentNames.ProcessPool);
 
             environment[
                 string.Concat(

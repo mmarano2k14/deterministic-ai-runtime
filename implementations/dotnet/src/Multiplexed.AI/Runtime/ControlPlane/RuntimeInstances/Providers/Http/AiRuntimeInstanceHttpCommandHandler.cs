@@ -3,6 +3,8 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transp
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 {
@@ -157,7 +159,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                     _ => CreateFailedResult(
                         request,
                         startedAtUtc,
-                        "unsupported-command-operation",
+                        AiRuntimeInstanceCommandFailureReasons.UnsupportedCommandOperation,
                         $"Runtime instance command operation '{request.Operation}' is not supported.")
                 };
             }
@@ -212,7 +214,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 return CreateFailedResult(
                     request,
                     startedAtUtc,
-                    "runtime-instance-not-found",
+                    AiRuntimeInstanceFailureReasons.RuntimeInstanceNotFound,
                     $"Runtime instance '{targetRuntimeInstanceId}' was not found in the local shared runtime instance registry.");
             }
 
@@ -267,7 +269,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 return CreateFailedResult(
                     request,
                     startedAtUtc,
-                    "queue-request-missing",
+                    AiRuntimeInstanceCommandFailureReasons.QueueRequestMissing,
                     "Queue command request is missing QueueRequest.");
             }
 
@@ -286,7 +288,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 return CreateFailedResult(
                     request,
                     startedAtUtc,
-                    "runtime-queue-not-found",
+                    AiRuntimeInstanceCommandFailureReasons.RuntimeQueueNotFound,
                     $"Runtime queue control-plane for runtime instance '{targetRuntimeInstanceId}' was not found.");
             }
 
@@ -440,7 +442,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 }
             }
 
-            result["target.runtime.instance.id"] =
+            result[AiRuntimeInstanceCommandTransportMetadataKeys.TargetRuntimeInstanceId] =
                 targetRuntimeInstanceId;
 
             return result;
@@ -482,7 +484,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
 
             if (exception is not null)
             {
-                metadata["exception.type"] =
+                metadata[AiExceptionMetadataKeys.ExceptionType] =
                     exception.GetType().FullName ??
                     exception.GetType().Name;
             }
@@ -533,7 +535,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http
                 }
             }
 
-            metadata["target.runtime.instance.id"] =
+            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TargetRuntimeInstanceId] =
                 targetRuntimeInstanceId;
 
             return metadata;

@@ -3,10 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Multiplexed.Abstractions.AI.Execution;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Stores.Mongo;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 {
@@ -366,10 +369,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 ForensicsId = forensicsId,
                 ExecutionId = evt.ExecutionId ?? string.Empty,
                 SharedRunId = evt.SharedRunId,
-                PipelineName = ResolveMetadataValue(evt.Metadata, "pipelineName", "pipeline.name", "pipelineKey", "pipeline.key"),
-                TenantId = ResolveMetadataValue(evt.Metadata, "tenantId", "tenant.id"),
-                TenantGroupId = ResolveMetadataValue(evt.Metadata, "tenantGroupId", "tenant.group.id"),
-                ControlPlaneId = ResolveMetadataValue(evt.Metadata, "controlPlaneId", "control.plane.id")
+                PipelineName = ResolveMetadataValue(evt.Metadata, AiPipelineMetadataKeys.CamelCasePipelineName, AiPipelineMetadataKeys.Name, AiPipelineMetadataKeys.CamelCasePipelineKey, AiPipelineMetadataKeys.Key),
+                TenantId = ResolveMetadataValue(evt.Metadata, AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId, AiRuntimeInstanceIsolationMetadataKeys.TenantId),
+                TenantGroupId = ResolveMetadataValue(evt.Metadata, AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId, AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId),
+                ControlPlaneId = ResolveMetadataValue(evt.Metadata, AiControlPlaneMetadataKeys.ControlPlaneId, AiControlPlaneMetadataKeys.LegacyDottedControlPlaneId)
             };
         }
 

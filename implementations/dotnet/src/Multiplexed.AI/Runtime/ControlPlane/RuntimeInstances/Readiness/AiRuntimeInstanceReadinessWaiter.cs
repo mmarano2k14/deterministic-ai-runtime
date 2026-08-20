@@ -18,6 +18,8 @@ using System.Net.Http;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
 {
@@ -40,9 +42,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
     /// </remarks>
     public sealed class AiRuntimeInstanceReadinessWaiter : IAiRuntimeInstanceReadinessWaiter
     {
-        private const string HttpTransportName = "http";
-        private const string GrpcTransportName = "grpc";
-        private const string DefaultCommandEndpointPath = "/runtime-instance/commands";
         private static readonly HttpClient TransportProbeHttpClient = new();
         private readonly IAiRuntimeInstanceRegistry runtimeInstanceRegistry;
         private readonly IAiRuntimeInstanceCapacityStore runtimeInstanceCapacityStore;
@@ -136,14 +135,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
 
                 return CreateFailure(
                     request,
-                    lastFailureReason ?? "runtime-readiness-timeout",
+                    lastFailureReason ?? AiRuntimeInstanceReadinessFailureReasons.Timeout,
                     timedOut: true);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 return CreateFailure(
                     request,
-                    "runtime-readiness-cancelled",
+                    AiRuntimeInstanceReadinessFailureReasons.Cancelled,
                     timedOut: false);
             }
             catch (Exception exception)
@@ -163,7 +162,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
 
                 return CreateFailure(
                     request,
-                    "runtime-readiness-exception",
+                    AiRuntimeInstanceReadinessFailureReasons.Exception,
                     timedOut: false);
             }
         }
@@ -285,7 +284,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
             {
                 return CreateFailure(
                     request,
-                    "runtime-readiness-exact-registry-missing",
+                    AiRuntimeInstanceReadinessFailureReasons.ExactRegistryMissing,
                     timedOut: false);
             }
 
@@ -301,7 +300,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
             {
                 return CreateFailure(
                     request,
-                    "runtime-readiness-compatible-registry-missing",
+                    AiRuntimeInstanceReadinessFailureReasons.CompatibleRegistryMissing,
                     timedOut: false);
             }
 
@@ -457,32 +456,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
             if (!string.IsNullOrWhiteSpace(request.ControlPlaneId) &&
                 !string.Equals(controlPlaneId, request.ControlPlaneId, StringComparison.OrdinalIgnoreCase))
             {
-                return CreateFailure(request, "runtime-readiness-control-plane-mismatch", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.ControlPlaneMismatch, timedOut: false);
             }
 
             if (!IsTenantMatch(tenantId, request.ExecutionContextSnapshot?.TenantId))
             {
-                return CreateFailure(request, "runtime-readiness-tenant-mismatch", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.TenantMismatch, timedOut: false);
             }
 
             if (!IsTenantMatch(tenantGroupId, request.ExecutionContextSnapshot?.TenantGroupId))
             {
-                return CreateFailure(request, "runtime-readiness-tenant-group-mismatch", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.TenantGroupMismatch, timedOut: false);
             }
 
             if (!string.Equals(status, AiRuntimeInstanceStatus.Ready.ToString(), StringComparison.OrdinalIgnoreCase))
             {
-                return CreateFailure(request, "runtime-readiness-not-ready", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.NotReady, timedOut: false);
             }
 
             if (!canAcceptRun)
             {
-                return CreateFailure(request, "runtime-readiness-cannot-accept-run", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.CannotAcceptRun, timedOut: false);
             }
 
             if (availableRunSlots is <= 0)
             {
-                return CreateFailure(request, "runtime-readiness-capacity-unavailable", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.CapacityUnavailable, timedOut: false);
             }
 
             var transportReadinessResult =
@@ -540,13 +539,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
                     $"Status='{snapshot.Status}', " +
                     $"CanAcceptRun='{snapshot.CanAcceptRun}', " +
                     $"AvailableRunSlots='{snapshot.AvailableRunSlots}', " +
-                    $"Provider='{GetMetadataValue(snapshot.Metadata, "provider.name") ?? GetMetadataValue(snapshot.Metadata, "provider")}', " +
-                    $"Transport='{GetMetadataValue(snapshot.Metadata, "transport.name")}', " +
-                    $"TransportEndpoint='{GetMetadataValue(snapshot.Metadata, "transport.endpoint")}', " +
-                    $"MetadataRuntimeInstanceId='{GetMetadataValue(snapshot.Metadata, "runtimeInstanceId")}', " +
-                    $"MetadataRuntimeInstanceIdAlt='{GetMetadataValue(snapshot.Metadata, "runtime.instance.id")}', " +
-                    $"MetadataControlPlaneId='{GetMetadataValue(snapshot.Metadata, "controlPlaneId")}', " +
-                    $"MetadataRuntimeControlPlaneId='{GetMetadataValue(snapshot.Metadata, "runtime.controlPlaneId")}'.");
+                    $"Provider='{GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceProviderMetadataKeys.ProviderName) ?? GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName)}', " +
+                    $"Transport='{GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportName)}', " +
+                    $"TransportEndpoint='{GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint)}', " +
+                    $"MetadataRuntimeInstanceId='{GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId)}', " +
+                    $"MetadataRuntimeInstanceIdAlt='{GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeInstanceId)}', " +
+                    $"MetadataControlPlaneId='{GetMetadataValue(snapshot.Metadata, AiControlPlaneMetadataKeys.ControlPlaneId)}', " +
+                    $"MetadataRuntimeControlPlaneId='{GetMetadataValue(snapshot.Metadata, AiControlPlaneMetadataKeys.RuntimeControlPlaneId)}'.");
             }
 
             var requestedTenantId = request.ExecutionContextSnapshot?.TenantId;
@@ -644,9 +643,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
                     $"Status='{snapshot.Status}', " +
                     $"CanAcceptRun='{snapshot.CanAcceptRun}', " +
                     $"AvailableRunSlots='{snapshot.AvailableRunSlots}', " +
-                    $"Provider='{GetMetadataValue(snapshot.Metadata, "provider.name") ?? GetMetadataValue(snapshot.Metadata, "provider")}', " +
-                    $"Transport='{GetMetadataValue(snapshot.Metadata, "transport.name")}', " +
-                    $"TransportEndpoint='{GetMetadataValue(snapshot.Metadata, "transport.endpoint")}'.");
+                    $"Provider='{GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceProviderMetadataKeys.ProviderName) ?? GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName)}', " +
+                    $"Transport='{GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportName)}', " +
+                    $"TransportEndpoint='{GetMetadataValue(snapshot.Metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint)}'.");
             }
         }
 
@@ -751,8 +750,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
 
             var providerName =
                 GetMetadataValue(metadata, AiRuntimeInstanceProviderMetadataKeys.ProviderName) ??
-                GetMetadataValue(metadata, "provider.name") ??
-                GetMetadataValue(metadata, "provider");
+                GetMetadataValue(metadata, AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName);
 
             if (!string.IsNullOrWhiteSpace(request.ProviderName) &&
                 !string.IsNullOrWhiteSpace(providerName) &&
@@ -762,8 +760,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
             }
 
             var transportName =
-                GetMetadataValue(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportName) ??
-                GetMetadataValue(metadata, "transport.name");
+                GetMetadataValue(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportName);
 
             if (!string.IsNullOrWhiteSpace(request.TransportName) &&
                 !string.IsNullOrWhiteSpace(transportName) &&
@@ -825,12 +822,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
 
             if (string.IsNullOrWhiteSpace(transportEndpoint))
             {
-                return CreateFailure(request, "runtime-readiness-transport-endpoint-missing", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.TransportEndpointMissing, timedOut: false);
             }
 
             if (!Uri.TryCreate(transportEndpoint, UriKind.Absolute, out var endpointUri))
             {
-                return CreateFailure(request, "runtime-readiness-transport-endpoint-invalid", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.TransportEndpointInvalid, timedOut: false);
             }
 
             if (IsGrpcTransport(request.TransportName))
@@ -883,22 +880,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
 
                 if (response.StatusCode == HttpStatusCode.NotFound)
                 {
-                    return CreateFailure(request, "runtime-readiness-command-endpoint-missing", timedOut: false);
+                    return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.CommandEndpointMissing, timedOut: false);
                 }
 
                 return CreateSuccess(request, transportEndpoint);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                return CreateFailure(request, "runtime-readiness-transport-timeout", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.TransportTimeout, timedOut: false);
             }
             catch (HttpRequestException)
             {
-                return CreateFailure(request, "runtime-readiness-transport-unreachable", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.TransportUnreachable, timedOut: false);
             }
             catch (InvalidOperationException)
             {
-                return CreateFailure(request, "runtime-readiness-transport-invalid", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.TransportInvalid, timedOut: false);
             }
         }
 
@@ -920,7 +917,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
 
             if (string.IsNullOrWhiteSpace(endpointUri.Host) || port <= 0)
             {
-                return CreateFailure(request, "runtime-readiness-transport-endpoint-invalid", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.TransportEndpointInvalid, timedOut: false);
             }
 
             try
@@ -943,11 +940,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                return CreateFailure(request, "runtime-readiness-transport-timeout", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.TransportTimeout, timedOut: false);
             }
             catch (SocketException)
             {
-                return CreateFailure(request, "runtime-readiness-transport-unreachable", timedOut: false);
+                return CreateFailure(request, AiRuntimeInstanceReadinessFailureReasons.TransportUnreachable, timedOut: false);
             }
         }
 
@@ -1049,9 +1046,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
             }
 
             return GetMetadataValue(snapshotMetadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint) ??
-                   GetMetadataValue(capacityMetadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint) ??
-                   GetMetadataValue(snapshotMetadata, "transport.endpoint") ??
-                   GetMetadataValue(capacityMetadata, "transport.endpoint");
+                   GetMetadataValue(capacityMetadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint);
         }
 
         /// <summary>
@@ -1108,7 +1103,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
             {
                 return string.Equals(
                     transportName,
-                    HttpTransportName,
+                    AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
                     StringComparison.OrdinalIgnoreCase);
             }
 
@@ -1134,7 +1129,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
         private static bool IsGrpcTransport(
             string? transportName)
         {
-            return string.Equals(transportName, GrpcTransportName, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(transportName, AiRuntimeInstanceCommandTransportMetadataKeys.GrpcTransportName, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -1172,7 +1167,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Readiness
             Uri baseEndpoint)
         {
             return new Uri(
-                baseEndpoint.ToString().TrimEnd('/') + DefaultCommandEndpointPath);
+                baseEndpoint.ToString().TrimEnd('/') + AiRuntimeInstanceCommandTransportDefaults.DefaultHttpCommandEndpointPath);
         }
 
         /// <summary>

@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.Observability.Metrics;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Metrics.Retention;
 
 namespace Multiplexed.AI.Runtime.Observability.Metrics.Retention
@@ -173,7 +174,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Retention
             var tags = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
-                ["execution.id"] = executionId ?? string.Empty
+                [AiExecutionMetadataKeys.ExecutionId] = executionId ?? string.Empty
             };
 
             if (additionalTags is not null)

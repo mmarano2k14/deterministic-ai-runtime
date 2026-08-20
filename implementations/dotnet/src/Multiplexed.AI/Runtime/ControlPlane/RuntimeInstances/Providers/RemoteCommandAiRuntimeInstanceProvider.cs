@@ -3,6 +3,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
 {
@@ -93,7 +94,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
                 return CreateFailedDispatchResult(
                     request,
                     string.Empty,
-                    "runtime-instance-id-missing",
+                    AiRuntimeInstanceFailureReasons.RuntimeInstanceIdMissing,
                     "Runtime instance id is missing.");
             }
 
@@ -243,7 +244,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
                     request,
                     queueOperation,
                     string.Empty,
-                    "runtime-instance-id-missing",
+                    AiRuntimeInstanceFailureReasons.RuntimeInstanceIdMissing,
                     "Runtime instance id is missing.");
             }
 

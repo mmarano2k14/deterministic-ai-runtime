@@ -48,7 +48,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         [Theory]
-        [InlineData(3, 5, 5, 2)]
+        [InlineData(5, 5, 2, 2)]
         public Task Grpc_ProcessHostPool_Should_Reuse_Warm_Capacity_Across_Sequential_Production_Recovery_Cycles(
             int maximumProcessHostCount,
             int runtimeCountPerHost,

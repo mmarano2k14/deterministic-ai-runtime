@@ -3,9 +3,15 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using StackExchange.Redis;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 {
@@ -19,12 +25,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
     /// </remarks>
     public sealed class RedisAiRuntimeScaleOutRequestStore : IAiRuntimeScaleOutRequestStore
     {
-        private const string ScaleOutIntentMetadataKey = "scaleout.intent";
-        private const string ScaleOutReplacementForRuntimeInstanceIdMetadataKey = "scaleout.replacementForRuntimeInstanceId";
-        private const string ScaleOutExcludedRuntimeInstanceIdMetadataKey = "scaleout.excludedRuntimeInstanceId";
-        private const string RecoveryReplacementMetadataKey = "recovery.replacement";
-        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
-        private const string ScaleOutDedupScopeMetadataKey = "scaleout.dedup.scope";
 
 
         /// <summary>
@@ -738,20 +738,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     NormalizeKeyPart(
                         GetMetadataValue(
                             request.Metadata,
-                            ScaleOutIntentMetadataKey));
+                            AiRuntimeScaleOutMetadataKeys.Intent));
 
                 var failedRuntimeInstanceId =
                     NormalizeKeyPart(
                         FirstNonEmpty(
                             GetMetadataValue(
                                 request.Metadata,
-                                ScaleOutReplacementForRuntimeInstanceIdMetadataKey),
+                                AiRuntimeScaleOutMetadataKeys.ReplacementForRuntimeInstanceId),
                             GetMetadataValue(
                                 request.Metadata,
-                                ScaleOutExcludedRuntimeInstanceIdMetadataKey),
+                                AiRuntimeScaleOutMetadataKeys.ExcludedRuntimeInstanceId),
                             GetMetadataValue(
                                 request.Metadata,
-                                RecoveryFailedRuntimeInstanceIdMetadataKey)));
+                                AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId)));
 
                 var sharedRunId =
                     NormalizeKeyPart(
@@ -762,8 +762,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         FirstNonEmpty(
                             GetMetadataValue(
                                 request.Metadata,
-                                ScaleOutDedupScopeMetadataKey),
-                            "recovery-replacement"));
+                                AiRuntimeScaleOutMetadataKeys.DeduplicationScope),
+                            AiRuntimeScaleOutDeduplicationScopes.RecoveryReplacement));
 
                 // A recovery replacement has one active owner per shared run and failed runtime.
                 // Diagnostic evidence such as reason, provider hint, and forensics id must not
@@ -834,13 +834,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         {
             return new[]
             {
-                new HashEntry("requestId", request.RequestId),
-                new HashEntry("controlPlaneId", request.ControlPlaneId),
-                new HashEntry("sharedRunId", request.SharedRunId),
+                new HashEntry(AiRuntimeScaleOutMetadataKeys.CamelCaseRequestId, request.RequestId),
+                new HashEntry(AiControlPlaneMetadataKeys.ControlPlaneId, request.ControlPlaneId),
+                new HashEntry(AiRunMetadataKeys.CamelCaseSharedRunId, request.SharedRunId),
                 new HashEntry("executionContextSnapshot", SerializeExecutionContextSnapshot(request.ExecutionContextSnapshot)),
-                new HashEntry("tenantId", request.TenantId ?? string.Empty),
-                new HashEntry("tenantGroupId", request.TenantGroupId ?? string.Empty),
-                new HashEntry("pipelineKey", request.PipelineKey ?? string.Empty),
+                new HashEntry(AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId, request.TenantId ?? string.Empty),
+                new HashEntry(AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId, request.TenantGroupId ?? string.Empty),
+                new HashEntry(AiPipelineMetadataKeys.CamelCasePipelineKey, request.PipelineKey ?? string.Empty),
 
                 new HashEntry("isolationMode", request.IsolationMode.ToString()),
                 new HashEntry("preferDedicatedCapacity", request.PreferDedicatedCapacity.ToString(CultureInfo.InvariantCulture)),
@@ -858,10 +858,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 new HashEntry("currentInstanceCount", FormatInt(request.CurrentInstanceCount)),
                 new HashEntry("maxInstanceCount", request.MaxInstanceCount?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
                 new HashEntry("requestedTargetInstanceCount", FormatInt(request.RequestedTargetInstanceCount)),
-                new HashEntry("providerHint", request.ProviderHint ?? string.Empty),
-                new HashEntry("requestedBy", request.RequestedBy ?? string.Empty),
+                new HashEntry(AiRuntimeScaleOutMetadataKeys.ProviderHint, request.ProviderHint ?? string.Empty),
+                new HashEntry(AiControlPlaneRequestMetadataKeys.RequestedBy, request.RequestedBy ?? string.Empty),
                 new HashEntry("source", request.Source ?? string.Empty),
-                new HashEntry("correlationId", request.CorrelationId ?? string.Empty),
+                new HashEntry(AiObservabilityMetadataKeys.CamelCaseCorrelationId, request.CorrelationId ?? string.Empty),
                 new HashEntry("createdAtUtc", FormatDate(request.CreatedAtUtc)),
                 new HashEntry("observedAtUtc", FormatNullableDate(request.ObservedAtUtc)),
                 new HashEntry("fulfilledAtUtc", FormatNullableDate(request.FulfilledAtUtc)),
@@ -906,15 +906,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             return new AiRuntimeScaleOutRequestRecord
             {
-                RequestId = GetString(fields, "requestId") ?? string.Empty,
-                ControlPlaneId = GetString(fields, "controlPlaneId") ?? string.Empty,
-                SharedRunId = GetString(fields, "sharedRunId") ?? string.Empty,
+                RequestId = GetString(fields, AiRuntimeScaleOutMetadataKeys.CamelCaseRequestId) ?? string.Empty,
+                ControlPlaneId = GetString(fields, AiControlPlaneMetadataKeys.ControlPlaneId) ?? string.Empty,
+                SharedRunId = GetString(fields, AiRunMetadataKeys.CamelCaseSharedRunId) ?? string.Empty,
                 ExecutionContextSnapshot = ParseExecutionContextSnapshot(
                     GetString(fields, "executionContextSnapshot"),
                     fields),
-                TenantId = EmptyToNull(GetString(fields, "tenantId")),
-                TenantGroupId = EmptyToNull(GetString(fields, "tenantGroupId")),
-                PipelineKey = EmptyToNull(GetString(fields, "pipelineKey")),
+                TenantId = EmptyToNull(GetString(fields, AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId)),
+                TenantGroupId = EmptyToNull(GetString(fields, AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId)),
+                PipelineKey = EmptyToNull(GetString(fields, AiPipelineMetadataKeys.CamelCasePipelineKey)),
 
                 IsolationMode = ParseIsolationMode(GetString(fields, "isolationMode")),
                 PreferDedicatedCapacity = ParseBool(GetString(fields, "preferDedicatedCapacity")),
@@ -932,10 +932,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 CurrentInstanceCount = ParseInt(GetString(fields, "currentInstanceCount")),
                 MaxInstanceCount = ParseNullableInt(GetString(fields, "maxInstanceCount")),
                 RequestedTargetInstanceCount = ParseInt(GetString(fields, "requestedTargetInstanceCount")),
-                ProviderHint = EmptyToNull(GetString(fields, "providerHint")),
-                RequestedBy = EmptyToNull(GetString(fields, "requestedBy")),
+                ProviderHint = EmptyToNull(GetString(fields, AiRuntimeScaleOutMetadataKeys.ProviderHint)),
+                RequestedBy = EmptyToNull(GetString(fields, AiControlPlaneRequestMetadataKeys.RequestedBy)),
                 Source = EmptyToNull(GetString(fields, "source")),
-                CorrelationId = EmptyToNull(GetString(fields, "correlationId")),
+                CorrelationId = EmptyToNull(GetString(fields, AiObservabilityMetadataKeys.CamelCaseCorrelationId)),
                 CreatedAtUtc = ParseDate(GetString(fields, "createdAtUtc")) ?? DateTimeOffset.MinValue,
                 ObservedAtUtc = ParseDate(GetString(fields, "observedAtUtc")),
                 FulfilledAtUtc = ParseDate(GetString(fields, "fulfilledAtUtc")),
@@ -1242,19 +1242,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             IReadOnlyDictionary<string, string> fields)
         {
             var controlPlaneId =
-                GetString(fields, "controlPlaneId") ?? "unknown-control-plane";
+                GetString(fields, AiControlPlaneMetadataKeys.ControlPlaneId) ?? "unknown-control-plane";
 
             var sharedRunId =
-                GetString(fields, "sharedRunId") ?? "unknown-shared-run";
+                GetString(fields, AiRunMetadataKeys.CamelCaseSharedRunId) ?? "unknown-shared-run";
 
             var tenantId =
-                EmptyToNull(GetString(fields, "tenantId")) ?? "system";
+                EmptyToNull(GetString(fields, AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId)) ?? "system";
 
             var tenantGroupId =
-                EmptyToNull(GetString(fields, "tenantGroupId")) ?? tenantId;
+                EmptyToNull(GetString(fields, AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId)) ?? tenantId;
 
             var requestedBy =
-                EmptyToNull(GetString(fields, "requestedBy")) ?? "system";
+                EmptyToNull(GetString(fields, AiControlPlaneRequestMetadataKeys.RequestedBy)) ?? "system";
 
             const string fallbackNamespace = "system";
 
@@ -1513,19 +1513,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             return IsTrue(
                        GetMetadataValue(
                            request.Metadata,
-                           RecoveryReplacementMetadataKey)) ||
+                           AiRuntimeRecoveryMetadataKeys.Replacement)) ||
                    !string.IsNullOrWhiteSpace(
                        GetMetadataValue(
                            request.Metadata,
-                           ScaleOutReplacementForRuntimeInstanceIdMetadataKey)) ||
+                           AiRuntimeScaleOutMetadataKeys.ReplacementForRuntimeInstanceId)) ||
                    !string.IsNullOrWhiteSpace(
                        GetMetadataValue(
                            request.Metadata,
-                           ScaleOutExcludedRuntimeInstanceIdMetadataKey)) ||
+                           AiRuntimeScaleOutMetadataKeys.ExcludedRuntimeInstanceId)) ||
                    !string.IsNullOrWhiteSpace(
                        GetMetadataValue(
                            request.Metadata,
-                           RecoveryFailedRuntimeInstanceIdMetadataKey));
+                           AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId));
         }
 
         /// <summary>

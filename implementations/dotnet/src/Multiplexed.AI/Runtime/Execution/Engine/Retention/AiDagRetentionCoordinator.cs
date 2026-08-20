@@ -7,6 +7,7 @@ using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Execution.Engine.Helpers;
 using Multiplexed.AI.Runtime.Execution.Retention;
 using Multiplexed.AI.Runtime.Execution.Retention.Models;
+using Multiplexed.Abstractions.AI.Policies;
 
 namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
 {
@@ -96,7 +97,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                             "Retention evaluation started.",
                             new Dictionary<string, string>
                             {
-                                ["policy.name"] = policyName,
+                                [AiPolicyMetadataKeys.Name] = policyName,
                                 ["steps.count"] = state.Steps.Count.ToString()
                             },
                             cancellationToken)
@@ -146,7 +147,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                 reason,
                                 new Dictionary<string, string>
                                 {
-                                    ["policy.name"] = policyName,
+                                    [AiPolicyMetadataKeys.Name] = policyName,
                                     ["steps.count"] = state.Steps.Count.ToString()
                                 },
                                 cancellationToken)
@@ -178,7 +179,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                 result.Decision?.Reason ?? "Retention policy triggered.",
                                 new Dictionary<string, string>
                                 {
-                                    ["policy.name"] = policyName,
+                                    [AiPolicyMetadataKeys.Name] = policyName,
                                     ["steps.count"] = state.Steps.Count.ToString(),
                                     ["compacted.count"] = compactedCount.ToString(),
                                     ["evicted.count"] = evictedCount.ToString()
@@ -208,7 +209,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     "Retention compacted step payloads.",
                                     new Dictionary<string, string>
                                     {
-                                        ["policy.name"] = policyName,
+                                        [AiPolicyMetadataKeys.Name] = policyName,
                                         ["compacted.count"] = compactedCount.ToString(),
                                         ["compacted.steps"] = string.Join(",", compactedSteps)
                                     },
@@ -230,7 +231,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     "Step payloads externalized during retention compaction.",
                                     new Dictionary<string, string>
                                     {
-                                        ["policy.name"] = policyName,
+                                        [AiPolicyMetadataKeys.Name] = policyName,
                                         ["payload.externalized.count"] = compactedCount.ToString(),
                                         ["compacted.steps"] = string.Join(",", compactedSteps)
                                     },
@@ -260,7 +261,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     "Retention evicted archived steps from hot state.",
                                     new Dictionary<string, string>
                                     {
-                                        ["policy.name"] = policyName,
+                                        [AiPolicyMetadataKeys.Name] = policyName,
                                         ["evicted.count"] = evictedCount.ToString(),
                                         ["evicted.steps"] = string.Join(",", evictedSteps)
                                     },
@@ -344,7 +345,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                     trace.SetTag("stepsBefore", stepsBefore);
                     trace.SetTag("stepsAfter", stepsAfter);
                     trace.SetTag("removedSteps", stepsBefore - stepsAfter);
-                    trace.SetTag("workerId", runtimeInstanceId);
+                    trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, runtimeInstanceId);
 
                     return true;
                 }).ConfigureAwait(false);
@@ -405,7 +406,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                             "Batch retention evaluation started.",
                             new Dictionary<string, string>
                             {
-                                ["policy.name"] = policyName,
+                                [AiPolicyMetadataKeys.Name] = policyName,
                                 ["steps.count"] = state.Steps.Count.ToString(),
                                 ["candidate.steps.count"] = candidateStepIds.Count.ToString()
                             },
@@ -457,7 +458,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                 reason,
                                 new Dictionary<string, string>
                                 {
-                                    ["policy.name"] = policyName,
+                                    [AiPolicyMetadataKeys.Name] = policyName,
                                     ["steps.count"] = state.Steps.Count.ToString(),
                                     ["candidate.steps.count"] = candidateStepIds.Count.ToString()
                                 },
@@ -489,7 +490,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                 result.Decision?.Reason ?? "Batch retention policy triggered.",
                                 new Dictionary<string, string>
                                 {
-                                    ["policy.name"] = policyName,
+                                    [AiPolicyMetadataKeys.Name] = policyName,
                                     ["steps.count"] = state.Steps.Count.ToString(),
                                     ["candidate.steps.count"] = candidateStepIds.Count.ToString(),
                                     ["compacted.count"] = compactedCount.ToString(),
@@ -520,7 +521,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     "Batch retention compacted step payloads.",
                                     new Dictionary<string, string>
                                     {
-                                        ["policy.name"] = policyName,
+                                        [AiPolicyMetadataKeys.Name] = policyName,
                                         ["compacted.count"] = compactedCount.ToString(),
                                         ["compacted.steps"] = string.Join(",", compactedSteps)
                                     },
@@ -542,7 +543,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     "Step payloads externalized during batch retention compaction.",
                                     new Dictionary<string, string>
                                     {
-                                        ["policy.name"] = policyName,
+                                        [AiPolicyMetadataKeys.Name] = policyName,
                                         ["payload.externalized.count"] = compactedCount.ToString(),
                                         ["compacted.steps"] = string.Join(",", compactedSteps)
                                     },
@@ -572,7 +573,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     "Batch retention evicted archived steps from hot state.",
                                     new Dictionary<string, string>
                                     {
-                                        ["policy.name"] = policyName,
+                                        [AiPolicyMetadataKeys.Name] = policyName,
                                         ["evicted.count"] = evictedCount.ToString(),
                                         ["evicted.steps"] = string.Join(",", evictedSteps)
                                     },
@@ -601,7 +602,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     result.Decision?.Reason ?? "Batch retention did not apply any atomic hot-state changes.",
                                     new Dictionary<string, string>
                                     {
-                                        ["policy.name"] = policyName,
+                                        [AiPolicyMetadataKeys.Name] = policyName,
                                         ["steps.count"] = state.Steps.Count.ToString(),
                                         ["candidate.steps.count"] = candidateStepIds.Count.ToString(),
                                         ["decision.kind"] = result.Decision?.Kind.ToString() ?? "Unknown",
@@ -694,7 +695,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                     trace.SetTag("stepsBefore", stepsBefore);
                     trace.SetTag("stepsAfter", stepsAfter);
                     trace.SetTag("removedSteps", stepsBefore - stepsAfter);
-                    trace.SetTag("workerId", runtimeInstanceId);
+                    trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, runtimeInstanceId);
 
                     return true;
                 }).ConfigureAwait(false);

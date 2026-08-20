@@ -3,10 +3,15 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
 {
@@ -26,11 +31,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
     /// </remarks>
     public sealed class AiRuntimeQueueControlPlane : IAiRuntimeQueueControlPlane
     {
-        private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
-        private const string RecoveryModeMetadataKey = "recovery.mode";
-        private const string RecoveryModeResumeExistingExecution = "resume-existing-execution";
-        private const string RecoveryModeRequeueLocalQueuedRun = "requeue-local-queued-run";
-        private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
 
         private readonly IAiRuntimePipelineBackgroundController _controller;
         private readonly IAiRuntimeRunExecutionIndex _runExecutionIndex;
@@ -473,11 +473,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                                     new Dictionary<string, string>
                                     {
                                         ["source"] = request.Source ?? string.Empty,
-                                        ["requestedBy"] = request.RequestedBy ?? string.Empty,
+                                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy ?? string.Empty,
                                         ["reason"] = request.Reason ?? string.Empty,
-                                        ["correlationId"] = request.CorrelationId ?? string.Empty,
-                                        ["recovery.resume"] = "false",
-                                        ["recovery.execution.id"] = string.Empty,
+                                        [AiObservabilityMetadataKeys.CamelCaseCorrelationId] = request.CorrelationId ?? string.Empty,
+                                        [AiRuntimeRecoveryMetadataKeys.Resume] = "false",
+                                        [AiRuntimeRecoveryMetadataKeys.ExecutionId] = string.Empty,
                                         [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = executionContextSnapshot?.TenantId ?? string.Empty,
                                         [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = executionContextSnapshot?.TenantGroupId ?? string.Empty
                                     })
@@ -808,9 +808,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request.Source,
-                        ["requestedBy"] = request.RequestedBy,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy,
                         ["reason"] = request.Reason,
-                        ["runId"] = request.RunId,
+                        [AiRunMetadataKeys.CamelCaseRunId] = request.RunId,
                         ["hasRunRequest"] = request.RunRequest is not null,
                         ["includeRunState"] = request.IncludeRunState,
                         ["includeQueueState"] = request.IncludeQueueState,
@@ -850,9 +850,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request.Source,
-                        ["requestedBy"] = request.RequestedBy,
-                        ["runId"] = operationResult.RunHandle?.RunId ?? operationResult.RunState?.RunId ?? request.RunId,
-                        ["executionId"] = operationResult.RunHandle?.ExecutionId ?? operationResult.RunState?.ExecutionId,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy,
+                        [AiRunMetadataKeys.CamelCaseRunId] = operationResult.RunHandle?.RunId ?? operationResult.RunState?.RunId ?? request.RunId,
+                        [AiExecutionMetadataKeys.CamelCaseExecutionId] = operationResult.RunHandle?.ExecutionId ?? operationResult.RunState?.ExecutionId,
                         ["queuePaused"] = operationResult.QueueState?.IsPaused,
                         ["queuedRunCount"] = operationResult.QueueState?.QueuedRunCount,
                         ["runningRunCount"] = operationResult.QueueState?.RunningRunCount,
@@ -893,8 +893,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request?.Source,
-                        ["requestedBy"] = request?.RequestedBy,
-                        ["runId"] = request?.RunId,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request?.RequestedBy,
+                        [AiRunMetadataKeys.CamelCaseRunId] = request?.RunId,
                         ["exceptionType"] = exception.GetType().Name
                     }
                 },
@@ -1038,7 +1038,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
 
             if (!TryGetMetadataValue(
                     metadata,
-                    RecoveryModeMetadataKey,
+                    AiRuntimeRecoveryMetadataKeys.Mode,
                     out var mode) ||
                 string.IsNullOrWhiteSpace(mode))
             {
@@ -1047,7 +1047,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
 
             if (string.Equals(
                     mode,
-                    RecoveryModeRequeueLocalQueuedRun,
+                    AiRuntimeRecoveryModes.RequeueLocalQueuedRun,
                     StringComparison.OrdinalIgnoreCase))
             {
                 return null;
@@ -1055,7 +1055,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
 
             if (!string.Equals(
                     mode,
-                    RecoveryModeResumeExistingExecution,
+                    AiRuntimeRecoveryModes.ResumeExistingExecution,
                     StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException(
@@ -1064,22 +1064,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue
 
             if (!TryGetMetadataValue(
                     metadata,
-                    RecoveryFailedExecutionIdMetadataKey,
+                    AiRuntimeRecoveryMetadataKeys.FailedExecutionId,
                     out var executionId) ||
                 string.IsNullOrWhiteSpace(executionId))
             {
                 throw new InvalidOperationException(
-                    $"Recovery metadata '{RecoveryFailedExecutionIdMetadataKey}' is required when '{RecoveryModeMetadataKey}' is '{RecoveryModeResumeExistingExecution}'.");
+                    $"Recovery metadata '{AiRuntimeRecoveryMetadataKeys.FailedExecutionId}' is required when '{AiRuntimeRecoveryMetadataKeys.Mode}' is '{AiRuntimeRecoveryModes.ResumeExistingExecution}'.");
             }
 
             if (!TryGetMetadataValue(
                     metadata,
-                    RecoveryForensicsIdMetadataKey,
+                    AiRuntimeRecoveryMetadataKeys.ForensicsId,
                     out var recoveryOwnerId) ||
                 string.IsNullOrWhiteSpace(recoveryOwnerId))
             {
                 throw new InvalidOperationException(
-                    $"Recovery metadata '{RecoveryForensicsIdMetadataKey}' is required when '{RecoveryModeMetadataKey}' is '{RecoveryModeResumeExistingExecution}'.");
+                    $"Recovery metadata '{AiRuntimeRecoveryMetadataKeys.ForensicsId}' is required when '{AiRuntimeRecoveryMetadataKeys.Mode}' is '{AiRuntimeRecoveryModes.ResumeExistingExecution}'.");
             }
 
             if (!recoveryOwnerId.StartsWith(

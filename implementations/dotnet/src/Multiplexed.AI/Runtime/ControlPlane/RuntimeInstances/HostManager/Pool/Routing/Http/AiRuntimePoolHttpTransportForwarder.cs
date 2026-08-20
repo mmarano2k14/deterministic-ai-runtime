@@ -23,7 +23,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         /// Gets the existing child runtime HTTP command path.
         /// </summary>
         public const string ChildCommandEndpointPath =
-            "/runtime-instance/commands";
+            AiRuntimeInstanceCommandTransportDefaults.DefaultHttpCommandEndpointPath;
 
         private readonly HttpClient httpClient;
 
@@ -51,7 +51,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
             if (!StringComparer.OrdinalIgnoreCase.Equals(
                     route.TransportName,
-                    "http"))
+                    AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName))
             {
                 throw new InvalidOperationException(
                     $"Route '{route.RouteId}' does not use the HTTP transport.");

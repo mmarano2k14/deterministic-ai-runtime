@@ -74,7 +74,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance
                     Metadata = new Dictionary<string, string>
                     {
                         ["execution.assistance.enabled"] = "false",
-                        ["helper.runtime.instance.id"] = helperRuntimeInstanceId
+                        [AiExecutionAssistanceMetadataKeys.HelperRuntimeInstanceId] = helperRuntimeInstanceId
                     }
                 };
             }
@@ -88,7 +88,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance
                     Metadata = new Dictionary<string, string>
                     {
                         ["execution.assistance.enabled"] = "true",
-                        ["helper.runtime.instance.id"] = helperRuntimeInstanceId,
+                        [AiExecutionAssistanceMetadataKeys.HelperRuntimeInstanceId] = helperRuntimeInstanceId,
                         ["helper.skipped.reason"] = "helper-not-idle"
                     }
                 };
@@ -158,7 +158,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance
                     {
                         ["candidate.execution.id"] = candidate.ExecutionId,
                         ["candidate.primary.runtime.instance.id"] = candidate.PrimaryRuntimeInstanceId,
-                        ["helper.runtime.instance.id"] = helperRuntimeInstanceId,
+                        [AiExecutionAssistanceMetadataKeys.HelperRuntimeInstanceId] = helperRuntimeInstanceId,
                         ["candidate.pipeline.name"] = candidate.PipelineName
                     }
                 };
@@ -202,7 +202,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ExecutionAssistance
                 Metadata = new Dictionary<string, string>
                 {
                     ["execution.assistance.enabled"] = "true",
-                    ["helper.runtime.instance.id"] = helperRuntimeInstanceId,
+                    [AiExecutionAssistanceMetadataKeys.HelperRuntimeInstanceId] = helperRuntimeInstanceId,
                     ["candidate.count"] = candidates.Count.ToString(),
                     ["decision.count"] = decisions.Count.ToString(),
                     ["started.pump.count"] = pumpResults.Count.ToString()

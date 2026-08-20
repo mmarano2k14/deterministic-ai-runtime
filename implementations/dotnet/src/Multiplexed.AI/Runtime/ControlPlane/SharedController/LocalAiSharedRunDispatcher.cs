@@ -2,11 +2,20 @@
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.Execution.Scheduling;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 {
@@ -26,10 +35,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
     public sealed class LocalAiSharedRunDispatcher : IAiSharedRunDispatcher
     {
         private const string LocalSharedRunDispatchOperation = "local-shared-run-dispatch";
-        private const string RecoveryForensicsIdMetadataKey = "recovery.forensicsId";
-        private const string RecoveryFailedExecutionIdMetadataKey = "recovery.failedExecutionId";
-        private const string RecoveryFailedLocalRunIdMetadataKey = "recovery.failedLocalRunId";
-        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
 
         private readonly IAiRuntimeQueueControlPlane _runtimeQueue;
         private readonly IAiRuntimeRecoveryForensicsRecorder _forensicsRecorder;
@@ -141,15 +146,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                     null,
                     new Dictionary<string, object?>
                     {
-                        ["sharedRunId"] = request.SharedRun.SharedRunId,
-                        ["runtimeInstanceId"] = request.RuntimeInstanceId,
-                        ["claimToken"] = request.ClaimToken,
-                        ["requestedBy"] = request.RequestedBy,
+                        [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRun.SharedRunId,
+                        [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = request.RuntimeInstanceId,
+                        [AiExecutionClaimMetadataKeys.CamelCaseClaimToken] = request.ClaimToken,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy,
                         ["source"] = request.Source,
                         ["reason"] = request.Reason,
-                        ["tenantId"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
-                        ["tenantGroupId"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
-                        ["controlPlaneId"] = request.SharedRun.ControlPlaneId
+                        [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                        [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                        [AiControlPlaneMetadataKeys.ControlPlaneId] = request.SharedRun.ControlPlaneId
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -294,18 +299,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 result.DurationMs,
                 new Dictionary<string, object?>
                 {
-                    ["sharedRunId"] = result.SharedRunId,
-                    ["runtimeInstanceId"] = result.RuntimeInstanceId,
-                    ["localRunId"] = result.LocalRunId,
-                    ["executionId"] = result.ExecutionId,
-                    ["claimToken"] = result.ClaimToken,
+                    [AiRunMetadataKeys.CamelCaseSharedRunId] = result.SharedRunId,
+                    [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = result.RuntimeInstanceId,
+                    [AiRunMetadataKeys.CamelCaseLocalRunId] = result.LocalRunId,
+                    [AiExecutionMetadataKeys.CamelCaseExecutionId] = result.ExecutionId,
+                    [AiExecutionClaimMetadataKeys.CamelCaseClaimToken] = result.ClaimToken,
                     ["success"] = result.Success,
                     ["message"] = result.Message,
-                    ["failureReason"] = result.FailureReason,
-                    ["durationMs"] = result.DurationMs,
-                    ["tenantId"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
-                    ["tenantGroupId"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
-                    ["controlPlaneId"] = request.SharedRun.ControlPlaneId
+                    [AiObservabilityMetadataKeys.FailureReason] = result.FailureReason,
+                    [AiObservabilityMetadataKeys.DurationMs] = result.DurationMs,
+                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                    [AiControlPlaneMetadataKeys.ControlPlaneId] = request.SharedRun.ControlPlaneId
                 },
                 cancellationToken);
         }
@@ -359,14 +364,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                                 properties,
                                 new Dictionary<string, object?>
                                 {
-                                    ["sharedRunId"] = request.SharedRun.SharedRunId,
-                                    ["localRunId"] = localRunId,
-                                    ["executionId"] = executionId,
-                                    ["runtimeInstanceId"] = request.RuntimeInstanceId,
-                                    ["tenantId"] = request.SharedRun.ExecutionContextSnapshot.TenantId,
-                                    ["tenantGroupId"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
-                                    ["claimToken"] = request.ClaimToken,
-                                    ["controlPlaneId"] = request.SharedRun.ControlPlaneId
+                                    [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRun.SharedRunId,
+                                    [AiRunMetadataKeys.CamelCaseLocalRunId] = localRunId,
+                                    [AiExecutionMetadataKeys.CamelCaseExecutionId] = executionId,
+                                    [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = request.RuntimeInstanceId,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.SharedRun.ExecutionContextSnapshot.TenantId,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
+                                    [AiExecutionClaimMetadataKeys.CamelCaseClaimToken] = request.ClaimToken,
+                                    [AiControlPlaneMetadataKeys.ControlPlaneId] = request.SharedRun.ControlPlaneId
                                 })
                         },
                         cancellationToken)
@@ -521,16 +526,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["tenant.id"] = request.SharedRun.ExecutionContextSnapshot.TenantId ?? string.Empty,
-                ["tenant.group.id"] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId ?? string.Empty,
-                ["replacement.runtimeInstanceId"] = request.RuntimeInstanceId,
-                ["replacement.localRunId"] = localRunId,
-                ["replacement.executionId"] = executionId ?? string.Empty,
-                ["failed.runtimeInstanceId"] = ResolveMetadataValue(metadata, RecoveryFailedRuntimeInstanceIdMetadataKey),
-                ["failed.localRunId"] = failedLocalRunId ?? string.Empty,
-                ["claim.token"] = request.ClaimToken ?? string.Empty,
-                ["resume.contextKey"] = request.SharedRun.ExecutionContextSnapshot.ContextKey ?? string.Empty,
-                ["resume.source"] = "shared-run.execution-context-snapshot"
+                [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.SharedRun.ExecutionContextSnapshot.TenantId ?? string.Empty,
+                [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.ReplacementRuntimeInstanceId] = request.RuntimeInstanceId,
+                [AiRuntimeRecoveryMetadataKeys.ReplacementLocalRunId] = localRunId,
+                [AiRuntimeRecoveryMetadataKeys.ReplacementExecutionId] = executionId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.TransitionFailedRuntimeInstanceId] = ResolveMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId),
+                [AiRuntimeRecoveryMetadataKeys.TransitionFailedLocalRunId] = failedLocalRunId ?? string.Empty,
+                [AiExecutionClaimMetadataKeys.ClaimToken] = request.ClaimToken ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.ResumeContextKey] = request.SharedRun.ExecutionContextSnapshot.ContextKey ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.ResumeSource] = AiRuntimeRecoveryResumeSources.SharedRunExecutionContextSnapshot
             };
         }
 
@@ -552,21 +557,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
         {
             if (TryGetMetadataValue(
                     metadata,
-                    RecoveryForensicsIdMetadataKey,
+                    AiRuntimeRecoveryMetadataKeys.ForensicsId,
                     out var explicitForensicsId))
             {
                 forensicsId = explicitForensicsId;
-                executionId = ResolveMetadataValue(metadata, RecoveryFailedExecutionIdMetadataKey);
-                failedLocalRunId = ResolveMetadataValue(metadata, RecoveryFailedLocalRunIdMetadataKey);
+                executionId = ResolveMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.FailedExecutionId);
+                failedLocalRunId = ResolveMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.FailedLocalRunId);
 
                 return true;
             }
 
             executionId =
-                ResolveMetadataValue(metadata, RecoveryFailedExecutionIdMetadataKey);
+                ResolveMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.FailedExecutionId);
 
             failedLocalRunId =
-                ResolveMetadataValue(metadata, RecoveryFailedLocalRunIdMetadataKey);
+                ResolveMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.FailedLocalRunId);
 
             if (string.IsNullOrWhiteSpace(executionId) ||
                 string.IsNullOrWhiteSpace(failedLocalRunId))

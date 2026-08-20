@@ -1,7 +1,9 @@
-﻿using System.Collections.Concurrent;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Metrics.Workers;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
 
 namespace Multiplexed.AI.Runtime.Observability.Metrics.Workers
 {
@@ -247,8 +249,8 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Workers
             var tags = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
-                ["execution.id"] = executionId ?? string.Empty,
-                ["runtime.instance.id"] = runtimeInstanceId ?? string.Empty
+                [AiExecutionMetadataKeys.ExecutionId] = executionId ?? string.Empty,
+                [AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] = runtimeInstanceId ?? string.Empty
             };
 
             if (additionalTags is not null)

@@ -1,5 +1,8 @@
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Pool;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes;
@@ -306,7 +309,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                         primaryRuntimeInstanceId,
                         startResult,
                         startResult.FailureReason ??
-                            "kubernetes-runtime-pool-pod-create-rejected",
+                            AiRuntimeScaleOutFailureReasons.KubernetesRuntimePoolPodCreateRejected,
                         startResult.Retryable);
                 }
 
@@ -627,13 +630,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
         {
             return HasMetadataValue(
                     request.Metadata,
-                    "scaleout.excludedRuntimeInstanceId") ||
+                    AiRuntimeScaleOutMetadataKeys.ExcludedRuntimeInstanceId) ||
                 HasMetadataValue(
                     request.Metadata,
-                    "scaleout.replacementForRuntimeInstanceId") ||
+                    AiRuntimeScaleOutMetadataKeys.ReplacementForRuntimeInstanceId) ||
                 HasMetadataValue(
                     request.Metadata,
-                    "recovery.failedRuntimeInstanceId");
+                    AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId);
         }
 
         private static bool HasMetadataValue(
@@ -917,7 +920,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             AiRuntimeHostStartResult startResult)
         {
             if (!startResult.Metadata.TryGetValue(
-                    "runtime.pool.id",
+                    AiRuntimePoolMetadataKeys.PoolId,
                     out var metadataPoolId) ||
                 !StringComparer.Ordinal.Equals(
                     metadataPoolId,
@@ -928,7 +931,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
             }
 
             if (startResult.Metadata.TryGetValue(
-                    "kubernetes.pod.uid",
+                    AiKubernetesRuntimeHostMetadataKeys.PodUid,
                     out var metadataPodUid) &&
                 !StringComparer.Ordinal.Equals(
                     metadataPodUid,

@@ -5,6 +5,10 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
+using Multiplexed.Abstractions.AI.Execution;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
 {
@@ -30,7 +34,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
     /// responsible for its own local queue, worker pool, and DAG execution engine.
     /// </para>
     /// </remarks>
-    [AiRuntimeInstanceProvider("local")]
+    [AiRuntimeInstanceProvider(AiRuntimeInstanceProviderNames.Local)]
     public sealed class LocalAiRuntimeInstanceProvider :
         IAiRuntimeInstanceDispatchProvider,
         IAiRuntimeInstanceStatusProvider,
@@ -41,7 +45,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
         /// <summary>
         /// The provider name used by this local runtime instance provider.
         /// </summary>
-        private const string ProviderName = "local";
 
         /// <summary>
         /// The shared runtime instance registry used to resolve local runtime instances.
@@ -93,7 +96,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
             {
                 return string.Equals(
                     providerName.Trim(),
-                    ProviderName,
+                    AiRuntimeInstanceProviderNames.Local,
                     StringComparison.OrdinalIgnoreCase);
             }
 
@@ -122,10 +125,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
                         Metadata = new Dictionary<string, string>(
                             StringComparer.OrdinalIgnoreCase)
                         {
-                            [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName,
-                            ["scaleOutRequestId"] = request.RequestId,
-                            ["sharedRunId"] = request.SharedRunId,
-                            ["controlPlaneId"] = request.ControlPlaneId
+                            [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = AiRuntimeInstanceProviderNames.Local,
+                            [AiRuntimeScaleOutMetadataKeys.CamelCaseScaleOutRequestId] = request.RequestId,
+                            [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId,
+                            [AiControlPlaneMetadataKeys.ControlPlaneId] = request.ControlPlaneId
                         }
                     });
             }
@@ -422,7 +425,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
             {
                 return SharedRuntimeInstanceResolution.Failed(
                     string.Empty,
-                    "runtime-instance-id-missing",
+                    AiRuntimeInstanceFailureReasons.RuntimeInstanceIdMissing,
                     "Runtime instance id is missing.");
             }
 
@@ -498,7 +501,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Local
                 Metadata = new Dictionary<string, string>(
                     StringComparer.OrdinalIgnoreCase)
                 {
-                    [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName
+                    [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = AiRuntimeInstanceProviderNames.Local
                 }
             };
         }

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Identity;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations.Persistence;
@@ -212,14 +213,14 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Dispatch
 
             var metadata = new Dictionary<string, string>(relation.DelegatedMetadata, StringComparer.Ordinal)
             {
-                ["child.invocation.key"] = relation.ChildInvocationKey,
-                ["child.invocation.generation"] = relation.InvocationGeneration.ToString(CultureInfo.InvariantCulture),
-                ["child.execution.id"] = relation.ChildExecutionId!,
-                ["child.definition.version"] = relation.ChildDagDefinitionVersion,
-                ["child.definition.digest"] = relation.FrozenChildDagDefinition.ContentHash ?? string.Empty,
-                ["child.input.digest"] = relation.FrozenInvocationInput.ContentHash ?? string.Empty,
-                ["parent.execution.id"] = relation.ParentExecutionId,
-                ["parent.callsite.id"] = relation.ParentCallSiteId
+                [AiChildDagMetadataKeys.InvocationKey] = relation.ChildInvocationKey,
+                [AiChildDagMetadataKeys.InvocationGeneration] = relation.InvocationGeneration.ToString(CultureInfo.InvariantCulture),
+                [AiChildDagMetadataKeys.ExecutionId] = relation.ChildExecutionId!,
+                [AiChildDagMetadataKeys.DefinitionVersion] = relation.ChildDagDefinitionVersion,
+                [AiChildDagMetadataKeys.DefinitionDigest] = relation.FrozenChildDagDefinition.ContentHash ?? string.Empty,
+                [AiChildDagMetadataKeys.InputDigest] = relation.FrozenInvocationInput.ContentHash ?? string.Empty,
+                [AiChildDagMetadataKeys.ParentExecutionId] = relation.ParentExecutionId,
+                [AiChildDagMetadataKeys.ParentCallSiteId] = relation.ParentCallSiteId
             };
 
             return metadata;

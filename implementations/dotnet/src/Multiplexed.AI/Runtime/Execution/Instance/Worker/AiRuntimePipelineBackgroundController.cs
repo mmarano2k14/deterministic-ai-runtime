@@ -2,6 +2,7 @@
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Control;
@@ -23,6 +24,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using System.Threading.Channels;
 using ExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
+using Multiplexed.Abstractions.AI.Execution.Context;
 
 namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 {
@@ -576,35 +578,35 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                                 : "Pipeline run queued.",
                         metadata: new Dictionary<string, string>
                         {
-                            ["run.id"] =
+                            [AiRunMetadataKeys.RunId] =
                                 runId,
 
-                            ["pipeline.name"] =
+                            [AiPipelineMetadataKeys.Name] =
                                 request.PipelineName,
 
-                            ["recovery.resume"] =
+                            [AiRuntimeRecoveryMetadataKeys.Resume] =
                                 (recoveryResume is not null).ToString(),
 
-                            ["recovery.execution.id"] =
+                            [AiRuntimeRecoveryMetadataKeys.ExecutionId] =
                                 recoveryResume?.ExecutionId ??
                                 string.Empty,
 
-                            ["recovery.owner.id"] =
+                            [AiRuntimeRecoveryMetadataKeys.OwnerId] =
                                 recoveryResume?.RecoveryOwnerId ??
                                 string.Empty,
 
-                            ["external.wait.continuation"] =
+                            [AiRuntimeExternalWaitMetadataKeys.Continuation] =
                                 (externalWaitContinuation is not null).ToString(),
 
-                            ["external.wait.execution.id"] =
+                            [AiRuntimeExternalWaitMetadataKeys.ExecutionId] =
                                 externalWaitContinuation?.ExecutionId ??
                                 string.Empty,
 
-                            ["external.wait.step"] =
+                            [AiRuntimeExternalWaitMetadataKeys.Step] =
                                 externalWaitContinuation?.StepName ??
                                 string.Empty,
 
-                            ["external.wait.continuation.id"] =
+                            [AiRuntimeExternalWaitMetadataKeys.ContinuationId] =
                                 externalWaitContinuation?.ContinuationId ??
                                 string.Empty
                         },
@@ -674,7 +676,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             }
 
             var metadata = GetPipelineRunMetadata(request);
-            if (TryGetMetadataValue(metadata, "recovery.mode", out _))
+            if (TryGetMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.Mode, out _))
             {
                 throw new InvalidOperationException(
                     "Normal external-wait continuation cannot carry crash-recovery mode metadata.");
@@ -706,13 +708,13 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 GetPipelineRunMetadata(queuedRun.Request),
                 StringComparer.OrdinalIgnoreCase)
             {
-                ["pipeline.name"] = queuedRun.Request.PipelineName,
-                ["runtime.instance.id"] = _runtimeInstanceIdentity.RuntimeInstanceId,
-                ["external.wait.continuation"] = "true",
-                ["external.wait.execution.id"] = continuation.ExecutionId,
-                ["external.wait.step"] = continuation.StepName,
-                ["external.wait.continuation.id"] = continuation.ContinuationId,
-                ["context.key"] = queuedRun.Request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
+                [AiPipelineMetadataKeys.Name] = queuedRun.Request.PipelineName,
+                [AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] = _runtimeInstanceIdentity.RuntimeInstanceId,
+                [AiRuntimeExternalWaitMetadataKeys.Continuation] = "true",
+                [AiRuntimeExternalWaitMetadataKeys.ExecutionId] = continuation.ExecutionId,
+                [AiRuntimeExternalWaitMetadataKeys.Step] = continuation.StepName,
+                [AiRuntimeExternalWaitMetadataKeys.ContinuationId] = continuation.ContinuationId,
+                [AiExecutionContextMetadataKeys.ContextKey] = queuedRun.Request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
                 [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = queuedRun.Request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
                 [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = queuedRun.Request.ExecutionContextSnapshot?.TenantGroupId ?? string.Empty
             };
@@ -769,12 +771,12 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     Metadata = MergeRecoveryMetadata(
                         new Dictionary<string, string>
                         {
-                            ["pipeline.name"] = queuedRun.Request.PipelineName,
-                            ["runtime.instance.id"] = _runtimeInstanceIdentity.RuntimeInstanceId,
-                            ["recovery.resume"] = "true",
-                            ["recovery.execution.id"] = recoveryResume.ExecutionId,
-                            ["recovery.owner.id"] = recoveryResume.RecoveryOwnerId,
-                            ["context.key"] = queuedRun.Request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
+                            [AiPipelineMetadataKeys.Name] = queuedRun.Request.PipelineName,
+                            [AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] = _runtimeInstanceIdentity.RuntimeInstanceId,
+                            [AiRuntimeRecoveryMetadataKeys.Resume] = "true",
+                            [AiRuntimeRecoveryMetadataKeys.ExecutionId] = recoveryResume.ExecutionId,
+                            [AiRuntimeRecoveryMetadataKeys.OwnerId] = recoveryResume.RecoveryOwnerId,
+                            [AiExecutionContextMetadataKeys.ContextKey] = queuedRun.Request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
                             [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = queuedRun.Request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
                             [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = queuedRun.Request.ExecutionContextSnapshot?.TenantGroupId ?? string.Empty
                         },
@@ -806,7 +808,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             var hasRecoveryOwner =
                 TryGetRecoveryMetadataValue(
                     entry.Metadata,
-                    "recovery.owner.id",
+                    AiRuntimeRecoveryMetadataKeys.OwnerId,
                     out var existingRecoveryOwnerId);
 
             if (!string.Equals(
@@ -842,7 +844,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             var status = entry.Status?.Trim().ToLowerInvariant() ?? "queued";
 
-            if (status is "failed" or "cancelled" or "requeued-for-recovery")
+            if (status is AiRuntimeRunExecutionIndexStatuses.Failed or AiRuntimeRunExecutionIndexStatuses.Cancelled or AiRuntimeRunExecutionIndexStatuses.RequeuedForRecovery)
             {
                 throw new InvalidOperationException(
                     $"Recovery resume acceptance '{entry.RunId}' is already terminal and cannot acknowledge a duplicate dispatch. Status='{entry.Status ?? string.Empty}', ExecutionId='{entry.ExecutionId ?? string.Empty}', RuntimeInstanceId='{entry.RuntimeInstanceId ?? string.Empty}', FailureReason='{entry.FailureReason ?? string.Empty}'.");
@@ -943,7 +945,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     reason: reason ?? "Pipeline controller queue paused.",
                     metadata: new Dictionary<string, string>
                     {
-                        ["requested.by"] = requestedBy ?? string.Empty,
+                        [AiExecutionControlMetadataKeys.RequestedBy] = requestedBy ?? string.Empty,
                         ["paused.at.utc"] = _queuePausedAtUtc?.ToString("O") ?? string.Empty
                     },
                     cancellationToken: cancellationToken)
@@ -984,7 +986,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     reason: "Pipeline controller queue resumed.",
                     metadata: new Dictionary<string, string>
                     {
-                        ["requested.by"] = requestedBy ?? string.Empty,
+                        [AiExecutionControlMetadataKeys.RequestedBy] = requestedBy ?? string.Empty,
                         ["previous.requested.by"] = previousRequestedBy ?? string.Empty,
                         ["paused.since.utc"] = pausedSince?.ToString("O") ?? string.Empty
                     },
@@ -1033,9 +1035,9 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     reason: reason ?? "Queued pipeline run cancelled before execution creation.",
                     metadata: new Dictionary<string, string>
                     {
-                        ["run.id"] = runId,
-                        ["pipeline.name"] = queuedRun.Request.PipelineName,
-                        ["requested.by"] = requestedBy ?? string.Empty,
+                        [AiRunMetadataKeys.RunId] = runId,
+                        [AiPipelineMetadataKeys.Name] = queuedRun.Request.PipelineName,
+                        [AiExecutionControlMetadataKeys.RequestedBy] = requestedBy ?? string.Empty,
                         ["run.status"] = AiRuntimeWorkerRunStatus.Cancelled.ToString()
                     },
                     cancellationToken: cancellationToken)
@@ -1150,8 +1152,8 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             reason: "Pipeline run dequeued for processing.",
                             metadata: new Dictionary<string, string>
                             {
-                                ["run.id"] = queuedRun.Handle.RunId,
-                                ["pipeline.name"] = queuedRun.Request.PipelineName,
+                                [AiRunMetadataKeys.RunId] = queuedRun.Handle.RunId,
+                                [AiPipelineMetadataKeys.Name] = queuedRun.Request.PipelineName,
                                 ["max.concurrent.runs"] = _options.MaxConcurrentRuns.ToString()
                             },
                             cancellationToken: cancellationToken)
@@ -1281,8 +1283,8 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         "Pipeline run cancelled by controller cancellation token.",
                         new Dictionary<string, string>
                         {
-                            ["run.id"] = handle.RunId,
-                            ["pipeline.name"] = request.PipelineName,
+                            [AiRunMetadataKeys.RunId] = handle.RunId,
+                            [AiPipelineMetadataKeys.Name] = request.PipelineName,
                             ["run.status"] = AiRuntimeWorkerRunStatus.Cancelled.ToString()
                         },
                         CancellationToken.None)
@@ -1754,23 +1756,23 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         "Pipeline run started execution processing.",
                         new Dictionary<string, string>
                         {
-                            ["run.id"] = handle.RunId,
-                            ["execution.id"] = created.ExecutionId,
-                            ["pipeline.name"] = request.PipelineName,
+                            [AiRunMetadataKeys.RunId] = handle.RunId,
+                            [AiExecutionMetadataKeys.ExecutionId] = created.ExecutionId,
+                            [AiPipelineMetadataKeys.Name] = request.PipelineName,
                             [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
                             [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.ExecutionContextSnapshot?.TenantGroupId ?? string.Empty,
-                            ["context.key"] = request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
+                            [AiExecutionContextMetadataKeys.ContextKey] = request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
                             ["distributed.enabled"] = _options.Distributed.Enabled.ToString(),
                             ["distributed.worker.count"] = _options.Distributed.WorkerCount.ToString(),
                             ["max.local.workers.per.execution"] = _options.MaxLocalWorkersPerExecution.ToString(),
                             ["effective.worker.count.per.execution"] = ResolveMaxWorkerCountForExecution().ToString(),
-                            ["recovery.resume"] = queuedRun.IsResume.ToString(),
-                            ["recovery.execution.id"] = queuedRun.ResumeExecutionId ?? string.Empty,
-                            ["recovery.owner.id"] = recoveryResume?.RecoveryOwnerId ?? string.Empty,
-                            ["external.wait.continuation"] = (externalWaitContinuation is not null).ToString(),
-                            ["external.wait.execution.id"] = externalWaitContinuation?.ExecutionId ?? string.Empty,
-                            ["external.wait.step"] = externalWaitContinuation?.StepName ?? string.Empty,
-                            ["external.wait.continuation.id"] = externalWaitContinuation?.ContinuationId ?? string.Empty
+                            [AiRuntimeRecoveryMetadataKeys.Resume] = queuedRun.IsResume.ToString(),
+                            [AiRuntimeRecoveryMetadataKeys.ExecutionId] = queuedRun.ResumeExecutionId ?? string.Empty,
+                            [AiRuntimeRecoveryMetadataKeys.OwnerId] = recoveryResume?.RecoveryOwnerId ?? string.Empty,
+                            [AiRuntimeExternalWaitMetadataKeys.Continuation] = (externalWaitContinuation is not null).ToString(),
+                            [AiRuntimeExternalWaitMetadataKeys.ExecutionId] = externalWaitContinuation?.ExecutionId ?? string.Empty,
+                            [AiRuntimeExternalWaitMetadataKeys.Step] = externalWaitContinuation?.StepName ?? string.Empty,
+                            [AiRuntimeExternalWaitMetadataKeys.ContinuationId] = externalWaitContinuation?.ContinuationId ?? string.Empty
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -1938,10 +1940,10 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                                 "Pipeline run released runtime capacity while the execution waits for an external durable condition.",
                                 new Dictionary<string, string>
                                 {
-                                    ["run.id"] = handle.RunId,
-                                    ["execution.id"] = created.ExecutionId,
-                                    ["pipeline.name"] = request.PipelineName,
-                                    ["execution.status"] = final.Status.ToString()
+                                    [AiRunMetadataKeys.RunId] = handle.RunId,
+                                    [AiExecutionMetadataKeys.ExecutionId] = created.ExecutionId,
+                                    [AiPipelineMetadataKeys.Name] = request.PipelineName,
+                                    [AiExecutionMetadataKeys.ExecutionStatus] = final.Status.ToString()
                                 },
                                 cancellationToken)
                             .ConfigureAwait(false);
@@ -2054,25 +2056,25 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             if (!TryGetRecoveryMetadataValue(
                     metadata,
-                    "recovery.mode",
+                    AiRuntimeRecoveryMetadataKeys.Mode,
                     out var recoveryMode) ||
                 !string.Equals(
                     recoveryMode,
-                    "resume-existing-execution",
+                    AiRuntimeRecoveryModes.ResumeExistingExecution,
                     StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException(
-                    "Recovery metadata must declare mode 'resume-existing-execution'.");
+                    $"Recovery metadata must declare mode '{AiRuntimeRecoveryModes.ResumeExistingExecution}'.");
             }
 
             if (!TryGetRecoveryMetadataValue(
                     metadata,
-                    "recovery.failedExecutionId",
+                    AiRuntimeRecoveryMetadataKeys.FailedExecutionId,
                     out var metadataExecutionId) ||
                 string.IsNullOrWhiteSpace(metadataExecutionId))
             {
                 throw new InvalidOperationException(
-                    "Recovery metadata 'recovery.failedExecutionId' is required.");
+                    $"Recovery metadata '{AiRuntimeRecoveryMetadataKeys.FailedExecutionId}' is required.");
             }
 
             if (!string.Equals(
@@ -2086,12 +2088,12 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             if (!TryGetRecoveryMetadataValue(
                     metadata,
-                    "recovery.forensicsId",
+                    AiRuntimeRecoveryMetadataKeys.ForensicsId,
                     out var recoveryOwnerId) ||
                 string.IsNullOrWhiteSpace(recoveryOwnerId))
             {
                 throw new InvalidOperationException(
-                    "Recovery metadata 'recovery.forensicsId' is required.");
+                    $"Recovery metadata '{AiRuntimeRecoveryMetadataKeys.ForensicsId}' is required.");
             }
 
             var expectedOwnerPrefix =
@@ -2221,16 +2223,16 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         RuntimeInstanceId = _runtimeInstanceIdentity.RuntimeInstanceId,
                         Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                         {
-                            ["pipeline.name"] = queuedRun.Request.PipelineName,
-                            ["tenant.id"] = queuedRun.Request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
-                            ["tenant.group.id"] = queuedRun.Request.ExecutionContextSnapshot?.TenantGroupId ?? string.Empty,
-                            ["replacement.runtimeInstanceId"] = _runtimeInstanceIdentity.RuntimeInstanceId,
-                            ["replacement.localRunId"] = queuedRun.Handle.RunId,
-                            ["replacement.executionId"] = executionId,
-                            ["failed.runtimeInstanceId"] = failedRuntimeInstanceId,
-                            ["failed.localRunId"] = failedLocalRunId,
-                            ["resume.contextKey"] = queuedRun.Request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
-                            ["recovery.resume"] = "true"
+                            [AiPipelineMetadataKeys.Name] = queuedRun.Request.PipelineName,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = queuedRun.Request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = queuedRun.Request.ExecutionContextSnapshot?.TenantGroupId ?? string.Empty,
+                            [AiRuntimeRecoveryMetadataKeys.ReplacementRuntimeInstanceId] = _runtimeInstanceIdentity.RuntimeInstanceId,
+                            [AiRuntimeRecoveryMetadataKeys.ReplacementLocalRunId] = queuedRun.Handle.RunId,
+                            [AiRuntimeRecoveryMetadataKeys.ReplacementExecutionId] = executionId,
+                            [AiRuntimeRecoveryMetadataKeys.TransitionFailedRuntimeInstanceId] = failedRuntimeInstanceId,
+                            [AiRuntimeRecoveryMetadataKeys.TransitionFailedLocalRunId] = failedLocalRunId,
+                            [AiRuntimeRecoveryMetadataKeys.ResumeContextKey] = queuedRun.Request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
+                            [AiRuntimeRecoveryMetadataKeys.Resume] = "true"
                         }
                     },
                     cancellationToken)
@@ -2258,17 +2260,17 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             out string failedLocalRunId)
         {
             sharedRunId =
-                ResolveMetadataValue(metadata, "shared.run.id");
+                ResolveMetadataValue(metadata, AiRunMetadataKeys.SharedRunId);
 
             failedRuntimeInstanceId =
-                ResolveMetadataValue(metadata, "recovery.failedRuntimeInstanceId");
+                ResolveMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId);
 
             failedLocalRunId =
-                ResolveMetadataValue(metadata, "recovery.failedLocalRunId");
+                ResolveMetadataValue(metadata, AiRuntimeRecoveryMetadataKeys.FailedLocalRunId);
 
             if (TryGetMetadataValue(
                     metadata,
-                    "recovery.forensicsId",
+                    AiRuntimeRecoveryMetadataKeys.ForensicsId,
                     out var explicitForensicsId))
             {
                 forensicsId = explicitForensicsId;
@@ -2620,10 +2622,10 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         Reason = "Pipeline execution started and is eligible for bounded execution assistance.",
                         Metadata = new Dictionary<string, string>
                         {
-                            ["run.id"] = runId,
-                            ["execution.id"] = created.ExecutionId,
-                            ["pipeline.name"] = request.PipelineName,
-                            ["runtime.instance.id"] = _runtimeInstanceIdentity.RuntimeInstanceId,
+                            [AiRunMetadataKeys.RunId] = runId,
+                            [AiExecutionMetadataKeys.ExecutionId] = created.ExecutionId,
+                            [AiPipelineMetadataKeys.Name] = request.PipelineName,
+                            [AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] = _runtimeInstanceIdentity.RuntimeInstanceId,
                             ["distributed.enabled"] = _options.Distributed.Enabled.ToString(),
                             ["distributed.worker.count"] = _options.Distributed.WorkerCount.ToString(),
                             ["estimated.ready.step.count"] = estimatedReadyStepCount.ToString(),
@@ -3096,10 +3098,10 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     $"Pipeline run reached terminal status '{final.Status}'.",
                     new Dictionary<string, string>
                     {
-                        ["run.id"] = runId,
-                        ["execution.id"] = executionId,
-                        ["pipeline.name"] = pipelineName,
-                        ["execution.status"] = final.Status.ToString(),
+                        [AiRunMetadataKeys.RunId] = runId,
+                        [AiExecutionMetadataKeys.ExecutionId] = executionId,
+                        [AiPipelineMetadataKeys.Name] = pipelineName,
+                        [AiExecutionMetadataKeys.ExecutionStatus] = final.Status.ToString(),
                         ["completed.at.utc"] = final.CompletedAtUtc.ToString("O") ?? string.Empty
                     },
                     cancellationToken)
@@ -3194,10 +3196,10 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     reason ?? "Running pipeline run cancellation delegated to execution control.",
                     new Dictionary<string, string>
                     {
-                        ["run.id"] = runId,
-                        ["execution.id"] = executionId,
-                        ["pipeline.name"] = runningRun.Request.PipelineName,
-                        ["requested.by"] = requestedBy ?? string.Empty,
+                        [AiRunMetadataKeys.RunId] = runId,
+                        [AiExecutionMetadataKeys.ExecutionId] = executionId,
+                        [AiPipelineMetadataKeys.Name] = runningRun.Request.PipelineName,
+                        [AiExecutionControlMetadataKeys.RequestedBy] = requestedBy ?? string.Empty,
                         ["run.status"] = runningRun.Handle.Status.ToString()
                     },
                     cancellationToken)
@@ -3457,15 +3459,15 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             return new Dictionary<string, string>
             {
-                ["run.id"] = queuedRun.Handle.RunId,
-                ["execution.id"] = executionId ?? queuedRun.Handle.ExecutionId ?? string.Empty,
-                ["pipeline.name"] = queuedRun.Request.PipelineName,
-                ["runtime.status"] = queuedRun.Handle.Status.ToString(),
+                [AiRunMetadataKeys.RunId] = queuedRun.Handle.RunId,
+                [AiExecutionMetadataKeys.ExecutionId] = executionId ?? queuedRun.Handle.ExecutionId ?? string.Empty,
+                [AiPipelineMetadataKeys.Name] = queuedRun.Request.PipelineName,
+                [AiRuntimeInstanceMetadataKeys.Status] = queuedRun.Handle.Status.ToString(),
                 ["failure.phase"] = phase,
                 ["input.type"] = ResolveInputTypeName(queuedRun.Request.Input),
-                ["exception.type"] = exception.GetType().FullName ?? exception.GetType().Name,
-                ["exception.message"] = Truncate(exception.Message, 2000),
-                ["exception.stack"] = Truncate(exception.StackTrace, 6000),
+                [AiExceptionMetadataKeys.ExceptionType] = exception.GetType().FullName ?? exception.GetType().Name,
+                [AiExceptionMetadataKeys.ExceptionMessage] = Truncate(exception.Message, 2000),
+                [AiExceptionMetadataKeys.ExceptionStackTrace] = Truncate(exception.StackTrace, 6000),
                 ["root.exception.type"] = root.GetType().FullName ?? root.GetType().Name,
                 ["root.exception.message"] = Truncate(root.Message, 2000),
                 ["root.exception.stack"] = Truncate(root.StackTrace, 6000)

@@ -7,6 +7,8 @@ using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client
 {
@@ -19,7 +21,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     /// </remarks>
     public sealed class KubernetesSdkAiKubernetesRuntimeHostClient : IAiKubernetesRuntimeHostClient
     {
-        private const string ReadyConditionType = "Ready";
 
         private readonly IKubernetesClientFactory clientFactory;
         private readonly AiKubernetesSdkResourceFactory resourceFactory;
@@ -141,9 +142,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                         ["kubernetes.creation.converged"] =
                             (podAlreadyExisted || serviceAlreadyExisted)
                                 .ToString(),
-                        ["kubernetes.pod.alreadyExists"] =
+                        [AiKubernetesRuntimeHostMetadataKeys.PodAlreadyExists] =
                             podAlreadyExisted.ToString(),
-                        ["kubernetes.service.alreadyExists"] =
+                        [AiKubernetesRuntimeHostMetadataKeys.ServiceAlreadyExists] =
                             serviceAlreadyExisted.ToString()
                     };
 
@@ -401,7 +402,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 condition =>
                     string.Equals(
                         condition.Type,
-                        ReadyConditionType,
+                        AiKubernetesRuntimeConditionTypes.Ready,
                         StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(
                         condition.Status,

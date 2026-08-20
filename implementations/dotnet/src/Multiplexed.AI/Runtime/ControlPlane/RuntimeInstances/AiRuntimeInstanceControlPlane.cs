@@ -10,6 +10,9 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.ControlPlane;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 {
@@ -472,9 +475,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request.Source,
-                        ["requestedBy"] = request.RequestedBy,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy,
                         ["reason"] = request.Reason,
-                        ["runtimeInstanceId"] = request.RuntimeInstanceId ?? request.Registration?.RuntimeInstanceId,
+                        [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = request.RuntimeInstanceId ?? request.Registration?.RuntimeInstanceId,
                         ["includeStopped"] = request.IncludeStopped,
                         ["status"] = request.Status.ToString()
                     }
@@ -512,8 +515,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request.Source,
-                        ["requestedBy"] = request.RequestedBy,
-                        ["runtimeInstanceId"] =
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request.RequestedBy,
+                        [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] =
                             operationResult.Instance?.RuntimeInstanceId ??
                             request.RuntimeInstanceId ??
                             request.Registration?.RuntimeInstanceId,
@@ -555,8 +558,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     Properties = new Dictionary<string, object?>
                     {
                         ["source"] = request?.Source,
-                        ["requestedBy"] = request?.RequestedBy,
-                        ["runtimeInstanceId"] = request?.RuntimeInstanceId ?? request?.Registration?.RuntimeInstanceId,
+                        [AiControlPlaneRequestMetadataKeys.RequestedBy] = request?.RequestedBy,
+                        [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = request?.RuntimeInstanceId ?? request?.Registration?.RuntimeInstanceId,
                         ["exceptionType"] = exception.GetType().Name
                     }
                 },

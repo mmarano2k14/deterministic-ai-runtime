@@ -1,6 +1,7 @@
 ﻿using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Redis;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using StackExchange.Redis;
 
@@ -126,7 +127,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
 
             this.keyPrefix =
                 string.IsNullOrWhiteSpace(value.KeyPrefix)
-                    ? "ai"
+                    ? AiRedisControlPlaneDefaults.DefaultKeyPrefix
                     : value.KeyPrefix.Trim();
         }
 

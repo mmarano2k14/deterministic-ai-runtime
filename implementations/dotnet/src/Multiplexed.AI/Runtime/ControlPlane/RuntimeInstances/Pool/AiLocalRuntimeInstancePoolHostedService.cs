@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Identity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 
@@ -169,7 +170,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                             CurrentInstanceCount = 0,
                             RequestedTargetInstanceCount = this.options.InstanceCount,
                             MaxInstanceCount = this.options.InstanceCount,
-                            ProviderHint = "local",
+                            ProviderHint = AiRuntimeInstanceProviderNames.Local,
                             RequestedBy = "local-runtime-instance-pool",
                             Source = nameof(AiLocalRuntimeInstancePoolHostedService),
                             Reason = "Initial local runtime instance pool startup.",

@@ -19,8 +19,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
     /// </remarks>
     public sealed class MongoAiRuntimeRecoveryForensicsQueryService : IAiRuntimeRecoveryForensicsQueryService
     {
-        private const string ExecutionRecoveryFailedEventType = "execution.recovery.failed";
-
         private readonly IMongoCollection<MongoAiRuntimeRecoveryForensicsDocument> _collection;
         private readonly AiRuntimeRecoveryForensicsMongoOptions _options;
 
@@ -168,7 +166,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 filters.Add(
                     builder.ElemMatch(
                         document => document.Record.Events,
-                        evt => evt.EventType == ExecutionRecoveryFailedEventType));
+                        evt => evt.EventType == AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryFailed));
             }
 
             if (query.CreatedFromUtc.HasValue)

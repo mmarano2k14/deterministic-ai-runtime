@@ -3,14 +3,19 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Pool;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Readiness;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using System.Collections.Concurrent;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.Execution;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut
 {
@@ -31,17 +36,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         /// <summary>
         /// HTTP provider name.
         /// </summary>
-        private const string ProviderName = "http";
 
         /// <summary>
         /// Default HTTP runtime instance id prefix used only as a technical fallback.
         /// </summary>
-        private const string DefaultRuntimeInstanceIdPrefix = "http-runtime";
 
         /// <summary>
         /// Default HTTP runtime endpoint used only as a technical fallback.
         /// </summary>
-        private const string DefaultEndpointTemplate = "http://localhost";
 
         /// <summary>
         /// Default worker count used only when neither tenant settings nor the request provide one.
@@ -58,23 +60,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         /// </summary>
         private const int DefaultQueueCapacity = 100;
 
-        /// <summary>
-        /// Metadata key carrying the runtime instance id that replacement scale-out must not reuse.
-        /// </summary>
-        private const string ScaleOutExcludedRuntimeInstanceIdMetadataKey =
-            "scaleout.excludedRuntimeInstanceId";
-
-        /// <summary>
-        /// Metadata key carrying the runtime instance id being replaced.
-        /// </summary>
-        private const string ScaleOutReplacementForRuntimeInstanceIdMetadataKey =
-            "scaleout.replacementForRuntimeInstanceId";
-
-        /// <summary>
-        /// Recovery metadata key carrying the failed runtime instance id.
-        /// </summary>
-        private const string RecoveryFailedRuntimeInstanceIdMetadataKey =
-            "recovery.failedRuntimeInstanceId";
 
         private static readonly ConcurrentDictionary<string, byte> RuntimeInstanceIdReservations =
             new(StringComparer.OrdinalIgnoreCase);
@@ -394,7 +379,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                         AiRuntimeCapacitySelectionLevel
                             .RuntimePoolPodCreation,
                     PoolId = this.options.PoolId?.Trim(),
-                    ProviderName = ProviderName,
+                    ProviderName = AiRuntimeInstanceProviderNames.Http,
                     IsCompatible = true,
                     IsAvailable = true,
                     Reason =
@@ -415,7 +400,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 return CreateRejectedResult(
                     request,
                     podCreation.FailureReason ??
-                        "kubernetes-runtime-pool-pod-create-rejected",
+                        AiRuntimeScaleOutFailureReasons.KubernetesRuntimePoolPodCreateRejected,
                     "HTTP Kubernetes Runtime Pool Pod creation was rejected.");
             }
 
@@ -435,31 +420,31 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 metadata,
                 podCreation.HostStartResult?.Metadata);
 
-            metadata["runtime.pool.podCreation.status"] =
+            metadata[AiRuntimePoolMetadataKeys.PodCreationStatus] =
                 podCreation.Status.ToString();
-            metadata["runtime.pool.podCreation.hostRequestId"] =
+            metadata[AiRuntimePoolMetadataKeys.PodCreationHostRequestId] =
                 podCreation.HostRequestId;
-            metadata["runtime.pool.podCreation.podUid"] =
+            metadata[AiRuntimePoolMetadataKeys.PodCreationPodUid] =
                 podCreation.PodUid ?? string.Empty;
-            metadata["runtime.pool.podCreation.runtimeCount"] =
+            metadata[AiRuntimePoolMetadataKeys.PodCreationRuntimeCount] =
                 podCreation.RuntimeInstanceIds.Count.ToString();
 
             if (podCreation.ActivePodCount.HasValue)
             {
-                metadata["runtime.pool.podCreation.activePodCount"] =
+                metadata[AiRuntimePoolMetadataKeys.PodCreationActivePodCount] =
                     podCreation.ActivePodCount.Value.ToString();
             }
 
             if (podCreation.ReservedPodCreationCount.HasValue)
             {
                 metadata[
-                    "runtime.pool.podCreation.reservedPodCreationCount"] =
+                    AiRuntimePoolMetadataKeys.PodCreationReservedPodCreationCount] =
                     podCreation.ReservedPodCreationCount.Value.ToString();
             }
 
             if (podCreation.MaximumPodCount.HasValue)
             {
-                metadata["runtime.pool.podCreation.maximumPodCount"] =
+                metadata[AiRuntimePoolMetadataKeys.PodCreationMaximumPodCount] =
                     podCreation.MaximumPodCount.Value.ToString();
             }
 
@@ -583,7 +568,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                         ExecutionContextSnapshot = request.ExecutionContextSnapshot,
                         RuntimeInstanceId = context.RuntimeInstanceId,
                         RuntimeInstanceIdPrefix = context.RuntimeInstanceIdPrefix,
-                        ProviderName = ProviderName,
+                        ProviderName = AiRuntimeInstanceProviderNames.Http,
                         TransportName = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
                         TransportEndpoint = context.Endpoint,
                         HostCreationMode = this.options.HostCreationMode,
@@ -633,7 +618,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 return new HttpProcessHostProvisionAttemptResult(
                     CreateRejectedResult(
                         request,
-                        startResult.FailureReason ?? "runtime-host-start-failed",
+                        startResult.FailureReason ?? AiRuntimeScaleOutFailureReasons.RuntimeHostStartFailed,
                         "HTTP runtime scale-out host manager start failed."),
                     CanRetryProcessRegistrationFailure: false);
             }
@@ -664,14 +649,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     request.SharedRunId,
                     context.RuntimeInstanceId,
                     this.options.HostCreationMode,
-                    "runtime-host-started-without-runtime-instance-id",
+                    AiRuntimeScaleOutFailureReasons.RuntimeHostStartedWithoutRuntimeInstanceId,
                     attempt,
                     maxAttempts);
 
                 return new HttpProcessHostProvisionAttemptResult(
                     CreateRejectedResult(
                         request,
-                        "runtime-host-started-without-runtime-instance-id",
+                        AiRuntimeScaleOutFailureReasons.RuntimeHostStartedWithoutRuntimeInstanceId,
                         "HTTP runtime scale-out host manager returned success without a runtime instance id."),
                     CanRetryProcessRegistrationFailure: false);
             }
@@ -694,7 +679,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 return new HttpProcessHostProvisionAttemptResult(
                     CreateRejectedResult(
                         request,
-                        "runtime-host-started-with-excluded-runtime-instance-id",
+                        AiRuntimeScaleOutFailureReasons.RuntimeHostStartedWithExcludedRuntimeInstanceId,
                         "HTTP runtime scale-out host manager returned the excluded failed runtime instance id for a recovery replacement."),
                     CanRetryProcessRegistrationFailure: false);
             }
@@ -724,7 +709,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                             ControlPlaneId = request.ControlPlaneId,
                             ExecutionContextSnapshot = request.ExecutionContextSnapshot,
                             RuntimeInstanceId = fulfilledRuntimeInstanceId,
-                            ProviderName = ProviderName,
+                            ProviderName = AiRuntimeInstanceProviderNames.Http,
                             TransportName = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName,
                             TransportEndpoint = fulfilledTransportEndpoint,
                             RequireTransportEndpoint = requireTransportEndpoint,
@@ -774,7 +759,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     return new HttpProcessHostProvisionAttemptResult(
                         CreateRejectedResult(
                             request,
-                            readinessResult.FailureReason ?? "runtime-readiness-failed",
+                            readinessResult.FailureReason ?? AiRuntimeScaleOutFailureReasons.RuntimeReadinessFailed,
                             "HTTP runtime scale-out readiness check failed."),
                         canRetry);
                 }
@@ -814,7 +799,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     return new HttpProcessHostProvisionAttemptResult(
                         CreateRejectedResult(
                             request,
-                            "runtime-readiness-returned-excluded-runtime-instance-id",
+                            AiRuntimeScaleOutFailureReasons.RuntimeReadinessReturnedExcludedRuntimeInstanceId,
                             "HTTP runtime readiness returned the excluded failed runtime instance id for a recovery replacement."),
                         CanRetryProcessRegistrationFailure: false);
                 }
@@ -879,7 +864,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             return this.options.HostCreationMode == AiRuntimeHostCreationMode.Process &&
                    string.Equals(
                        failureReason,
-                       "runtime-readiness-compatible-registry-missing",
+                       AiRuntimeInstanceReadinessFailureReasons.CompatibleRegistryMissing,
                        StringComparison.OrdinalIgnoreCase);
         }
 
@@ -939,7 +924,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                     request.RequestId,
                     request.SharedRunId,
                     runtimeInstanceId,
-                    "process-control-unavailable");
+                    AiRuntimeScaleOutFailureReasons.ProcessControlUnavailable);
 
                 return false;
             }
@@ -1199,7 +1184,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 return this.options.DefaultRuntimeInstanceIdPrefix.Trim();
             }
 
-            return DefaultRuntimeInstanceIdPrefix;
+            return AiHttpRuntimeScaleOutDefaults.DefaultRuntimeInstanceIdPrefix;
         }
 
         /// <summary>
@@ -1409,13 +1394,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         {
             return ResolveMetadataValue(
                        metadata,
-                       ScaleOutExcludedRuntimeInstanceIdMetadataKey) ??
+                       AiRuntimeScaleOutMetadataKeys.ExcludedRuntimeInstanceId) ??
                    ResolveMetadataValue(
                        metadata,
-                       ScaleOutReplacementForRuntimeInstanceIdMetadataKey) ??
+                       AiRuntimeScaleOutMetadataKeys.ReplacementForRuntimeInstanceId) ??
                    ResolveMetadataValue(
                        metadata,
-                       RecoveryFailedRuntimeInstanceIdMetadataKey);
+                       AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId);
         }
 
         /// <summary>
@@ -1470,7 +1455,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         {
             var endpointTemplate =
                 string.IsNullOrWhiteSpace(this.options.EndpointTemplate)
-                    ? DefaultEndpointTemplate
+                    ? AiRuntimeInstanceCommandTransportDefaults.DefaultLoopbackEndpointBase
                     : this.options.EndpointTemplate.Trim();
 
             return endpointTemplate
@@ -1659,9 +1644,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             CopyMetadata(metadata, request.Metadata);
             CopyMetadata(metadata, tenantSettings.Metadata);
 
-            metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName;
-            metadata["provider.name"] = ProviderName;
-            metadata["provider"] = ProviderName;
+            metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] = AiRuntimeInstanceProviderNames.Http;
+            metadata[AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName] = AiRuntimeInstanceProviderNames.Http;
 
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName;
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeInstanceId] = runtimeInstanceId;
@@ -1673,16 +1657,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
             metadata[AiRuntimeInstanceIsolationMetadataKeys.PreferDedicatedCapacity] = preferDedicatedCapacity.ToString();
             metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] = allowSharedFallback.ToString();
 
-            metadata["runtime.maxRuntimeInstances"] = maxRuntimeInstances?.ToString() ?? string.Empty;
-            metadata["runtime.instanceIdPrefix"] = runtimeInstanceIdPrefix;
-            metadata["runtime.workerCountPerInstance"] = workerCount.ToString();
-            metadata["runtime.maxConcurrentRunsPerInstance"] = maxConcurrentRuns.ToString();
-            metadata["runtime.localQueueCapacity"] = queueCapacity.ToString();
+            metadata[AiRuntimeInstanceProvisioningMetadataKeys.MaxRuntimeInstances] = maxRuntimeInstances?.ToString() ?? string.Empty;
+            metadata[AiRuntimeInstanceProvisioningMetadataKeys.RuntimeInstanceIdPrefix] = runtimeInstanceIdPrefix;
+            metadata[AiRuntimeInstanceProvisioningMetadataKeys.WorkerCountPerInstance] = workerCount.ToString();
+            metadata[AiRuntimeInstanceProvisioningMetadataKeys.MaxConcurrentRunsPerInstance] = maxConcurrentRuns.ToString();
+            metadata[AiRuntimeInstanceProvisioningMetadataKeys.LocalQueueCapacity] = queueCapacity.ToString();
 
-            metadata["scaleout.provider"] = ProviderName;
-            metadata["scaleout.requestId"] = request.RequestId;
-            metadata["scaleout.sharedRunId"] = request.SharedRunId;
-            metadata["controlPlaneId"] = request.ControlPlaneId;
+            metadata[AiRuntimeScaleOutMetadataKeys.Provider] = AiRuntimeInstanceProviderNames.Http;
+            metadata[AiRuntimeScaleOutMetadataKeys.RequestId] = request.RequestId;
+            metadata[AiRuntimeScaleOutMetadataKeys.SharedRunId] = request.SharedRunId;
+            metadata[AiControlPlaneMetadataKeys.ControlPlaneId] = request.ControlPlaneId;
 
             return metadata;
         }
@@ -1710,20 +1694,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
 
             CopyMetadata(metadata, context.Metadata);
 
-            metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName;
-            metadata["provider.name"] = ProviderName;
-            metadata["provider"] = ProviderName;
+            metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] = AiRuntimeInstanceProviderNames.Http;
+            metadata[AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName] = AiRuntimeInstanceProviderNames.Http;
 
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] = AiRuntimeInstanceCommandTransportMetadataKeys.HttpTransportName;
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeInstanceId] = fulfilledRuntimeInstanceId;
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = fulfilledTransportEndpoint;
 
-            metadata["scaleOutRequestId"] = request.RequestId;
-            metadata["sharedRunId"] = request.SharedRunId;
-            metadata["controlPlaneId"] = request.ControlPlaneId;
-            metadata["hostCreation.mode"] = metadata.TryGetValue("hostCreation.mode", out var hostCreationMode)
+            metadata[AiRuntimeScaleOutMetadataKeys.CamelCaseScaleOutRequestId] = request.RequestId;
+            metadata[AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId;
+            metadata[AiControlPlaneMetadataKeys.ControlPlaneId] = request.ControlPlaneId;
+            metadata[AiRuntimeHostMetadataKeys.LegacyHostCreationMode] = metadata.TryGetValue(AiRuntimeHostMetadataKeys.LegacyHostCreationMode, out var hostCreationMode)
                 ? hostCreationMode
-                : "HostManager";
+                : AiRuntimeScaleOutModes.HostManager;
 
             return metadata;
         }
@@ -1780,9 +1763,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 Message = message,
                 Metadata = new Dictionary<string, string>(metadata, StringComparer.OrdinalIgnoreCase)
                 {
-                    ["scaleOutRequestId"] = request.RequestId,
-                    ["sharedRunId"] = request.SharedRunId,
-                    ["controlPlaneId"] = request.ControlPlaneId
+                    [AiRuntimeScaleOutMetadataKeys.CamelCaseScaleOutRequestId] = request.RequestId,
+                    [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId,
+                    [AiControlPlaneMetadataKeys.ControlPlaneId] = request.ControlPlaneId
                 }
             };
         }
@@ -1811,12 +1794,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
                 Message = message,
                 Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName,
-                    ["provider.name"] = ProviderName,
-                    ["provider"] = ProviderName,
-                    ["scaleOutRequestId"] = request.RequestId,
-                    ["sharedRunId"] = request.SharedRunId,
-                    ["controlPlaneId"] = request.ControlPlaneId,
+                    [AiRuntimeInstanceProviderMetadataKeys.ProviderName] = AiRuntimeInstanceProviderNames.Http,
+                    [AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName] = AiRuntimeInstanceProviderNames.Http,
+                    [AiRuntimeScaleOutMetadataKeys.CamelCaseScaleOutRequestId] = request.RequestId,
+                    [AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId,
+                    [AiControlPlaneMetadataKeys.ControlPlaneId] = request.ControlPlaneId,
                     [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.TenantId ?? string.Empty,
                     [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId ?? string.Empty
                 }

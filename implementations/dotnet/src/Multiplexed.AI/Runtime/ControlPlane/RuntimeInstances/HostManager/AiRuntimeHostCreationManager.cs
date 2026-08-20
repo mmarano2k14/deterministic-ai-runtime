@@ -14,6 +14,13 @@ using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
 {
@@ -155,11 +162,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
                     null,
                     new Dictionary<string, object?>
                     {
-                        ["runtimeInstanceId"] = request.RuntimeInstanceId,
-                        ["providerName"] = request.ProviderName,
-                        ["transportName"] = request.TransportName,
-                        ["transportEndpoint"] = request.TransportEndpoint,
-                        ["hostCreationMode"] = request.HostCreationMode.ToString(),
+                        [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = request.RuntimeInstanceId,
+                        [AiRuntimeInstanceProviderMetadataKeys.CamelCaseProviderName] = request.ProviderName,
+                        [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportName] = request.TransportName,
+                        [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = request.TransportEndpoint,
+                        [AiRuntimeHostMetadataKeys.CamelCaseHostCreationMode] = request.HostCreationMode.ToString(),
                         ["strategyCount"] = this.strategies.Count,
                         ["registeredModes"] = string.Join(",", this.strategies.Keys.Select(mode => mode.ToString()))
                     },
@@ -273,14 +280,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
                         durationMs,
                         new Dictionary<string, object?>
                         {
-                            ["runtimeInstanceId"] = request.RuntimeInstanceId,
-                            ["providerName"] = request.ProviderName,
-                            ["transportName"] = request.TransportName,
-                            ["transportEndpoint"] = request.TransportEndpoint,
-                            ["hostCreationMode"] = request.HostCreationMode.ToString(),
-                            ["durationMs"] = durationMs,
-                            ["exception.type"] = exception.GetType().FullName,
-                            ["exception.message"] = exception.Message
+                            [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = request.RuntimeInstanceId,
+                            [AiRuntimeInstanceProviderMetadataKeys.CamelCaseProviderName] = request.ProviderName,
+                            [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportName] = request.TransportName,
+                            [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = request.TransportEndpoint,
+                            [AiRuntimeHostMetadataKeys.CamelCaseHostCreationMode] = request.HostCreationMode.ToString(),
+                            [AiObservabilityMetadataKeys.DurationMs] = durationMs,
+                            [AiExceptionMetadataKeys.ExceptionType] = exception.GetType().FullName,
+                            [AiExceptionMetadataKeys.ExceptionMessage] = exception.Message
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -339,14 +346,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
                     durationMs,
                     new Dictionary<string, object?>
                     {
-                        ["runtimeInstanceId"] = result.RuntimeInstanceId ?? request.RuntimeInstanceId,
-                        ["providerName"] = result.ProviderName ?? request.ProviderName,
-                        ["transportName"] = result.TransportName ?? request.TransportName,
-                        ["transportEndpoint"] = result.TransportEndpoint ?? request.TransportEndpoint,
-                        ["hostCreationMode"] = request.HostCreationMode.ToString(),
+                        [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = result.RuntimeInstanceId ?? request.RuntimeInstanceId,
+                        [AiRuntimeInstanceProviderMetadataKeys.CamelCaseProviderName] = result.ProviderName ?? request.ProviderName,
+                        [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportName] = result.TransportName ?? request.TransportName,
+                        [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = result.TransportEndpoint ?? request.TransportEndpoint,
+                        [AiRuntimeHostMetadataKeys.CamelCaseHostCreationMode] = request.HostCreationMode.ToString(),
                         ["success"] = result.Success,
-                        ["failureReason"] = result.FailureReason,
-                        ["durationMs"] = durationMs
+                        [AiObservabilityMetadataKeys.FailureReason] = result.FailureReason,
+                        [AiObservabilityMetadataKeys.DurationMs] = durationMs
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -398,16 +405,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
                                 properties,
                                 new Dictionary<string, object?>
                                 {
-                                    ["runtimeInstanceId"] = result?.RuntimeInstanceId ?? request.RuntimeInstanceId,
-                                    ["providerName"] = result?.ProviderName ?? request.ProviderName,
-                                    ["transportName"] = result?.TransportName ?? request.TransportName,
-                                    ["transportEndpoint"] = result?.TransportEndpoint ?? request.TransportEndpoint,
-                                    ["hostCreationMode"] = request.HostCreationMode.ToString(),
-                                    ["tenantId"] = request.ExecutionContextSnapshot?.TenantId,
-                                    ["tenantGroupId"] = request.ExecutionContextSnapshot?.TenantGroupId,
-                                    ["pipelineKey"] = request.ExecutionContextSnapshot?.ContextKey,
+                                    [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = result?.RuntimeInstanceId ?? request.RuntimeInstanceId,
+                                    [AiRuntimeInstanceProviderMetadataKeys.CamelCaseProviderName] = result?.ProviderName ?? request.ProviderName,
+                                    [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportName] = result?.TransportName ?? request.TransportName,
+                                    [AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = result?.TransportEndpoint ?? request.TransportEndpoint,
+                                    [AiRuntimeHostMetadataKeys.CamelCaseHostCreationMode] = request.HostCreationMode.ToString(),
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = request.ExecutionContextSnapshot?.TenantId,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = request.ExecutionContextSnapshot?.TenantGroupId,
+                                    [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.ExecutionContextSnapshot?.ContextKey,
                                     ["success"] = result?.Success,
-                                    ["failureReason"] = result?.FailureReason
+                                    [AiObservabilityMetadataKeys.FailureReason] = result?.FailureReason
                                 })
                         },
                         cancellationToken)
@@ -629,12 +636,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
 
             if (!string.IsNullOrWhiteSpace(transportName))
             {
-                merged["transportName"] = transportName;
+                merged[AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportName] = transportName;
             }
 
             if (!string.IsNullOrWhiteSpace(transportEndpoint))
             {
-                merged["transportEndpoint"] = transportEndpoint;
+                merged[AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint] = transportEndpoint;
             }
 
             return merged;

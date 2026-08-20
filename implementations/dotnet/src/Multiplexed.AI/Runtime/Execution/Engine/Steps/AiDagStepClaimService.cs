@@ -60,6 +60,10 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
     /// </remarks>
     public sealed class AiDagStepClaimService
     {
+        private const string ClaimModeMetadataKey = "claim.mode";
+        private const string SingleClaimMode = "single";
+        private const string BatchClaimMode = "batch";
+
         private static readonly IAiConcurrencyDefinitionResolver ConcurrencyDefinitionResolver =
             new DefaultAiConcurrencyDefinitionResolver();
 
@@ -133,9 +137,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     "Single-step claim attempt started.",
                     new Dictionary<string, string>
                     {
-                        ["pipeline.key"] = pipelineKey,
-                        ["worker.id"] = workerId,
-                        ["claim.mode"] = "single"
+                        [AiPipelineMetadataKeys.Key] = pipelineKey,
+                        [AiWorkerMetadataKeys.WorkerId] = workerId,
+                        [ClaimModeMetadataKey] = SingleClaimMode
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -166,9 +170,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             controlDecision.Reason ?? "Claim denied because execution cancellation was observed.",
                             new Dictionary<string, string>
                             {
-                                ["pipeline.key"] = pipelineKey,
-                                ["worker.id"] = workerId,
-                                ["claim.mode"] = "single",
+                                [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                [AiWorkerMetadataKeys.WorkerId] = workerId,
+                                [ClaimModeMetadataKey] = SingleClaimMode,
                                 ["control.status"] = controlDecision.Status.ToString(),
                                 ["should.cancel"] = controlDecision.ShouldCancel.ToString()
                             },
@@ -195,9 +199,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             controlDecision.Reason ?? "Claim denied because execution control state does not allow advancement.",
                             new Dictionary<string, string>
                             {
-                                ["pipeline.key"] = pipelineKey,
-                                ["worker.id"] = workerId,
-                                ["claim.mode"] = "single",
+                                [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                [AiWorkerMetadataKeys.WorkerId] = workerId,
+                                [ClaimModeMetadataKey] = SingleClaimMode,
                                 ["control.status"] = controlDecision.Status.ToString(),
                                 ["can.continue"] = controlDecision.CanContinue.ToString(),
                                 ["stop.claiming"] = controlDecision.ShouldStopClaiming.ToString()
@@ -251,9 +255,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             : "Claim denied because execution state contains no steps.",
                         new Dictionary<string, string>
                         {
-                            ["pipeline.key"] = pipelineKey,
-                            ["worker.id"] = workerId,
-                            ["claim.mode"] = "single",
+                            [AiPipelineMetadataKeys.Key] = pipelineKey,
+                            [AiWorkerMetadataKeys.WorkerId] = workerId,
+                            [ClaimModeMetadataKey] = SingleClaimMode,
                             ["state.found"] = (state is not null).ToString(),
                             ["steps.count"] = state?.Steps.Count.ToString() ?? "0"
                         },
@@ -286,9 +290,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         "Claim denied because no ready DAG steps were available.",
                         new Dictionary<string, string>
                         {
-                            ["pipeline.key"] = pipelineKey,
-                            ["worker.id"] = workerId,
-                            ["claim.mode"] = "single",
+                            [AiPipelineMetadataKeys.Key] = pipelineKey,
+                            [AiWorkerMetadataKeys.WorkerId] = workerId,
+                            [ClaimModeMetadataKey] = SingleClaimMode,
                             ["steps.count"] = state.Steps.Count.ToString(),
                             ["ready.steps.count"] = "0"
                         },
@@ -349,10 +353,10 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             gateDecision.Reason ?? "Concurrency admission denied.",
                             new Dictionary<string, string>
                             {
-                                ["pipeline.key"] = pipelineKey,
-                                ["step.name"] = stepDefinition.Name,
-                                ["step.key"] = stepDefinition.StepKey,
-                                ["worker.id"] = workerId
+                                [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                [AiStepMetadataKeys.StepName] = stepDefinition.Name,
+                                [AiStepMetadataKeys.StepKey] = stepDefinition.StepKey,
+                                [AiWorkerMetadataKeys.WorkerId] = workerId
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
@@ -386,11 +390,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             "Concurrency lease acquired before step claim.",
                             new Dictionary<string, string>
                             {
-                                ["pipeline.key"] = pipelineKey,
-                                ["step.name"] = stepDefinition.Name,
-                                ["step.key"] = stepDefinition.StepKey,
-                                ["worker.id"] = workerId,
-                                ["lease.id"] = concurrencyContext.LeaseId
+                                [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                [AiStepMetadataKeys.StepName] = stepDefinition.Name,
+                                [AiStepMetadataKeys.StepKey] = stepDefinition.StepKey,
+                                [AiWorkerMetadataKeys.WorkerId] = workerId,
+                                [AiConcurrencyMetadataKeys.LeaseId] = concurrencyContext.LeaseId
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
@@ -419,11 +423,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 "Step claim failed after concurrency lease was acquired.",
                                 new Dictionary<string, string>
                                 {
-                                    ["pipeline.key"] = pipelineKey,
-                                    ["step.name"] = stepDefinition.Name,
-                                    ["step.key"] = stepDefinition.StepKey,
-                                    ["worker.id"] = workerId,
-                                    ["lease.id"] = concurrencyContext.LeaseId
+                                    [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                    [AiStepMetadataKeys.StepName] = stepDefinition.Name,
+                                    [AiStepMetadataKeys.StepKey] = stepDefinition.StepKey,
+                                    [AiWorkerMetadataKeys.WorkerId] = workerId,
+                                    [AiConcurrencyMetadataKeys.LeaseId] = concurrencyContext.LeaseId
                                 },
                                 cancellationToken)
                             .ConfigureAwait(false);
@@ -446,11 +450,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             "Step claim acquired.",
                             new Dictionary<string, string>
                             {
-                                ["pipeline.key"] = pipelineKey,
-                                ["step.name"] = stepDefinition.Name,
-                                ["step.key"] = stepDefinition.StepKey,
-                                ["worker.id"] = workerId,
-                                ["claim.token"] = claimed.ClaimToken
+                                [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                [AiStepMetadataKeys.StepName] = stepDefinition.Name,
+                                [AiStepMetadataKeys.StepKey] = stepDefinition.StepKey,
+                                [AiWorkerMetadataKeys.WorkerId] = workerId,
+                                [AiExecutionClaimMetadataKeys.ClaimToken] = claimed.ClaimToken
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
@@ -476,7 +480,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 concurrencyContext,
                                 concurrencyDefinition,
                                 "Concurrency lease released because step claim ownership was not transferred.",
-                                claimMode: "single")
+                                claimMode: SingleClaimMode)
                             .ConfigureAwait(false);
                     }
                 }
@@ -497,9 +501,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     "Claim denied because no ready candidate could be admitted or claimed.",
                     new Dictionary<string, string>
                     {
-                        ["pipeline.key"] = pipelineKey,
-                        ["worker.id"] = workerId,
-                        ["claim.mode"] = "single",
+                        [AiPipelineMetadataKeys.Key] = pipelineKey,
+                        [AiWorkerMetadataKeys.WorkerId] = workerId,
+                        [ClaimModeMetadataKey] = SingleClaimMode,
                         ["ready.steps.count"] = readySteps.Count.ToString()
                     },
                     cancellationToken)
@@ -566,9 +570,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     "Batch claim attempt started.",
                     new Dictionary<string, string>
                     {
-                        ["pipeline.key"] = pipelineKey,
-                        ["worker.id"] = workerId,
-                        ["claim.mode"] = "batch",
+                        [AiPipelineMetadataKeys.Key] = pipelineKey,
+                        [AiWorkerMetadataKeys.WorkerId] = workerId,
+                        [ClaimModeMetadataKey] = BatchClaimMode,
                         ["max.steps"] = maxSteps.ToString()
                     },
                     cancellationToken)
@@ -600,9 +604,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             controlDecision.Reason ?? "Batch claim denied because execution cancellation was observed.",
                             new Dictionary<string, string>
                             {
-                                ["pipeline.key"] = pipelineKey,
-                                ["worker.id"] = workerId,
-                                ["claim.mode"] = "batch",
+                                [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                [AiWorkerMetadataKeys.WorkerId] = workerId,
+                                [ClaimModeMetadataKey] = BatchClaimMode,
                                 ["control.status"] = controlDecision.Status.ToString(),
                                 ["should.cancel"] = controlDecision.ShouldCancel.ToString()
                             },
@@ -629,9 +633,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             controlDecision.Reason ?? "Batch claim denied because execution control state does not allow advancement.",
                             new Dictionary<string, string>
                             {
-                                ["pipeline.key"] = pipelineKey,
-                                ["worker.id"] = workerId,
-                                ["claim.mode"] = "batch",
+                                [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                [AiWorkerMetadataKeys.WorkerId] = workerId,
+                                [ClaimModeMetadataKey] = BatchClaimMode,
                                 ["control.status"] = controlDecision.Status.ToString(),
                                 ["can.continue"] = controlDecision.CanContinue.ToString(),
                                 ["stop.claiming"] = controlDecision.ShouldStopClaiming.ToString()
@@ -685,9 +689,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             : "Batch claim denied because execution state contains no steps.",
                         new Dictionary<string, string>
                         {
-                            ["pipeline.key"] = pipelineKey,
-                            ["worker.id"] = workerId,
-                            ["claim.mode"] = "batch",
+                            [AiPipelineMetadataKeys.Key] = pipelineKey,
+                            [AiWorkerMetadataKeys.WorkerId] = workerId,
+                            [ClaimModeMetadataKey] = BatchClaimMode,
                             ["state.found"] = (state is not null).ToString(),
                             ["steps.count"] = state?.Steps.Count.ToString() ?? "0"
                         },
@@ -720,9 +724,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         "Batch claim denied because no ready DAG steps were available.",
                         new Dictionary<string, string>
                         {
-                            ["pipeline.key"] = pipelineKey,
-                            ["worker.id"] = workerId,
-                            ["claim.mode"] = "batch",
+                            [AiPipelineMetadataKeys.Key] = pipelineKey,
+                            [AiWorkerMetadataKeys.WorkerId] = workerId,
+                            [ClaimModeMetadataKey] = BatchClaimMode,
                             ["steps.count"] = state.Steps.Count.ToString(),
                             ["ready.steps.count"] = "0"
                         },
@@ -790,11 +794,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             gateDecision.Reason ?? "Concurrency admission denied.",
                             new Dictionary<string, string>
                             {
-                                ["pipeline.key"] = pipelineKey,
-                                ["step.name"] = stepDefinition.Name,
-                                ["step.key"] = stepDefinition.StepKey,
-                                ["worker.id"] = workerId,
-                                ["claim.mode"] = "batch"
+                                [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                [AiStepMetadataKeys.StepName] = stepDefinition.Name,
+                                [AiStepMetadataKeys.StepKey] = stepDefinition.StepKey,
+                                [AiWorkerMetadataKeys.WorkerId] = workerId,
+                                [ClaimModeMetadataKey] = BatchClaimMode
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
@@ -828,12 +832,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             "Concurrency lease acquired before batch step claim.",
                             new Dictionary<string, string>
                             {
-                                ["pipeline.key"] = pipelineKey,
-                                ["step.name"] = stepDefinition.Name,
-                                ["step.key"] = stepDefinition.StepKey,
-                                ["worker.id"] = workerId,
-                                ["lease.id"] = concurrencyContext.LeaseId,
-                                ["claim.mode"] = "batch"
+                                [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                [AiStepMetadataKeys.StepName] = stepDefinition.Name,
+                                [AiStepMetadataKeys.StepKey] = stepDefinition.StepKey,
+                                [AiWorkerMetadataKeys.WorkerId] = workerId,
+                                [AiConcurrencyMetadataKeys.LeaseId] = concurrencyContext.LeaseId,
+                                [ClaimModeMetadataKey] = BatchClaimMode
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
@@ -862,12 +866,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 "Batch step claim failed after concurrency lease was acquired.",
                                 new Dictionary<string, string>
                                 {
-                                    ["pipeline.key"] = pipelineKey,
-                                    ["step.name"] = stepDefinition.Name,
-                                    ["step.key"] = stepDefinition.StepKey,
-                                    ["worker.id"] = workerId,
-                                    ["lease.id"] = concurrencyContext.LeaseId,
-                                    ["claim.mode"] = "batch"
+                                    [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                    [AiStepMetadataKeys.StepName] = stepDefinition.Name,
+                                    [AiStepMetadataKeys.StepKey] = stepDefinition.StepKey,
+                                    [AiWorkerMetadataKeys.WorkerId] = workerId,
+                                    [AiConcurrencyMetadataKeys.LeaseId] = concurrencyContext.LeaseId,
+                                    [ClaimModeMetadataKey] = BatchClaimMode
                                 },
                                 cancellationToken)
                             .ConfigureAwait(false);
@@ -896,12 +900,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             "Step claim acquired.",
                             new Dictionary<string, string>
                             {
-                                ["pipeline.key"] = pipelineKey,
-                                ["step.name"] = stepDefinition.Name,
-                                ["step.key"] = stepDefinition.StepKey,
-                                ["worker.id"] = workerId,
-                                ["claim.token"] = claimed.ClaimToken,
-                                ["claim.mode"] = "batch"
+                                [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                [AiStepMetadataKeys.StepName] = stepDefinition.Name,
+                                [AiStepMetadataKeys.StepKey] = stepDefinition.StepKey,
+                                [AiWorkerMetadataKeys.WorkerId] = workerId,
+                                [AiExecutionClaimMetadataKeys.ClaimToken] = claimed.ClaimToken,
+                                [ClaimModeMetadataKey] = BatchClaimMode
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
@@ -921,7 +925,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 concurrencyContext,
                                 concurrencyDefinition,
                                 "Concurrency lease released because batch step claim ownership was not transferred.",
-                                claimMode: "batch")
+                                claimMode: BatchClaimMode)
                             .ConfigureAwait(false);
                     }
                 }
@@ -944,9 +948,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         "Batch claim denied because no ready candidate could be admitted or claimed.",
                         new Dictionary<string, string>
                         {
-                            ["pipeline.key"] = pipelineKey,
-                            ["worker.id"] = workerId,
-                            ["claim.mode"] = "batch",
+                            [AiPipelineMetadataKeys.Key] = pipelineKey,
+                            [AiWorkerMetadataKeys.WorkerId] = workerId,
+                            [ClaimModeMetadataKey] = BatchClaimMode,
                             ["ready.steps.count"] = readySteps.Count.ToString(),
                             ["claimed.steps.count"] = "0"
                         },
@@ -996,12 +1000,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             reason,
                             new Dictionary<string, string>
                             {
-                                ["pipeline.key"] = pipelineKey,
-                                ["step.name"] = stepDefinition.Name,
-                                ["step.key"] = stepDefinition.StepKey,
-                                ["worker.id"] = workerId,
-                                ["lease.id"] = concurrencyContext.LeaseId,
-                                ["claim.mode"] = claimMode,
+                                [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                [AiStepMetadataKeys.StepName] = stepDefinition.Name,
+                                [AiStepMetadataKeys.StepKey] = stepDefinition.StepKey,
+                                [AiWorkerMetadataKeys.WorkerId] = workerId,
+                                [AiConcurrencyMetadataKeys.LeaseId] = concurrencyContext.LeaseId,
+                                [ClaimModeMetadataKey] = claimMode,
                                 ["release.owner"] = nameof(AiDagStepClaimService)
                             },
                             CancellationToken.None)
@@ -1095,7 +1099,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         trace.SetTag("concurrency.provider", context.Provider ?? string.Empty);
                         trace.SetTag("concurrency.model", context.Model ?? string.Empty);
                         trace.SetTag("concurrency.operation", context.Operation ?? string.Empty);
-                        trace.SetTag("workerId", _services.ObservabilityService?.Correlation?.Current?.WorkerId ?? context.RuntimeInstanceId);
+                        trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, _services.ObservabilityService?.Correlation?.Current?.WorkerId ?? context.RuntimeInstanceId);
 
                         var policyDecision = await EvaluateConfiguredConcurrencyPoliciesAsync(
                                 context,
@@ -1364,12 +1368,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             .ConfigureAwait(false);
 
                         trace.SetTag("claimAcquired", result is not null);
-                        trace.SetTag("workerId", _services?.ObservabilityService?.Correlation?.Current?.WorkerId ?? workerId);
-                        trace.SetTag("stepId", stepName);
+                        trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, _services?.ObservabilityService?.Correlation?.Current?.WorkerId ?? workerId);
+                        trace.SetTag(AiStepMetadataKeys.CamelCaseStepId, stepName);
 
                         if (result is not null)
                         {
-                            trace.SetTag("claimToken", result.ClaimToken);
+                            trace.SetTag(AiExecutionClaimMetadataKeys.CamelCaseClaimToken, result.ClaimToken);
                         }
 
                         return result;
@@ -1462,7 +1466,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             .ConfigureAwait(false);
 
                         trace.SetTag("recoveredCount", result);
-                        trace.SetTag("workerId", _services.ObservabilityService?.Correlation?.Current?.WorkerId ?? workerId);
+                        trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, _services.ObservabilityService?.Correlation?.Current?.WorkerId ?? workerId);
                         trace.SetTag("recovered", result > 0);
 
                         if (result <= 0)
@@ -1496,8 +1500,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 "Timed-out running DAG steps detected during recovery scan.",
                                 new Dictionary<string, string>
                                 {
-                                    ["pipeline.key"] = pipelineKey,
-                                    ["worker.id"] = workerId,
+                                    [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                    [AiWorkerMetadataKeys.WorkerId] = workerId,
                                     ["recovered.count"] = result.ToString(),
                                     ["recovered.steps"] = recoveredStepNamesText
                                 },
@@ -1519,8 +1523,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 "Timed-out running DAG steps were recovered.",
                                 new Dictionary<string, string>
                                 {
-                                    ["pipeline.key"] = pipelineKey,
-                                    ["worker.id"] = workerId,
+                                    [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                    [AiWorkerMetadataKeys.WorkerId] = workerId,
                                     ["recovered.count"] = result.ToString(),
                                     ["recovered.steps"] = recoveredStepNamesText
                                 },
@@ -1548,9 +1552,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                     "Timed-out DAG step was moved back to a recoverable state.",
                                     new Dictionary<string, string>
                                     {
-                                        ["pipeline.key"] = pipelineKey,
-                                        ["worker.id"] = workerId,
-                                        ["step.name"] = recoveredStepName,
+                                        [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                        [AiWorkerMetadataKeys.WorkerId] = workerId,
+                                        [AiStepMetadataKeys.StepName] = recoveredStepName,
                                         ["recovered.count"] = result.ToString()
                                     },
                                     cancellationToken)
@@ -1574,8 +1578,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                     "Timed-out DAG steps were recovered, but recovered step names could not be inferred from state.",
                                     new Dictionary<string, string>
                                     {
-                                        ["pipeline.key"] = pipelineKey,
-                                        ["worker.id"] = workerId,
+                                        [AiPipelineMetadataKeys.Key] = pipelineKey,
+                                        [AiWorkerMetadataKeys.WorkerId] = workerId,
                                         ["recovered.count"] = result.ToString()
                                     },
                                     cancellationToken)
@@ -1756,8 +1760,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         decision.Reason ?? "Execution cancellation observed by DAG claim service.",
                         new Dictionary<string, string>
                         {
-                            ["pipeline.key"] = pipelineKey,
-                            ["worker.id"] = workerId,
+                            [AiPipelineMetadataKeys.Key] = pipelineKey,
+                            [AiWorkerMetadataKeys.WorkerId] = workerId,
                             ["status"] = decision.Status.ToString(),
                             ["stop.claiming"] = decision.ShouldStopClaiming.ToString(),
                             ["should.cancel"] = decision.ShouldCancel.ToString(),
@@ -1786,8 +1790,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         decision.Reason ?? "Execution is waiting for human input.",
                         new Dictionary<string, string>
                         {
-                            ["pipeline.key"] = pipelineKey ?? string.Empty,
-                            ["worker.id"] = workerId ?? string.Empty,
+                            [AiPipelineMetadataKeys.Key] = pipelineKey ?? string.Empty,
+                            [AiWorkerMetadataKeys.WorkerId] = workerId ?? string.Empty,
                             ["status"] = decision.Status.ToString(),
                             ["stop.claiming"] = decision.ShouldStopClaiming.ToString(),
                             ["should.cancel"] = decision.ShouldCancel.ToString(),

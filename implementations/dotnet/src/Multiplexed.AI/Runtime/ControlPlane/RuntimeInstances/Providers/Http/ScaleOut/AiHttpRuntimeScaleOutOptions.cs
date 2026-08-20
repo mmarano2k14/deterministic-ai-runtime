@@ -1,5 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.ScaleOut
 {
@@ -35,7 +36,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         /// <summary>
         /// Gets or sets the default runtime instance id prefix used only when the tenant-aware request does not provide one.
         /// </summary>
-        public string DefaultRuntimeInstanceIdPrefix { get; set; } = "http-runtime";
+        public string DefaultRuntimeInstanceIdPrefix { get; set; } =
+            AiHttpRuntimeScaleOutDefaults.DefaultRuntimeInstanceIdPrefix;
 
         /// <summary>
         /// Gets or sets the HTTP endpoint template used for newly materialized HTTP runtime instances.
@@ -44,7 +46,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Http.Sc
         /// Supported tokens:
         /// <c>{runtimeInstanceId}</c>, <c>{runtimeInstanceIdPrefix}</c>, <c>{tenantId}</c>, <c>{tenantGroupId}</c>, <c>{controlPlaneId}</c>.
         /// </remarks>
-        public string EndpointTemplate { get; set; } = "http://localhost";
+        public string EndpointTemplate { get; set; } =
+            AiRuntimeInstanceCommandTransportDefaults.DefaultLoopbackEndpointBase;
 
         /// <summary>
         /// Gets or sets a value indicating whether readiness must be validated in host-manager mode.

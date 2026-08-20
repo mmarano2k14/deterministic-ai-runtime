@@ -1,4 +1,4 @@
-using Multiplexed.Abstractions.AI.Concurrency;
+﻿using Multiplexed.Abstractions.AI.Concurrency;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
@@ -327,8 +327,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                                     cancellationToken).ConfigureAwait(false);
 
                                 trace.SetTag("failed", result);
-                                trace.SetTag("workerId", workerId);
-                                trace.SetTag("claimToken", claimed.ClaimToken);
+                                trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, workerId);
+                                trace.SetTag(AiExecutionClaimMetadataKeys.CamelCaseClaimToken, claimed.ClaimToken);
                                 trace.SetTag("errorType", ex.GetType().FullName);
 
                                 return result;
@@ -456,8 +456,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                                     cancellationToken).ConfigureAwait(false);
 
                                 trace.SetTag("parked", result);
-                                trace.SetTag("workerId", workerId);
-                                trace.SetTag("claimToken", claimed.ClaimToken);
+                                trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, workerId);
+                                trace.SetTag(AiExecutionClaimMetadataKeys.CamelCaseClaimToken, claimed.ClaimToken);
 
                                 return result;
                             }).ConfigureAwait(false);
@@ -504,8 +504,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                                     cancellationToken).ConfigureAwait(false);
 
                                 trace.SetTag("failed", result);
-                                trace.SetTag("workerId", workerId);
-                                trace.SetTag("claimToken", claimed.ClaimToken);
+                                trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, workerId);
+                                trace.SetTag(AiExecutionClaimMetadataKeys.CamelCaseClaimToken, claimed.ClaimToken);
                                 trace.SetTag("error", stepResult.Error);
 
                                 return result;
@@ -581,8 +581,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                                     cancellationToken).ConfigureAwait(false);
 
                                 trace.SetTag("completed", result);
-                                trace.SetTag("workerId", workerId);
-                                trace.SetTag("claimToken", claimed.ClaimToken);
+                                trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, workerId);
+                                trace.SetTag(AiExecutionClaimMetadataKeys.CamelCaseClaimToken, claimed.ClaimToken);
 
                                 return result;
                             }).ConfigureAwait(false);
@@ -985,13 +985,13 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                         "Concurrency lease released by the claim-owning DAG runner.",
                         new Dictionary<string, string>
                         {
-                            ["pipeline.name"] = pipeline.Name ?? string.Empty,
-                            ["pipeline.version"] = pipeline.Version ?? string.Empty,
-                            ["step.name"] = stepName,
-                            ["step.key"] = concurrencyAdmission.Context.StepKey ?? string.Empty,
-                            ["worker.id"] = workerId,
-                            ["claim.token"] = claimToken,
-                            ["lease.id"] = concurrencyAdmission.Context.LeaseId ?? string.Empty
+                            [AiPipelineMetadataKeys.Name] = pipeline.Name ?? string.Empty,
+                            [AiPipelineMetadataKeys.Version] = pipeline.Version ?? string.Empty,
+                            [AiStepMetadataKeys.StepName] = stepName,
+                            [AiStepMetadataKeys.StepKey] = concurrencyAdmission.Context.StepKey ?? string.Empty,
+                            [AiWorkerMetadataKeys.WorkerId] = workerId,
+                            [AiExecutionClaimMetadataKeys.ClaimToken] = claimToken,
+                            [AiConcurrencyMetadataKeys.LeaseId] = concurrencyAdmission.Context.LeaseId ?? string.Empty
                         },
                         CancellationToken.None)
                     .ConfigureAwait(false);

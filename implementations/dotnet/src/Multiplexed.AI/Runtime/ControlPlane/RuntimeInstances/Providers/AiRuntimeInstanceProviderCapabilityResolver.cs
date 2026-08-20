@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -88,8 +89,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
                     "RUNTIME PROVIDER CAPABILITY NOT FOUND RuntimeInstanceId={RuntimeInstanceId} ProviderCapability={ProviderCapability} DescriptorProviderName={ProviderName} DescriptorTransportName={TransportName} Metadata={Metadata}",
                     runtimeInstanceId,
                     typeof(TProvider).FullName,
-                    ResolveMetadataValue(descriptor.Metadata, "provider.name", "provider"),
-                    ResolveMetadataValue(descriptor.Metadata, "transport.name", "transport"),
+                    ResolveMetadataValue(descriptor.Metadata, AiRuntimeInstanceProviderMetadataKeys.ProviderName, AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName),
+                    ResolveMetadataValue(descriptor.Metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportName, "transport"),
                     FormatMetadata(descriptor.Metadata));
 
                 return AiRuntimeInstanceProviderCapabilityResolution<TProvider>.Failed(
@@ -123,8 +124,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
                 descriptor.RuntimeInstanceId,
                 descriptor.ControlPlaneId,
                 descriptor.ControlPlaneHostId,
-                ResolveMetadataValue(descriptor.Metadata, "provider.name", "provider"),
-                ResolveMetadataValue(descriptor.Metadata, "transport.name", "transport"),
+                ResolveMetadataValue(descriptor.Metadata, AiRuntimeInstanceProviderMetadataKeys.ProviderName, AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName),
+                ResolveMetadataValue(descriptor.Metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportName, "transport"),
                 descriptor.Role,
                 descriptor.Status,
                 descriptor.CanAcceptRun,
@@ -181,8 +182,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers
                         descriptor.RuntimeInstanceId,
                         descriptor.ControlPlaneId,
                         descriptor.ControlPlaneHostId,
-                        ResolveMetadataValue(descriptor.Metadata, "provider.name", "provider"),
-                        ResolveMetadataValue(descriptor.Metadata, "transport.name", "transport"),
+                        ResolveMetadataValue(descriptor.Metadata, AiRuntimeInstanceProviderMetadataKeys.ProviderName, AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName),
+                        ResolveMetadataValue(descriptor.Metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportName, "transport"),
                         descriptor.Role,
                         descriptor.Status,
                         descriptor.CanAcceptRun,

@@ -1,9 +1,14 @@
+using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.Execution.Context;
+using Multiplexed.Abstractions.AI.Execution.Scheduling;
+using Multiplexed.Abstractions.AI.Observability;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
 {
@@ -229,12 +234,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                                     Reason = "Diagnose immediate local run visibility after an accepted enqueue.",
                                     Metadata = new Dictionary<string, string>
                                     {
-                                        ["runtime.instance.id"] = RuntimeInstanceId,
-                                        ["shared.run.id"] = request.SharedRun.SharedRunId,
-                                        ["local.run.id"] = localRunId,
+                                        [AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] = RuntimeInstanceId,
+                                        [AiRunMetadataKeys.SharedRunId] = request.SharedRun.SharedRunId,
+                                        [AiRunMetadataKeys.LocalRunId] = localRunId,
                                         [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.SharedRun.ExecutionContextSnapshot.TenantId,
                                         [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
-                                        ["context.key"] = request.SharedRun.ExecutionContextSnapshot.ContextKey
+                                        [AiExecutionContextMetadataKeys.ContextKey] = request.SharedRun.ExecutionContextSnapshot.ContextKey
                                     }
                                 },
                                 CancellationToken.None)
@@ -298,14 +303,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                     FailureReason = exception.Message,
                     Metadata = new Dictionary<string, string>
                     {
-                        ["runtime.instance.id"] = RuntimeInstanceId,
-                        ["shared.run.id"] = request.SharedRun.SharedRunId,
+                        [AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] = RuntimeInstanceId,
+                        [AiRunMetadataKeys.SharedRunId] = request.SharedRun.SharedRunId,
                         [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = request.SharedRun.ExecutionContextSnapshot.TenantId,
                         [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
-                        ["context.key"] = request.SharedRun.ExecutionContextSnapshot.ContextKey,
-                        ["exception.type"] = exception.GetType().FullName ?? exception.GetType().Name,
-                        ["exception.message"] = exception.Message,
-                        ["exception.stack"] = exception.StackTrace ?? string.Empty
+                        [AiExecutionContextMetadataKeys.ContextKey] = request.SharedRun.ExecutionContextSnapshot.ContextKey,
+                        [AiExceptionMetadataKeys.ExceptionType] = exception.GetType().FullName ?? exception.GetType().Name,
+                        [AiExceptionMetadataKeys.ExceptionMessage] = exception.Message,
+                        [AiExceptionMetadataKeys.ExceptionStackTrace] = exception.StackTrace ?? string.Empty
                     }
                 };
             }
@@ -411,12 +416,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                             Reason = "Confirm durable external-wait continuation execution binding before shared dispatch acknowledgement.",
                             Metadata = new Dictionary<string, string>
                             {
-                                ["runtime.instance.id"] = RuntimeInstanceId,
-                                ["shared.run.id"] = dispatchRequest.SharedRun.SharedRunId,
-                                ["local.run.id"] = localRunId,
-                                ["external.wait.continuation.id"] = continuation.ContinuationId,
-                                ["external.wait.execution.id"] = continuation.ExecutionId,
-                                ["external.wait.step"] = continuation.StepName
+                                [AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] = RuntimeInstanceId,
+                                [AiRunMetadataKeys.SharedRunId] = dispatchRequest.SharedRun.SharedRunId,
+                                [AiRunMetadataKeys.LocalRunId] = localRunId,
+                                [AiRuntimeExternalWaitMetadataKeys.ContinuationId] = continuation.ContinuationId,
+                                [AiRuntimeExternalWaitMetadataKeys.ExecutionId] = continuation.ExecutionId,
+                                [AiRuntimeExternalWaitMetadataKeys.Step] = continuation.StepName
                             }
                         },
                         cancellationToken)
@@ -434,7 +439,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                 {
                     var normalizedStatus = runState.Status?.Trim().ToLowerInvariant() ?? string.Empty;
 
-                    if (normalizedStatus is "failed" or "cancelled" or "requeued-for-recovery")
+                    if (normalizedStatus is AiRuntimeRunExecutionIndexStatuses.Failed or AiRuntimeRunExecutionIndexStatuses.Cancelled or AiRuntimeRunExecutionIndexStatuses.RequeuedForRecovery)
                     {
                         throw new InvalidOperationException(
                             runState.FailureReason ??
@@ -539,12 +544,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                 }
             }
 
-            metadata["shared.run.id"] = sharedRunId;
-            metadata["runtime.instance.id"] = runtimeInstanceId;
+            metadata[AiRunMetadataKeys.SharedRunId] = sharedRunId;
+            metadata[AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] = runtimeInstanceId;
 
             if (!string.IsNullOrWhiteSpace(claimToken))
             {
-                metadata["claim.token"] = claimToken;
+                metadata[AiExecutionClaimMetadataKeys.ClaimToken] = claimToken;
             }
 
             if (executionContextSnapshot is not null)
@@ -553,7 +558,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                 metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = executionContextSnapshot.TenantGroupId;
                 metadata["project"] = executionContextSnapshot.Project;
                 metadata["user.id"] = executionContextSnapshot.UserId;
-                metadata["context.key"] = executionContextSnapshot.ContextKey;
+                metadata[AiExecutionContextMetadataKeys.ContextKey] = executionContextSnapshot.ContextKey;
             }
 
             return metadata;
@@ -571,10 +576,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
             var metadata = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
-                ["runtime.instance.id"] = runtimeInstanceId,
-                ["shared.run.id"] = request.SharedRun.SharedRunId,
-                ["local.run.id"] = localRunId ?? string.Empty,
-                ["execution.id"] = executionId ?? string.Empty,
+                [AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] = runtimeInstanceId,
+                [AiRunMetadataKeys.SharedRunId] = request.SharedRun.SharedRunId,
+                [AiRunMetadataKeys.LocalRunId] = localRunId ?? string.Empty,
+                [AiExecutionMetadataKeys.ExecutionId] = executionId ?? string.Empty,
                 ["result.run.id"] = result.RunId ?? string.Empty,
                 ["result.handle.run.id"] = result.RunHandle?.RunId ?? string.Empty,
                 ["result.state.run.id"] = result.RunState?.RunId ?? string.Empty,
@@ -587,7 +592,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance
                 [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.SharedRun.ExecutionContextSnapshot.TenantGroupId,
                 ["project"] = request.SharedRun.ExecutionContextSnapshot.Project,
                 ["user.id"] = request.SharedRun.ExecutionContextSnapshot.UserId,
-                ["context.key"] = request.SharedRun.ExecutionContextSnapshot.ContextKey,
+                [AiExecutionContextMetadataKeys.ContextKey] = request.SharedRun.ExecutionContextSnapshot.ContextKey,
                 ["run.request.has.snapshot"] = (request.RunRequest.ExecutionContextSnapshot is not null).ToString()
             };
 

@@ -4,6 +4,9 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Pool;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Client
@@ -257,11 +260,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 StringComparer.OrdinalIgnoreCase)
             {
                 [AiRuntimeHostMetadataKeys.HostId] = hostId,
-                ["kubernetes.pod.uid"] = hostId,
-                ["kubernetes.pod.name"] = podSpec.PodName,
-                ["kubernetes.namespace"] = podSpec.Namespace,
-                ["runtime.pool.id"] = podSpec.PoolId,
-                ["transport.endpoint"] = endpoint
+                [AiKubernetesRuntimeHostMetadataKeys.PodUid] = hostId,
+                [AiKubernetesRuntimeHostMetadataKeys.PodName] = podSpec.PodName,
+                [AiKubernetesRuntimeHostMetadataKeys.Namespace] = podSpec.Namespace,
+                [AiRuntimePoolMetadataKeys.PoolId] = podSpec.PoolId,
+                [AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint] = endpoint
             };
         }
     }

@@ -11,6 +11,16 @@
         public const string ProviderName = "provider.name";
 
         /// <summary>
+        /// Gets the legacy provider-name metadata key retained for compatibility.
+        /// </summary>
+        public const string LegacyProviderName = "provider";
+
+        /// <summary>
+        /// Gets the camel-case provider status metadata key used by scale-out diagnostics.
+        /// </summary>
+        public const string ProviderStatus = "providerStatus";
+
+        /// <summary>
         /// Metadata key used to identify the provider transport.
         /// </summary>
         public const string ProviderTransport = "provider.transport";
@@ -49,5 +59,10 @@
         /// Metadata key used to identify a region, zone, or deployment location.
         /// </summary>
         public const string ProviderRegion = "provider.region";
+
+        /// <summary>
+        /// Gets the camel-case provider name metadata key used by compatibility and diagnostic payloads.
+        /// </summary>
+        public const string CamelCaseProviderName = "providerName";
     }
 }

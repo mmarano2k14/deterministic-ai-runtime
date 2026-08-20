@@ -6,6 +6,210 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.8.3 - 2026-08-20  - Semantic Contract Consolidation — Changelog
+
+## Objective
+
+Consolidate stable semantic strings across the runtime so each shared semantic value has one canonical declaration.
+
+```text
+ONE SEMANTIC VALUE
+=
+ONE CANONICAL DECLARATION
+```
+
+This refactor introduces no intentional behavioral change.
+
+---
+
+## Main Changes
+
+### Canonical Metadata Contracts
+
+Centralized shared metadata for:
+
+- Runtime identity and provisioning
+- Tenant isolation
+- Host and Kubernetes metadata
+- Provider and transport metadata
+- Runtime Pool metadata
+- Recovery metadata and recovery modes
+- Scale-Out metadata and intents
+- Shared Queue metadata
+- Execution, Run, Pipeline, Worker and Step metadata
+- Child DAG and continuation metadata
+- External Wait metadata
+- Policy, Exception, Claim, Lease and Observability metadata
+- Control Plane and request metadata
+
+Existing contracts were reused wherever possible. New contracts were introduced only when no correct shared owner existed.
+
+---
+
+### Duplicate Semantic Strings Removed
+
+Removed:
+
+- duplicated `const string` declarations;
+- inline metadata keys repeated across components;
+- duplicated event/recovery values;
+- duplicated provider, transport and routing values;
+- duplicated camelCase and legacy aliases.
+
+Consumers now reference the canonical owner instead of redeclaring the physical string.
+
+---
+
+### Legacy Compatibility Preserved
+
+Legacy aliases remain distinct when their physical representation is part of an existing contract.
+
+Examples include variants such as:
+
+```text
+execution.id
+executionId
+
+runtime.instance.id
+runtimeInstanceId
+
+host.creation.mode
+hostCreation.mode
+```
+
+No alias was silently renamed or merged.
+
+---
+
+### Recovery and Scale-Out
+
+Centralized recovery and Scale-Out vocabulary including:
+
+```text
+recovery.*
+scaleout.*
+replacement.*
+resume.*
+failed.*
+```
+
+Recovery modes, operation names, transition statuses, outcome codes and failure identifiers now have explicit ownership.
+
+---
+
+### Child DAG and Execution
+
+Centralized Child DAG, execution and continuation metadata including:
+
+```text
+child.*
+parent.*
+external.wait.*
+execution.*
+shared.run.*
+local.run.*
+pipeline.*
+worker.*
+step.*
+```
+
+No execution identity or Child DAG semantics changed.
+
+---
+
+### Runtime Pool / Transport / Kubernetes
+
+Centralized shared Runtime Pool, routing, transport and Kubernetes contracts while preserving exact endpoint and host-mode values.
+
+Important compatibility rule retained:
+
+```text
+"ProcessPool"
+```
+
+remains exactly `"ProcessPool"`.
+
+It is not mapped to `AiRuntimeHostCreationMode.Process` and no nonexistent enum member is introduced.
+
+---
+
+## Architectural Result
+
+The code now follows:
+
+```text
+Shared semantic value
+        ↓
+Canonical owner
+        ↓
+Symbolic references from consumers
+```
+
+instead of duplicating the same physical string throughout production code.
+
+Contracts remain grouped by responsibility rather than being placed in a global `Constants.cs`.
+
+`Multiplexed.Abstractions` contains only genuinely transversal contracts.
+
+---
+
+## Behavioral Guarantees
+
+The refactor preserves:
+
+```text
+Execution behavior
+Recovery behavior
+Queue behavior
+Scale-Out behavior
+Runtime Pool behavior
+Child DAG behavior
+Transport routing
+Persisted values
+Wire-visible values
+```
+
+A string is replaced only when the semantic contract is exact.
+
+No approximate enum or `ToString()` replacement is allowed.
+
+---
+
+## Validation
+
+Regression validation remained green across the affected runtime paths, including:
+
+```text
+gRPC ProcessHost
+Kubernetes Depth 0
+Depth 1 recovery
+Child DAG / continuation
+Scale-Out / recovery
+```
+
+A final validation issue in the gRPC Scale-Out runtime-instance-prefix fallback was corrected while preserving the configured option as the primary value and the provider constant as fallback.
+
+---
+
+## Final State
+
+```text
+Canonical contracts consolidated
++
+Duplicate semantic declarations removed
++
+Legacy values preserved
++
+Zero intentional behavioral change
++
+Regression gates green
+```
+
+**Semantic contract consolidation complete.**
+
+
+---
+
 ## 1.0.8.3 - 2026-08-14  — Child DAG & Runtime Pool
 
 ## 2026-08-14

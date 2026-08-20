@@ -1,5 +1,7 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Kubernetes;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
@@ -8,6 +10,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Publisher
 {
@@ -17,7 +22,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
     public sealed class KubernetesAiRuntimeInstancePublisher :
         IAiKubernetesRuntimeInstancePublisher
     {
-        private const string KubernetesHostProviderName = "kubernetes";
         private readonly IAiRuntimeInstanceRegistry runtimeInstanceRegistry;
         private readonly IAiRuntimeInstanceCapacityStore runtimeInstanceCapacityStore;
 
@@ -69,10 +73,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                     Role = AiRuntimeInstanceRole.Runtime,
                     TenantId = tenantId,
                     TenantGroupId = tenantGroupId,
-                    HostName = GetMetadataValue(metadata, "host.name") ?? GetMetadataValue(metadata, "kubernetes.node.name"),
-                    KubernetesNamespace = GetMetadataValue(metadata, "kubernetes.namespace"),
-                    KubernetesPodName = GetMetadataValue(metadata, "kubernetes.pod.name"),
-                    KubernetesNodeName = GetMetadataValue(metadata, "kubernetes.node.name"),
+                    HostName = GetMetadataValue(metadata, AiRuntimeHostMetadataKeys.HostName) ?? GetMetadataValue(metadata, AiKubernetesRuntimeHostMetadataKeys.NodeName),
+                    KubernetesNamespace = GetMetadataValue(metadata, AiKubernetesRuntimeHostMetadataKeys.Namespace),
+                    KubernetesPodName = GetMetadataValue(metadata, AiKubernetesRuntimeHostMetadataKeys.PodName),
+                    KubernetesNodeName = GetMetadataValue(metadata, AiKubernetesRuntimeHostMetadataKeys.NodeName),
                     WorkerCount = workerCount,
                     MaxConcurrentRuns = maxConcurrentRuns,
                     QueueCapacity = queueCapacity,
@@ -438,19 +442,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             CopyMetadata(metadata, request.Metadata);
             CopyMetadata(metadata, result.Metadata);
 
-            metadata["provider.name"] = providerName;
-            metadata["provider"] = providerName;
             metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] = providerName;
-            metadata["transport.name"] = transportName;
+            metadata[AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName] = providerName;
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] = transportName;
             metadata[AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeInstanceId] = request.RuntimeInstanceId;
-            metadata["host.provider"] = KubernetesHostProviderName;
-            metadata["host.creation.mode"] = KubernetesHostProviderName;
-            metadata["controlPlaneId"] = request.ControlPlaneId;
-            metadata["control-plane.id"] = request.ControlPlaneId;
-            metadata["controlplane.id"] = request.ControlPlaneId;
-            metadata["runtime.controlPlaneId"] = request.ControlPlaneId;
-            metadata["runtimeInstanceId"] = request.RuntimeInstanceId;
+            metadata[AiRuntimeHostMetadataKeys.HostProvider] = AiRuntimeHostProviderNames.Kubernetes;
+            metadata[AiRuntimeHostMetadataKeys.HostCreationMode] = AiRuntimeHostProviderNames.Kubernetes;
+            metadata[AiControlPlaneMetadataKeys.ControlPlaneId] = request.ControlPlaneId;
+            metadata[AiControlPlaneMetadataKeys.DashedControlPlaneId] = request.ControlPlaneId;
+            metadata[AiControlPlaneMetadataKeys.CompactControlPlaneId] = request.ControlPlaneId;
+            metadata[AiControlPlaneMetadataKeys.RuntimeControlPlaneId] = request.ControlPlaneId;
+            metadata[AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = request.RuntimeInstanceId;
 
             var transportEndpoint =
                 ResolveTransportEndpoint(
@@ -462,17 +464,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 transportName,
                 transportEndpoint);
 
-            AddIfNotEmpty(metadata, "host.id", ResolveHostId(request, result, metadata));
-            AddIfNotEmpty(metadata, "tenant.id", tenantId);
-            AddIfNotEmpty(metadata, "tenantId", tenantId);
-            AddIfNotEmpty(metadata, "tenant.group.id", tenantGroupId);
-            AddIfNotEmpty(metadata, "tenant.groupId", tenantGroupId);
-            AddIfNotEmpty(metadata, "tenantGroupId", tenantGroupId);
+            AddIfNotEmpty(metadata, AiRuntimeHostMetadataKeys.HostId, ResolveHostId(request, result, metadata));
+            AddIfNotEmpty(metadata, AiRuntimeInstanceIsolationMetadataKeys.TenantId, tenantId);
+            AddIfNotEmpty(metadata, AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId, tenantId);
+            AddIfNotEmpty(metadata, AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId, tenantGroupId);
+            AddIfNotEmpty(metadata, AiRuntimeInstanceIsolationMetadataKeys.LegacyTenantGroupId, tenantGroupId);
+            AddIfNotEmpty(metadata, AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId, tenantGroupId);
             AddIfNotEmpty(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint, transportEndpoint);
-            AddIfNotEmpty(metadata, "transport.endpoint", transportEndpoint);
-            AddIfNotEmpty(metadata, "transportEndpoint", transportEndpoint);
-            AddIfNotEmpty(metadata, "runtime.command.endpoint", transportEndpoint);
-            AddIfNotEmpty(metadata, "grpc.endpoint", transportEndpoint);
+            AddIfNotEmpty(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.CamelCaseTransportEndpoint, transportEndpoint);
+            AddIfNotEmpty(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.RuntimeCommandEndpoint, transportEndpoint);
+            AddIfNotEmpty(metadata, AiRuntimeInstanceCommandTransportMetadataKeys.GrpcEndpoint, transportEndpoint);
             AddIfNotEmpty(metadata, "host.runtimeInstanceId", request.RuntimeInstanceId);
 
             return metadata;
@@ -573,10 +574,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             AiRuntimeHostStartResult result,
             IReadOnlyDictionary<string, string> metadata)
         {
-            return GetMetadataValue(metadata, "host.id") ??
-                   GetMetadataValue(metadata, "hostId") ??
-                   GetMetadataValue(metadata, "kubernetes.pod.name") ??
-                   GetMetadataValue(metadata, "kubernetes.service.name") ??
+            return GetMetadataValue(metadata, AiRuntimeHostMetadataKeys.HostId) ??
+                   GetMetadataValue(metadata, AiRuntimeHostMetadataKeys.CamelCaseHostId) ??
+                   GetMetadataValue(metadata, AiKubernetesRuntimeHostMetadataKeys.PodName) ??
+                   GetMetadataValue(metadata, AiKubernetesRuntimeHostMetadataKeys.ServiceName) ??
                    result.RuntimeInstanceId ??
                    request.RuntimeInstanceId;
         }

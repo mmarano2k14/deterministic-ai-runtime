@@ -9,6 +9,11 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using System.Globalization;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.Execution;
+
 
 namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 {
@@ -30,7 +35,6 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
     public sealed class AiLocalRuntimeInstanceScaler :
         IAiLocalRuntimeInstanceScaler
     {
-        private const string ProviderName = "local";
         private const string UnknownHostMode = "(unknown)";
         private const string UnknownEnableSharedQueuePump = "(unknown)";
 
@@ -590,34 +594,34 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 metadata.TryGetValue(AiRuntimeInstanceProviderMetadataKeys.ProviderName, out var existingProviderName) &&
                 !string.IsNullOrWhiteSpace(existingProviderName)
                     ? existingProviderName
-                    : ProviderName;
+                    : AiRuntimeInstanceProviderNames.Local;
 
-            metadata["provider"] =
-                metadata.TryGetValue("provider", out var existingProvider) &&
+            metadata[AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName] =
+                metadata.TryGetValue(AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName, out var existingProvider) &&
                 !string.IsNullOrWhiteSpace(existingProvider)
                     ? existingProvider
                     : metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName];
 
-            metadata["runtime.scaler.provider"] = ProviderName;
+            metadata["runtime.scaler.provider"] = AiRuntimeInstanceProviderNames.Local;
 
-            metadata["runtime.instanceIdPrefix"] = runtimeInstanceIdPrefix;
-            metadata["runtime.workerCountPerInstance"] =
+            metadata[AiRuntimeInstanceProvisioningMetadataKeys.RuntimeInstanceIdPrefix] = runtimeInstanceIdPrefix;
+            metadata[AiRuntimeInstanceProvisioningMetadataKeys.WorkerCountPerInstance] =
                 workerCountPerInstance.ToString(CultureInfo.InvariantCulture);
-            metadata["runtime.maxConcurrentRunsPerInstance"] =
+            metadata[AiRuntimeInstanceProvisioningMetadataKeys.MaxConcurrentRunsPerInstance] =
                 maxConcurrentRunsPerInstance.ToString(CultureInfo.InvariantCulture);
 
             if (!string.IsNullOrWhiteSpace(explicitRuntimeInstanceId))
             {
-                metadata["runtime.instance.id"] =
+                metadata[AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] =
                     explicitRuntimeInstanceId;
 
-                metadata["runtimeInstanceId"] =
+                metadata[AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] =
                     explicitRuntimeInstanceId;
             }
 
             if (localQueueCapacity.HasValue)
             {
-                metadata["runtime.localQueueCapacity"] =
+                metadata[AiRuntimeInstanceProvisioningMetadataKeys.LocalQueueCapacity] =
                     localQueueCapacity.Value.ToString(CultureInfo.InvariantCulture);
             }
 
@@ -644,7 +648,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
                 if (request.MaxRuntimeInstances.HasValue)
                 {
-                    metadata["runtime.maxRuntimeInstances"] =
+                    metadata[AiRuntimeInstanceProvisioningMetadataKeys.MaxRuntimeInstances] =
                         request.MaxRuntimeInstances.Value.ToString(CultureInfo.InvariantCulture);
                 }
             }
@@ -830,21 +834,21 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 metadata[pair.Key] = pair.Value;
             }
 
-            metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] = ProviderName;
-            metadata["provider"] = ProviderName;
-            metadata["providerStatus"] = status;
-            metadata["scaleOutRequestId"] = request.RequestId;
-            metadata["sharedRunId"] = request.SharedRunId;
+            metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderName] = AiRuntimeInstanceProviderNames.Local;
+            metadata[AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName] = AiRuntimeInstanceProviderNames.Local;
+            metadata[AiRuntimeInstanceProviderMetadataKeys.ProviderStatus] = status;
+            metadata[AiRuntimeScaleOutMetadataKeys.CamelCaseScaleOutRequestId] = request.RequestId;
+            metadata[AiRunMetadataKeys.CamelCaseSharedRunId] = request.SharedRunId;
             metadata["activeInstanceCount"] = activeInstanceCount.ToString(CultureInfo.InvariantCulture);
             metadata["targetInstanceCount"] = targetInstanceCount.ToString(CultureInfo.InvariantCulture);
             metadata["createdInstanceCount"] = createdInstanceCount.ToString(CultureInfo.InvariantCulture);
 
             if (!string.IsNullOrWhiteSpace(settings.RuntimeInstanceId))
             {
-                metadata["runtime.instance.id"] =
+                metadata[AiRuntimeInstanceMetadataKeys.RuntimeInstanceId] =
                     settings.RuntimeInstanceId;
 
-                metadata["runtimeInstanceId"] =
+                metadata[AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] =
                     settings.RuntimeInstanceId;
             }
 
@@ -856,7 +860,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
             if (!string.IsNullOrWhiteSpace(request.TenantGroupId))
             {
                 metadata[AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = request.TenantGroupId;
-                metadata["tenant.groupId"] = request.TenantGroupId;
+                metadata[AiRuntimeInstanceIsolationMetadataKeys.LegacyTenantGroupId] = request.TenantGroupId;
             }
 
             if (HasExplicitTenantRuntimeSettings(request))
@@ -872,31 +876,31 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 
                 if (request.MaxRuntimeInstances.HasValue)
                 {
-                    metadata["runtime.maxRuntimeInstances"] =
+                    metadata[AiRuntimeInstanceProvisioningMetadataKeys.MaxRuntimeInstances] =
                         request.MaxRuntimeInstances.Value.ToString(CultureInfo.InvariantCulture);
                 }
 
                 if (!string.IsNullOrWhiteSpace(request.RuntimeInstanceIdPrefix))
                 {
-                    metadata["runtime.instanceIdPrefix"] =
+                    metadata[AiRuntimeInstanceProvisioningMetadataKeys.RuntimeInstanceIdPrefix] =
                         request.RuntimeInstanceIdPrefix;
                 }
 
                 if (request.WorkerCountPerInstance.HasValue)
                 {
-                    metadata["runtime.workerCountPerInstance"] =
+                    metadata[AiRuntimeInstanceProvisioningMetadataKeys.WorkerCountPerInstance] =
                         request.WorkerCountPerInstance.Value.ToString(CultureInfo.InvariantCulture);
                 }
 
                 if (request.MaxConcurrentRunsPerInstance.HasValue)
                 {
-                    metadata["runtime.maxConcurrentRunsPerInstance"] =
+                    metadata[AiRuntimeInstanceProvisioningMetadataKeys.MaxConcurrentRunsPerInstance] =
                         request.MaxConcurrentRunsPerInstance.Value.ToString(CultureInfo.InvariantCulture);
                 }
 
                 if (request.LocalQueueCapacity.HasValue)
                 {
-                    metadata["runtime.localQueueCapacity"] =
+                    metadata[AiRuntimeInstanceProvisioningMetadataKeys.LocalQueueCapacity] =
                         request.LocalQueueCapacity.Value.ToString(CultureInfo.InvariantCulture);
                 }
             }

@@ -1,6 +1,8 @@
-﻿using System.Collections.Concurrent;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using System.Collections.Concurrent;
 using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Metrics.Storage;
+using Multiplexed.Abstractions.AI.Observability;
 
 namespace Multiplexed.AI.Runtime.Observability.Metrics.Storage
 {
@@ -167,8 +169,8 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Storage
                 storageKind,
                 new Dictionary<string, string>
                 {
-                    ["exception.type"] = exceptionType,
-                    ["exception.message"] = exception?.Message ?? string.Empty
+                    [AiExceptionMetadataKeys.ExceptionType] = exceptionType,
+                    [AiExceptionMetadataKeys.ExceptionMessage] = exception?.Message ?? string.Empty
                 });
         }
 
@@ -232,8 +234,8 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Storage
             var tags = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
-                ["execution.id"] = executionId ?? string.Empty,
-                ["step.id"] = stepId ?? string.Empty,
+                [AiExecutionMetadataKeys.ExecutionId] = executionId ?? string.Empty,
+                [AiStepMetadataKeys.StepId] = stepId ?? string.Empty,
                 ["storage.kind"] = Normalize(storageKind)
             };
 

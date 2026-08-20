@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Pool;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
@@ -18,6 +19,8 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.AI.Runtime.Execution.Instance;
 using Multiplexed.AI.Runtime.Execution.Instance.Worker;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+
 
 namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
 {
@@ -225,7 +228,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 identity.RuntimeId,
                 queueState.RuntimeInstanceId,
                 effectiveMetadata.Count,
-                controlPlaneMetadata["controlPlaneId"]);
+                controlPlaneMetadata[AiControlPlaneMetadataKeys.ControlPlaneId]);
 
             logger.LogInformation(
                 "Pool runtime instance capacity resolved. RuntimeInstanceId={RuntimeInstanceId}, HostId={HostId}, RuntimeId={RuntimeId}, WorkerCountArg={WorkerCountArg}, MaxConcurrentRunsArg={MaxConcurrentRunsArg}, LocalQueueCapacityArg={LocalQueueCapacityArg}, QueueStateRuntimeInstanceId={QueueStateRuntimeInstanceId}, QueueStateMaxConcurrentRuns={QueueStateMaxConcurrentRuns}, QueueStateAvailableRunSlots={QueueStateAvailableRunSlots}, QueueStateRunningRunCount={QueueStateRunningRunCount}, QueueStateQueuedRunCount={QueueStateQueuedRunCount}, QueueStateQueueCapacity={QueueStateQueueCapacity}, MetadataCount={MetadataCount}",
@@ -359,10 +362,10 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                         this.metadata,
                         StringComparer.OrdinalIgnoreCase)
                     {
-                        ["provider"] = "local-pool",
+                        [AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName] = AiRuntimeInstanceProviderNames.LocalPool,
                         ["machineName"] = hostName,
                         ["processId"] = processId.ToString(),
-                        ["hostId"] = hostId,
+                        [AiRuntimeHostMetadataKeys.CamelCaseHostId] = hostId,
                         ["runtimeId"] = runtimeId,
                         ["controlPlaneHostId"] = controlPlaneHostId
                     };
@@ -370,7 +373,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 return Task.FromResult(
                     new AiRuntimeEnvironmentSnapshot
                     {
-                        ProviderName = "local-pool",
+                        ProviderName = AiRuntimeInstanceProviderNames.LocalPool,
                         RuntimeInstanceId = runtimeInstanceId,
                         HostId = hostId,
                         RuntimeId = runtimeId,

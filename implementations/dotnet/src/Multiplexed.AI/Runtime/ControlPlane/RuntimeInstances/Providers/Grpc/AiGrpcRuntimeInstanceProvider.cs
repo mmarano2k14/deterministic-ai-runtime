@@ -12,6 +12,8 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.SharedInstance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc.ScaleOut;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
 {
@@ -43,9 +45,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
         IAiRuntimeScaleOutProvider,
         IAiRuntimeInstanceControlPlaneContext
     {
-        private const string GatewayRoutingHeaderMetadataKey = "gateway.routing.header";
-        private const string GatewayRoutingValueMetadataKey = "gateway.routing.value";
-        private const string DefaultGatewayRoutingHeaderName = "x-ai-runtime-instance-id";
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
         private readonly ILogger<AiGrpcRuntimeInstanceProvider> logger;
         private readonly AiGrpcRuntimeInstanceProviderOptions options;
@@ -164,7 +163,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
                 return CreateFailedDispatchResult(
                     request,
                     string.Empty,
-                    "runtime-instance-id-missing",
+                    AiRuntimeInstanceFailureReasons.RuntimeInstanceIdMissing,
                     "Runtime instance id is missing.");
             }
 
@@ -359,7 +358,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
                     request,
                     queueOperation,
                     string.Empty,
-                    "runtime-instance-id-missing",
+                    AiRuntimeInstanceFailureReasons.RuntimeInstanceIdMissing,
                     "Runtime instance id is missing.");
             }
 
@@ -962,16 +961,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
             var endpoint =
                 GetMetadataValue(
                     descriptor.Metadata,
-                    AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint) ??
-                GetMetadataValue(
-                    descriptor.Metadata,
-                    AiGrpcRuntimeProviderConstants.TransportEndpointMetadataKey);
+                    AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint);
 
             if (string.IsNullOrWhiteSpace(endpoint))
             {
                 return GrpcCommandEndpointResolution.Failed(
                     AiGrpcRuntimeDispatchFailureReasons.EndpointMissing,
-                    $"Runtime instance descriptor '{descriptor.RuntimeInstanceId}' does not define '{AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint}' or 'transport.endpoint'.");
+                    $"Runtime instance descriptor '{descriptor.RuntimeInstanceId}' does not define '{AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint}' or '{AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpoint}'.");
             }
 
             var endpointText =
@@ -1002,11 +998,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
             var configuredHeaderName =
                 GetMetadataValue(
                     metadata,
-                    GatewayRoutingHeaderMetadataKey);
+                    AiRuntimeInstanceCommandTransportMetadataKeys.GatewayRoutingHeader);
 
             var headerName =
                 string.IsNullOrWhiteSpace(configuredHeaderName)
-                    ? DefaultGatewayRoutingHeaderName
+                    ? AiRuntimeInstanceCommandTransportDefaults.DefaultGatewayRoutingHeaderName
                     : configuredHeaderName.Trim().ToLowerInvariant();
 
             if (!IsValidGrpcMetadataKey(headerName))
@@ -1033,7 +1029,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
             var configuredRoutingValue =
                 GetMetadataValue(
                     metadata,
-                    GatewayRoutingValueMetadataKey);
+                    AiRuntimeInstanceCommandTransportMetadataKeys.GatewayRoutingValue);
 
             return string.IsNullOrWhiteSpace(configuredRoutingValue)
                 ? runtimeInstanceId
@@ -1198,7 +1194,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
             result[AiRuntimeInstanceProviderMetadataKeys.ProviderName] =
                 AiGrpcRuntimeProviderConstants.ProviderName;
 
-            result["provider"] =
+            result[AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName] =
                 AiGrpcRuntimeProviderConstants.ProviderName;
 
             result[AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] =
@@ -1230,16 +1226,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Providers.Grpc
                 new Dictionary<string, string>(
                     StringComparer.OrdinalIgnoreCase)
                 {
-                    ["transport.name"] = AiGrpcRuntimeProviderConstants.TransportName
+                    [AiRuntimeInstanceCommandTransportMetadataKeys.TransportName] = AiGrpcRuntimeProviderConstants.TransportName
                 };
 
             if (exception is not null)
             {
-                metadata["exception.type"] =
+                metadata[AiExceptionMetadataKeys.ExceptionType] =
                     exception.GetType().FullName ??
                     exception.GetType().Name;
 
-                metadata["exception.message"] =
+                metadata[AiExceptionMetadataKeys.ExceptionMessage] =
                     exception.Message;
             }
 

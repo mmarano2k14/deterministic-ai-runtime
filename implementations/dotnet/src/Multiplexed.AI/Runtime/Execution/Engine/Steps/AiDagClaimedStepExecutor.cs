@@ -1,4 +1,4 @@
-using Multiplexed.Abstractions.AI.Concurrency;
+﻿using Multiplexed.Abstractions.AI.Concurrency;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Scheduling;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
@@ -8,6 +8,7 @@ using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Runtime.Execution.Context;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Execution.Engine.Helpers;
+using Multiplexed.Abstractions.AI.Observability;
 
 namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 {
@@ -136,12 +137,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     "Step execution started.",
                     new Dictionary<string, string>
                     {
-                        ["pipeline.name"] = resolvedPipeline.Name ?? string.Empty,
-                        ["pipeline.version"] = resolvedPipeline.Version ?? string.Empty,
-                        ["step.name"] = claimedStep.StepName ?? string.Empty,
-                        ["step.key"] = concurrencyContext.StepKey ?? string.Empty,
-                        ["worker.id"] = runtimeInstanceId,
-                        ["claim.token"] = claimedStep.ClaimToken ?? string.Empty
+                        [AiPipelineMetadataKeys.Name] = resolvedPipeline.Name ?? string.Empty,
+                        [AiPipelineMetadataKeys.Version] = resolvedPipeline.Version ?? string.Empty,
+                        [AiStepMetadataKeys.StepName] = claimedStep.StepName ?? string.Empty,
+                        [AiStepMetadataKeys.StepKey] = concurrencyContext.StepKey ?? string.Empty,
+                        [AiWorkerMetadataKeys.WorkerId] = runtimeInstanceId,
+                        [AiExecutionClaimMetadataKeys.ClaimToken] = claimedStep.ClaimToken ?? string.Empty
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -207,12 +208,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             },
                             new Dictionary<string, string>
                             {
-                                ["pipeline.name"] = resolvedPipeline.Name ?? string.Empty,
-                                ["pipeline.version"] = resolvedPipeline.Version ?? string.Empty,
-                                ["step.name"] = claimedStep.StepName ?? string.Empty,
-                                ["step.key"] = concurrencyContext.StepKey ?? string.Empty,
-                                ["worker.id"] = runtimeInstanceId ?? string.Empty,
-                                ["claim.token"] = claimedStep.ClaimToken ?? string.Empty
+                                [AiPipelineMetadataKeys.Name] = resolvedPipeline.Name ?? string.Empty,
+                                [AiPipelineMetadataKeys.Version] = resolvedPipeline.Version ?? string.Empty,
+                                [AiStepMetadataKeys.StepName] = claimedStep.StepName ?? string.Empty,
+                                [AiStepMetadataKeys.StepKey] = concurrencyContext.StepKey ?? string.Empty,
+                                [AiWorkerMetadataKeys.WorkerId] = runtimeInstanceId ?? string.Empty,
+                                [AiExecutionClaimMetadataKeys.ClaimToken] = claimedStep.ClaimToken ?? string.Empty
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
@@ -244,13 +245,13 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             ex.Message,
                             new Dictionary<string, string>
                             {
-                                ["pipeline.name"] = resolvedPipeline.Name ?? string.Empty,
-                                ["pipeline.version"] = resolvedPipeline.Version ?? string.Empty,
-                                ["step.name"] = resolvedStep.Name ?? string.Empty,
-                                ["step.key"] = resolvedStep.StepKey ?? string.Empty,
-                                ["worker.id"] = runtimeInstanceId ?? string.Empty,
-                                ["claim.token"] = claimedStep.ClaimToken ?? string.Empty,
-                                ["exception.type"] = ex.GetType().Name ?? string.Empty
+                                [AiPipelineMetadataKeys.Name] = resolvedPipeline.Name ?? string.Empty,
+                                [AiPipelineMetadataKeys.Version] = resolvedPipeline.Version ?? string.Empty,
+                                [AiStepMetadataKeys.StepName] = resolvedStep.Name ?? string.Empty,
+                                [AiStepMetadataKeys.StepKey] = resolvedStep.StepKey ?? string.Empty,
+                                [AiWorkerMetadataKeys.WorkerId] = runtimeInstanceId ?? string.Empty,
+                                [AiExecutionClaimMetadataKeys.ClaimToken] = claimedStep.ClaimToken ?? string.Empty,
+                                [AiExceptionMetadataKeys.ExceptionType] = ex.GetType().Name ?? string.Empty
                             },
                             cancellationToken)
                         .ConfigureAwait(false);

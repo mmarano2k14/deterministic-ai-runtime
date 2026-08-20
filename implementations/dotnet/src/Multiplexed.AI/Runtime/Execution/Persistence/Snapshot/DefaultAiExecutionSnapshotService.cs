@@ -4,6 +4,7 @@ using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Normalization;
 using Multiplexed.AI.Runtime.Observability.Helpers;
+using Multiplexed.Abstractions.AI.Execution.Context;
 
 namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot
 {
@@ -101,7 +102,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot
                         exception.Message,
                         new Dictionary<string, string>
                         {
-                            ["exception.type"] = exception.GetType().Name,
+                            [AiExceptionMetadataKeys.ExceptionType] = exception.GetType().Name,
                             ["storage.artifact"] = "execution.snapshot"
                         },
                         CancellationToken.None)
@@ -156,8 +157,8 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot
             var metadata = CreateBaseMetadata(record);
 
             metadata["snapshot.id"] = snapshot.Id ?? string.Empty;
-            metadata["context.key"] = snapshot.ContextKey ?? string.Empty;
-            metadata["execution.status"] = record.Status.ToString();
+            metadata[AiExecutionContextMetadataKeys.ContextKey] = snapshot.ContextKey ?? string.Empty;
+            metadata[AiExecutionMetadataKeys.ExecutionStatus] = record.Status.ToString();
 
             MergeMetadata(
                 metadata,
@@ -247,9 +248,9 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot
         {
             return new Dictionary<string, string>
             {
-                ["execution.id"] = record.ExecutionId,
-                ["pipeline.name"] = record.PipelineName ?? string.Empty,
-                ["execution.status"] = record.Status.ToString()
+                [AiExecutionMetadataKeys.ExecutionId] = record.ExecutionId,
+                [AiPipelineMetadataKeys.Name] = record.PipelineName ?? string.Empty,
+                [AiExecutionMetadataKeys.ExecutionStatus] = record.Status.ToString()
             };
         }
 

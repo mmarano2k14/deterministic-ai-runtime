@@ -8,9 +8,12 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.Execution;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.Admission
 {
@@ -28,7 +31,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
     public sealed class AiRunAdmissionController : IAiRunAdmissionController
     {
         private const string RuntimeAdmissionDecisionOperation = "runtime-admission-decision";
-        private const string RecoveryFailedRuntimeInstanceIdMetadataKey = "recovery.failedRuntimeInstanceId";
 
         private readonly IAiRuntimeInstanceRegistry _registry;
         private readonly IAiRuntimeAdmissionReservationStore _reservationStore;
@@ -134,9 +136,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                     null,
                     new Dictionary<string, object?>
                     {
-                        ["tenantId"] = tenantRuntimeSettings.TenantId,
-                        ["tenantGroupId"] = tenantRuntimeSettings.TenantGroupId,
-                        ["pipelineKey"] = request.PipelineKey,
+                        [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = tenantRuntimeSettings.TenantId,
+                        [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = tenantRuntimeSettings.TenantGroupId,
+                        [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey,
                         ["preferredRuntimeInstanceId"] = request.PreferredRuntimeInstanceId,
                         ["placementRuntimeInstanceId"] = request.Placement?.Target.RuntimeInstanceId,
                         ["placementHostId"] = request.Placement?.Target.HostId,
@@ -508,10 +510,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                         durationMs,
                         new Dictionary<string, object?>
                         {
-                            ["runId"] = request.RunId,
-                            ["tenantId"] = tenantRuntimeSettings.TenantId ?? request.TenantId,
-                            ["tenantGroupId"] = tenantRuntimeSettings.TenantGroupId ?? request.RunRequest.ExecutionContextSnapshot?.TenantGroupId,
-                            ["pipelineKey"] = request.PipelineKey,
+                            [AiRunMetadataKeys.CamelCaseRunId] = request.RunId,
+                            [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = tenantRuntimeSettings.TenantId ?? request.TenantId,
+                            [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = tenantRuntimeSettings.TenantGroupId ?? request.RunRequest.ExecutionContextSnapshot?.TenantGroupId,
+                            [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey,
                             ["preferredRuntimeInstanceId"] = request.PreferredRuntimeInstanceId,
                             ["placementRuntimeInstanceId"] = request.Placement?.Target.RuntimeInstanceId,
                             ["placementHostId"] = request.Placement?.Target.HostId,
@@ -519,9 +521,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                             ["placementNodeId"] = request.Placement?.Target.NodeId,
                             ["placementRequirement"] = request.Placement?.Requirement.ToString(),
                             ["placementFallback"] = request.Placement?.Fallback.ToString(),
-                            ["durationMs"] = durationMs,
-                            ["exception.type"] = exception.GetType().FullName,
-                            ["exception.message"] = exception.Message
+                            [AiObservabilityMetadataKeys.DurationMs] = durationMs,
+                            [AiExceptionMetadataKeys.ExceptionType] = exception.GetType().FullName,
+                            [AiExceptionMetadataKeys.ExceptionMessage] = exception.Message
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -543,7 +545,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
             return !string.IsNullOrWhiteSpace(runtimeInstanceId) &&
                    TryGetMetadataValue(
                        request.Metadata,
-                       RecoveryFailedRuntimeInstanceIdMetadataKey,
+                       AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId,
                        out var failedRuntimeInstanceId) &&
                    string.Equals(
                        runtimeInstanceId,
@@ -673,9 +675,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                                 properties,
                                 new Dictionary<string, object?>
                                 {
-                                    ["tenantId"] = decision?.TenantId ?? request.TenantId,
-                                    ["tenantGroupId"] = decision?.TenantGroupId ?? request.RunRequest.ExecutionContextSnapshot?.TenantGroupId,
-                                    ["pipelineKey"] = request.PipelineKey,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = decision?.TenantId ?? request.TenantId,
+                                    [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = decision?.TenantGroupId ?? request.RunRequest.ExecutionContextSnapshot?.TenantGroupId,
+                                    [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey,
                                     ["preferredRuntimeInstanceId"] = request.PreferredRuntimeInstanceId,
                                     ["assignedRuntimeInstanceId"] = decision?.AssignedRuntimeInstanceId,
                                     ["decisionType"] = decision?.DecisionType.ToString(),
@@ -705,10 +707,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
         {
             var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                ["runId"] = request.RunId,
-                ["tenantId"] = decision.TenantId ?? request.TenantId,
-                ["tenantGroupId"] = decision.TenantGroupId ?? request.RunRequest.ExecutionContextSnapshot?.TenantGroupId,
-                ["pipelineKey"] = request.PipelineKey,
+                [AiRunMetadataKeys.CamelCaseRunId] = request.RunId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = decision.TenantId ?? request.TenantId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = decision.TenantGroupId ?? request.RunRequest.ExecutionContextSnapshot?.TenantGroupId,
+                [AiPipelineMetadataKeys.CamelCasePipelineKey] = request.PipelineKey,
                 ["preferredRuntimeInstanceId"] = request.PreferredRuntimeInstanceId,
                 ["assignedRuntimeInstanceId"] = decision.AssignedRuntimeInstanceId,
                 ["decisionType"] = decision.DecisionType.ToString(),
@@ -717,7 +719,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
                 ["availableInstanceCount"] = decision.AvailableInstanceCount,
                 ["currentInstanceCount"] = decision.CurrentInstanceCount,
                 ["maxInstanceCount"] = decision.MaxInstanceCount,
-                ["durationMs"] = durationMs
+                [AiObservabilityMetadataKeys.DurationMs] = durationMs
             };
 
             foreach (var item in decision.Metadata)
@@ -1518,19 +1520,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Admission
             metadata[AiRuntimeInstanceIsolationMetadataKeys.AllowSharedFallback] =
                 tenantRuntimeSettings.AllowSharedFallback.ToString();
 
-            metadata["runtime.maxRuntimeInstances"] =
+            metadata[AiRuntimeInstanceProvisioningMetadataKeys.MaxRuntimeInstances] =
                 tenantRuntimeSettings.MaxRuntimeInstances.ToString();
 
-            metadata["runtime.workerCountPerInstance"] =
+            metadata[AiRuntimeInstanceProvisioningMetadataKeys.WorkerCountPerInstance] =
                 tenantRuntimeSettings.WorkerCountPerInstance.ToString();
 
-            metadata["runtime.maxConcurrentRunsPerInstance"] =
+            metadata[AiRuntimeInstanceProvisioningMetadataKeys.MaxConcurrentRunsPerInstance] =
                 tenantRuntimeSettings.MaxConcurrentRunsPerInstance.ToString();
 
-            metadata["runtime.instanceIdPrefix"] =
+            metadata[AiRuntimeInstanceProvisioningMetadataKeys.RuntimeInstanceIdPrefix] =
                 tenantRuntimeSettings.RuntimeInstanceIdPrefix ?? string.Empty;
 
-            metadata["runtime.localQueueCapacity"] =
+            metadata[AiRuntimeInstanceProvisioningMetadataKeys.LocalQueueCapacity] =
                 tenantRuntimeSettings.LocalQueueCapacity?.ToString() ?? string.Empty;
         }
 

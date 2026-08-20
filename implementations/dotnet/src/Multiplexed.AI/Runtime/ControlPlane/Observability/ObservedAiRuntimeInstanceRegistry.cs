@@ -8,6 +8,14 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
+using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Pool;
+
 
 namespace Multiplexed.AI.Runtime.ControlPlane.Observability
 {
@@ -91,7 +99,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
             {
                 var snapshot = await this.inner.HeartbeatAsync(runtimeInstanceId, queuedRunCount, runningRunCount, activeRunCount, availableRunSlots, activeWorkerCount, availableWorkerCount, maxLocalWorkersPerExecution, isQueuePaused, canAcceptRun, status, cancellationToken).ConfigureAwait(false);
                 var outcome = snapshot is null ? AiControlPlaneOperationOutcome.CompletedWithIssues : AiControlPlaneOperationOutcome.Succeeded;
-                var failureReason = snapshot is null ? "runtime-instance-not-found" : null;
+                var failureReason = snapshot is null ? AiRuntimeInstanceFailureReasons.RuntimeInstanceNotFound : null;
                 await this.RecordCompletedAsync(RuntimeInstanceHeartbeatOperation, runtimeInstanceId, snapshot?.ControlPlaneId, snapshot?.TenantId, snapshot?.TenantGroupId, outcome, failureReason, startedAtUtc, MergeProperties(CreateHeartbeatProperties(queuedRunCount, runningRunCount, activeRunCount, availableRunSlots, activeWorkerCount, availableWorkerCount, maxLocalWorkersPerExecution, isQueuePaused, canAcceptRun, status), snapshot is null ? null : CreateSnapshotProperties(snapshot)), cancellationToken).ConfigureAwait(false);
                 return snapshot;
             }
@@ -155,7 +163,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
 
             return this.RecordMembershipQueryAsync(
                 RuntimeInstanceListByPoolOperation,
-                identityName: "poolId",
+                identityName: AiRuntimePoolMetadataKeys.CamelCasePoolId,
                 identityValue: poolId,
                 action: token =>
                     this.membershipReader.ListByPoolIdAsync(poolId, token),
@@ -171,7 +179,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
 
             return this.RecordMembershipQueryAsync(
                 RuntimeInstanceListByHostOperation,
-                identityName: "hostId",
+                identityName: AiRuntimeHostMetadataKeys.CamelCaseHostId,
                 identityValue: hostId,
                 action: token =>
                     this.membershipReader.ListByHostIdAsync(hostId, token),
@@ -187,7 +195,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
 
             return this.RecordMembershipQueryAsync(
                 RuntimeInstanceListPoolHostsOperation,
-                identityName: "poolId",
+                identityName: AiRuntimePoolMetadataKeys.CamelCasePoolId,
                 identityValue: poolId,
                 action: token =>
                     this.membershipReader.ListHostIdsByPoolIdAsync(poolId, token),
@@ -222,7 +230,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
             {
                 var snapshot = await this.inner.UnregisterAsync(runtimeInstanceId, cancellationToken).ConfigureAwait(false);
                 var outcome = snapshot is null ? AiControlPlaneOperationOutcome.CompletedWithIssues : AiControlPlaneOperationOutcome.Succeeded;
-                var failureReason = snapshot is null ? "runtime-instance-not-found" : null;
+                var failureReason = snapshot is null ? AiRuntimeInstanceFailureReasons.RuntimeInstanceNotFound : null;
                 await this.RecordCompletedAsync(RuntimeInstanceUnregisterOperation, runtimeInstanceId, snapshot?.ControlPlaneId, snapshot?.TenantId, snapshot?.TenantGroupId, outcome, failureReason, startedAtUtc, snapshot is null ? null : CreateSnapshotProperties(snapshot), cancellationToken).ConfigureAwait(false);
                 return snapshot;
             }
@@ -324,7 +332,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
             {
                 var snapshot = await action().ConfigureAwait(false);
                 var outcome = snapshot is null ? AiControlPlaneOperationOutcome.CompletedWithIssues : AiControlPlaneOperationOutcome.Succeeded;
-                var failureReason = snapshot is null ? "runtime-instance-not-found" : null;
+                var failureReason = snapshot is null ? AiRuntimeInstanceFailureReasons.RuntimeInstanceNotFound : null;
                 await this.RecordCompletedAsync(operation, runtimeInstanceId, snapshot?.ControlPlaneId, snapshot?.TenantId, snapshot?.TenantGroupId, outcome, failureReason, startedAtUtc, snapshot is null ? null : CreateSnapshotProperties(snapshot), cancellationToken).ConfigureAwait(false);
                 return snapshot;
             }
@@ -372,7 +380,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
             DateTimeOffset startedAtUtc,
             CancellationToken cancellationToken)
         {
-            return this.RecordEventAsync(AiControlPlaneEventType.OperationFailed, operation, runtimeInstanceId, controlPlaneId, tenantId, tenantGroupId, AiControlPlaneOperationOutcome.Failed, exception.GetType().Name, CalculateDurationMs(startedAtUtc, DateTimeOffset.UtcNow), new Dictionary<string, object?> { ["exception.type"] = exception.GetType().FullName, ["exception.message"] = exception.Message }, cancellationToken);
+            return this.RecordEventAsync(AiControlPlaneEventType.OperationFailed, operation, runtimeInstanceId, controlPlaneId, tenantId, tenantGroupId, AiControlPlaneOperationOutcome.Failed, exception.GetType().Name, CalculateDurationMs(startedAtUtc, DateTimeOffset.UtcNow), new Dictionary<string, object?> { [AiExceptionMetadataKeys.ExceptionType] = exception.GetType().FullName, [AiExceptionMetadataKeys.ExceptionMessage] = exception.Message }, cancellationToken);
         }
 
         private async Task RecordEventAsync(
@@ -408,10 +416,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                             properties,
                             new Dictionary<string, object?>
                             {
-                                ["runtimeInstanceId"] = runtimeInstanceId,
-                                ["controlPlaneId"] = controlPlaneId,
-                                ["tenantId"] = tenantId,
-                                ["tenantGroupId"] = tenantGroupId
+                                [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = runtimeInstanceId,
+                                [AiControlPlaneMetadataKeys.ControlPlaneId] = controlPlaneId,
+                                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = tenantId,
+                                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = tenantGroupId
                             })
                     },
                     cancellationToken).ConfigureAwait(false);
@@ -427,10 +435,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
         {
             return new Dictionary<string, object?>
             {
-                ["runtimeInstanceId"] = snapshot.RuntimeInstanceId,
-                ["controlPlaneId"] = snapshot.ControlPlaneId,
-                ["tenantId"] = snapshot.TenantId,
-                ["tenantGroupId"] = snapshot.TenantGroupId,
+                [AiRuntimeInstanceMetadataKeys.CamelCaseRuntimeInstanceId] = snapshot.RuntimeInstanceId,
+                [AiControlPlaneMetadataKeys.ControlPlaneId] = snapshot.ControlPlaneId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId] = snapshot.TenantId,
+                [AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId] = snapshot.TenantGroupId,
                 ["status"] = snapshot.Status.ToString(),
                 ["role"] = snapshot.Role.ToString(),
                 ["workerCount"] = snapshot.WorkerCount,
