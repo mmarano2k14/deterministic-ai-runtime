@@ -24,6 +24,7 @@ using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
 using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 {
@@ -142,9 +143,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 options?.Value
                 ?? throw new ArgumentNullException(nameof(options));
 
-            _observer =
-                observer
-                ?? throw new ArgumentNullException(nameof(observer));
+            ArgumentNullException.ThrowIfNull(observer);
+            var resolvedLifecycleJournal = lifecycleJournal ?? NoopAiRuntimeLifecycleJournal.Instance;
+            _observer = AiRuntimeLifecycleObservabilityCompatibility.Compose(
+                observer,
+                resolvedLifecycleJournal);
 
             _executionContextSnapshotProvider =
                 executionContextSnapshotProvider
@@ -152,8 +155,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
 
             _runtimeRunExecutionIndex = runtimeRunExecutionIndex;
 
-            _lifecycleWriter = new AiRuntimeLifecycleEventWriter(
-                lifecycleJournal ?? NoopAiRuntimeLifecycleJournal.Instance);
+            _lifecycleWriter = new AiRuntimeLifecycleEventWriter(resolvedLifecycleJournal);
         }
 
         /// <inheritdoc />
@@ -733,14 +735,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController
                 metadata[AiPipelineMetadataKeys.Name] = dispatchedRun.PipelineKey;
             }
 
-            await _lifecycleWriter
-                .AppendOnceAsync(
+            await _observer
+                .RecordLifecycleAsync(
                     new AiRuntimeLifecycleEvent
                     {
                         EventId = AiRuntimeLifecycleEventWriter.CreateEventId(
-                            AiRuntimeLifecycleEventType.WorkAssigned,
+                            AiRuntimeLifecycleEvents.WorkAssigned,
                             subjectId),
-                        EventType = AiRuntimeLifecycleEventType.WorkAssigned,
+                        EventType = AiRuntimeLifecycleEvents.WorkAssigned,
                         TimestampUtc = DateTimeOffset.UtcNow,
                         ControlPlaneId = dispatchedRun.ControlPlaneId,
                         HostCreationMode = context.HostCreationMode,

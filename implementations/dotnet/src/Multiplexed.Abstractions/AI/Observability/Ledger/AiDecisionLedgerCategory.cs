@@ -1,11 +1,12 @@
-﻿namespace Multiplexed.Abstractions.AI.Observability.Ledger
+﻿using Multiplexed.Abstractions.AI.Observability.Events;
+namespace Multiplexed.Abstractions.AI.Observability.Ledger
 {
     /// <summary>
     /// Defines the high-level category of a decision ledger entry.
     /// </summary>
     /// <remarks>
     /// Categories are intentionally broad and stable. Specific runtime events are represented
-    /// by string constants from <see cref="AiDecisionLedgerEvents"/> instead of a very large enum.
+    /// by string constants from <see cref="AiEngineEvents"/> instead of a very large enum.
     /// </remarks>
     public enum AiDecisionLedgerCategory
     {

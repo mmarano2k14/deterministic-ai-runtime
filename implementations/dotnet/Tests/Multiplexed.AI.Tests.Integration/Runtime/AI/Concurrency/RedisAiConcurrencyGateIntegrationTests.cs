@@ -23,6 +23,7 @@ using Multiplexed.AI.Stores;
 using NSubstitute;
 using StackExchange.Redis;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.AI.Concurrency
 {
@@ -1975,22 +1976,22 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.AI.Concurrency
                 entries,
                 entry =>
                     entry.Category == AiDecisionLedgerCategory.Claim &&
-                    entry.EventType == AiDecisionLedgerEvents.Claim.Attempted &&
+                    entry.EventType == AiEngineEvents.Claim.Attempted &&
                     entry.Outcome == AiDecisionLedgerOutcome.Started);
 
             Assert.Contains(
                 entries,
                 entry =>
                     entry.Category == AiDecisionLedgerCategory.Claim &&
-                    entry.EventType == AiDecisionLedgerEvents.Claim.Denied &&
+                    entry.EventType == AiEngineEvents.Claim.Denied &&
                     entry.Outcome == AiDecisionLedgerOutcome.Denied);
 
             var entry = Assert.Single(entries, entry =>
                     entry.Category == AiDecisionLedgerCategory.Concurrency &&
-                    entry.EventType == AiDecisionLedgerEvents.Concurrency.Denied);
+                    entry.EventType == AiEngineEvents.Concurrency.Denied);
 
             Assert.Equal(AiDecisionLedgerCategory.Concurrency, entry.Category);
-            Assert.Equal(AiDecisionLedgerEvents.Concurrency.Denied, entry.EventType);
+            Assert.Equal(AiEngineEvents.Concurrency.Denied, entry.EventType);
             Assert.Equal(AiDecisionLedgerOutcome.Denied, entry.Outcome);
             Assert.Equal(executionId, entry.CorrelationContext.ExecutionId);
             Assert.Equal(pipelineKey, entry.CorrelationContext.PipelineName);
@@ -2150,7 +2151,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.AI.Concurrency
 
             var entry = Assert.Single(entries, entry =>
                     entry.Category == AiDecisionLedgerCategory.Claim &&
-                    entry.EventType == AiDecisionLedgerEvents.Claim.Acquired);
+                    entry.EventType == AiEngineEvents.Claim.Acquired);
 
             Assert.NotEmpty(entries);
 
@@ -2158,20 +2159,20 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.AI.Concurrency
                 entries,
                 entry =>
                     entry.Category == AiDecisionLedgerCategory.Claim &&
-                    entry.EventType == AiDecisionLedgerEvents.Claim.Attempted &&
+                    entry.EventType == AiEngineEvents.Claim.Attempted &&
                     entry.Outcome == AiDecisionLedgerOutcome.Started);
 
             Assert.Contains(
                 entries,
                 entry =>
                     entry.Category == AiDecisionLedgerCategory.Concurrency &&
-                    entry.EventType == AiDecisionLedgerEvents.Concurrency.LeaseAcquired &&
+                    entry.EventType == AiEngineEvents.Concurrency.LeaseAcquired &&
                     entry.Outcome == AiDecisionLedgerOutcome.Allowed);
 
 
 
             Assert.Equal(AiDecisionLedgerCategory.Claim, entry.Category);
-            Assert.Equal(AiDecisionLedgerEvents.Claim.Acquired, entry.EventType);
+            Assert.Equal(AiEngineEvents.Claim.Acquired, entry.EventType);
             Assert.Equal(AiDecisionLedgerOutcome.Allowed, entry.Outcome);
             Assert.Equal(executionId, entry.CorrelationContext.ExecutionId);
             Assert.Equal(pipelineKey, entry.CorrelationContext.PipelineName);
@@ -2320,19 +2321,19 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.AI.Concurrency
                 entries,
                 entry =>
                     entry.Category == AiDecisionLedgerCategory.Claim &&
-                    entry.EventType == AiDecisionLedgerEvents.Claim.Attempted &&
+                    entry.EventType == AiEngineEvents.Claim.Attempted &&
                     entry.Outcome == AiDecisionLedgerOutcome.Started);
 
             Assert.Contains(
                 entries,
                 entry =>
                     entry.Category == AiDecisionLedgerCategory.Concurrency &&
-                    entry.EventType == AiDecisionLedgerEvents.Concurrency.LeaseAcquired &&
+                    entry.EventType == AiEngineEvents.Concurrency.LeaseAcquired &&
                     entry.Outcome == AiDecisionLedgerOutcome.Allowed);
 
             var claimDenied = Assert.Single(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Claim &&
-                entry.EventType == AiDecisionLedgerEvents.Claim.Denied &&
+                entry.EventType == AiEngineEvents.Claim.Denied &&
                 entry.Outcome == AiDecisionLedgerOutcome.Denied &&
                 entry.CorrelationContext.StepId == stepName);
 
@@ -2345,7 +2346,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.AI.Concurrency
 
             var leaseReleased = Assert.Single(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Concurrency &&
-                entry.EventType == AiDecisionLedgerEvents.Concurrency.LeaseReleased &&
+                entry.EventType == AiEngineEvents.Concurrency.LeaseReleased &&
                 entry.Outcome == AiDecisionLedgerOutcome.Released);
 
             Assert.Equal(executionId, leaseReleased.CorrelationContext.ExecutionId);
@@ -2367,7 +2368,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.AI.Concurrency
                 entries,
                 entry =>
                     entry.Category == AiDecisionLedgerCategory.Claim &&
-                    entry.EventType == AiDecisionLedgerEvents.Claim.Denied &&
+                    entry.EventType == AiEngineEvents.Claim.Denied &&
                     entry.Outcome == AiDecisionLedgerOutcome.Denied &&
                     entry.CorrelationContext.StepId == "_claim");
         }

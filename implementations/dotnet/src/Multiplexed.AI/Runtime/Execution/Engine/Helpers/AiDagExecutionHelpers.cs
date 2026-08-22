@@ -6,6 +6,7 @@ using Multiplexed.AI.Runtime.AI.Concurrency;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Observability.Helpers;
 using System.Text.Json;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.Execution.Engine.Helpers
 {
@@ -407,7 +408,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Helpers
                     claimToken,
                     concurrencyContext: null,
                     AiDecisionLedgerCategory.Retry,
-                    AiDecisionLedgerEvents.Retry.Evaluated,
+                    AiEngineEvents.Retry.Evaluated,
                     AiDecisionLedgerOutcome.Started,
                     "Retry decision evaluated after step failure.",
                     new Dictionary<string, string>
@@ -435,7 +436,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Helpers
                         claimToken,
                         concurrencyContext: null,
                         AiDecisionLedgerCategory.Retry,
-                        AiDecisionLedgerEvents.Retry.Denied,
+                        AiEngineEvents.Retry.Denied,
                         AiDecisionLedgerOutcome.Denied,
                         "Retry decision could not be resolved because the step state was not found after failure persistence.",
                         new Dictionary<string, string>
@@ -463,7 +464,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Helpers
                         claimToken,
                         concurrencyContext: null,
                         AiDecisionLedgerCategory.Retry,
-                        AiDecisionLedgerEvents.Retry.Scheduled,
+                        AiEngineEvents.Retry.Scheduled,
                         AiDecisionLedgerOutcome.Applied,
                         stepState.RetryState?.RetryReason ?? "Step retry scheduled.",
                         new Dictionary<string, string>
@@ -504,8 +505,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Helpers
                     concurrencyContext: null,
                     AiDecisionLedgerCategory.Retry,
                     budgetExhausted
-                        ? AiDecisionLedgerEvents.Retry.BudgetExhausted
-                        : AiDecisionLedgerEvents.Retry.Denied,
+                        ? AiEngineEvents.Retry.BudgetExhausted
+                        : AiEngineEvents.Retry.Denied,
                     AiDecisionLedgerOutcome.Denied,
                     budgetExhausted
                         ? "Retry budget exhausted."

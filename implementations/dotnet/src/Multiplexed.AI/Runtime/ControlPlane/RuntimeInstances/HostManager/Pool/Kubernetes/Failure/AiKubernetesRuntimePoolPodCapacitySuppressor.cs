@@ -1,3 +1,5 @@
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -6,6 +8,7 @@ using System.Threading.Tasks;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Failure
 {
@@ -20,6 +23,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         private readonly IAiRuntimePoolCapacitySafetyBatchWriter batchWriter;
         private readonly IAiRuntimePoolCapacitySafetyReader safetyReader;
         private readonly AiRuntimeLifecycleEventWriter lifecycleWriter;
+        private readonly IAiControlPlaneObserver observer;
         private readonly SemaphoreSlim suppressionGate = new(1, 1);
 
 
@@ -39,7 +43,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             IAiKubernetesRuntimePoolPodMembershipEnumerator membershipEnumerator,
             IAiRuntimePoolCapacitySafetyBatchWriter batchWriter,
             IAiRuntimePoolCapacitySafetyReader safetyReader,
-            IAiRuntimeLifecycleJournal lifecycleJournal)
+            IAiRuntimeLifecycleJournal lifecycleJournal,
+            IAiControlPlaneObserver? observer = null)
         {
             this.membershipEnumerator =
                 membershipEnumerator
@@ -53,6 +58,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             this.lifecycleWriter = new AiRuntimeLifecycleEventWriter(
                 lifecycleJournal
                 ?? throw new ArgumentNullException(nameof(lifecycleJournal)));
+            this.observer = AiRuntimeLifecycleObservabilityCompatibility.Compose(
+                observer ?? new NoopAiControlPlaneObserver(),
+                lifecycleJournal);
         }
 
         public async Task<AiKubernetesRuntimePoolPodCapacitySuppression>
@@ -219,22 +227,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                     .ConfigureAwait(false);
 
                 var disappearedEventId = AiRuntimeLifecycleEventWriter.CreateEventId(
-                    AiRuntimeLifecycleEventType.HostDisappeared,
+                    AiRuntimeLifecycleEvents.HostDisappeared,
                     suppression.PodUid,
                     suppression.FailureId);
                 var unhealthyEventId = AiRuntimeLifecycleEventWriter.CreateEventId(
-                    AiRuntimeLifecycleEventType.RuntimeUnhealthy,
+                    AiRuntimeLifecycleEvents.RuntimeUnhealthy,
                     member.RuntimeInstanceId,
                     suppression.FailureId);
 
-                await this.lifecycleWriter
-                    .AppendOnceAsync(
+                await this.observer
+                    .RecordLifecycleAsync(
                         CreateRuntimeFailureLifecycleEvent(
                             context,
                             suppression,
                             member,
                             unhealthyEventId,
-                            AiRuntimeLifecycleEventType.RuntimeUnhealthy,
+                            AiRuntimeLifecycleEvents.RuntimeUnhealthy,
                             member.SuppressedAtUtc,
                             disappearedEventId,
                             "selectable",
@@ -243,17 +251,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                await this.lifecycleWriter
-                    .AppendOnceAsync(
+                await this.observer
+                    .RecordLifecycleAsync(
                         CreateRuntimeFailureLifecycleEvent(
                             context,
                             suppression,
                             member,
                             AiRuntimeLifecycleEventWriter.CreateEventId(
-                                AiRuntimeLifecycleEventType.RuntimeSuppressed,
+                                AiRuntimeLifecycleEvents.RuntimeSuppressed,
                                 member.RuntimeInstanceId,
                                 suppression.FailureId),
-                            AiRuntimeLifecycleEventType.RuntimeSuppressed,
+                            AiRuntimeLifecycleEvents.RuntimeSuppressed,
                             member.SuppressedAtUtc.AddTicks(1),
                             unhealthyEventId,
                             "unhealthy",

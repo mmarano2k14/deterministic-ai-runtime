@@ -1,3 +1,5 @@
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
@@ -5,6 +7,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health
 {
@@ -21,6 +24,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health
         private readonly IAiRuntimeInstanceRegistry registry;
         private readonly AiRuntimeInstanceHealthReconciliationOptions options;
         private readonly AiRuntimeLifecycleEventWriter lifecycleWriter;
+        private readonly IAiControlPlaneObserver observer;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiRuntimeInstanceHealthReconciler"/> class.
@@ -40,7 +44,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health
         public AiRuntimeInstanceHealthReconciler(
             IAiRuntimeInstanceRegistry registry,
             IOptions<AiRuntimeInstanceHealthReconciliationOptions> options,
-            IAiRuntimeLifecycleJournal lifecycleJournal)
+            IAiRuntimeLifecycleJournal lifecycleJournal,
+            IAiControlPlaneObserver? observer = null)
         {
             ArgumentNullException.ThrowIfNull(registry);
             ArgumentNullException.ThrowIfNull(options);
@@ -49,6 +54,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health
             this.registry = registry;
             this.options = options.Value;
             this.lifecycleWriter = new AiRuntimeLifecycleEventWriter(lifecycleJournal);
+            this.observer = AiRuntimeLifecycleObservabilityCompatibility.Compose(
+                observer ?? new NoopAiControlPlaneObserver(),
+                lifecycleJournal);
         }
 
         /// <inheritdoc />
@@ -200,14 +208,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Health
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            await this.lifecycleWriter.AppendOnceAsync(
+            await this.observer.RecordLifecycleAsync(
                 new AiRuntimeLifecycleEvent
                 {
                     EventId = AiRuntimeLifecycleEventWriter.CreateEventId(
-                        AiRuntimeLifecycleEventType.RuntimeUnhealthy,
+                        AiRuntimeLifecycleEvents.RuntimeUnhealthy,
                         current.RuntimeInstanceId,
                         incidentId),
-                    EventType = AiRuntimeLifecycleEventType.RuntimeUnhealthy,
+                    EventType = AiRuntimeLifecycleEvents.RuntimeUnhealthy,
                     TimestampUtc = timestampUtc,
                     ControlPlaneId = current.ControlPlaneId ?? context.ControlPlaneId,
                     HostCreationMode = context.HostCreationMode,

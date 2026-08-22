@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 {
@@ -19,8 +20,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
             var incidentId = "pod-failure-1";
 
             await journal.AppendAsync(CreateInfrastructureEvent(
-                "host.disappeared",
-                AiRuntimeLifecycleEventType.HostDisappeared,
+                AiRuntimeLifecycleEvents.HostDisappeared,
+                AiRuntimeLifecycleEvents.HostDisappeared,
                 timestamp,
                 incidentId,
                 hostId: "pod-old",
@@ -28,7 +29,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 
             await journal.AppendAsync(CreateInfrastructureEvent(
                 "runtime.unhealthy:runtime-1",
-                AiRuntimeLifecycleEventType.RuntimeUnhealthy,
+                AiRuntimeLifecycleEvents.RuntimeUnhealthy,
                 timestamp.AddTicks(1),
                 incidentId,
                 hostId: "pod-old",
@@ -36,7 +37,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 
             await journal.AppendAsync(CreateInfrastructureEvent(
                 "runtime.suppressed:runtime-1",
-                AiRuntimeLifecycleEventType.RuntimeSuppressed,
+                AiRuntimeLifecycleEvents.RuntimeSuppressed,
                 timestamp.AddTicks(2),
                 incidentId,
                 hostId: "pod-old",
@@ -44,7 +45,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 
             await journal.AppendAsync(CreateInfrastructureEvent(
                 "runtime.replacement.requested:runtime-1",
-                AiRuntimeLifecycleEventType.RuntimeReplacementRequested,
+                AiRuntimeLifecycleEvents.RuntimeReplacementRequested,
                 timestamp.AddTicks(3),
                 incidentId,
                 hostId: "pod-old",
@@ -52,7 +53,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 
             await journal.AppendAsync(CreateInfrastructureEvent(
                 "runtime.replacement.registered:runtime-4",
-                AiRuntimeLifecycleEventType.RuntimeReplacementRegistered,
+                AiRuntimeLifecycleEvents.RuntimeReplacementRegistered,
                 timestamp.AddTicks(4),
                 incidentId,
                 hostId: "pod-new",
@@ -60,7 +61,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 
             await journal.AppendAsync(CreateWorkEvent(
                 "work.released:local-1",
-                AiRuntimeLifecycleEventType.WorkReleased,
+                AiRuntimeLifecycleEvents.WorkReleased,
                 timestamp.AddTicks(5),
                 incidentId,
                 "runtime-1",
@@ -69,7 +70,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 
             await journal.AppendAsync(CreateWorkEvent(
                 "work.reassigned:local-2",
-                AiRuntimeLifecycleEventType.WorkReassigned,
+                AiRuntimeLifecycleEvents.WorkReassigned,
                 timestamp.AddTicks(6),
                 incidentId,
                 "runtime-4",
@@ -82,18 +83,18 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
             Assert.Equal(
                 new[]
                 {
-                    AiRuntimeLifecycleEventType.HostDisappeared,
-                    AiRuntimeLifecycleEventType.RuntimeUnhealthy,
-                    AiRuntimeLifecycleEventType.RuntimeSuppressed,
-                    AiRuntimeLifecycleEventType.RuntimeReplacementRequested,
-                    AiRuntimeLifecycleEventType.RuntimeReplacementRegistered,
-                    AiRuntimeLifecycleEventType.WorkReleased,
-                    AiRuntimeLifecycleEventType.WorkReassigned
+                    AiRuntimeLifecycleEvents.HostDisappeared,
+                    AiRuntimeLifecycleEvents.RuntimeUnhealthy,
+                    AiRuntimeLifecycleEvents.RuntimeSuppressed,
+                    AiRuntimeLifecycleEvents.RuntimeReplacementRequested,
+                    AiRuntimeLifecycleEvents.RuntimeReplacementRegistered,
+                    AiRuntimeLifecycleEvents.WorkReleased,
+                    AiRuntimeLifecycleEvents.WorkReassigned
                 },
                 events.Select(item => item.EventType));
 
             var reassigned = Assert.Single(events.Where(
-                item => item.EventType == AiRuntimeLifecycleEventType.WorkReassigned));
+                item => item.EventType == AiRuntimeLifecycleEvents.WorkReassigned));
 
             Assert.Equal("tenant-1", reassigned.TenantId);
             Assert.Equal("shared-run-1", reassigned.SharedRunId);
@@ -110,7 +111,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 
             await journal.AppendAsync(CreateWorkEvent(
                 "work.reassigned:tenant-1",
-                AiRuntimeLifecycleEventType.WorkReassigned,
+                AiRuntimeLifecycleEvents.WorkReassigned,
                 timestamp,
                 "incident-1",
                 "runtime-4",
@@ -119,7 +120,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 
             await journal.AppendAsync(CreateWorkEvent(
                 "work.reassigned:tenant-2",
-                AiRuntimeLifecycleEventType.WorkReassigned,
+                AiRuntimeLifecycleEvents.WorkReassigned,
                 timestamp.AddTicks(1),
                 "incident-2",
                 "runtime-safe",

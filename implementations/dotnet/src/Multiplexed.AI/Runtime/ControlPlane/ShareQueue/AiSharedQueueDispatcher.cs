@@ -1,6 +1,7 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Reservations;
@@ -18,12 +19,14 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Rbac.Core.ExecutionContext;
 using RbacExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
 {
@@ -65,7 +68,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
         private readonly IAiTenantRuntimeSettingsProvider _tenantRuntimeSettingsProvider;
         private readonly IAiControlPlaneIdResolver _controlPlaneIdResolver;
         private readonly IExecutionContextAccessor _executionContextAccessor;
-        private readonly IAiRuntimeRecoveryForensicsRecorder _forensicsRecorder;
+        private readonly IAiControlPlaneObserver _observer;
         private readonly IAiRuntimeSignalPublisher? _runtimeSignalPublisher;
         private readonly AiRuntimeLifecycleEventWriter _lifecycleWriter;
         private readonly AiSharedQueuePumpOptions _queuePumpOptions;
@@ -122,7 +125,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             IAiRuntimeRecoveryForensicsRecorder forensicsRecorder,
             IAiRuntimeSignalPublisher? runtimeSignalPublisher = null,
             IAiRuntimeLifecycleJournal? lifecycleJournal = null,
-            IOptions<AiSharedQueuePumpOptions>? queuePumpOptions = null)
+            IOptions<AiSharedQueuePumpOptions>? queuePumpOptions = null,
+            IAiControlPlaneObserver? observer = null)
         {
             _sharedQueue = sharedQueue ?? throw new ArgumentNullException(nameof(sharedQueue));
             _sharedRunStore = sharedRunStore ?? throw new ArgumentNullException(nameof(sharedRunStore));
@@ -135,9 +139,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
             _controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
             _executionContextAccessor = executionContextAccessor ?? throw new ArgumentNullException(nameof(executionContextAccessor));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _forensicsRecorder = forensicsRecorder ?? throw new ArgumentNullException(nameof(forensicsRecorder));
-            _lifecycleWriter = new AiRuntimeLifecycleEventWriter(
-                lifecycleJournal ?? NoopAiRuntimeLifecycleJournal.Instance);
+            ArgumentNullException.ThrowIfNull(forensicsRecorder);
+            var recoveryObserver = observer is null
+                ? AiRecoveryObservabilityCompatibility.Create(forensicsRecorder)
+                : AiRecoveryObservabilityCompatibility.Compose(observer, forensicsRecorder);
+            var resolvedLifecycleJournal = lifecycleJournal ?? NoopAiRuntimeLifecycleJournal.Instance;
+            _observer = AiRuntimeLifecycleObservabilityCompatibility.Compose(
+                recoveryObserver,
+                resolvedLifecycleJournal);
+            _lifecycleWriter = new AiRuntimeLifecycleEventWriter(resolvedLifecycleJournal);
             _runtimeSignalPublisher = runtimeSignalPublisher;
             _queuePumpOptions =
                 queuePumpOptions?.Value ??
@@ -1631,8 +1641,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 AiRuntimeRecoveryMetadataKeys.FailureIncidentId,
                 out var runtimeFailureIncidentId);
             var eventType = isRecovery
-                ? AiRuntimeLifecycleEventType.WorkReassigned
-                : AiRuntimeLifecycleEventType.WorkAssigned;
+                ? AiRuntimeLifecycleEvents.WorkReassigned
+                : AiRuntimeLifecycleEvents.WorkAssigned;
             var subjectId = string.Join(
                 ":",
                 dispatchedRun.SharedRunId,
@@ -1641,8 +1651,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 metadata,
                 AiRuntimeRecoveryMetadataKeys.ForensicsId);
 
-            await _lifecycleWriter
-                .AppendOnceAsync(
+            await _observer
+                .RecordLifecycleAsync(
                     new AiRuntimeLifecycleEvent
                     {
                         EventId = AiRuntimeLifecycleEventWriter.CreateEventId(
@@ -1732,24 +1742,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                 return;
             }
 
-            await _forensicsRecorder
-                .RecordEventAsync(
-                    new AiRuntimeRecoveryForensicsEvent
-                    {
-                        EventId = string.Join(
-                            ":",
-                            forensicsId,
-                            AiRuntimeRecoveryForensicsEventType.ReplacementRuntimeSelected,
-                            replacementRuntimeInstanceId),
-                        ForensicsId = forensicsId,
-                        TimestampUtc = DateTimeOffset.UtcNow,
-                        EventType = AiRuntimeRecoveryForensicsEventType.ReplacementRuntimeSelected,
-                        Outcome = "selected",
-                        Reason = "replacement-runtime-selected-for-recovery-redispatch",
-                        ExecutionId = executionId,
-                        SharedRunId = sharedRun.SharedRunId,
-                        RuntimeInstanceId = replacementRuntimeInstanceId,
-                        Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            var eventType = AiEngineEvents.Recovery.ReplacementRuntimeSelected;
+
+            await _observer
+                .RecordAsync(
+                    AiRecoveryEngineEventFactory.Create(
+                        semanticEventType: eventType,
+                        eventId: string.Join(":", forensicsId, eventType, replacementRuntimeInstanceId),
+                        forensicsId: forensicsId,
+                        timestampUtc: DateTimeOffset.UtcNow,
+                        outcome: "selected",
+                        reason: "replacement-runtime-selected-for-recovery-redispatch",
+                        executionId: executionId,
+                        sharedRunId: sharedRun.SharedRunId,
+                        localRunId: null,
+                        runtimeInstanceId: replacementRuntimeInstanceId,
+                        metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                         {
                             [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = sharedRun.ExecutionContextSnapshot.TenantId ?? string.Empty,
                             [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = sharedRun.ExecutionContextSnapshot.TenantGroupId ?? string.Empty,
@@ -1759,8 +1767,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedQueue
                             [AiRuntimeRecoveryMetadataKeys.TransitionFailedLocalRunId] = failedLocalRunId ?? string.Empty,
                             ["queue.claimToken"] = queueItem.ClaimToken ?? string.Empty,
                             [AiRuntimeRecoveryMetadataKeys.ResumeContextKey] = sharedRun.ExecutionContextSnapshot.ContextKey ?? string.Empty
-                        }
-                    },
+                        }),
                     cancellationToken)
                 .ConfigureAwait(false);
         }

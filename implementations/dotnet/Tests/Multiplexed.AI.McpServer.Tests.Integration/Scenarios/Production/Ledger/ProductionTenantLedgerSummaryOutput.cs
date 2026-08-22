@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Xunit.Abstractions;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 {
@@ -214,18 +215,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                         .ToArray();
 
                 var stepStartedCount =
-                    executionEntries.Count(entry => string.Equals(entry.EventType, "step.started", StringComparison.Ordinal));
+                    executionEntries.Count(entry => string.Equals(entry.EventType, AiEngineEvents.Step.Started, StringComparison.Ordinal));
 
                 var stepCompletedCount =
-                    executionEntries.Count(entry => string.Equals(entry.EventType, "step.completed", StringComparison.Ordinal));
+                    executionEntries.Count(entry => string.Equals(entry.EventType, AiEngineEvents.Step.Completed, StringComparison.Ordinal));
 
                 var replayEntries =
                     executionEntries.Count(entry => EventTypeContains(entry, "replay"));
 
                 var completionEvidence =
                     executionEntries.Any(entry =>
-                        string.Equals(entry.EventType, "run.completed", StringComparison.Ordinal) ||
-                        string.Equals(entry.EventType, "execution.completed", StringComparison.Ordinal) ||
+                        string.Equals(entry.EventType, AiEngineEvents.Run.Completed, StringComparison.Ordinal) ||
+                        string.Equals(entry.EventType, AiEngineEvents.Execution.Completed, StringComparison.Ordinal) ||
                         string.Equals(entry.EventType, "dag.completed", StringComparison.Ordinal) ||
                         (EventTypeContains(entry, "completed") &&
                         string.Equals(entry.Outcome.ToString(), "Completed", StringComparison.OrdinalIgnoreCase)));

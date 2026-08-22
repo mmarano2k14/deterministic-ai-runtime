@@ -11,6 +11,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
 {
@@ -27,16 +28,16 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
         {
             var ledger = new InMemoryAiDecisionLedger();
 
-            await ledger.AppendAsync(CreateEntry("execution-1", AiDecisionLedgerEvents.Execution.Started));
-            await ledger.AppendAsync(CreateEntry("execution-2", AiDecisionLedgerEvents.Execution.Started));
-            await ledger.AppendAsync(CreateEntry("execution-1", AiDecisionLedgerEvents.Execution.Completed));
+            await ledger.AppendAsync(CreateEntry("execution-1", AiEngineEvents.Execution.Started));
+            await ledger.AppendAsync(CreateEntry("execution-2", AiEngineEvents.Execution.Started));
+            await ledger.AppendAsync(CreateEntry("execution-1", AiEngineEvents.Execution.Completed));
 
             var entries = await ledger.GetByExecutionAsync("execution-1");
 
             entries.Should().HaveCount(2);
             entries.Should().OnlyContain(entry => entry.CorrelationContext.ExecutionId == "execution-1");
-            entries[0].EventType.Should().Be(AiDecisionLedgerEvents.Execution.Started);
-            entries[1].EventType.Should().Be(AiDecisionLedgerEvents.Execution.Completed);
+            entries[0].EventType.Should().Be(AiEngineEvents.Execution.Started);
+            entries[1].EventType.Should().Be(AiEngineEvents.Execution.Completed);
         }
 
         /// <summary>
@@ -47,9 +48,9 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
         {
             var ledger = new InMemoryAiDecisionLedger();
 
-            await ledger.AppendAsync(CreateEntry("execution-1", AiDecisionLedgerEvents.Step.Started));
-            await ledger.AppendAsync(CreateEntry("execution-1", AiDecisionLedgerEvents.Step.Completed));
-            await ledger.AppendAsync(CreateEntry("execution-2", AiDecisionLedgerEvents.Step.Started));
+            await ledger.AppendAsync(CreateEntry("execution-1", AiEngineEvents.Step.Started));
+            await ledger.AppendAsync(CreateEntry("execution-1", AiEngineEvents.Step.Completed));
+            await ledger.AppendAsync(CreateEntry("execution-2", AiEngineEvents.Step.Started));
 
             var executionOneEntries = await ledger.GetByExecutionAsync("execution-1");
             var executionTwoEntries = await ledger.GetByExecutionAsync("execution-2");
@@ -69,7 +70,7 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
 
             await ledger.AppendAsync(CreateEntry(
                 "execution-1",
-                AiDecisionLedgerEvents.Concurrency.Denied,
+                AiEngineEvents.Concurrency.Denied,
                 AiDecisionLedgerCategory.Concurrency,
                 AiDecisionLedgerOutcome.Denied,
                 stepId: "step-1",
@@ -77,7 +78,7 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
 
             await ledger.AppendAsync(CreateEntry(
                 "execution-1",
-                AiDecisionLedgerEvents.Step.Completed,
+                AiEngineEvents.Step.Completed,
                 AiDecisionLedgerCategory.Step,
                 AiDecisionLedgerOutcome.Completed,
                 stepId: "step-2"));
@@ -91,7 +92,7 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
             });
 
             entries.Should().ContainSingle();
-            entries[0].EventType.Should().Be(AiDecisionLedgerEvents.Concurrency.Denied);
+            entries[0].EventType.Should().Be(AiEngineEvents.Concurrency.Denied);
             entries[0].CorrelationContext.StepId.Should().Be("step-1");
         }
 
@@ -143,7 +144,7 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
             await recorder.RecordAsync(
                 context,
                 AiDecisionLedgerCategory.Retry,
-                AiDecisionLedgerEvents.Retry.Scheduled,
+                AiEngineEvents.Retry.Scheduled,
                 AiDecisionLedgerOutcome.Applied,
                 "Retry scheduled after transient failure.",
                 new Dictionary<string, string>
@@ -180,7 +181,7 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
             correlation.CorrelationId.Should().Be("correlation-1");
 
             entry.Category.Should().Be(AiDecisionLedgerCategory.Retry);
-            entry.EventType.Should().Be(AiDecisionLedgerEvents.Retry.Scheduled);
+            entry.EventType.Should().Be(AiEngineEvents.Retry.Scheduled);
             entry.Outcome.Should().Be(AiDecisionLedgerOutcome.Applied);
             entry.Reason.Should().Be("Retry scheduled after transient failure.");
             entry.Metadata.Should().ContainKey("retry.count");
@@ -217,7 +218,7 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Ledger
                     ExecutionId = "execution-1"
                 },
                 AiDecisionLedgerCategory.Execution,
-                AiDecisionLedgerEvents.Execution.Started,
+                AiEngineEvents.Execution.Started,
                 AiDecisionLedgerOutcome.Started);
 
             var entries = await ledger.GetByExecutionAsync("execution-1");

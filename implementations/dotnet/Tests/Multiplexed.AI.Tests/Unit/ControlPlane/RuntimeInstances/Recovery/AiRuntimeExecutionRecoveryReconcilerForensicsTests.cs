@@ -21,6 +21,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.AI.Tests.Fixtures;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
 {
@@ -122,12 +123,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
             record.Identity.SharedRunId.Should().Be("shared-run-1");
 
             record.Events.Should().Contain(
-                recoveryEvent => recoveryEvent.EventType == AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected);
+                recoveryEvent => recoveryEvent.EventType == AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected);
 
             var evt = record.Events.Single(
-                recoveryEvent => recoveryEvent.EventType == AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected);
+                recoveryEvent => recoveryEvent.EventType == AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected);
 
-            evt.EventType.Should().Be(AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected);
+            evt.EventType.Should().Be(AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected);
             evt.Outcome.Should().Be("recoverable");
             evt.Reason.Should().Be("dispatched-to-unavailable-runtime");
             evt.ExecutionId.Should().Be("execution-1");
@@ -238,9 +239,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery
             var evt = records
                 .Single()
                 .Events
-                .Single(recoveryEvent => recoveryEvent.EventType == AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected);
+                .Single(recoveryEvent => recoveryEvent.EventType == AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected);
 
-            evt.EventType.Should().Be(AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected);
+            evt.EventType.Should().Be(AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected);
             evt.Outcome.Should().Be("not-recoverable");
             evt.Reason.Should().Be("already-terminal");
             evt.Metadata["candidate.canRecover"].Should().Be(bool.FalseString);

@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 {
@@ -94,7 +95,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 
             var diagnoseResumeContextSeeded = string.Equals(
                 evt.EventType,
-                AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded,
+                AiEngineEvents.Recovery.ResumeContextSeeded,
                 StringComparison.Ordinal);
 
             try

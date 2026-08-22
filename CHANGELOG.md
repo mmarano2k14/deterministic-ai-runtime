@@ -6,6 +6,729 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.8.3 - 2026-08-22 — Centralized Engine Event Observation
+
+
+**Status:** Implementation substantially complete; final deterministic-observer and regression validation in progress.  
+**Scope:** Centralization of canonical engine-event observation through the existing Event Manager, while preserving existing durability, forensics, lifecycle journal, metrics, logging, and realtime implementations.
+
+---
+
+## 1. Canonical Engine Event Governance
+
+### Added
+
+- Established a single canonical namespace for engine-event declarations:
+
+  ```text
+  Multiplexed.Abstractions.AI.Observability.Events
+  ```
+
+- Consolidated semantic engine-event declarations under this namespace.
+- Allowed multiple focused classes/enums by domain while preserving a single namespace and a single semantic source of truth.
+- Preserved all existing physical persisted/wire event values exactly.
+- Added stable event-envelope support for:
+  - `EventId`
+  - `SemanticEventType`
+  - `CorrelationId`
+  - `CausationId`
+
+### Removed
+
+Removed the former competing semantic event declaration owners:
+
+```text
+AiDecisionLedgerEvents
+AiRuntimeRecoveryForensicsEventType
+AiRuntimeLifecycleEventType
+```
+
+These declarations are no longer authoritative sources.
+
+### Governance
+
+Added repository guard tests enforcing:
+
+```text
+ONE SEMANTIC EVENT
+=
+ONE CANONICAL DECLARATION
+=
+ONE CANONICAL NAMESPACE
+```
+
+The guards reject:
+
+- inline canonical event strings outside the canonical namespace;
+- duplicate semantic declarations;
+- reintroduction of removed event catalogs;
+- inconsistent event values across production code and tests.
+
+A historical recovery event value:
+
+```text
+SharedRunRequeuedForLocalQueuedRecovery
+```
+
+was preserved exactly while moving ownership to the canonical event namespace.
+
+---
+
+## 2. Canonical Event Envelope Alignment
+
+The existing `AiControlPlaneEvent` model was extended rather than replaced.
+
+This preserved backward compatibility with existing generic Control Plane events while allowing canonical engine facts to carry a stable semantic identity.
+
+The model now distinguishes:
+
+```text
+generic operation phase/outcome
+```
+
+from:
+
+```text
+canonical semantic event type
+```
+
+This avoids creating a third competing event model.
+
+Legacy operation events such as:
+
+```text
+OperationStarted
+OperationCompleted
+OperationFailed
+```
+
+remain supported.
+
+Canonical events now provide the semantic meaning required by centralized projections.
+
+---
+
+## 3. Central Projection Contract
+
+A central event-to-projection contract was introduced.
+
+The Event Manager no longer relies on individual sinks independently deciding which semantic events they want to process.
+
+The architecture is now:
+
+```text
+Canonical Engine Event
+        ↓
+Existing Event Manager
+        ↓
+Central Projection Catalog
+        ↓
+Configured Projections
+```
+
+The projection catalog centrally defines whether an event is projected to:
+
+```text
+Ledger
+Recovery Forensics
+Execution Forensics
+Runtime Lifecycle Journal
+Metrics
+Logging
+Realtime
+```
+
+This removes distributed projection knowledge from production components and sinks.
+
+---
+
+## 4. Projection Durability and Failure Semantics
+
+Projection behavior was made explicit instead of treating every sink identically.
+
+The central contract supports differentiated projection requirements including:
+
+```text
+RequiredDurable
+ReplayableDurable
+BestEffort
+None
+```
+
+This allows the Event Manager to preserve existing durability boundaries while preventing low-criticality projections such as Metrics or Logging from unnecessarily breaking engine execution.
+
+The design explicitly avoids pretending that Redis and MongoDB share a distributed atomic transaction.
+
+Where mutation and durable event evidence share a real persistence boundary, atomic persistence may be used.
+
+Where they do not, the implementation preserves the proven durability boundary and relies on existing idempotency/reconciliation semantics instead of introducing false atomicity.
+
+---
+
+## 5. Ledger Projection Alignment
+
+The existing Ledger implementation remains authoritative and unchanged in responsibility.
+
+The Ledger projection was adapted so that canonical semantic events preserve their canonical `SemanticEventType` instead of reconstructing competing strings from generic Control Plane fields.
+
+Stable event identity is now reused when producing projection evidence.
+
+The migration preserves existing Ledger durability behavior and avoids weakening strict/best-effort behavior merely for architectural uniformity.
+
+Some direct Ledger boundaries remain intentionally preserved where they are still part of proven execution durability semantics.
+
+These remaining boundaries are explicitly inventoried and guarded against uncontrolled growth.
+
+---
+
+## 6. Recovery Observation Centralization
+
+Recovery observability was migrated first because it had the richest duplicated observation surface.
+
+Recovery semantic facts now flow through:
+
+```text
+Recovery logic
+    ↓
+Canonical Recovery Event
+    ↓
+Existing Event Manager
+    ↓
+Central Projection Catalog
+    ↓
+Recovery Forensics projection
+```
+
+The Recovery Forensics sink delegates to the existing recovery forensics implementation rather than replacing it.
+
+Direct recovery-forensics orchestration was removed from migrated production paths.
+
+Existing recovery transition semantics remain unchanged.
+
+A regression test confirmed that recovery success is emitted only when the underlying transition is both accepted and state-changing.
+
+Candidate detection remains observable even when a transition is rejected or results in no state change.
+
+This preserves the distinction between:
+
+```text
+candidate detected
+```
+
+and:
+
+```text
+recovery completed
+```
+
+---
+
+## 7. Runtime Lifecycle and Runtime Pool Centralization
+
+Runtime lifecycle facts were migrated behind the Event Manager while preserving the existing Runtime Lifecycle Journal.
+
+The runtime lifecycle flow is now:
+
+```text
+Runtime / Pool component
+        ↓
+Canonical Runtime Lifecycle Event
+        ↓
+Existing Event Manager
+        ↓
+Central Projection Catalog
+        ↓
+Runtime Lifecycle Journal projection
+        ↓
+Existing append-once Journal implementation
+```
+
+Direct `AppendOnceAsync` calls for migrated lifecycle facts were removed from their producers.
+
+Journal reads that participate in runtime behavior, reconstruction, idempotency, or recovery remain direct because they are execution dependencies rather than observation projections.
+
+Canonical runtime lifecycle coverage includes facts such as:
+
+```text
+runtime.registered
+runtime.ready
+runtime.unhealthy
+runtime.draining
+runtime.suppressed
+runtime.stopped
+runtime.replacement.requested
+runtime.replacement.registered
+
+host.creation.requested
+host.creation.started
+host.creation.succeeded
+host.creation.failed
+host.deletion.requested
+host.deleted
+host.disappeared
+
+work.assigned
+work.released
+work.reassigned
+```
+
+The Control Plane area mapping was also completed for:
+
+```text
+Recovery → "recovery"
+ChildDag → "child-dag"
+```
+
+---
+
+## 8. Legacy Event Compatibility
+
+The Runtime Lifecycle Journal projection initially received legacy generic Control Plane events that did not contain lifecycle projection payloads.
+
+This caused broad test failures.
+
+The sink was corrected to ignore non-semantic legacy events, matching the compatibility behavior already used by the Recovery projection.
+
+The canonical path remains strict:
+
+```text
+canonical lifecycle event
+→ lifecycle payload required
+```
+
+while:
+
+```text
+legacy generic event
+→ ignored by lifecycle-specific projection
+```
+
+This preserved backward compatibility without weakening canonical validation.
+
+---
+
+## 9. Child DAG and Continuation Events
+
+Canonical Child DAG and continuation events were introduced and routed through the centralized event architecture.
+
+Supported semantic facts include:
+
+```text
+ChildExecutionCreated
+ChildExecutionStarted
+ChildExecutionCompleted
+ChildExecutionFailed
+
+ContinuationScheduled
+ContinuationDelivered
+ContinuationConsumed
+ParentContinuationResumed
+```
+
+Emission boundaries were aligned to actual durable semantics.
+
+Examples:
+
+```text
+actual child execution creation
+→ ChildExecutionCreated
+
+execution index marked started
+→ ChildExecutionStarted
+
+relation completion CAS committed
+→ ChildExecutionCompleted / ChildExecutionFailed
+
+Pending → Scheduled CAS committed
+→ ContinuationScheduled
+
+physical continuation accepted
+→ ContinuationDelivered
+
+Scheduled → Resumed CAS committed
+→ ContinuationConsumed
+→ ParentContinuationResumed
+```
+
+No event is emitted merely because a nearby state exists.
+
+Cancellation is not incorrectly normalized into failure.
+
+---
+
+## 10. Existing Observability Test Compatibility
+
+Several existing tests originally assumed that an observer would receive only generic `OperationStarted`, `OperationCompleted`, or `OperationFailed` events.
+
+After centralization, the same observer correctly receives additional canonical semantic facts.
+
+Tests were updated to distinguish:
+
+```text
+legacy generic Control Plane events
+```
+
+from:
+
+```text
+canonical engine events
+```
+
+Assertions now validate each contract independently instead of relying on the total event count.
+
+This preserves the legacy contract while explicitly proving the new canonical event stream.
+
+---
+
+## 11. Kubernetes Runtime Identity Regression Fix
+
+A timing-sensitive Kubernetes runtime identity regression became visible during lifecycle-event migration.
+
+A replacement runtime that inherited gateway transport metadata from a sibling could later have its provenance overwritten as:
+
+```text
+preserved-existing-capacity-descriptor
+```
+
+instead of preserving:
+
+```text
+preserved-sibling-capacity-descriptor
+```
+
+The provenance semantics were stabilized so that the original sibling-derived source remains preserved across subsequent heartbeats.
+
+This was a behavioral regression exposed by the refactor rather than a desired Step 11 semantic change.
+
+---
+
+## 12. Policy and Decision Observation Centralization
+
+Policy observation was migrated behind the Event Manager.
+
+Existing canonical policy semantics were preserved:
+
+```text
+policy.evaluated
+policy.allowed
+policy.denied
+policy.failed
+```
+
+No artificial `policy.skipped` emission was introduced merely because no policies are configured.
+
+The new policy flow is:
+
+```text
+Policy Engine
+    ↓
+Canonical Policy Event
+    ↓
+Existing Event Manager
+    ↓
+Central Projection Catalog
+    ├── Ledger
+    ├── Policy Metrics
+    └── Logging
+```
+
+Direct Policy Engine calls to:
+
+```text
+Ledger
+Policy Metrics
+```
+
+were removed for migrated semantic facts.
+
+Tracing remains direct where it represents implementation instrumentation rather than a canonical engine fact.
+
+Policy Metrics is now a first-class centralized projection.
+
+Tests were updated so that `PolicyAllowed` correctly expects both Ledger and Metrics projections.
+
+---
+
+## 13. Direct Observability Orchestration Sweep
+
+Repository guards now enforce the centralized architecture for migrated semantic facts.
+
+Current guarded outcomes include:
+
+```text
+Direct Recovery Forensics calls        0
+Direct migrated Journal append calls   0
+Canonical event literal violations     0
+```
+
+Remaining direct observability dependencies are allowed only when they represent:
+
+- execution behavior rather than observation;
+- proven durability boundaries not yet safe to move;
+- implementation telemetry that is not a canonical semantic fact.
+
+The goal is not to mechanically remove every observability call.
+
+The rule is:
+
+```text
+canonical semantic fact
+→ Event Manager only
+```
+
+while execution behavior and implementation-specific telemetry remain where they belong.
+
+---
+
+## 14. Deterministic Lifecycle Observation
+
+A deterministic lifecycle observation path has been introduced on top of the centralized event architecture.
+
+The observer supports:
+
+```text
+durable evidence check
+→ realtime subscription
+→ durable evidence re-check
+→ await canonical event
+→ verify durable state when required
+```
+
+This addresses the missed-event race:
+
+```text
+transition happens
+→ realtime event emitted
+→ test subscribes too late
+```
+
+Durable evidence readers cover existing observation stores including:
+
+```text
+Runtime Lifecycle Journal
+Recovery Forensics
+Decision Ledger
+```
+
+Hard watchdogs remain mandatory.
+
+The deterministic observer is intended to improve diagnostics and synchronization, not to remove liveness boundaries.
+
+---
+
+## 15. Test Synchronization Migration Strategy
+
+Existing production and integration tests currently contain proven polling-based synchronization such as:
+
+```text
+poll
+sleep
+snapshot
+infer
+```
+
+These tests will not be deleted or rewritten abruptly.
+
+A progressive event-driven mode will be added:
+
+```text
+Polling mode
++
+Event-driven mode
+```
+
+Both modes will initially drive the same scenario and final assertions.
+
+The event-driven mode will use:
+
+```text
+durable evidence check
+→ subscribe
+→ durable evidence re-check
+→ await canonical lifecycle event
+→ final durable-state verification
+```
+
+Polling remains available as a compatibility/fallback path until event-driven synchronization is proven equivalent for each scenario.
+
+Priority order for migration:
+
+1. Depth 1 recovery.
+2. Pod deletion and runtime replacement.
+3. Warm reuse and Runtime Pool convergence.
+4. Child DAG and continuation recovery.
+5. Depth 0 and historical regression scenarios.
+
+Hard watchdogs remain in both modes.
+
+---
+
+## 16. Runtime Lifecycle Event Documentation
+
+The public/internal architecture documentation will include a dedicated **Runtime Lifecycle Events** section.
+
+The canonical code namespace remains the source of truth.
+
+Documentation will describe each event using fields such as:
+
+| Field | Description |
+|---|---|
+| Event | Canonical semantic event |
+| Meaning | Exact engine fact represented |
+| Emission boundary | State transition after which it is emitted |
+| Identities | Relevant runtime/execution/correlation identifiers |
+| Durability | Durable / replayable / transient classification |
+| Projections | Ledger / Forensics / Journal / Metrics / Logging / Realtime |
+| Test usage | Scenarios that may wait for the event |
+
+Documentation will also describe expected lifecycle sequences for major production scenarios.
+
+Example:
+
+```text
+Host/Pod failure
+→ host.disappeared
+→ runtime.unhealthy
+→ work.released
+→ runtime.replacement.requested
+→ runtime.replacement.registered
+→ runtime.ready
+→ work.reassigned
+```
+
+These sequences are documentation of the canonical runtime lifecycle, not a second declaration source.
+
+---
+
+## 17. Current Architecture
+
+The current Step 11 architecture is:
+
+```text
+                     PRODUCTION ENGINE
+                            │
+                            │
+                    semantic engine fact
+                            │
+                            ▼
+                 CANONICAL EVENT NAMESPACE
+                            │
+                            ▼
+                  EXISTING EVENT MANAGER
+                            │
+                            ▼
+                CENTRAL PROJECTION CATALOG
+                            │
+          ┌─────────────────┼─────────────────┐
+          │                 │                 │
+          ▼                 ▼                 ▼
+       Ledger           Forensics      Lifecycle Journal
+          │                 │                 │
+          └──────────┬──────┴─────────┬───────┘
+                     │                │
+                     ▼                ▼
+                  Metrics          Logging
+                     │                │
+                     └───────┬────────┘
+                             ▼
+                       Realtime Observer
+                             │
+                             ▼
+                 Deterministic Test Waiting
+```
+
+No second event bus or parallel observability framework has been introduced.
+
+The Event Manager remains the single orchestration point.
+
+---
+
+## 18. Validation Status
+
+### Completed and validated during implementation
+
+- canonical event namespace consolidation;
+- canonical string governance;
+- central projection catalog;
+- differentiated projection failure semantics;
+- Recovery Forensics centralization;
+- Runtime Lifecycle Journal centralization;
+- Child DAG / continuation canonical events;
+- Policy Ledger/Metrics centralization;
+- legacy event compatibility;
+- projection routing tests;
+- regression corrections discovered during migration.
+
+### Implemented and awaiting final regression validation
+
+- deterministic lifecycle observer;
+- durable evidence fallback/re-check behavior;
+- final direct-call repository guards;
+- production/integration test event-driven synchronization mode.
+
+### Final regression matrix
+
+Step 11 final validation will include:
+
+```text
+gRPC ProcessHost
+Kubernetes Depth 0
+Depth 1 recovery
+Runtime Pool warm reuse
+Pod deletion and replacement
+Scale-Out recovery
+Child DAG continuation
+```
+
+Existing polling behavior will remain available while the new event-driven mode is proven against the same production scenarios.
+
+---
+
+## 19. Architectural Invariants Established by Step 11
+
+```text
+ONE ENGINE FACT
+=
+ONE CANONICAL EVENT
+=
+ONE CANONICAL DECLARATION
+=
+ONE CENTRAL DISPATCH PATH
+```
+
+And:
+
+```text
+THE ENGINE EMITS FACTS.
+
+THE EVENT MANAGER PROJECTS THEM.
+```
+
+Ledger, Forensics, Runtime Lifecycle Journal, Metrics, Logging, and Realtime retain their existing responsibilities and implementations.
+
+What changed is the orchestration boundary.
+
+Canonical engine facts are no longer independently projected by production components.
+
+---
+
+## 20. Next Work
+
+The next Step 11 activity is validation rather than architectural redesign:
+
+```text
+1. Complete unit validation of deterministic observer/final guards.
+2. Add event-driven waiting mode to production/integration tests.
+3. Keep polling mode intact as compatibility/fallback.
+4. Run the full regression matrix.
+5. Document the canonical Runtime Lifecycle Event catalog and scenario sequences.
+6. Close Step 11 only when behavioral parity is proven.
+```
+
+No additional event bus, observability store, Ledger, Forensics system, or lifecycle store is planned.
+
+---
+
 ## 1.0.8.3 - 2026-08-20  - Semantic Contract Consolidation — Changelog
 
 ## Objective

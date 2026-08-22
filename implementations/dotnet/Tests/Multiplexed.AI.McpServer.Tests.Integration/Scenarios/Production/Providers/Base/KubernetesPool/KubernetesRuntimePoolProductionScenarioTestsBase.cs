@@ -40,6 +40,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.AI.Stores;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger;
 using StackExchange.Redis;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.KubernetesPool
 {
@@ -1350,7 +1351,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     executionLedgerEntries.Count(
                         entry => string.Equals(
                             entry.EventType,
-                            "step.completed",
+                            AiEngineEvents.Step.Completed,
                             StringComparison.OrdinalIgnoreCase));
 
                 var stepCompletionLedgerProof =
@@ -3158,7 +3159,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             executionLedgerEntries.Count(
                                 entry => string.Equals(
                                     entry.EventType,
-                                    "step.completed",
+                                    AiEngineEvents.Step.Completed,
                                     StringComparison.OrdinalIgnoreCase));
 
                         var stepCompletionLedgerProof =

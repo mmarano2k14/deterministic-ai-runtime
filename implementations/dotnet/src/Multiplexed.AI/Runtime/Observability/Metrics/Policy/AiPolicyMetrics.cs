@@ -1,4 +1,5 @@
 ﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Metrics.Policy;
 using Multiplexed.AI.Abstractions.AI.Policies;
@@ -102,7 +103,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Policy
                 new Dictionary<string, string>
                 {
                     ["success"] = success.ToString(),
-                    ["duration.ms"] = durationMs.ToString()
+                    [AiObservabilityMetadataKeys.DottedDurationMs] = durationMs.ToString()
                 },
                 value: durationMs > 0 ? durationMs : 1);
         }
@@ -159,7 +160,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Policy
                 policyName,
                 new Dictionary<string, string>
                 {
-                    ["result.kind"] = kind.ToString()
+                    [AiPolicyMetadataKeys.ResultKind] = kind.ToString()
                 });
         }
 

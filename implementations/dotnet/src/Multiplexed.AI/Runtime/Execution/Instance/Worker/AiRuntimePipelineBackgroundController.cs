@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.ExecutionAssistance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -16,7 +17,9 @@ using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Observability;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Observability;
 using Multiplexed.AI.Runtime.Observability.Helpers;
 using Multiplexed.AI.Runtime.Observability.Logging;
 using Multiplexed.Rbac.Core.ExecutionContext;
@@ -25,6 +28,7 @@ using System.Reflection;
 using System.Threading.Channels;
 using ExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
 using Multiplexed.Abstractions.AI.Execution.Context;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 {
@@ -82,7 +86,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         private readonly IAiExecutionAssistanceCandidateStore _assistanceCandidateStore;
         private readonly IAiRuntimeRunExecutionIndex _runExecutionIndex;
         private readonly IExecutionContextAccessor _executionContextAccessor;
-        private readonly IAiRuntimeRecoveryForensicsRecorder _forensicsRecorder;
+        private readonly IAiControlPlaneObserver _observer;
 
         private readonly AiRuntimePipelineBackgroundControllerOptions _options;
         private readonly Channel<AiRuntimeQueuedPipelineRun> _queue;
@@ -177,7 +181,8 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
         /// <param name="runExecutionIndex">The runtime run execution index.</param>
         /// <param name="executionContextAccessor">The RBAC execution context accessor used to restore durable snapshots for background runs.</param>
         /// <param name="options">The controller options.</param>
-        /// <param name="forensicsRecorder">The runtime recovery forensics recorder.</param>
+        /// <param name="forensicsRecorder">The runtime recovery forensics recorder retained for direct-construction compatibility.</param>
+        /// <param name="observer">The centralized control-plane Event Manager when provided by dependency injection.</param>
         public AiRuntimePipelineBackgroundController(
             AiDagExecutionEngine engine,
             IAiRuntimeInstanceWorker worker,
@@ -194,7 +199,8 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             IAiRuntimeRunExecutionIndex runExecutionIndex,
             IExecutionContextAccessor executionContextAccessor,
             IOptions<AiRuntimePipelineBackgroundControllerOptions> options,
-            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder)
+            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder,
+            IAiControlPlaneObserver? observer = null)
         {
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
             _worker = worker ?? throw new ArgumentNullException(nameof(worker));
@@ -211,7 +217,10 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             _runExecutionIndex = runExecutionIndex ?? throw new ArgumentNullException(nameof(runExecutionIndex));
             _executionContextAccessor = executionContextAccessor ?? throw new ArgumentNullException(nameof(executionContextAccessor));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-            _forensicsRecorder = forensicsRecorder ?? throw new ArgumentNullException(nameof(forensicsRecorder));
+            ArgumentNullException.ThrowIfNull(forensicsRecorder);
+            _observer = observer is null
+                ? AiRecoveryObservabilityCompatibility.Create(forensicsRecorder)
+                : AiRecoveryObservabilityCompatibility.Compose(observer, forensicsRecorder);
 
             var queueCapacity = Math.Max(1, _options.QueueCapacity);
             var maxConcurrentRuns = Math.Max(1, _options.MaxConcurrentRuns);
@@ -542,7 +551,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 {
                     await RecordRecoveryForensicsEventAsync(
                             queuedRun,
-                            AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered,
+                            AiEngineEvents.Recovery.ReplacementLocalRunRegistered,
                             "registered",
                             "replacement-local-run-registered-on-runtime-instance",
                             recoveryResume.ExecutionId,
@@ -569,7 +578,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 await RecordRunLedgerAsync(
                         runId,
                         request.PipelineName,
-                        AiDecisionLedgerEvents.Run.Queued,
+                        AiEngineEvents.Run.Queued,
                         AiDecisionLedgerOutcome.Persisted,
                         reason: recoveryResume is not null
                             ? "Pipeline run queued for existing execution recovery resume."
@@ -940,7 +949,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     executionId: ledgerTarget.ExecutionId,
                     runId: ledgerTarget.RunId,
                     pipelineName: ledgerTarget.PipelineName,
-                    eventType: AiDecisionLedgerEvents.Queue.Paused,
+                    eventType: AiEngineEvents.Queue.Paused,
                     outcome: AiDecisionLedgerOutcome.Applied,
                     reason: reason ?? "Pipeline controller queue paused.",
                     metadata: new Dictionary<string, string>
@@ -981,7 +990,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     executionId: ledgerTarget.ExecutionId,
                     runId: ledgerTarget.RunId,
                     pipelineName: ledgerTarget.PipelineName,
-                    eventType: AiDecisionLedgerEvents.Queue.Resumed,
+                    eventType: AiEngineEvents.Queue.Resumed,
                     outcome: AiDecisionLedgerOutcome.Applied,
                     reason: "Pipeline controller queue resumed.",
                     metadata: new Dictionary<string, string>
@@ -1030,7 +1039,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             await RecordRunLedgerAsync(
                     runId,
                     queuedRun.Request.PipelineName,
-                    AiDecisionLedgerEvents.Run.Cancelled,
+                    AiEngineEvents.Run.Cancelled,
                     AiDecisionLedgerOutcome.Cancelled,
                     reason: reason ?? "Queued pipeline run cancelled before execution creation.",
                     metadata: new Dictionary<string, string>
@@ -1147,7 +1156,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     await RecordRunLedgerAsync(
                             queuedRun.Handle.RunId,
                             queuedRun.Request.PipelineName,
-                            AiDecisionLedgerEvents.Run.Dequeued,
+                            AiEngineEvents.Run.Dequeued,
                             AiDecisionLedgerOutcome.Started,
                             reason: "Pipeline run dequeued for processing.",
                             metadata: new Dictionary<string, string>
@@ -1277,7 +1286,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 await RecordRunLedgerAsync(
                         handle.RunId,
                         request.PipelineName,
-                        AiDecisionLedgerEvents.Run.Cancelled,
+                        AiEngineEvents.Run.Cancelled,
                         AiDecisionLedgerOutcome.Cancelled,
                         handle.ExecutionId,
                         "Pipeline run cancelled by controller cancellation token.",
@@ -1325,7 +1334,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 await RecordRunLedgerAsync(
                         handle.RunId,
                         request.PipelineName,
-                        AiDecisionLedgerEvents.Run.Failed,
+                        AiEngineEvents.Run.Failed,
                         AiDecisionLedgerOutcome.Failed,
                         handle.ExecutionId,
                         failureReason,
@@ -1681,7 +1690,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
                     await RecordRecoveryForensicsEventAsync(
                             queuedRun,
-                            AiRuntimeRecoveryForensicsEventType.DagResumeStarted,
+                            AiEngineEvents.Recovery.DagResumeStarted,
                             "started",
                             "dag-resume-started-on-replacement-runtime",
                             created.ExecutionId,
@@ -1713,6 +1722,20 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         $"[AI PIPELINE CONTROLLER] Execution created. RunId='{handle.RunId}', ExecutionId='{created.ExecutionId}', Pipeline='{created.PipelineName}'.");
                 }
 
+                if (!queuedRun.IsResume && externalWaitContinuation is null)
+                {
+                    var childCreatedEvent = AiChildDagEngineEventFactory.TryCreateExecutionLifecycle(
+                        request,
+                        created.ExecutionId,
+                        _runtimeInstanceIdentity.RuntimeInstanceId,
+                        AiEngineEvents.ChildDag.ExecutionCreated);
+
+                    if (childCreatedEvent is not null)
+                    {
+                        await _observer.RecordAsync(childCreatedEvent, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+
                 queuedRun.Correlation.ExecutionId = created.ExecutionId;
                 queuedRun.Correlation.PipelineKey = created.PipelineName;
                 queuedRun.Correlation.RunId = handle.RunId;
@@ -1728,6 +1751,20 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         created.ExecutionId,
                         cancellationToken)
                     .ConfigureAwait(false);
+
+                if (!queuedRun.IsResume && externalWaitContinuation is null)
+                {
+                    var childStartedEvent = AiChildDagEngineEventFactory.TryCreateExecutionLifecycle(
+                        request,
+                        created.ExecutionId,
+                        _runtimeInstanceIdentity.RuntimeInstanceId,
+                        AiEngineEvents.ChildDag.ExecutionStarted);
+
+                    if (childStartedEvent is not null)
+                    {
+                        await _observer.RecordAsync(childStartedEvent, cancellationToken).ConfigureAwait(false);
+                    }
+                }
 
                 if (externalWaitContinuation is null)
                 {
@@ -1750,7 +1787,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 await RecordRunLedgerAsync(
                         handle.RunId,
                         request.PipelineName,
-                        AiDecisionLedgerEvents.Run.Started,
+                        AiEngineEvents.Run.Started,
                         AiDecisionLedgerOutcome.Started,
                         created.ExecutionId,
                         "Pipeline run started execution processing.",
@@ -1816,7 +1853,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         {
                             await RecordRecoveryForensicsEventAsync(
                                     queuedRun,
-                                    AiRuntimeRecoveryForensicsEventType.DagResumeCompleted,
+                                    AiEngineEvents.Recovery.DagResumeCompleted,
                                     "completed",
                                     "dag-resume-completed-on-replacement-runtime",
                                     created.ExecutionId,
@@ -1825,7 +1862,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
                             await RecordRecoveryForensicsEventAsync(
                                     queuedRun,
-                                    AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCompleted,
+                                    AiEngineEvents.Recovery.ExecutionRecoveryCompleted,
                                     "completed",
                                     "execution-recovery-completed-after-dag-resume",
                                     created.ExecutionId,
@@ -1836,7 +1873,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         {
                             await RecordRecoveryForensicsEventAsync(
                                     queuedRun,
-                                    AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCompleted,
+                                    AiEngineEvents.Recovery.ExecutionRecoveryCompleted,
                                     "waiting",
                                     "execution-recovery-converged-to-durable-waiting-state",
                                     created.ExecutionId,
@@ -1847,7 +1884,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         {
                             await RecordRecoveryForensicsEventAsync(
                                     queuedRun,
-                                    AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryFailed,
+                                    AiEngineEvents.Recovery.ExecutionRecoveryFailed,
                                     "failed",
                                     $"execution-recovery-failed-after-dag-resume-status-{final.Status}",
                                     created.ExecutionId,
@@ -1934,7 +1971,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                         await RecordRunLedgerAsync(
                                 handle.RunId,
                                 request.PipelineName,
-                                AiDecisionLedgerEvents.Run.Suspended,
+                                AiEngineEvents.Run.Suspended,
                                 AiDecisionLedgerOutcome.Applied,
                                 created.ExecutionId,
                                 "Pipeline run released runtime capacity while the execution waits for an external durable condition.",
@@ -1960,7 +1997,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                     {
                         await RecordRecoveryForensicsEventAsync(
                                 queuedRun,
-                                AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryFailed,
+                                AiEngineEvents.Recovery.ExecutionRecoveryFailed,
                                 "failed",
                                 ex.Message,
                                 created.ExecutionId,
@@ -2202,26 +2239,25 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                 return;
             }
 
-            await _forensicsRecorder
-                .RecordEventAsync(
-                    new AiRuntimeRecoveryForensicsEvent
-                    {
-                        EventId = string.Join(
+            await _observer
+                .RecordAsync(
+                    AiRecoveryEngineEventFactory.Create(
+                        semanticEventType: eventType,
+                        eventId: string.Join(
                             ":",
                             forensicsId,
                             eventType,
                             _runtimeInstanceIdentity.RuntimeInstanceId,
                             queuedRun.Handle.RunId),
-                        ForensicsId = forensicsId,
-                        TimestampUtc = DateTimeOffset.UtcNow,
-                        EventType = eventType,
-                        Outcome = outcome,
-                        Reason = reason,
-                        ExecutionId = executionId,
-                        SharedRunId = sharedRunId,
-                        LocalRunId = queuedRun.Handle.RunId,
-                        RuntimeInstanceId = _runtimeInstanceIdentity.RuntimeInstanceId,
-                        Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        forensicsId: forensicsId,
+                        timestampUtc: DateTimeOffset.UtcNow,
+                        outcome: outcome,
+                        reason: reason,
+                        executionId: executionId,
+                        sharedRunId: sharedRunId,
+                        localRunId: queuedRun.Handle.RunId,
+                        runtimeInstanceId: _runtimeInstanceIdentity.RuntimeInstanceId,
+                        metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                         {
                             [AiPipelineMetadataKeys.Name] = queuedRun.Request.PipelineName,
                             [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = queuedRun.Request.ExecutionContextSnapshot?.TenantId ?? string.Empty,
@@ -2233,8 +2269,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                             [AiRuntimeRecoveryMetadataKeys.TransitionFailedLocalRunId] = failedLocalRunId,
                             [AiRuntimeRecoveryMetadataKeys.ResumeContextKey] = queuedRun.Request.ExecutionContextSnapshot?.ContextKey ?? string.Empty,
                             [AiRuntimeRecoveryMetadataKeys.Resume] = "true"
-                        }
-                    },
+                        }),
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -2479,7 +2514,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
 
             await RecordRecoveryForensicsEventAsync(
                     queuedRun,
-                    AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded,
+                    AiEngineEvents.Recovery.ResumeContextSeeded,
                     "seeded",
                     "resume-context-seeded-on-replacement-runtime",
                     queuedRun.ResumeExecutionId!,
@@ -3078,10 +3113,10 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             ArgumentNullException.ThrowIfNull(final);
 
             var eventType = final.Status == AiExecutionStatus.Completed
-                ? AiDecisionLedgerEvents.Run.Completed
+                ? AiEngineEvents.Run.Completed
                 : final.Status == AiExecutionStatus.Cancelled
-                    ? AiDecisionLedgerEvents.Run.Cancelled
-                    : AiDecisionLedgerEvents.Run.Failed;
+                    ? AiEngineEvents.Run.Cancelled
+                    : AiEngineEvents.Run.Failed;
 
             var outcome = final.Status == AiExecutionStatus.Completed
                 ? AiDecisionLedgerOutcome.Completed
@@ -3190,7 +3225,7 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
             await RecordRunLedgerAsync(
                     runId,
                     runningRun.Request.PipelineName,
-                    AiDecisionLedgerEvents.Run.Cancelled,
+                    AiEngineEvents.Run.Cancelled,
                     AiDecisionLedgerOutcome.Applied,
                     executionId,
                     reason ?? "Running pipeline run cancellation delegated to execution control.",

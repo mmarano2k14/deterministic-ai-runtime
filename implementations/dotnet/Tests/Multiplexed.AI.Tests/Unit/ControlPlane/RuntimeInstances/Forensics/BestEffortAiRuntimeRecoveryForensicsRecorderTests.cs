@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
 {
@@ -209,7 +210,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
                 EventId = eventId,
                 ForensicsId = forensicsId,
                 TimestampUtc = DateTimeOffset.UtcNow,
-                EventType = AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected,
+                EventType = AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected,
                 Outcome = "ok",
                 Reason = "test",
                 ExecutionId = executionId,

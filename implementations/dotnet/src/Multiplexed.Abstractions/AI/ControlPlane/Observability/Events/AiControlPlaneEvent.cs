@@ -13,7 +13,26 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.Observability.Events
     public sealed class AiControlPlaneEvent
     {
         /// <summary>
-        /// Generic control-plane event type.
+        /// Gets the stable identifier for this emitted event instance.
+        /// </summary>
+        /// <remarks>
+        /// Existing generic control-plane emitters may rely on the generated value. Durable semantic
+        /// emitters should set this value explicitly when an existing stable identity can be reused
+        /// for idempotent projection and replay.
+        /// </remarks>
+        public string EventId { get; init; } = Guid.NewGuid().ToString("N");
+
+        /// <summary>
+        /// Gets the canonical semantic engine event type when this event represents a canonical engine fact.
+        /// </summary>
+        /// <remarks>
+        /// Values must come from <c>Multiplexed.Abstractions.AI.Observability.Events</c>. Generic legacy
+        /// control-plane operation events may leave this value null until their semantic migration is performed.
+        /// </remarks>
+        public string? SemanticEventType { get; init; }
+
+        /// <summary>
+        /// Generic control-plane event type describing the operation phase or outcome envelope.
         /// </summary>
         public required AiControlPlaneEventType EventType { get; init; }
 
@@ -39,6 +58,11 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.Observability.Events
         /// creating a duplicate control-plane-specific context.
         /// </summary>
         public required AiRuntimeExecutionCorrelationContext Correlation { get; init; }
+
+        /// <summary>
+        /// Gets the identifier of the event, decision, or durable fact that caused this event when known.
+        /// </summary>
+        public string? CausationId { get; init; }
 
         /// <summary>
         /// UTC timestamp of the event.

@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Normalization;
 using Multiplexed.AI.Runtime.Observability.Helpers;
 using Multiplexed.Abstractions.AI.Execution.Context;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot
 {
@@ -86,7 +87,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot
                 await RecordSnapshotLedgerEventAsync(
                         record,
                         snapshot,
-                        AiDecisionLedgerEvents.Snapshot.Created,
+                        AiEngineEvents.Snapshot.Created,
                         AiDecisionLedgerOutcome.Persisted,
                         "Terminal execution snapshot persisted.",
                         null,
@@ -97,7 +98,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot
             {
                 await RecordStorageLedgerEventAsync(
                         record,
-                        AiDecisionLedgerEvents.Storage.StatePersistenceFailed,
+                        AiEngineEvents.Storage.StatePersistenceFailed,
                         AiDecisionLedgerOutcome.Failed,
                         exception.Message,
                         new Dictionary<string, string>

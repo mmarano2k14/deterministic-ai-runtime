@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 {
@@ -234,14 +235,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
         {
             ArgumentNullException.ThrowIfNull(timelineEventTypes);
 
-            if (timelineEventTypes.Any(eventType => string.Equals(eventType, "execution.recovery.candidate.detected", StringComparison.Ordinal)) ||
-                timelineEventTypes.Any(eventType => string.Equals(eventType, "shared.run.requeued.for.resume", StringComparison.Ordinal)))
+            if (timelineEventTypes.Any(eventType => string.Equals(eventType, AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected, StringComparison.Ordinal)) ||
+                timelineEventTypes.Any(eventType => string.Equals(eventType, AiEngineEvents.Recovery.SharedRunRequeuedForResume, StringComparison.Ordinal)))
             {
                 return InFlightResumeTimelineType;
             }
 
-            if (timelineEventTypes.Any(eventType => string.Equals(eventType, "SharedRunRequeuedForLocalQueuedRecovery", StringComparison.Ordinal)) ||
-                timelineEventTypes.Any(eventType => string.Equals(eventType, "failed.local.run.marked.requeued.for.recovery", StringComparison.Ordinal)))
+            if (timelineEventTypes.Any(eventType => string.Equals(eventType, AiEngineEvents.Recovery.SharedRunRequeuedForLocalQueuedRecovery, StringComparison.Ordinal)) ||
+                timelineEventTypes.Any(eventType => string.Equals(eventType, AiEngineEvents.Recovery.FailedLocalRunMarkedRequeuedForRecovery, StringComparison.Ordinal)))
             {
                 return LocalQueuedRecoveryTimelineType;
             }

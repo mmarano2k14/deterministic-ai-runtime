@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Stores.Mongo;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 {
@@ -166,7 +167,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 filters.Add(
                     builder.ElemMatch(
                         document => document.Record.Events,
-                        evt => evt.EventType == AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryFailed));
+                        evt => evt.EventType == AiEngineEvents.Recovery.ExecutionRecoveryFailed));
             }
 
             if (query.CreatedFromUtc.HasValue)

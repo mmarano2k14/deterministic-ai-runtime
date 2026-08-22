@@ -12,6 +12,7 @@ using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 {
@@ -66,8 +67,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
             var events = await journal.ListByRuntimeInstanceIdAsync("runtime-a1");
 
             Assert.Equal(2, events.Count);
-            Assert.Equal(AiRuntimeLifecycleEventType.RuntimeRegistered, events[0].EventType);
-            Assert.Equal(AiRuntimeLifecycleEventType.RuntimeReady, events[1].EventType);
+            Assert.Equal(AiRuntimeLifecycleEvents.RuntimeRegistered, events[0].EventType);
+            Assert.Equal(AiRuntimeLifecycleEvents.RuntimeReady, events[1].EventType);
             Assert.All(events, lifecycleEvent =>
             {
                 Assert.Equal("control-plane-a", lifecycleEvent.ControlPlaneId);
@@ -138,10 +139,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 
             Assert.Single(
                 events.Where(lifecycleEvent =>
-                    lifecycleEvent.EventType == AiRuntimeLifecycleEventType.RuntimeRegistered));
+                    lifecycleEvent.EventType == AiRuntimeLifecycleEvents.RuntimeRegistered));
             Assert.Single(
                 events.Where(lifecycleEvent =>
-                    lifecycleEvent.EventType == AiRuntimeLifecycleEventType.RuntimeReady));
+                    lifecycleEvent.EventType == AiRuntimeLifecycleEvents.RuntimeReady));
         }
 
         private static AiRuntimeInstanceControlPlane CreateControlPlane(

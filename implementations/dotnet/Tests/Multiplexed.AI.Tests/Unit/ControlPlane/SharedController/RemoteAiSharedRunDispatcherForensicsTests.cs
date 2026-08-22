@@ -11,6 +11,7 @@ using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch;
 using Multiplexed.AI.Tests.Fixtures;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
 {
@@ -144,8 +145,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             var localRunEvent = forensicsRecorder.Events[0];
             var resumeContextEvent = forensicsRecorder.Events[1];
 
-            Assert.Equal(AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered, localRunEvent.EventType);
-            Assert.Equal(AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded, resumeContextEvent.EventType);
+            Assert.Equal(AiEngineEvents.Recovery.ReplacementLocalRunRegistered, localRunEvent.EventType);
+            Assert.Equal(AiEngineEvents.Recovery.ResumeContextSeeded, resumeContextEvent.EventType);
 
             Assert.Equal("runtime-recovery:execution-1:shared-run-1:local-run-failed-1", localRunEvent.ForensicsId);
             Assert.Equal(localRunEvent.ForensicsId, resumeContextEvent.ForensicsId);

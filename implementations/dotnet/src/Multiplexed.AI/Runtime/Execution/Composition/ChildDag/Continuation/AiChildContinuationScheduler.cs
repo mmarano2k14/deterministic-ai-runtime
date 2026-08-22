@@ -1,3 +1,7 @@
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.Observability.Events;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution;
@@ -34,6 +38,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
 
         private readonly IAiSharedRuntimeController sharedRuntimeController;
         private readonly IAiSharedQueue sharedQueue;
+        private readonly IAiControlPlaneObserver observer;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiChildContinuationScheduler"/> class.
@@ -42,10 +47,12 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
         /// <param name="sharedQueue">The existing shared/global queue that owns physical continuation delivery.</param>
         public AiChildContinuationScheduler(
             IAiSharedRuntimeController sharedRuntimeController,
-            IAiSharedQueue sharedQueue)
+            IAiSharedQueue sharedQueue,
+            IAiControlPlaneObserver? observer = null)
         {
             this.sharedRuntimeController = sharedRuntimeController ?? throw new ArgumentNullException(nameof(sharedRuntimeController));
             this.sharedQueue = sharedQueue ?? throw new ArgumentNullException(nameof(sharedQueue));
+            this.observer = observer ?? new NoopAiControlPlaneObserver();
         }
 
         /// <summary>
@@ -238,6 +245,20 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
             {
                 throw new InvalidOperationException(
                     $"Shared runtime continuation '{continuationId}' did not preserve the exact parent execution and waiting-step identity.");
+            }
+
+            if (reason == "resume-parent-after-child-completion")
+            {
+                await this.observer
+                    .RecordAsync(
+                        AiChildDagEngineEventFactory.Create(
+                            relation,
+                            AiEngineEvents.ChildDag.ContinuationDelivered,
+                            string.Concat(continuationId, ":", Guid.NewGuid().ToString("N")),
+                            continuationId: continuationId,
+                            reason: reason),
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             return result;

@@ -31,6 +31,7 @@ using Multiplexed.AI.Tests.Integration.Runtime.Execution.Fixtures;
 using System.Collections.Concurrent;
 using Xunit;
 using Xunit.Abstractions;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Worker.Chaos
 {
@@ -168,22 +169,22 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                 AssertLedgerContains(
                     runEntries,
                     AiDecisionLedgerCategory.Run,
-                    "run.queued");
+                    AiEngineEvents.Run.Queued);
 
                 AssertLedgerContains(
                     runEntries,
                     AiDecisionLedgerCategory.Run,
-                    "run.dequeued");
+                    AiEngineEvents.Run.Dequeued);
 
                 var queued = runEntries.Single(
                     x =>
                         x.Category == AiDecisionLedgerCategory.Run &&
-                        x.EventType == "run.queued");
+                        x.EventType == AiEngineEvents.Run.Queued);
 
                 var dequeued = runEntries.Single(
                     x =>
                         x.Category == AiDecisionLedgerCategory.Run &&
-                        x.EventType == "run.dequeued");
+                        x.EventType == AiEngineEvents.Run.Dequeued);
 
                 Assert.Equal(AiDecisionLedgerOutcome.Persisted, queued.Outcome);
                 Assert.Equal(AiDecisionLedgerOutcome.Started, dequeued.Outcome);
@@ -210,7 +211,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                     runEntries,
                     x =>
                         x.Category == AiDecisionLedgerCategory.Run &&
-                        (x.EventType == "run.started" || x.EventType == "run.completed"));
+                        (x.EventType == AiEngineEvents.Run.Started || x.EventType == AiEngineEvents.Run.Completed));
 
                 _output.WriteLine("");
                 _output.WriteLine("RUN-ID-CORRELATED QUEUE LEDGER EVENTS");
@@ -299,18 +300,18 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
 
                 Assert.NotEmpty(entries);
 
-                AssertLedgerContains(entries, AiDecisionLedgerCategory.Queue, "queue.paused");
-                AssertLedgerContains(entries, AiDecisionLedgerCategory.Queue, "queue.resumed");
+                AssertLedgerContains(entries, AiDecisionLedgerCategory.Queue, AiEngineEvents.Queue.Paused);
+                AssertLedgerContains(entries, AiDecisionLedgerCategory.Queue, AiEngineEvents.Queue.Resumed);
 
                 var paused = entries.Single(
                     x =>
                         x.Category == AiDecisionLedgerCategory.Queue &&
-                        x.EventType == "queue.paused");
+                        x.EventType == AiEngineEvents.Queue.Paused);
 
                 var resumed = entries.Single(
                     x =>
                         x.Category == AiDecisionLedgerCategory.Queue &&
-                        x.EventType == "queue.resumed");
+                        x.EventType == AiEngineEvents.Queue.Resumed);
 
                 Assert.Equal(AiDecisionLedgerOutcome.Applied, paused.Outcome);
                 Assert.Equal(AiDecisionLedgerOutcome.Applied, resumed.Outcome);
@@ -506,52 +507,52 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Execution,
-                    AiDecisionLedgerEvents.Execution.Created);
+                    AiEngineEvents.Execution.Created);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Claim,
-                    AiDecisionLedgerEvents.Claim.Acquired);
+                    AiEngineEvents.Claim.Acquired);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Step,
-                    AiDecisionLedgerEvents.Step.Started);
+                    AiEngineEvents.Step.Started);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Step,
-                    AiDecisionLedgerEvents.Step.Completed);
+                    AiEngineEvents.Step.Completed);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Retry,
-                    AiDecisionLedgerEvents.Retry.Evaluated);
+                    AiEngineEvents.Retry.Evaluated);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Retry,
-                    AiDecisionLedgerEvents.Retry.Scheduled);
+                    AiEngineEvents.Retry.Scheduled);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Retention,
-                    AiDecisionLedgerEvents.Retention.Evaluated);
+                    AiEngineEvents.Retention.Evaluated);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Finalization,
-                    AiDecisionLedgerEvents.Finalization.Started);
+                    AiEngineEvents.Finalization.Started);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Finalization,
-                    AiDecisionLedgerEvents.Finalization.Completed);
+                    AiEngineEvents.Finalization.Completed);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Execution,
-                    AiDecisionLedgerEvents.Execution.Finalized);
+                    AiEngineEvents.Execution.Finalized);
 
                 Assert.All(entries, entry =>
                 {
@@ -747,40 +748,40 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Retention,
-                    AiDecisionLedgerEvents.Retention.Evaluated);
+                    AiEngineEvents.Retention.Evaluated);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Retention,
-                    AiDecisionLedgerEvents.Retention.Triggered);
+                    AiEngineEvents.Retention.Triggered);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Retention,
-                    AiDecisionLedgerEvents.Retention.Compacted);
+                    AiEngineEvents.Retention.Compacted);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Payload,
-                    AiDecisionLedgerEvents.Payload.Externalized);
+                    AiEngineEvents.Payload.Externalized);
 
                 Assert.DoesNotContain(
                     entries,
                     entry =>
                         entry.Category == AiDecisionLedgerCategory.Retention &&
-                        entry.EventType == AiDecisionLedgerEvents.Retention.Evicted);
+                        entry.EventType == AiEngineEvents.Retention.Evicted);
 
                 // New ledger validation asserts.
                 var compactedEvents = entries
                     .Where(entry =>
                         entry.Category == AiDecisionLedgerCategory.Retention &&
-                        entry.EventType == AiDecisionLedgerEvents.Retention.Compacted)
+                        entry.EventType == AiEngineEvents.Retention.Compacted)
                     .ToArray();
 
                 var externalizedEvents = entries
                     .Where(entry =>
                         entry.Category == AiDecisionLedgerCategory.Payload &&
-                        entry.EventType == AiDecisionLedgerEvents.Payload.Externalized)
+                        entry.EventType == AiEngineEvents.Payload.Externalized)
                     .ToArray();
 
                 Assert.NotEmpty(compactedEvents);
@@ -798,7 +799,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                     entries,
                     entry =>
                         entry.Category == AiDecisionLedgerCategory.Retention &&
-                        entry.EventType == AiDecisionLedgerEvents.Retention.Evicted);
+                        entry.EventType == AiEngineEvents.Retention.Evicted);
 
                 _output.WriteLine("");
                 _output.WriteLine("ATOMIC COMPACTION LEDGER SUMMARY");
@@ -956,28 +957,28 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Retention,
-                    AiDecisionLedgerEvents.Retention.Evaluated);
+                    AiEngineEvents.Retention.Evaluated);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Retention,
-                    AiDecisionLedgerEvents.Retention.Triggered);
+                    AiEngineEvents.Retention.Triggered);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Retention,
-                    AiDecisionLedgerEvents.Retention.Evicted);
+                    AiEngineEvents.Retention.Evicted);
 
                 Assert.DoesNotContain(
                     entries,
                     entry =>
                         entry.Category == AiDecisionLedgerCategory.Retention &&
-                        entry.EventType == AiDecisionLedgerEvents.Retention.Compacted);
+                        entry.EventType == AiEngineEvents.Retention.Compacted);
 
                 var evictedEvents = entries
                     .Where(entry =>
                         entry.Category == AiDecisionLedgerCategory.Retention &&
-                        entry.EventType == AiDecisionLedgerEvents.Retention.Evicted)
+                        entry.EventType == AiEngineEvents.Retention.Evicted)
                     .ToArray();
 
                 Assert.NotEmpty(evictedEvents);
@@ -1163,44 +1164,44 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Retention,
-                    AiDecisionLedgerEvents.Retention.Evaluated);
+                    AiEngineEvents.Retention.Evaluated);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Retention,
-                    AiDecisionLedgerEvents.Retention.Triggered);
+                    AiEngineEvents.Retention.Triggered);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Retention,
-                    AiDecisionLedgerEvents.Retention.Compacted);
+                    AiEngineEvents.Retention.Compacted);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Retention,
-                    AiDecisionLedgerEvents.Retention.Evicted);
+                    AiEngineEvents.Retention.Evicted);
 
                 AssertLedgerContains(
                     entries,
                     AiDecisionLedgerCategory.Payload,
-                    AiDecisionLedgerEvents.Payload.Externalized);
+                    AiEngineEvents.Payload.Externalized);
 
                 var compactedEvents = entries
                     .Where(entry =>
                         entry.Category == AiDecisionLedgerCategory.Retention &&
-                        entry.EventType == AiDecisionLedgerEvents.Retention.Compacted)
+                        entry.EventType == AiEngineEvents.Retention.Compacted)
                     .ToArray();
 
                 var evictedEvents = entries
                     .Where(entry =>
                         entry.Category == AiDecisionLedgerCategory.Retention &&
-                        entry.EventType == AiDecisionLedgerEvents.Retention.Evicted)
+                        entry.EventType == AiEngineEvents.Retention.Evicted)
                     .ToArray();
 
                 var externalizedEvents = entries
                     .Where(entry =>
                         entry.Category == AiDecisionLedgerCategory.Payload &&
-                        entry.EventType == AiDecisionLedgerEvents.Payload.Externalized)
+                        entry.EventType == AiEngineEvents.Payload.Externalized)
                     .ToArray();
 
                 Assert.NotEmpty(compactedEvents);
@@ -1502,24 +1503,24 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
 
                 Assert.NotEmpty(entries);
 
-                AssertLedgerContains(entries, AiDecisionLedgerCategory.Run, "run.started");
-                AssertLedgerContains(entries, AiDecisionLedgerCategory.Run, "run.completed");
+                AssertLedgerContains(entries, AiDecisionLedgerCategory.Run, AiEngineEvents.Run.Started);
+                AssertLedgerContains(entries, AiDecisionLedgerCategory.Run, AiEngineEvents.Run.Completed);
 
                 Assert.DoesNotContain(
                     entries,
                     x =>
                         x.Category == AiDecisionLedgerCategory.Run &&
-                        (x.EventType == "run.queued" || x.EventType == "run.dequeued"));
+                        (x.EventType == AiEngineEvents.Run.Queued || x.EventType == AiEngineEvents.Run.Dequeued));
 
                 var started = entries.Single(
                     x =>
                         x.Category == AiDecisionLedgerCategory.Run &&
-                        x.EventType == "run.started");
+                        x.EventType == AiEngineEvents.Run.Started);
 
                 var completed = entries.Single(
                     x =>
                         x.Category == AiDecisionLedgerCategory.Run &&
-                        x.EventType == "run.completed");
+                        x.EventType == AiEngineEvents.Run.Completed);
 
                 Assert.Equal(AiDecisionLedgerOutcome.Started, started.Outcome);
                 Assert.Equal(AiDecisionLedgerOutcome.Completed, completed.Outcome);
@@ -1626,15 +1627,15 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Wo
 
             Assert.NotEmpty(entries);
 
-            AssertLedgerContains(entries, AiDecisionLedgerCategory.Control, AiDecisionLedgerEvents.Control.PauseRequested);
-            AssertLedgerContains(entries, AiDecisionLedgerCategory.Control, AiDecisionLedgerEvents.Control.Paused);
-            AssertLedgerContains(entries, AiDecisionLedgerCategory.Control, AiDecisionLedgerEvents.Control.ResumeRequested);
-            AssertLedgerContains(entries, AiDecisionLedgerCategory.Control, AiDecisionLedgerEvents.Control.Resumed);
-            AssertLedgerContains(entries, AiDecisionLedgerCategory.Control, AiDecisionLedgerEvents.Control.StateChanged);
+            AssertLedgerContains(entries, AiDecisionLedgerCategory.Control, AiEngineEvents.Control.PauseRequested);
+            AssertLedgerContains(entries, AiDecisionLedgerCategory.Control, AiEngineEvents.Control.Paused);
+            AssertLedgerContains(entries, AiDecisionLedgerCategory.Control, AiEngineEvents.Control.ResumeRequested);
+            AssertLedgerContains(entries, AiDecisionLedgerCategory.Control, AiEngineEvents.Control.Resumed);
+            AssertLedgerContains(entries, AiDecisionLedgerCategory.Control, AiEngineEvents.Control.StateChanged);
 
-            AssertLedgerContains(entries, AiDecisionLedgerCategory.HumanInput, AiDecisionLedgerEvents.HumanInput.Requested);
-            AssertLedgerContains(entries, AiDecisionLedgerCategory.HumanInput, AiDecisionLedgerEvents.HumanInput.Waiting);
-            AssertLedgerContains(entries, AiDecisionLedgerCategory.HumanInput, AiDecisionLedgerEvents.HumanInput.Submitted);
+            AssertLedgerContains(entries, AiDecisionLedgerCategory.HumanInput, AiEngineEvents.HumanInput.Requested);
+            AssertLedgerContains(entries, AiDecisionLedgerCategory.HumanInput, AiEngineEvents.HumanInput.Waiting);
+            AssertLedgerContains(entries, AiDecisionLedgerCategory.HumanInput, AiEngineEvents.HumanInput.Submitted);
 
             Assert.All(
                 entries.Where(x =>

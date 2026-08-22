@@ -35,6 +35,7 @@ using Multiplexed.AI.Tests.Integration.Runtime.Execution.Fixtures;
 using Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Worker.Chaos;
 using Xunit;
 using Xunit.Abstractions;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
 {
@@ -349,22 +350,22 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.SharedController
                 AssertLedgerContains(
                     ledgerAfterReplay,
                     AiDecisionLedgerCategory.Replay,
-                    AiDecisionLedgerEvents.Replay.Requested);
+                    AiEngineEvents.Replay.Requested);
 
                 AssertLedgerContains(
                     ledgerAfterReplay,
                     AiDecisionLedgerCategory.Replay,
-                    AiDecisionLedgerEvents.Replay.Started);
+                    AiEngineEvents.Replay.Started);
 
                 AssertLedgerContains(
                     ledgerAfterReplay,
                     AiDecisionLedgerCategory.Replay,
-                    AiDecisionLedgerEvents.Replay.ComparisonCompleted);
+                    AiEngineEvents.Replay.ComparisonCompleted);
 
                 AssertLedgerContains(
                     ledgerAfterReplay,
                     AiDecisionLedgerCategory.Replay,
-                    AiDecisionLedgerEvents.Replay.Completed);
+                    AiEngineEvents.Replay.Completed);
 
                 var restoredRecord = await dagStore.GetRecordAsync(
                     executionId);

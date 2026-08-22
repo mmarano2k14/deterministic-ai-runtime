@@ -1,5 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 {
@@ -90,8 +91,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             var hostTerminalEvents =
                 events
                     .Where(item =>
-                        string.Equals(item.EventType, AiRuntimeLifecycleEventType.HostDeleted, StringComparison.Ordinal) ||
-                        string.Equals(item.EventType, AiRuntimeLifecycleEventType.HostDisappeared, StringComparison.Ordinal))
+                        string.Equals(item.EventType, AiRuntimeLifecycleEvents.HostDeleted, StringComparison.Ordinal) ||
+                        string.Equals(item.EventType, AiRuntimeLifecycleEvents.HostDisappeared, StringComparison.Ordinal))
                     .ToArray();
             var demonstratedFailureIncidentIds = ResolveDemonstratedFailureIncidentIds(events);
 
@@ -211,7 +212,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             {
                 status = string.Equals(
                     hostTerminalEvent.EventType,
-                    AiRuntimeLifecycleEventType.HostDeleted,
+                    AiRuntimeLifecycleEvents.HostDeleted,
                     StringComparison.Ordinal)
                     ? AiRuntimeInstanceStatus.Stopped
                     : AiRuntimeInstanceStatus.Unhealthy;
@@ -220,9 +221,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             var registeredAtUtc =
                 ordered
                     .Where(item =>
-                        string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeRegistered, StringComparison.Ordinal) ||
-                        string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeReplacementRegistered, StringComparison.Ordinal) ||
-                        string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeReady, StringComparison.Ordinal))
+                        string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeRegistered, StringComparison.Ordinal) ||
+                        string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeReplacementRegistered, StringComparison.Ordinal) ||
+                        string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeReady, StringComparison.Ordinal))
                     .Select(item => (DateTimeOffset?)item.TimestampUtc)
                     .FirstOrDefault() ?? ordered[0].TimestampUtc;
             var latest = ordered[^1];
@@ -259,14 +260,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             var placementEvents =
                 ordered
                     .Where(item =>
-                        (string.Equals(item.EventType, AiRuntimeLifecycleEventType.WorkAssigned, StringComparison.Ordinal) ||
-                         string.Equals(item.EventType, AiRuntimeLifecycleEventType.WorkReassigned, StringComparison.Ordinal)) &&
+                        (string.Equals(item.EventType, AiRuntimeLifecycleEvents.WorkAssigned, StringComparison.Ordinal) ||
+                         string.Equals(item.EventType, AiRuntimeLifecycleEvents.WorkReassigned, StringComparison.Ordinal)) &&
                         !string.IsNullOrWhiteSpace(item.RuntimeInstanceId))
                     .ToArray();
             var releaseEvents =
                 ordered
                     .Where(item =>
-                        string.Equals(item.EventType, AiRuntimeLifecycleEventType.WorkReleased, StringComparison.Ordinal) &&
+                        string.Equals(item.EventType, AiRuntimeLifecycleEvents.WorkReleased, StringComparison.Ordinal) &&
                         !string.IsNullOrWhiteSpace(item.RuntimeInstanceId))
                     .ToArray();
 
@@ -276,7 +277,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             }
 
             var initialAssigned = placementEvents.FirstOrDefault(item =>
-                string.Equals(item.EventType, AiRuntimeLifecycleEventType.WorkAssigned, StringComparison.Ordinal));
+                string.Equals(item.EventType, AiRuntimeLifecycleEvents.WorkAssigned, StringComparison.Ordinal));
             var initialReleased = releaseEvents.FirstOrDefault();
             var initialFact = initialAssigned ?? initialReleased;
             var current = placementEvents.LastOrDefault() ?? releaseEvents.Last();
@@ -341,7 +342,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
         {
             return FirstNonEmpty(
                 LastNonEmpty(ordered, item => ResolveFirstMetadata(item.Metadata, WorkKindMetadataKeys)),
-                string.Equals(current.EventType, AiRuntimeLifecycleEventType.WorkReassigned, StringComparison.Ordinal)
+                string.Equals(current.EventType, AiRuntimeLifecycleEvents.WorkReassigned, StringComparison.Ordinal)
                     ? "RecoveryRedispatch"
                     : "InitialDispatch");
         }
@@ -349,9 +350,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
         private static bool IsWorkEvent(
             AiRuntimeLifecycleEvent item)
         {
-            return string.Equals(item.EventType, AiRuntimeLifecycleEventType.WorkAssigned, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.WorkReassigned, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.WorkReleased, StringComparison.Ordinal);
+            return string.Equals(item.EventType, AiRuntimeLifecycleEvents.WorkAssigned, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.WorkReassigned, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.WorkReleased, StringComparison.Ordinal);
         }
 
         private static HashSet<string> ResolveDemonstratedFailureIncidentIds(
@@ -359,7 +360,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
         {
             var incidentIds = events
                 .Where(item =>
-                    string.Equals(item.EventType, AiRuntimeLifecycleEventType.WorkReleased, StringComparison.Ordinal) &&
+                    string.Equals(item.EventType, AiRuntimeLifecycleEvents.WorkReleased, StringComparison.Ordinal) &&
                     !string.IsNullOrWhiteSpace(item.RuntimeFailureIncidentId))
                 .Select(item => item.RuntimeFailureIncidentId!)
                 .ToHashSet(StringComparer.Ordinal);
@@ -371,7 +372,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 
             return events
                 .Where(item =>
-                    string.Equals(item.EventType, AiRuntimeLifecycleEventType.WorkReassigned, StringComparison.Ordinal) &&
+                    string.Equals(item.EventType, AiRuntimeLifecycleEvents.WorkReassigned, StringComparison.Ordinal) &&
                     !string.IsNullOrWhiteSpace(item.RuntimeFailureIncidentId))
                 .Select(item => item.RuntimeFailureIncidentId!)
                 .ToHashSet(StringComparer.Ordinal);
@@ -411,8 +412,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                     .Where(item =>
                         !string.IsNullOrWhiteSpace(item.RuntimeFailureIncidentId) &&
                         demonstratedFailureIncidentIds.Contains(item.RuntimeFailureIncidentId!) &&
-                        (string.Equals(item.EventType, AiRuntimeLifecycleEventType.HostDeleted, StringComparison.Ordinal) ||
-                         string.Equals(item.EventType, AiRuntimeLifecycleEventType.HostDisappeared, StringComparison.Ordinal)) &&
+                        (string.Equals(item.EventType, AiRuntimeLifecycleEvents.HostDeleted, StringComparison.Ordinal) ||
+                         string.Equals(item.EventType, AiRuntimeLifecycleEvents.HostDisappeared, StringComparison.Ordinal)) &&
                         !string.IsNullOrWhiteSpace(item.KubernetesPodUid))
                     .Select(item => item.KubernetesPodUid!)
                     .ToHashSet(StringComparer.Ordinal);
@@ -445,7 +446,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                 .Where(item =>
                     !string.IsNullOrWhiteSpace(item.RuntimeFailureIncidentId) &&
                     demonstratedFailureIncidentIds.Contains(item.RuntimeFailureIncidentId!) &&
-                    string.Equals(item.EventType, AiRuntimeLifecycleEventType.WorkReleased, StringComparison.Ordinal) &&
+                    string.Equals(item.EventType, AiRuntimeLifecycleEvents.WorkReleased, StringComparison.Ordinal) &&
                     !string.IsNullOrWhiteSpace(item.KubernetesPodUid))
                 .Select(item => item.KubernetesPodUid!)
                 .ToHashSet(StringComparer.Ordinal);
@@ -477,9 +478,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
         private static bool IsRuntimeFailureStatusEvent(
             AiRuntimeLifecycleEvent item)
         {
-            return string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeSuppressed, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeUnhealthy, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeStopped, StringComparison.Ordinal);
+            return string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeSuppressed, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeUnhealthy, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeStopped, StringComparison.Ordinal);
         }
 
         private static bool ShouldIncludeHistoricalRuntime(
@@ -511,23 +512,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
         private static bool IsFailureSideEvent(
             AiRuntimeLifecycleEvent item)
         {
-            return string.Equals(item.EventType, AiRuntimeLifecycleEventType.HostDeleted, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.HostDisappeared, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeSuppressed, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeUnhealthy, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.WorkReleased, StringComparison.Ordinal);
+            return string.Equals(item.EventType, AiRuntimeLifecycleEvents.HostDeleted, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.HostDisappeared, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeSuppressed, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeUnhealthy, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.WorkReleased, StringComparison.Ordinal);
         }
 
         private static bool IsRuntimeStatusEvent(
             AiRuntimeLifecycleEvent item)
         {
-            return string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeRegistered, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeReady, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeDraining, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeSuppressed, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeUnhealthy, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeStopped, StringComparison.Ordinal) ||
-                   string.Equals(item.EventType, AiRuntimeLifecycleEventType.RuntimeReplacementRegistered, StringComparison.Ordinal);
+            return string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeRegistered, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeReady, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeDraining, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeSuppressed, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeUnhealthy, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeStopped, StringComparison.Ordinal) ||
+                   string.Equals(item.EventType, AiRuntimeLifecycleEvents.RuntimeReplacementRegistered, StringComparison.Ordinal);
         }
 
         private static AiRuntimeInstanceStatus ResolveRuntimeStatus(
@@ -540,12 +541,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 
             return statusEvent.EventType switch
             {
-                AiRuntimeLifecycleEventType.RuntimeReady => AiRuntimeInstanceStatus.Ready,
-                AiRuntimeLifecycleEventType.RuntimeReplacementRegistered => AiRuntimeInstanceStatus.Ready,
-                AiRuntimeLifecycleEventType.RuntimeDraining => AiRuntimeInstanceStatus.Draining,
-                AiRuntimeLifecycleEventType.RuntimeSuppressed => AiRuntimeInstanceStatus.Unhealthy,
-                AiRuntimeLifecycleEventType.RuntimeUnhealthy => AiRuntimeInstanceStatus.Unhealthy,
-                AiRuntimeLifecycleEventType.RuntimeStopped => AiRuntimeInstanceStatus.Stopped,
+                AiRuntimeLifecycleEvents.RuntimeReady => AiRuntimeInstanceStatus.Ready,
+                AiRuntimeLifecycleEvents.RuntimeReplacementRegistered => AiRuntimeInstanceStatus.Ready,
+                AiRuntimeLifecycleEvents.RuntimeDraining => AiRuntimeInstanceStatus.Draining,
+                AiRuntimeLifecycleEvents.RuntimeSuppressed => AiRuntimeInstanceStatus.Unhealthy,
+                AiRuntimeLifecycleEvents.RuntimeUnhealthy => AiRuntimeInstanceStatus.Unhealthy,
+                AiRuntimeLifecycleEvents.RuntimeStopped => AiRuntimeInstanceStatus.Stopped,
                 _ => AiRuntimeInstanceStatus.Unknown
             };
         }
@@ -571,11 +572,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             var hasPlacement = runtimeEvents.Any(item =>
                 string.Equals(
                     item.EventType,
-                    AiRuntimeLifecycleEventType.WorkAssigned,
+                    AiRuntimeLifecycleEvents.WorkAssigned,
                     StringComparison.Ordinal) ||
                 string.Equals(
                     item.EventType,
-                    AiRuntimeLifecycleEventType.WorkReassigned,
+                    AiRuntimeLifecycleEvents.WorkReassigned,
                     StringComparison.Ordinal));
 
             if (!hasPlacement)
@@ -586,27 +587,27 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             return !runtimeEvents.Any(item =>
                 string.Equals(
                     item.EventType,
-                    AiRuntimeLifecycleEventType.RuntimeSuppressed,
+                    AiRuntimeLifecycleEvents.RuntimeSuppressed,
                     StringComparison.Ordinal) ||
                 string.Equals(
                     item.EventType,
-                    AiRuntimeLifecycleEventType.RuntimeUnhealthy,
+                    AiRuntimeLifecycleEvents.RuntimeUnhealthy,
                     StringComparison.Ordinal) ||
                 string.Equals(
                     item.EventType,
-                    AiRuntimeLifecycleEventType.RuntimeStopped,
+                    AiRuntimeLifecycleEvents.RuntimeStopped,
                     StringComparison.Ordinal) ||
                 string.Equals(
                     item.EventType,
-                    AiRuntimeLifecycleEventType.HostDeleted,
+                    AiRuntimeLifecycleEvents.HostDeleted,
                     StringComparison.Ordinal) ||
                 string.Equals(
                     item.EventType,
-                    AiRuntimeLifecycleEventType.HostDisappeared,
+                    AiRuntimeLifecycleEvents.HostDisappeared,
                     StringComparison.Ordinal) ||
                 (string.Equals(
                      item.EventType,
-                     AiRuntimeLifecycleEventType.WorkReleased,
+                     AiRuntimeLifecycleEvents.WorkReleased,
                      StringComparison.Ordinal) &&
                  !string.IsNullOrWhiteSpace(item.RuntimeFailureIncidentId)));
         }

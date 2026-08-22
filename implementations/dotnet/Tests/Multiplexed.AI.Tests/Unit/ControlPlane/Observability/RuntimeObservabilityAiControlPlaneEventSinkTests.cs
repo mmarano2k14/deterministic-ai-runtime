@@ -5,11 +5,14 @@ using System.Threading.Tasks;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
+using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.Abstractions.AI.Observability.Events;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
+using Multiplexed.Abstractions.AI.Policies;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Xunit;
 
@@ -21,7 +24,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
     public sealed class RuntimeObservabilityAiControlPlaneEventSinkTests
     {
         /// <summary>
-        /// Verifies that ledger failures do not break control-plane event recording.
+        /// Verifies that ledger failures preserve the historical best-effort behavior for generic control-plane events.
         /// </summary>
         /// <returns>A task representing the asynchronous test operation.</returns>
         [Fact]
@@ -45,6 +48,35 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
             };
 
             await sink.RecordAsync(controlPlaneEvent, CancellationToken.None).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Verifies that canonical semantic ledger failures are surfaced to the Event Manager instead of being swallowed by the sink.
+        /// </summary>
+        /// <returns>A task representing the asynchronous test operation.</returns>
+        [Fact]
+        public async Task RecordAsync_Should_Throw_When_Canonical_Semantic_Ledger_Projection_Fails()
+        {
+            var observability = new FakeRuntimeObservability(new ThrowingDecisionLedgerRecorder());
+            var sink = new RuntimeObservabilityAiControlPlaneEventSink(observability);
+
+            var controlPlaneEvent = new AiControlPlaneEvent
+            {
+                EventId = "policy-event-1",
+                SemanticEventType = AiEngineEvents.Policy.Allowed,
+                EventType = AiControlPlaneEventType.OperationCompleted,
+                Area = AiControlPlaneArea.Admission,
+                Operation = "policy-evaluation",
+                Outcome = AiControlPlaneOperationOutcome.Succeeded,
+                Correlation = new AiRuntimeExecutionCorrelationContext
+                {
+                    CorrelationId = "policy-correlation-1",
+                    ExecutionId = "execution-1"
+                }
+            };
+
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => sink.RecordAsync(controlPlaneEvent, CancellationToken.None)).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -256,6 +288,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
 
             var controlPlaneEvent = new AiControlPlaneEvent
             {
+                EventId = "event-1",
                 EventType = AiControlPlaneEventType.OperationCompleted,
                 Area = AiControlPlaneArea.Replay,
                 Operation = "timeline-read",
@@ -269,8 +302,98 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
             await sink.RecordAsync(controlPlaneEvent, CancellationToken.None).ConfigureAwait(false);
 
             Assert.Single(ledger.Entries);
-            Assert.StartsWith("control-plane-event:", ledger.Entries[0].Context.ExecutionId);
+            Assert.Equal("control-plane-event:event-1", ledger.Entries[0].Context.ExecutionId);
             Assert.Equal("test-correlation", ledger.Entries[0].Context.CorrelationId);
+        }
+
+        /// <summary>
+        /// Verifies that a canonical semantic event type is projected without rebuilding a competing ledger event string.
+        /// </summary>
+        /// <returns>A task representing the asynchronous test operation.</returns>
+        [Fact]
+        public async Task RecordAsync_Should_Preserve_Canonical_Semantic_EventType_When_Provided()
+        {
+            var ledger = new CapturingDecisionLedgerRecorder();
+            var observability = new FakeRuntimeObservability(ledger);
+            var sink = new RuntimeObservabilityAiControlPlaneEventSink(observability);
+
+            var controlPlaneEvent = new AiControlPlaneEvent
+            {
+                EventId = "recovery-event-1",
+                SemanticEventType = AiEngineEvents.Recovery.ExecutionRecoveryCompleted,
+                EventType = AiControlPlaneEventType.OperationCompleted,
+                Area = AiControlPlaneArea.Recovery,
+                Operation = "execution-recovery",
+                Outcome = AiControlPlaneOperationOutcome.Succeeded,
+                CausationId = "recovery-cause-1",
+                Correlation = new AiRuntimeExecutionCorrelationContext
+                {
+                    CorrelationId = "recovery-correlation-1",
+                    ExecutionId = "execution-1"
+                }
+            };
+
+            await sink.RecordAsync(controlPlaneEvent, CancellationToken.None).ConfigureAwait(false);
+
+            var entry = Assert.Single(ledger.Entries);
+            Assert.Equal(AiEngineEvents.Recovery.ExecutionRecoveryCompleted, entry.EventType);
+            Assert.Equal("recovery-event-1", entry.Metadata!["event.id"]);
+            Assert.Equal(AiEngineEvents.Recovery.ExecutionRecoveryCompleted, entry.Metadata["event.semanticType"]);
+            Assert.Equal("recovery-cause-1", entry.Metadata["event.causationId"]);
+        }
+
+        /// <summary>
+        /// Verifies that canonical policy events preserve the existing policy Ledger category, outcome, reason, and correlation.
+        /// </summary>
+        /// <returns>A task representing the asynchronous test operation.</returns>
+        [Fact]
+        public async Task RecordAsync_Should_Project_Canonical_Policy_Event_With_Existing_Ledger_Semantics()
+        {
+            var ledger = new CapturingDecisionLedgerRecorder();
+            var observability = new FakeRuntimeObservability(ledger);
+            var sink = new RuntimeObservabilityAiControlPlaneEventSink(observability);
+
+            var controlPlaneEvent = new AiControlPlaneEvent
+            {
+                EventId = "policy-event-1",
+                SemanticEventType = AiEngineEvents.Policy.Allowed,
+                EventType = AiControlPlaneEventType.OperationCompleted,
+                Area = AiControlPlaneArea.Policy,
+                Operation = "policy.execute",
+                Outcome = AiControlPlaneOperationOutcome.Succeeded,
+                Message = "Policy allowed execution.",
+                Correlation = new AiRuntimeExecutionCorrelationContext
+                {
+                    CorrelationId = "execution-1",
+                    ExecutionId = "execution-1",
+                    PipelineName = "pipeline-a",
+                    PipelineKey = "pipeline-a",
+                    RuntimeInstanceId = "worker-1",
+                    WorkerId = "worker-1"
+                },
+                Properties = new Dictionary<string, object?>
+                {
+                    [AiPolicyMetadataKeys.Name] = "RiskPolicy",
+                    [AiPolicyMetadataKeys.Kind] = "Risk",
+                    [AiStepMetadataKeys.StepName] = "risk-step",
+                    [AiStepMetadataKeys.StepId] = "risk-step",
+                    [AiStepMetadataKeys.StepKey] = "risk-step"
+                }
+            };
+
+            await sink.RecordAsync(controlPlaneEvent, CancellationToken.None).ConfigureAwait(false);
+
+            var entry = Assert.Single(ledger.Entries);
+            Assert.Equal(AiDecisionLedgerCategory.Policy, entry.Category);
+            Assert.Equal(AiEngineEvents.Policy.Allowed, entry.EventType);
+            Assert.Equal(AiDecisionLedgerOutcome.Allowed, entry.Outcome);
+            Assert.Equal("Policy allowed execution.", entry.Reason);
+            Assert.Equal("execution-1", entry.Context.ExecutionId);
+            Assert.Equal("pipeline-a", entry.Context.PipelineName);
+            Assert.Equal("risk-step", entry.Context.StepId);
+            Assert.Equal("risk-step", entry.Context.StepKey);
+            Assert.Equal("worker-1", entry.Context.WorkerId);
+            Assert.Equal("RiskPolicy", entry.Metadata![AiPolicyMetadataKeys.Name]);
         }
 
         /// <summary>

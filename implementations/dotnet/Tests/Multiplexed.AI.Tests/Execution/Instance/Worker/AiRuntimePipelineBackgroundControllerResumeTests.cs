@@ -21,6 +21,7 @@ using Multiplexed.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.Observability.Logging;
 using Multiplexed.Rbac.Core.ExecutionContext;
 using ExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
 {
@@ -670,7 +671,7 @@ namespace Multiplexed.AI.Tests.Unit.Execution.Instance.Worker
             {
                 if (!string.Equals(
                         eventType,
-                        AiDecisionLedgerEvents.Run.Suspended,
+                        AiEngineEvents.Run.Suspended,
                         StringComparison.Ordinal))
                 {
                     return;

@@ -10,6 +10,7 @@ using Multiplexed.AI.Runtime.AI.Concurrency;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Execution.Engine.Helpers;
 using Multiplexed.AI.Runtime.Observability.Helpers;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 {
@@ -132,7 +133,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     claimToken: null,
                     concurrencyContext: null,
                     AiDecisionLedgerCategory.Claim,
-                    AiDecisionLedgerEvents.Claim.Attempted,
+                    AiEngineEvents.Claim.Attempted,
                     AiDecisionLedgerOutcome.Started,
                     "Single-step claim attempt started.",
                     new Dictionary<string, string>
@@ -165,7 +166,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             claimToken: null,
                             concurrencyContext: null,
                             AiDecisionLedgerCategory.Claim,
-                            AiDecisionLedgerEvents.Claim.Denied,
+                            AiEngineEvents.Claim.Denied,
                             AiDecisionLedgerOutcome.Denied,
                             controlDecision.Reason ?? "Claim denied because execution cancellation was observed.",
                             new Dictionary<string, string>
@@ -194,7 +195,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             claimToken: null,
                             concurrencyContext: null,
                             AiDecisionLedgerCategory.Claim,
-                            AiDecisionLedgerEvents.Claim.Denied,
+                            AiEngineEvents.Claim.Denied,
                             AiDecisionLedgerOutcome.Denied,
                             controlDecision.Reason ?? "Claim denied because execution control state does not allow advancement.",
                             new Dictionary<string, string>
@@ -248,7 +249,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         claimToken: null,
                         concurrencyContext: null,
                         AiDecisionLedgerCategory.Claim,
-                        AiDecisionLedgerEvents.Claim.Denied,
+                        AiEngineEvents.Claim.Denied,
                         AiDecisionLedgerOutcome.Denied,
                         state is null
                             ? "Claim denied because execution state was not found."
@@ -285,7 +286,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         claimToken: null,
                         concurrencyContext: null,
                         AiDecisionLedgerCategory.Claim,
-                        AiDecisionLedgerEvents.Claim.Denied,
+                        AiEngineEvents.Claim.Denied,
                         AiDecisionLedgerOutcome.Denied,
                         "Claim denied because no ready DAG steps were available.",
                         new Dictionary<string, string>
@@ -348,7 +349,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             claimToken: null,
                             concurrencyContext,
                             AiDecisionLedgerCategory.Concurrency,
-                            AiDecisionLedgerEvents.Concurrency.Denied,
+                            AiEngineEvents.Concurrency.Denied,
                             AiDecisionLedgerOutcome.Denied,
                             gateDecision.Reason ?? "Concurrency admission denied.",
                             new Dictionary<string, string>
@@ -385,7 +386,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             concurrencyContext.LeaseId,
                             concurrencyContext,
                             AiDecisionLedgerCategory.Concurrency,
-                            AiDecisionLedgerEvents.Concurrency.LeaseAcquired,
+                            AiEngineEvents.Concurrency.LeaseAcquired,
                             AiDecisionLedgerOutcome.Allowed,
                             "Concurrency lease acquired before step claim.",
                             new Dictionary<string, string>
@@ -418,7 +419,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 concurrencyContext.LeaseId,
                                 concurrencyContext,
                                 AiDecisionLedgerCategory.Claim,
-                                AiDecisionLedgerEvents.Claim.Denied,
+                                AiEngineEvents.Claim.Denied,
                                 AiDecisionLedgerOutcome.Denied,
                                 "Step claim failed after concurrency lease was acquired.",
                                 new Dictionary<string, string>
@@ -445,7 +446,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             claimed.ClaimToken,
                             concurrencyContext,
                             AiDecisionLedgerCategory.Claim,
-                            AiDecisionLedgerEvents.Claim.Acquired,
+                            AiEngineEvents.Claim.Acquired,
                             AiDecisionLedgerOutcome.Allowed,
                             "Step claim acquired.",
                             new Dictionary<string, string>
@@ -496,7 +497,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     claimToken: null,
                     concurrencyContext: null,
                     AiDecisionLedgerCategory.Claim,
-                    AiDecisionLedgerEvents.Claim.Denied,
+                    AiEngineEvents.Claim.Denied,
                     AiDecisionLedgerOutcome.Denied,
                     "Claim denied because no ready candidate could be admitted or claimed.",
                     new Dictionary<string, string>
@@ -565,7 +566,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     claimToken: null,
                     concurrencyContext: null,
                     AiDecisionLedgerCategory.Claim,
-                    AiDecisionLedgerEvents.Claim.Attempted,
+                    AiEngineEvents.Claim.Attempted,
                     AiDecisionLedgerOutcome.Started,
                     "Batch claim attempt started.",
                     new Dictionary<string, string>
@@ -599,7 +600,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             claimToken: null,
                             concurrencyContext: null,
                             AiDecisionLedgerCategory.Claim,
-                            AiDecisionLedgerEvents.Claim.Denied,
+                            AiEngineEvents.Claim.Denied,
                             AiDecisionLedgerOutcome.Denied,
                             controlDecision.Reason ?? "Batch claim denied because execution cancellation was observed.",
                             new Dictionary<string, string>
@@ -628,7 +629,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             claimToken: null,
                             concurrencyContext: null,
                             AiDecisionLedgerCategory.Claim,
-                            AiDecisionLedgerEvents.Claim.Denied,
+                            AiEngineEvents.Claim.Denied,
                             AiDecisionLedgerOutcome.Denied,
                             controlDecision.Reason ?? "Batch claim denied because execution control state does not allow advancement.",
                             new Dictionary<string, string>
@@ -682,7 +683,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         claimToken: null,
                         concurrencyContext: null,
                         AiDecisionLedgerCategory.Claim,
-                        AiDecisionLedgerEvents.Claim.Denied,
+                        AiEngineEvents.Claim.Denied,
                         AiDecisionLedgerOutcome.Denied,
                         state is null
                             ? "Batch claim denied because execution state was not found."
@@ -719,7 +720,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         claimToken: null,
                         concurrencyContext: null,
                         AiDecisionLedgerCategory.Claim,
-                        AiDecisionLedgerEvents.Claim.Denied,
+                        AiEngineEvents.Claim.Denied,
                         AiDecisionLedgerOutcome.Denied,
                         "Batch claim denied because no ready DAG steps were available.",
                         new Dictionary<string, string>
@@ -789,7 +790,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             claimToken: null,
                             concurrencyContext,
                             AiDecisionLedgerCategory.Concurrency,
-                            AiDecisionLedgerEvents.Concurrency.Denied,
+                            AiEngineEvents.Concurrency.Denied,
                             AiDecisionLedgerOutcome.Denied,
                             gateDecision.Reason ?? "Concurrency admission denied.",
                             new Dictionary<string, string>
@@ -827,7 +828,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             concurrencyContext.LeaseId,
                             concurrencyContext,
                             AiDecisionLedgerCategory.Concurrency,
-                            AiDecisionLedgerEvents.Concurrency.LeaseAcquired,
+                            AiEngineEvents.Concurrency.LeaseAcquired,
                             AiDecisionLedgerOutcome.Allowed,
                             "Concurrency lease acquired before batch step claim.",
                             new Dictionary<string, string>
@@ -861,7 +862,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 concurrencyContext.LeaseId,
                                 concurrencyContext,
                                 AiDecisionLedgerCategory.Claim,
-                                AiDecisionLedgerEvents.Claim.Denied,
+                                AiEngineEvents.Claim.Denied,
                                 AiDecisionLedgerOutcome.Denied,
                                 "Batch step claim failed after concurrency lease was acquired.",
                                 new Dictionary<string, string>
@@ -895,7 +896,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             claimed.ClaimToken,
                             concurrencyContext,
                             AiDecisionLedgerCategory.Claim,
-                            AiDecisionLedgerEvents.Claim.Acquired,
+                            AiEngineEvents.Claim.Acquired,
                             AiDecisionLedgerOutcome.Allowed,
                             "Step claim acquired.",
                             new Dictionary<string, string>
@@ -943,7 +944,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         claimToken: null,
                         concurrencyContext: null,
                         AiDecisionLedgerCategory.Claim,
-                        AiDecisionLedgerEvents.Claim.Denied,
+                        AiEngineEvents.Claim.Denied,
                         AiDecisionLedgerOutcome.Denied,
                         "Batch claim denied because no ready candidate could be admitted or claimed.",
                         new Dictionary<string, string>
@@ -995,7 +996,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             concurrencyContext.LeaseId,
                             concurrencyContext,
                             AiDecisionLedgerCategory.Concurrency,
-                            AiDecisionLedgerEvents.Concurrency.LeaseReleased,
+                            AiEngineEvents.Concurrency.LeaseReleased,
                             AiDecisionLedgerOutcome.Released,
                             reason,
                             new Dictionary<string, string>
@@ -1115,8 +1116,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 
                         if (!policyDecision.Allowed)
                         {
-                            trace.SetTag("concurrency.allowed", false);
-                            trace.SetTag("concurrency.denied", true);
+                            trace.SetTag(AiEngineEvents.Concurrency.Allowed, false);
+                            trace.SetTag(AiEngineEvents.Concurrency.Denied, true);
                             trace.SetTag("concurrency.policy.denied", true);
                             trace.SetTag("concurrency.reason", policyDecision.Reason ?? "Concurrency policy denied execution.");
 
@@ -1129,12 +1130,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 cancellationToken)
                             .ConfigureAwait(false);
 
-                        trace.SetTag("concurrency.allowed", gateDecision.Allowed);
+                        trace.SetTag(AiEngineEvents.Concurrency.Allowed, gateDecision.Allowed);
                         trace.SetTag("concurrency.gate.allowed", gateDecision.Allowed);
 
                         if (!gateDecision.Allowed)
                         {
-                            trace.SetTag("concurrency.denied", true);
+                            trace.SetTag(AiEngineEvents.Concurrency.Denied, true);
                             trace.SetTag("concurrency.reason", gateDecision.Reason ?? "Concurrency limit reached.");
                         }
 
@@ -1495,7 +1496,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 claimToken: null,
                                 concurrencyContext: null,
                                 AiDecisionLedgerCategory.Recovery,
-                                AiDecisionLedgerEvents.Recovery.Detected,
+                                AiEngineEvents.Recovery.Detected,
                                 AiDecisionLedgerOutcome.Started,
                                 "Timed-out running DAG steps detected during recovery scan.",
                                 new Dictionary<string, string>
@@ -1518,7 +1519,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 claimToken: null,
                                 concurrencyContext: null,
                                 AiDecisionLedgerCategory.Recovery,
-                                AiDecisionLedgerEvents.Recovery.Applied,
+                                AiEngineEvents.Recovery.Applied,
                                 AiDecisionLedgerOutcome.Applied,
                                 "Timed-out running DAG steps were recovered.",
                                 new Dictionary<string, string>
@@ -1547,7 +1548,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                     claimToken: null,
                                     concurrencyContext: null,
                                     AiDecisionLedgerCategory.Recovery,
-                                    AiDecisionLedgerEvents.Recovery.StepRecovered,
+                                    AiEngineEvents.Recovery.StepRecovered,
                                     AiDecisionLedgerOutcome.Applied,
                                     "Timed-out DAG step was moved back to a recoverable state.",
                                     new Dictionary<string, string>
@@ -1573,7 +1574,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                     claimToken: null,
                                     concurrencyContext: null,
                                     AiDecisionLedgerCategory.Recovery,
-                                    AiDecisionLedgerEvents.Recovery.StepRecovered,
+                                    AiEngineEvents.Recovery.StepRecovered,
                                     AiDecisionLedgerOutcome.Applied,
                                     "Timed-out DAG steps were recovered, but recovered step names could not be inferred from state.",
                                     new Dictionary<string, string>
@@ -1755,7 +1756,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         claimToken: null,
                         concurrencyContext: null,
                         AiDecisionLedgerCategory.Control,
-                        AiDecisionLedgerEvents.Control.CancelObserved,
+                        AiEngineEvents.Control.CancelObserved,
                         AiDecisionLedgerOutcome.Blocked,
                         decision.Reason ?? "Execution cancellation observed by DAG claim service.",
                         new Dictionary<string, string>
@@ -1785,7 +1786,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         claimToken: null,
                         concurrencyContext: null,
                         AiDecisionLedgerCategory.HumanInput,
-                        AiDecisionLedgerEvents.HumanInput.Waiting,
+                        AiEngineEvents.HumanInput.Waiting,
                         AiDecisionLedgerOutcome.Blocked,
                         decision.Reason ?? "Execution is waiting for human input.",
                         new Dictionary<string, string>

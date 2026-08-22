@@ -9,6 +9,7 @@ using Multiplexed.AI.Runtime.Execution.Context;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Execution.Engine.Helpers;
 using Multiplexed.Abstractions.AI.Observability;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 {
@@ -132,7 +133,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     claimedStep.ClaimToken,
                     concurrencyContext,
                     AiDecisionLedgerCategory.Step,
-                    AiDecisionLedgerEvents.Step.Started,
+                    AiEngineEvents.Step.Started,
                     AiDecisionLedgerOutcome.Started,
                     "Step execution started.",
                     new Dictionary<string, string>
@@ -190,9 +191,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             AiDecisionLedgerCategory.Step,
                             result.EffectiveOutcome switch
                             {
-                                AiStepExecutionOutcome.Park => AiDecisionLedgerEvents.Step.Parked,
-                                AiStepExecutionOutcome.Complete => AiDecisionLedgerEvents.Step.Completed,
-                                _ => AiDecisionLedgerEvents.Step.Failed
+                                AiStepExecutionOutcome.Park => AiEngineEvents.Step.Parked,
+                                AiStepExecutionOutcome.Complete => AiEngineEvents.Step.Completed,
+                                _ => AiEngineEvents.Step.Failed
                             },
                             result.EffectiveOutcome switch
                             {
@@ -240,7 +241,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             claimedStep.ClaimToken,
                             concurrencyContext,
                             AiDecisionLedgerCategory.Step,
-                            AiDecisionLedgerEvents.Step.Failed,
+                            AiEngineEvents.Step.Failed,
                             AiDecisionLedgerOutcome.Failed,
                             ex.Message,
                             new Dictionary<string, string>

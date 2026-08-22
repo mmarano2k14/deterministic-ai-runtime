@@ -2,7 +2,9 @@
 using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Driver;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
@@ -25,6 +27,30 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 
             Assert.Equal(typeof(InMemoryAiRuntimeLifecycleJournal), descriptor.ImplementationType);
             Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
+        }
+
+        [Fact]
+        public void AddInMemoryAiRuntimeLifecycleJournal_Should_Register_Exactly_One_LifecycleJournal_Projection()
+        {
+            var services = new ServiceCollection();
+
+            services.AddInMemoryAiRuntimeLifecycleJournal();
+            services.AddInMemoryAiRuntimeLifecycleJournal();
+
+            using var provider = services.BuildServiceProvider(
+                new ServiceProviderOptions
+                {
+                    ValidateOnBuild = true,
+                    ValidateScopes = true
+                });
+
+            var projection = Assert.Single(
+                provider
+                    .GetServices<IAiControlPlaneEventSink>()
+                    .OfType<IAiControlPlaneEventProjectionSink>()
+                    .Where(sink => sink.ProjectionTarget == AiEngineEventProjectionTarget.LifecycleJournal));
+
+            Assert.IsType<RuntimeLifecycleJournalAiControlPlaneEventSink>(projection);
         }
 
         [Fact]

@@ -8,6 +8,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
+using Multiplexed.Abstractions.AI.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
@@ -15,26 +16,54 @@ using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 namespace Multiplexed.AI.Runtime.ControlPlane.Observability
 {
     /// <summary>
-    /// Records structured control-plane events through the central runtime observability facade.
+    /// Projects structured control-plane events to the existing Decision Ledger recorder.
     /// </summary>
     /// <remarks>
-    /// This sink forwards control-plane events to the runtime decision ledger through
-    /// <see cref="IAiRuntimeObservability"/>.
-    ///
-    /// It is intentionally best-effort so ledger failures do not break control-plane execution.
+    /// Generic legacy control-plane events preserve their historical best-effort behavior.
+    /// Canonical semantic events surface recorder failures to the Event Manager so the central
+    /// projection catalog, rather than the sink itself, owns failure semantics.
     /// </remarks>
-    public sealed class RuntimeObservabilityAiControlPlaneEventSink : IAiControlPlaneEventSink
+    public sealed class RuntimeObservabilityAiControlPlaneEventSink : IAiControlPlaneEventProjectionSink
     {
-        private readonly IAiRuntimeObservability observability;
+        private readonly IAiDecisionLedgerRecorder ledger;
+
+        /// <inheritdoc />
+        public AiEngineEventProjectionTarget ProjectionTarget => AiEngineEventProjectionTarget.Ledger;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="RuntimeObservabilityAiControlPlaneEventSink"/> class.
+        /// Initializes a new instance of the <see cref="RuntimeObservabilityAiControlPlaneEventSink"/> class
+        /// from the existing runtime observability facade.
         /// </summary>
-        /// <param name="observability">The central runtime observability facade.</param>
+        /// <param name="observability">The existing runtime observability facade.</param>
+        /// <remarks>
+        /// This constructor is preserved for direct callers and existing tests. Dependency injection uses
+        /// <see cref="CreateForLedger"/> so the singleton Event Manager does not capture the scoped facade.
+        /// </remarks>
         public RuntimeObservabilityAiControlPlaneEventSink(
             IAiRuntimeObservability observability)
+            : this((observability ?? throw new ArgumentNullException(nameof(observability))).Ledger)
         {
-            this.observability = observability ?? throw new ArgumentNullException(nameof(observability));
+        }
+
+        /// <summary>
+        /// Initializes the sink directly from the existing Decision Ledger recorder.
+        /// </summary>
+        /// <param name="ledger">The existing Decision Ledger recorder.</param>
+        private RuntimeObservabilityAiControlPlaneEventSink(
+            IAiDecisionLedgerRecorder ledger)
+        {
+            this.ledger = ledger ?? throw new ArgumentNullException(nameof(ledger));
+        }
+
+        /// <summary>
+        /// Creates the projection sink directly from the existing singleton-safe Decision Ledger recorder.
+        /// </summary>
+        /// <param name="ledger">The existing Decision Ledger recorder.</param>
+        /// <returns>A Ledger projection sink.</returns>
+        internal static RuntimeObservabilityAiControlPlaneEventSink CreateForLedger(
+            IAiDecisionLedgerRecorder ledger)
+        {
+            return new RuntimeObservabilityAiControlPlaneEventSink(ledger);
         }
 
         /// <inheritdoc />
@@ -49,30 +78,37 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
             var context = new AiRuntimeLedgerEventCorrelationContext
             {
                 ExecutionId = GetRequiredExecutionId(controlPlaneEvent),
+                RunId = controlPlaneEvent.Correlation.RunId,
+                PipelineName = controlPlaneEvent.Correlation.PipelineName,
+                PipelineVersion = controlPlaneEvent.Correlation.PipelineVersion,
+                StepId = GetPropertyValue(controlPlaneEvent, AiStepMetadataKeys.StepId)
+                    ?? GetPropertyValue(controlPlaneEvent, AiStepMetadataKeys.StepName),
+                StepKey = GetPropertyValue(controlPlaneEvent, AiStepMetadataKeys.StepKey)
+                    ?? GetPropertyValue(controlPlaneEvent, AiStepMetadataKeys.StepName),
                 Operation = controlPlaneEvent.Operation,
                 CorrelationId = controlPlaneEvent.Correlation.CorrelationId,
                 RuntimeInstanceId = controlPlaneEvent.Correlation.RuntimeInstanceId,
-                WorkerId = controlPlaneEvent.Correlation.WorkerId,
-                RunId = controlPlaneEvent.Correlation.RunId
+                WorkerId = controlPlaneEvent.Correlation.WorkerId
             };
 
             try
             {
-                await this.observability.Ledger
+                await this.ledger
                     .RecordAsync(
                         context,
                         GetLedgerCategory(controlPlaneEvent),
                         GetEventType(controlPlaneEvent),
                         GetLedgerOutcome(controlPlaneEvent),
-                        controlPlaneEvent.FailureReason,
+                        GetLedgerReason(controlPlaneEvent),
                         metadata,
                         cancellationToken)
                     .ConfigureAwait(false);
             }
-            catch
+            catch when (string.IsNullOrWhiteSpace(controlPlaneEvent.SemanticEventType))
             {
-                // Control-plane observability must not break control-plane execution.
-                // Ledger strict/failure behavior can be hardened later behind explicit options.
+                // Preserve the historical best-effort behavior for generic control-plane operation events.
+                // Canonical semantic events must surface failures to the Event Manager, which applies the
+                // centralized projection requirement declared by AiEngineEventProjectionCatalog.
             }
         }
 
@@ -86,13 +122,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
         {
             var metadata = new Dictionary<string, string?>
             {
+                ["event.id"] = controlPlaneEvent.EventId,
                 ["event.type"] = controlPlaneEvent.EventType.ToString(),
                 ["eventType"] = controlPlaneEvent.EventType.ToString(),
+                ["event.semanticType"] = controlPlaneEvent.SemanticEventType,
+                ["event.causationId"] = controlPlaneEvent.CausationId,
 
                 ["area"] = controlPlaneEvent.Area.ToString(),
                 ["operation"] = controlPlaneEvent.Operation,
                 ["outcome"] = controlPlaneEvent.Outcome?.ToString(),
-                ["duration.ms"] = controlPlaneEvent.DurationMs?.ToString(),
+                [AiObservabilityMetadataKeys.DottedDurationMs] = controlPlaneEvent.DurationMs?.ToString(),
                 [AiObservabilityMetadataKeys.DurationMs] = controlPlaneEvent.DurationMs?.ToString(),
                 ["failure.reason"] = controlPlaneEvent.FailureReason,
                 [AiObservabilityMetadataKeys.FailureReason] = controlPlaneEvent.FailureReason,
@@ -194,7 +233,29 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                 return "control-plane-runtime-instance:" + controlPlaneEvent.Correlation.RuntimeInstanceId;
             }
 
-            return "control-plane-event:" + Guid.NewGuid().ToString("N");
+            return "control-plane-event:" + controlPlaneEvent.EventId;
+        }
+
+        /// <summary>
+        /// Gets a structured event property as text when present.
+        /// </summary>
+        private static string? GetPropertyValue(
+            AiControlPlaneEvent controlPlaneEvent,
+            string key)
+        {
+            return controlPlaneEvent.Properties.TryGetValue(key, out var value)
+                ? value?.ToString()
+                : null;
+        }
+
+        /// <summary>
+        /// Resolves the Decision Ledger reason without overloading canonical event failure semantics.
+        /// </summary>
+        private static string? GetLedgerReason(AiControlPlaneEvent controlPlaneEvent)
+        {
+            return !string.IsNullOrWhiteSpace(controlPlaneEvent.SemanticEventType)
+                ? controlPlaneEvent.Message ?? controlPlaneEvent.FailureReason
+                : controlPlaneEvent.FailureReason;
         }
 
         /// <summary>
@@ -205,6 +266,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
         private static string GetEventType(
             AiControlPlaneEvent controlPlaneEvent)
         {
+            if (!string.IsNullOrWhiteSpace(controlPlaneEvent.SemanticEventType))
+            {
+                return controlPlaneEvent.SemanticEventType;
+            }
+
             var suffix =
                 controlPlaneEvent.Outcome is null
                     ? controlPlaneEvent.EventType.ToString().ToLowerInvariant()
@@ -226,6 +292,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
         private static AiDecisionLedgerOutcome GetLedgerOutcome(
             AiControlPlaneEvent controlPlaneEvent)
         {
+            if (!string.IsNullOrWhiteSpace(controlPlaneEvent.SemanticEventType))
+            {
+                var semanticOutcome = ResolveSemanticLedgerOutcome(controlPlaneEvent.SemanticEventType);
+                if (semanticOutcome is not null)
+                {
+                    return semanticOutcome.Value;
+                }
+            }
+
             if (controlPlaneEvent.EventType == AiControlPlaneEventType.OperationStarted)
             {
                 return AiDecisionLedgerOutcome.Started;
@@ -239,6 +314,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                 "CompletedWithIssues" => AiDecisionLedgerOutcome.CompletedWithIssues,
                 _ => AiDecisionLedgerOutcome.None
             };
+        }
+
+        /// <summary>
+        /// Resolves canonical semantic outcomes that are more precise than the generic control-plane envelope.
+        /// </summary>
+        /// <param name="semanticEventType">The canonical semantic event type.</param>
+        /// <returns>The exact existing Ledger outcome when the semantic family requires one; otherwise <see langword="null" />.</returns>
+        private static AiDecisionLedgerOutcome? ResolveSemanticLedgerOutcome(
+            string semanticEventType)
+        {
+            if (string.Equals(semanticEventType, AiEngineEvents.Policy.Evaluated, StringComparison.Ordinal))
+            {
+                return AiDecisionLedgerOutcome.Started;
+            }
+
+            if (string.Equals(semanticEventType, AiEngineEvents.Policy.Allowed, StringComparison.Ordinal))
+            {
+                return AiDecisionLedgerOutcome.Allowed;
+            }
+
+            if (string.Equals(semanticEventType, AiEngineEvents.Policy.Denied, StringComparison.Ordinal))
+            {
+                return AiDecisionLedgerOutcome.Denied;
+            }
+
+            if (string.Equals(semanticEventType, AiEngineEvents.Policy.Skipped, StringComparison.Ordinal))
+            {
+                return AiDecisionLedgerOutcome.Skipped;
+            }
+
+            if (string.Equals(semanticEventType, AiEngineEvents.Policy.Failed, StringComparison.Ordinal))
+            {
+                return AiDecisionLedgerOutcome.Failed;
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -260,6 +371,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                 AiControlPlaneArea.SharedController => AiDecisionLedgerCategory.SharedController,
                 AiControlPlaneArea.Scaling => AiDecisionLedgerCategory.Scaling,
                 AiControlPlaneArea.Recovery => AiDecisionLedgerCategory.Recovery,
+                AiControlPlaneArea.ChildDag => AiDecisionLedgerCategory.Dag,
+                AiControlPlaneArea.Policy => AiDecisionLedgerCategory.Policy,
                 _ => AiDecisionLedgerCategory.Control
             };
         }

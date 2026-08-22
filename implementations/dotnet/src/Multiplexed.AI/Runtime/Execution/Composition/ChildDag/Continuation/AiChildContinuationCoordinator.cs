@@ -1,3 +1,7 @@
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.Observability.Events;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Identity;
@@ -29,6 +33,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
         private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
         private readonly IAiDagExecutionEngineServices engineServices;
         private readonly AiChildContinuationScheduler scheduler;
+        private readonly IAiControlPlaneObserver observer;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiChildContinuationCoordinator"/> class.
@@ -41,12 +46,14 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
             IAiChildExecutionRelationStore relationStore,
             IAiControlPlaneIdResolver controlPlaneIdResolver,
             IAiDagExecutionEngineServices engineServices,
-            AiChildContinuationScheduler scheduler)
+            AiChildContinuationScheduler scheduler,
+            IAiControlPlaneObserver? observer = null)
         {
             this.relationStore = relationStore ?? throw new ArgumentNullException(nameof(relationStore));
             this.controlPlaneIdResolver = controlPlaneIdResolver ?? throw new ArgumentNullException(nameof(controlPlaneIdResolver));
             this.engineServices = engineServices ?? throw new ArgumentNullException(nameof(engineServices));
             this.scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
+            this.observer = observer ?? new NoopAiControlPlaneObserver();
         }
 
         /// <summary>
@@ -111,7 +118,20 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                if (!committed)
+                if (committed)
+                {
+                    await this.observer
+                        .RecordAsync(
+                            AiChildDagEngineEventFactory.Create(
+                                relation,
+                                AiEngineEvents.ChildDag.ContinuationScheduled,
+                                relation.ChildInvocationKey,
+                                continuationId: string.Concat("child-continuation:", relation.ChildInvocationKey),
+                                timestampUtc: relation.ParentContinuationScheduledAtUtc),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                else
                 {
                     relation = await this.relationStore
                         .GetAsync(identity, cancellationToken)
@@ -492,6 +512,30 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
 
             if (committed)
             {
+                var continuationId = string.Concat("child-continuation:", relation.ChildInvocationKey);
+
+                await this.observer
+                    .RecordAsync(
+                        AiChildDagEngineEventFactory.Create(
+                            relation,
+                            AiEngineEvents.ChildDag.ContinuationConsumed,
+                            continuationId,
+                            continuationId: continuationId,
+                            timestampUtc: relation.ParentResumedAtUtc),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                await this.observer
+                    .RecordAsync(
+                        AiChildDagEngineEventFactory.Create(
+                            relation,
+                            AiEngineEvents.ChildDag.ParentContinuationResumed,
+                            relation.ParentExecutionId,
+                            continuationId: continuationId,
+                            timestampUtc: relation.ParentResumedAtUtc),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
                 return relation;
             }
 

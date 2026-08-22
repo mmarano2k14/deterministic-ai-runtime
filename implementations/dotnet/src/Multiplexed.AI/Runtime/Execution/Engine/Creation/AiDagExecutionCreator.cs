@@ -14,6 +14,7 @@ using Multiplexed.AI.Runtime.Execution.Payloads.Serialization;
 using Multiplexed.AI.Runtime.Execution.Payloads.Immutable;
 using Multiplexed.AI.Stores.Creation;
 using Multiplexed.Abstractions.AI.Execution.Context;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.Execution.Engine.Creation
 {
@@ -387,7 +388,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Creation
                     claimToken: null,
                     concurrencyContext: null,
                     AiDecisionLedgerCategory.Execution,
-                    AiDecisionLedgerEvents.Execution.Created,
+                    AiEngineEvents.Execution.Created,
                     AiDecisionLedgerOutcome.Persisted,
                     "DAG execution created and persisted.",
                     new Dictionary<string, string>

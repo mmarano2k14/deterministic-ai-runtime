@@ -7,6 +7,7 @@ using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 {
@@ -138,7 +139,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
             return new AiRuntimeLifecycleEvent
             {
                 EventId = eventId,
-                EventType = AiRuntimeLifecycleEventType.RuntimeReplacementRegistered,
+                EventType = AiRuntimeLifecycleEvents.RuntimeReplacementRegistered,
                 TimestampUtc = timestampUtc,
                 ControlPlaneId = "control-plane-1",
                 HostCreationMode = AiRuntimeHostCreationMode.KubernetesPool,

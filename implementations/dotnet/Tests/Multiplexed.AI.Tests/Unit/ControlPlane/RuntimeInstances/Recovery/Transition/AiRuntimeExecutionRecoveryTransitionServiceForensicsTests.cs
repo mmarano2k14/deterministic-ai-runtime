@@ -26,6 +26,7 @@ using Multiplexed.AI.Runtime.Execution.Retention.Models;
 using Multiplexed.AI.Tests.Fixtures;
 using Multiplexed.AI.Stores;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Transition
 {
@@ -111,8 +112,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             record.Artifacts.LostVolatile.Should().Contain(AiRuntimeRecoveryArtifactName.OldLocalRunAsActiveWork);
 
             record.Events.Should().HaveCount(2);
-            record.Events.Select(x => x.EventType).Should().Contain(AiRuntimeRecoveryForensicsEventType.SharedRunRequeuedForResume);
-            record.Events.Select(x => x.EventType).Should().Contain(AiRuntimeRecoveryForensicsEventType.FailedLocalRunMarkedRequeuedForRecovery);
+            record.Events.Select(x => x.EventType).Should().Contain(AiEngineEvents.Recovery.SharedRunRequeuedForResume);
+            record.Events.Select(x => x.EventType).Should().Contain(AiEngineEvents.Recovery.FailedLocalRunMarkedRequeuedForRecovery);
         }
 
         /// <summary>

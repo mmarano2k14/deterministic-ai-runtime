@@ -1,4 +1,5 @@
-using Multiplexed.Abstractions.AI.Execution;
+﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Observability.Events;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Completion;
 using Multiplexed.AI.Stores.Memory;
@@ -21,10 +22,12 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Compl
 
             var relation = ChildDagCompositionTestData.CreateRelation(AiChildExecutionRelationStatus.Waiting);
             var relationStore = new InMemoryAiChildExecutionRelationStore(relation);
+            var observer = new CapturingAiControlPlaneObserver();
             var coordinator = new AiChildExecutionCompletionCoordinator(
                 relationStore,
                 new TestAiDagExecutionEngineServices(executionStore),
-                ChildDagCompositionTestData.CreateSnapshotService());
+                ChildDagCompositionTestData.CreateSnapshotService(),
+                observer);
 
             var first = await coordinator.CompleteIfTerminalAsync(ChildDagCompositionTestData.ChildExecutionId);
             var second = await coordinator.CompleteIfTerminalAsync(ChildDagCompositionTestData.ChildExecutionId);
@@ -41,6 +44,13 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Compl
             Assert.Null(first.ParentResumedAtUtc);
             Assert.Equal(first.ChildResult.ContentHash, second!.ChildResult!.ContentHash);
             Assert.Equal(first.CompletedAtUtc, second.CompletedAtUtc);
+
+            var completedEvent = Assert.Single(observer.Events);
+            Assert.Equal(AiEngineEvents.ChildDag.ExecutionCompleted, completedEvent.SemanticEventType);
+            Assert.Equal(
+                $"{AiEngineEvents.ChildDag.ExecutionCompleted}:{ChildDagCompositionTestData.ChildExecutionId}",
+                completedEvent.EventId);
+            Assert.Equal(ChildDagCompositionTestData.ChildExecutionId, completedEvent.Correlation.ExecutionId);
         }
 
         [Fact]
@@ -53,10 +63,12 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Compl
 
             var relation = ChildDagCompositionTestData.CreateRelation(AiChildExecutionRelationStatus.Waiting);
             var relationStore = new InMemoryAiChildExecutionRelationStore(relation);
+            var observer = new CapturingAiControlPlaneObserver();
             var coordinator = new AiChildExecutionCompletionCoordinator(
                 relationStore,
                 new TestAiDagExecutionEngineServices(executionStore),
-                ChildDagCompositionTestData.CreateSnapshotService());
+                ChildDagCompositionTestData.CreateSnapshotService(),
+                observer);
 
             var completed = await coordinator.CompleteIfTerminalAsync(ChildDagCompositionTestData.ChildExecutionId);
             var duplicate = await coordinator.CompleteIfTerminalAsync(ChildDagCompositionTestData.ChildExecutionId);
@@ -68,6 +80,10 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Compl
             Assert.NotNull(completed.ChildResult);
             Assert.Equal(completed.ChildResult!.ContentHash, duplicate!.ChildResult!.ContentHash);
             Assert.Equal(completed.ChildFailureReason, duplicate.ChildFailureReason);
+
+            var failedEvent = Assert.Single(observer.Events);
+            Assert.Equal(AiEngineEvents.ChildDag.ExecutionFailed, failedEvent.SemanticEventType);
+            Assert.Equal("Child execution failed.", failedEvent.FailureReason);
         }
 
         [Fact]

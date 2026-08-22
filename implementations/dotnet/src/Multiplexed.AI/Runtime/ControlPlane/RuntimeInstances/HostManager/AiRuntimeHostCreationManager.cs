@@ -20,6 +20,7 @@ using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers.Transport;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Providers;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
@@ -119,8 +120,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
 
             this.strategies = strategyList.ToDictionary(strategy => strategy.Mode);
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            this.observer = observer ?? throw new ArgumentNullException(nameof(observer));
+            ArgumentNullException.ThrowIfNull(observer);
             this.lifecycleJournal = lifecycleJournal ?? throw new ArgumentNullException(nameof(lifecycleJournal));
+            this.observer = AiRuntimeLifecycleObservabilityCompatibility.Compose(
+                observer,
+                this.lifecycleJournal);
         }
 
         /// <inheritdoc />
@@ -141,7 +145,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
                     request.HostCreationMode)
             };
             var requestedLifecycleEvent = await this.AppendHostLifecycleEventAsync(
-                    AiRuntimeLifecycleEventType.HostCreationRequested,
+                    AiRuntimeLifecycleEvents.HostCreationRequested,
                     request,
                     result: null,
                     lifecycleCorrelationId,
@@ -198,7 +202,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
                     .ConfigureAwait(false);
 
                 await this.AppendHostLifecycleEventAsync(
-                        AiRuntimeLifecycleEventType.HostCreationFailed,
+                        AiRuntimeLifecycleEvents.HostCreationFailed,
                         request,
                         rejectedResult,
                         lifecycleCorrelationId,
@@ -214,7 +218,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
             }
 
             var startedLifecycleEvent = await this.AppendHostLifecycleEventAsync(
-                    AiRuntimeLifecycleEventType.HostCreationStarted,
+                    AiRuntimeLifecycleEvents.HostCreationStarted,
                     request,
                     result: null,
                     lifecycleCorrelationId,
@@ -247,8 +251,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
 
                 await this.AppendHostLifecycleEventAsync(
                         result.Success
-                            ? AiRuntimeLifecycleEventType.HostCreationSucceeded
-                            : AiRuntimeLifecycleEventType.HostCreationFailed,
+                            ? AiRuntimeLifecycleEvents.HostCreationSucceeded
+                            : AiRuntimeLifecycleEvents.HostCreationFailed,
                         request,
                         result,
                         lifecycleCorrelationId,
@@ -293,7 +297,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
                     .ConfigureAwait(false);
 
                 await this.AppendHostLifecycleEventAsync(
-                        AiRuntimeLifecycleEventType.HostCreationFailed,
+                        AiRuntimeLifecycleEvents.HostCreationFailed,
                         request,
                         result: null,
                         lifecycleCorrelationId,
@@ -525,8 +529,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager
                     result?.TransportEndpoint ?? request.TransportEndpoint)
             };
 
-            await this.lifecycleJournal
-                .AppendAsync(lifecycleEvent, cancellationToken)
+            await this.observer
+                .RecordLifecycleAsync(lifecycleEvent, cancellationToken)
                 .ConfigureAwait(false);
 
             return lifecycleEvent;

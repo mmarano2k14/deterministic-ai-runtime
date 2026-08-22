@@ -32,6 +32,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Background;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.Admission;
 using Multiplexed.AI.Runtime.ControlPlane.Admission.Reservations;
@@ -641,6 +642,37 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         }
 
         /// <summary>
+        /// Enables deterministic lifecycle waiting over the canonical realtime projection.
+        /// </summary>
+        /// <remarks>
+        /// This registration reuses the existing Event Manager and owns its centralized Realtime projection
+        /// surface. It is intended for deterministic production/integration tests that need event-driven
+        /// synchronization without polling or sleeps.
+        /// </remarks>
+        /// <param name="services">The service collection.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        public static IServiceCollection AddAiControlPlaneDeterministicLifecycleObservation(
+            this IServiceCollection services)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IAiDeterministicLifecycleEvidenceReader, DurableAiDeterministicLifecycleEvidenceReader>());
+
+            if (!services.Any(serviceDescriptor =>
+                    serviceDescriptor.ServiceType == typeof(DeterministicLifecycleAiControlPlaneEventSink)))
+            {
+                services.AddSingleton<DeterministicLifecycleAiControlPlaneEventSink>();
+                services.AddSingleton<IAiDeterministicLifecycleObserver>(
+                    serviceProvider => serviceProvider.GetRequiredService<DeterministicLifecycleAiControlPlaneEventSink>());
+                services.AddSingleton<IAiControlPlaneEventSink>(
+                    serviceProvider => serviceProvider.GetRequiredService<DeterministicLifecycleAiControlPlaneEventSink>());
+            }
+
+            return services;
+        }
+
+        /// <summary>
         /// Enables structured logging for AI control-plane events.
         ///
         /// This adds a logging sink to the composite control-plane observer
@@ -663,11 +695,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         }
 
         /// <summary>
-        /// Enables runtime observability for AI control-plane events.
+        /// Enables the existing Decision Ledger projection for AI control-plane events.
         ///
-        /// This adds a runtime observability sink to the composite control-plane observer
-        /// so control-plane events can be forwarded to ledger, tracing, metrics, and correlation
-        /// through the central runtime observability facade.
+        /// This adds the Ledger projection sink to the composite control-plane observer.
+        /// The sink depends directly on the existing singleton-safe ledger recorder rather than
+        /// capturing the scoped runtime observability facade inside the singleton Event Manager.
         /// </summary>
         /// <param name="services">The service collection.</param>
         /// <returns>The same service collection for chaining.</returns>
@@ -676,8 +708,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
         {
             ArgumentNullException.ThrowIfNull(services);
 
+            if (!services.Any(serviceDescriptor =>
+                    serviceDescriptor.ServiceType == typeof(RuntimeObservabilityAiControlPlaneEventSink)))
+            {
+                services.AddSingleton(
+                    serviceProvider => RuntimeObservabilityAiControlPlaneEventSink.CreateForLedger(
+                        serviceProvider.GetRequiredService<IAiDecisionLedgerRecorder>()));
+
+                services.AddSingleton<IAiControlPlaneEventSink>(
+                    serviceProvider => serviceProvider.GetRequiredService<RuntimeObservabilityAiControlPlaneEventSink>());
+            }
+
+            return services;
+        }
+
+        /// <summary>
+        /// Enables the existing Policy Metrics projection for canonical policy engine events.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        /// <returns>The same service collection for chaining.</returns>
+        public static IServiceCollection AddAiControlPlanePolicyMetrics(
+            this IServiceCollection services)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+
             services.TryAddEnumerable(
-                ServiceDescriptor.Singleton<IAiControlPlaneEventSink, RuntimeObservabilityAiControlPlaneEventSink>());
+                ServiceDescriptor.Singleton<IAiControlPlaneEventSink, PolicyMetricsAiControlPlaneEventSink>());
 
             return services;
         }

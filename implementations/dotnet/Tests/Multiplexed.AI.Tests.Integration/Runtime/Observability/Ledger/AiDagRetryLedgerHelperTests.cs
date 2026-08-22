@@ -13,6 +13,7 @@ using Multiplexed.AI.Runtime.Execution.Instance;
 using Multiplexed.AI.Runtime.Observability.Context;
 using NSubstitute;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 {
@@ -72,19 +73,19 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Retry &&
-                entry.EventType == AiDecisionLedgerEvents.Retry.Evaluated &&
+                entry.EventType == AiEngineEvents.Retry.Evaluated &&
                 entry.Outcome == AiDecisionLedgerOutcome.Started);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Retry &&
-                entry.EventType == AiDecisionLedgerEvents.Retry.Scheduled &&
+                entry.EventType == AiEngineEvents.Retry.Scheduled &&
                 entry.Outcome == AiDecisionLedgerOutcome.Applied);
 
             Assert.DoesNotContain(entries, entry =>
-                entry.EventType == AiDecisionLedgerEvents.Retry.Denied);
+                entry.EventType == AiEngineEvents.Retry.Denied);
 
             Assert.DoesNotContain(entries, entry =>
-                entry.EventType == AiDecisionLedgerEvents.Retry.BudgetExhausted);
+                entry.EventType == AiEngineEvents.Retry.BudgetExhausted);
         }
 
         /// <summary>
@@ -135,16 +136,16 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Retry &&
-                entry.EventType == AiDecisionLedgerEvents.Retry.Evaluated &&
+                entry.EventType == AiEngineEvents.Retry.Evaluated &&
                 entry.Outcome == AiDecisionLedgerOutcome.Started);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Retry &&
-                entry.EventType == AiDecisionLedgerEvents.Retry.BudgetExhausted &&
+                entry.EventType == AiEngineEvents.Retry.BudgetExhausted &&
                 entry.Outcome == AiDecisionLedgerOutcome.Denied);
 
             Assert.DoesNotContain(entries, entry =>
-                entry.EventType == AiDecisionLedgerEvents.Retry.Scheduled);
+                entry.EventType == AiEngineEvents.Retry.Scheduled);
         }
 
         /// <summary>
@@ -195,19 +196,19 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Retry &&
-                entry.EventType == AiDecisionLedgerEvents.Retry.Evaluated &&
+                entry.EventType == AiEngineEvents.Retry.Evaluated &&
                 entry.Outcome == AiDecisionLedgerOutcome.Started);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Retry &&
-                entry.EventType == AiDecisionLedgerEvents.Retry.Denied &&
+                entry.EventType == AiEngineEvents.Retry.Denied &&
                 entry.Outcome == AiDecisionLedgerOutcome.Denied);
 
             Assert.DoesNotContain(entries, entry =>
-                entry.EventType == AiDecisionLedgerEvents.Retry.Scheduled);
+                entry.EventType == AiEngineEvents.Retry.Scheduled);
 
             Assert.DoesNotContain(entries, entry =>
-                entry.EventType == AiDecisionLedgerEvents.Retry.BudgetExhausted);
+                entry.EventType == AiEngineEvents.Retry.BudgetExhausted);
         }
 
         /// <summary>
@@ -242,12 +243,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Retry &&
-                entry.EventType == AiDecisionLedgerEvents.Retry.Evaluated &&
+                entry.EventType == AiEngineEvents.Retry.Evaluated &&
                 entry.Outcome == AiDecisionLedgerOutcome.Started);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Retry &&
-                entry.EventType == AiDecisionLedgerEvents.Retry.Denied &&
+                entry.EventType == AiEngineEvents.Retry.Denied &&
                 entry.Outcome == AiDecisionLedgerOutcome.Denied);
         }
 

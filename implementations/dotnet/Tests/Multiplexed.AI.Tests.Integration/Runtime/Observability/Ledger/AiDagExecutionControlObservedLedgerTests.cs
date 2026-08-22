@@ -20,6 +20,7 @@ using Multiplexed.AI.Runtime.Observability.Logging;
 using Multiplexed.AI.Stores;
 using NSubstitute;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 {
@@ -65,7 +66,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Control &&
-                entry.EventType == AiDecisionLedgerEvents.Control.CancelObserved &&
+                entry.EventType == AiEngineEvents.Control.CancelObserved &&
                 entry.Outcome == AiDecisionLedgerOutcome.Blocked &&
                 entry.CorrelationContext.ExecutionId == executionId &&
                 entry.CorrelationContext.PipelineName == pipelineKey &&
@@ -117,7 +118,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.HumanInput &&
-                entry.EventType == AiDecisionLedgerEvents.HumanInput.Waiting &&
+                entry.EventType == AiEngineEvents.HumanInput.Waiting &&
                 entry.Outcome == AiDecisionLedgerOutcome.Blocked &&
                 entry.CorrelationContext.ExecutionId == executionId &&
                 entry.CorrelationContext.PipelineName == pipelineKey &&
@@ -196,10 +197,10 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
             var entries = await ledger.GetByExecutionAsync(executionId);
 
             Assert.DoesNotContain(entries, entry =>
-                entry.EventType == AiDecisionLedgerEvents.Control.CancelObserved);
+                entry.EventType == AiEngineEvents.Control.CancelObserved);
 
             Assert.DoesNotContain(entries, entry =>
-                entry.EventType == AiDecisionLedgerEvents.HumanInput.Waiting);
+                entry.EventType == AiEngineEvents.HumanInput.Waiting);
         }
 
         private static IAiDagExecutionEngineServices CreateServices(

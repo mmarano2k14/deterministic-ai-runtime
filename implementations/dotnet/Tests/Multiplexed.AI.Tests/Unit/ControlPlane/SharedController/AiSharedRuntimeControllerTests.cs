@@ -14,6 +14,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
+using Multiplexed.Abstractions.AI.Observability.Events;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Isolation;
@@ -652,18 +653,34 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController
             });
 
             Assert.True(result.Success);
-            Assert.Equal(2, observer.Events.Count);
 
-            Assert.Equal(AiControlPlaneEventType.OperationStarted, observer.Events[0].EventType);
-            Assert.Equal(AiControlPlaneEventType.OperationCompleted, observer.Events[1].EventType);
+            var legacyEvents = observer.Events
+                .Where(controlPlaneEvent =>
+                    string.IsNullOrWhiteSpace(controlPlaneEvent.SemanticEventType))
+                .ToArray();
 
-            Assert.All(observer.Events, controlPlaneEvent =>
+            Assert.Equal(2, legacyEvents.Length);
+            Assert.Equal(AiControlPlaneEventType.OperationStarted, legacyEvents[0].EventType);
+            Assert.Equal(AiControlPlaneEventType.OperationCompleted, legacyEvents[1].EventType);
+
+            Assert.All(legacyEvents, controlPlaneEvent =>
             {
                 Assert.Equal(AiControlPlaneArea.SharedController, controlPlaneEvent.Area);
                 Assert.Equal("SubmitRun", controlPlaneEvent.Operation);
                 Assert.Equal("correlation-1", controlPlaneEvent.Correlation.CorrelationId);
                 Assert.Equal("shared-run-1", controlPlaneEvent.Correlation.RunId);
             });
+
+            var workAssignedEvent = Assert.Single(
+                observer.Events,
+                controlPlaneEvent => string.Equals(
+                    controlPlaneEvent.SemanticEventType,
+                    AiRuntimeLifecycleEvents.WorkAssigned,
+                    StringComparison.Ordinal));
+
+            Assert.Equal(AiControlPlaneArea.SharedController, workAssignedEvent.Area);
+            Assert.Equal("correlation-1", workAssignedEvent.Correlation.CorrelationId);
+            Assert.Equal("shared-run-1", workAssignedEvent.Correlation.RunId);
         }
 
         /// <summary>

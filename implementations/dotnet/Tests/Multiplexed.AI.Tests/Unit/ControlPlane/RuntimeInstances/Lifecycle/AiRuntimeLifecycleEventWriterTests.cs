@@ -1,9 +1,10 @@
-using System;
+﻿using System;
 using System.Threading.Tasks;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
 {
@@ -20,7 +21,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
                 new AiRuntimeLifecycleEvent
                 {
                     EventId = "runtime.registered:runtime-1",
-                    EventType = AiRuntimeLifecycleEventType.RuntimeRegistered,
+                    EventType = AiRuntimeLifecycleEvents.RuntimeRegistered,
                     TimestampUtc = timestamp,
                     ControlPlaneId = "control-plane-1",
                     HostCreationMode = AiRuntimeHostCreationMode.KubernetesPool,
@@ -41,7 +42,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
                 new AiRuntimeLifecycleEvent
                 {
                     EventId = "runtime.suppressed:runtime-1",
-                    EventType = AiRuntimeLifecycleEventType.RuntimeSuppressed,
+                    EventType = AiRuntimeLifecycleEvents.RuntimeSuppressed,
                     TimestampUtc = timestamp.AddSeconds(1),
                     ControlPlaneId = "control-plane-1",
                     PoolId = "pool-1",
@@ -74,7 +75,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Lifecycle
             var lifecycleEvent = new AiRuntimeLifecycleEvent
             {
                 EventId = "runtime.suppressed:failure-1:runtime-1",
-                EventType = AiRuntimeLifecycleEventType.RuntimeSuppressed,
+                EventType = AiRuntimeLifecycleEvents.RuntimeSuppressed,
                 TimestampUtc = DateTimeOffset.UtcNow,
                 ControlPlaneId = "control-plane-1",
                 RuntimeInstanceId = "runtime-1",

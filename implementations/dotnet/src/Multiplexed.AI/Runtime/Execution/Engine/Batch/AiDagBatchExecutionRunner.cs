@@ -13,6 +13,7 @@ using Multiplexed.AI.Runtime.Execution.Engine.Finalization;
 using Multiplexed.AI.Runtime.Execution.Engine.Helpers;
 using Multiplexed.AI.Runtime.Execution.Engine.Retention;
 using Multiplexed.AI.Runtime.Execution.Engine.Steps;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
 {
@@ -839,7 +840,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
                         claimToken,
                         concurrencyAdmission.Context,
                         AiDecisionLedgerCategory.Concurrency,
-                        AiDecisionLedgerEvents.Concurrency.LeaseReleased,
+                        AiEngineEvents.Concurrency.LeaseReleased,
                         AiDecisionLedgerOutcome.Released,
                         "Concurrency lease released by the claim-owning DAG runner.",
                         new Dictionary<string, string>

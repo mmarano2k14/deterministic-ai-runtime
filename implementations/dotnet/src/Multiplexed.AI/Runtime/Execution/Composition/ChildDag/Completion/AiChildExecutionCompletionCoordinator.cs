@@ -1,3 +1,7 @@
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.Observability.Events;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Observability;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations.Persistence;
@@ -19,6 +23,7 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Completion
         private readonly IAiChildExecutionRelationStore relationStore;
         private readonly IAiDagExecutionEngineServices engineServices;
         private readonly AiChildDagSnapshotService snapshotService;
+        private readonly IAiControlPlaneObserver observer;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiChildExecutionCompletionCoordinator"/> class.
@@ -29,11 +34,13 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Completion
         public AiChildExecutionCompletionCoordinator(
             IAiChildExecutionRelationStore relationStore,
             IAiDagExecutionEngineServices engineServices,
-            AiChildDagSnapshotService snapshotService)
+            AiChildDagSnapshotService snapshotService,
+            IAiControlPlaneObserver? observer = null)
         {
             this.relationStore = relationStore ?? throw new ArgumentNullException(nameof(relationStore));
             this.engineServices = engineServices ?? throw new ArgumentNullException(nameof(engineServices));
             this.snapshotService = snapshotService ?? throw new ArgumentNullException(nameof(snapshotService));
+            this.observer = observer ?? new NoopAiControlPlaneObserver();
         }
 
         /// <summary>
@@ -114,6 +121,32 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Completion
 
             if (committed)
             {
+                if (record.Status == AiExecutionStatus.Completed)
+                {
+                    await this.observer
+                        .RecordAsync(
+                            AiChildDagEngineEventFactory.Create(
+                                relation,
+                                AiEngineEvents.ChildDag.ExecutionCompleted,
+                                childExecutionId,
+                                timestampUtc: relation.CompletedAtUtc),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                else if (record.Status == AiExecutionStatus.Failed)
+                {
+                    await this.observer
+                        .RecordAsync(
+                            AiChildDagEngineEventFactory.Create(
+                                relation,
+                                AiEngineEvents.ChildDag.ExecutionFailed,
+                                childExecutionId,
+                                reason: failureReason,
+                                timestampUtc: relation.CompletedAtUtc),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
                 return relation;
             }
 

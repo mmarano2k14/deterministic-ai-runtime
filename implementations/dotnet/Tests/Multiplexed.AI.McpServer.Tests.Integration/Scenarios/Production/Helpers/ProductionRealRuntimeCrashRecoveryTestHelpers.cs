@@ -16,6 +16,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Multiplexed.AI.Stores;
 using Xunit;
 using Xunit.Abstractions;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers
 {
@@ -2678,19 +2679,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
                 AssertContainsTimelineEvent(
                     record,
-                    "failed.local.run.marked.requeued.for.recovery");
+                    AiEngineEvents.Recovery.FailedLocalRunMarkedRequeuedForRecovery);
 
                 AssertContainsTimelineEvent(
                     record,
-                    "replacement.runtime.selected");
+                    AiEngineEvents.Recovery.ReplacementRuntimeSelected);
 
                 AssertContainsTimelineEvent(
                     record,
-                    "replacement.local.run.registered");
+                    AiEngineEvents.Recovery.ReplacementLocalRunRegistered);
 
                 AssertContainsTimelineEvent(
                     record,
-                    "resume.context.seeded");
+                    AiEngineEvents.Recovery.ResumeContextSeeded);
 
                 var recovered =
                     proof.RecoveredWorks.Single(work =>
@@ -2703,11 +2704,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 {
                     AssertContainsTimelineEvent(
                         record,
-                        "execution.recovery.candidate.detected");
+                        AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected);
 
                     AssertContainsTimelineEvent(
                         record,
-                        "shared.run.requeued.for.resume");
+                        AiEngineEvents.Recovery.SharedRunRequeuedForResume);
 
                     Assert.Equal(
                         recovered.Original.ExecutionId,
@@ -2720,8 +2721,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         recovered.Original.Kind);
 
                     Assert.True(
-                        ContainsTimelineEvent(record, "SharedRunRequeuedForLocalQueuedRecovery") ||
-                        ContainsTimelineEvent(record, "shared.run.requeued.for.local.queued.recovery"),
+                        ContainsTimelineEvent(record, AiEngineEvents.Recovery.SharedRunRequeuedForLocalQueuedRecovery),
                         $"Local queued recovery forensics record does not contain a local queued requeue event. SharedRunId='{record.SharedRunId}', Timeline='{string.Join(" -> ", record.Timeline.Select(item => item.EventType))}'.");
 
                     Assert.True(
@@ -2867,24 +2867,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     return false;
                 }
 
-                if (!ContainsTimelineEvent(record, "failed.local.run.marked.requeued.for.recovery") ||
-                    !ContainsTimelineEvent(record, "replacement.runtime.selected") ||
-                    !ContainsTimelineEvent(record, "replacement.local.run.registered") ||
-                    !ContainsTimelineEvent(record, "resume.context.seeded"))
+                if (!ContainsTimelineEvent(record, AiEngineEvents.Recovery.FailedLocalRunMarkedRequeuedForRecovery) ||
+                    !ContainsTimelineEvent(record, AiEngineEvents.Recovery.ReplacementRuntimeSelected) ||
+                    !ContainsTimelineEvent(record, AiEngineEvents.Recovery.ReplacementLocalRunRegistered) ||
+                    !ContainsTimelineEvent(record, AiEngineEvents.Recovery.ResumeContextSeeded))
                 {
                     return false;
                 }
 
                 if (recovered.Original.Kind == RealRuntimeCrashWorkKind.InFlightExecution)
                 {
-                    if (!ContainsTimelineEvent(record, "execution.recovery.candidate.detected") ||
-                        !ContainsTimelineEvent(record, "shared.run.requeued.for.resume"))
+                    if (!ContainsTimelineEvent(record, AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected) ||
+                        !ContainsTimelineEvent(record, AiEngineEvents.Recovery.SharedRunRequeuedForResume))
                     {
                         return false;
                     }
                 }
-                else if (!ContainsTimelineEvent(record, "SharedRunRequeuedForLocalQueuedRecovery") &&
-                         !ContainsTimelineEvent(record, "shared.run.requeued.for.local.queued.recovery"))
+                else if (!ContainsTimelineEvent(record, AiEngineEvents.Recovery.SharedRunRequeuedForLocalQueuedRecovery))
                 {
                     return false;
                 }

@@ -12,6 +12,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Tests.Fixtures;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
 {
@@ -46,9 +47,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             Assert.Equal(
                 new[]
                 {
-                    AiRuntimeLifecycleEventType.HostCreationRequested,
-                    AiRuntimeLifecycleEventType.HostCreationStarted,
-                    AiRuntimeLifecycleEventType.HostCreationSucceeded
+                    AiRuntimeLifecycleEvents.HostCreationRequested,
+                    AiRuntimeLifecycleEvents.HostCreationStarted,
+                    AiRuntimeLifecycleEvents.HostCreationSucceeded
                 },
                 events.Select(lifecycleEvent => lifecycleEvent.EventType));
             Assert.All(events, lifecycleEvent =>
@@ -89,11 +90,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
 
             Assert.Equal(3, events.Count);
             Assert.Single(events.Where(lifecycleEvent =>
-                lifecycleEvent.EventType == AiRuntimeLifecycleEventType.HostCreationRequested));
+                lifecycleEvent.EventType == AiRuntimeLifecycleEvents.HostCreationRequested));
             Assert.Single(events.Where(lifecycleEvent =>
-                lifecycleEvent.EventType == AiRuntimeLifecycleEventType.HostCreationStarted));
+                lifecycleEvent.EventType == AiRuntimeLifecycleEvents.HostCreationStarted));
             Assert.Single(events.Where(lifecycleEvent =>
-                lifecycleEvent.EventType == AiRuntimeLifecycleEventType.HostCreationSucceeded));
+                lifecycleEvent.EventType == AiRuntimeLifecycleEvents.HostCreationSucceeded));
         }
 
         /// <summary>
@@ -120,14 +121,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             var events = await journal.ListByCorrelationIdAsync(request.RequestId);
 
             Assert.Equal(2, events.Count);
-            Assert.Equal(AiRuntimeLifecycleEventType.HostCreationRequested, events[0].EventType);
-            Assert.Equal(AiRuntimeLifecycleEventType.HostCreationFailed, events[1].EventType);
+            Assert.Equal(AiRuntimeLifecycleEvents.HostCreationRequested, events[0].EventType);
+            Assert.Equal(AiRuntimeLifecycleEvents.HostCreationFailed, events[1].EventType);
             Assert.DoesNotContain(
                 events,
-                lifecycleEvent => lifecycleEvent.EventType == AiRuntimeLifecycleEventType.HostCreationStarted);
+                lifecycleEvent => lifecycleEvent.EventType == AiRuntimeLifecycleEvents.HostCreationStarted);
             Assert.DoesNotContain(
                 events,
-                lifecycleEvent => lifecycleEvent.EventType == AiRuntimeLifecycleEventType.HostCreationSucceeded);
+                lifecycleEvent => lifecycleEvent.EventType == AiRuntimeLifecycleEvents.HostCreationSucceeded);
         }
 
         /// <summary>
@@ -188,7 +189,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager
             var events = await journal.ListByCorrelationIdAsync(request.RequestId);
             var succeeded = Assert.Single(
                 events.Where(lifecycleEvent =>
-                    lifecycleEvent.EventType == AiRuntimeLifecycleEventType.HostCreationSucceeded));
+                    lifecycleEvent.EventType == AiRuntimeLifecycleEvents.HostCreationSucceeded));
 
             Assert.Equal("pod-uid-a", succeeded.HostId);
             Assert.Equal("pod-uid-a", succeeded.KubernetesPodUid);

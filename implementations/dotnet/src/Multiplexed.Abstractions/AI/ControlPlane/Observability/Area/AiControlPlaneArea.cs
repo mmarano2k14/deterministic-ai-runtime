@@ -48,6 +48,16 @@
         /// <summary>
         /// Runtime execution recovery, failed instance reconciliation, requeue, restore, and forensic repair operations.
         /// </summary>
-        Recovery = 8
+        Recovery = 8,
+
+        /// <summary>
+        /// Recursive Child DAG execution, completion, and durable parent continuation operations.
+        /// </summary>
+        ChildDag = 9,
+
+        /// <summary>
+        /// Canonical policy evaluation and policy decision observation.
+        /// </summary>
+        Policy = 10
     }
 }

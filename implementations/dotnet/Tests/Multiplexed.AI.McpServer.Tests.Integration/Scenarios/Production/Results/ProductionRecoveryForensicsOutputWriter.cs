@@ -1,5 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Xunit.Abstractions;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Results
 {
@@ -190,17 +191,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Result
                 ?? timeline.FirstOrDefault(item =>
                     string.Equals(
                         item.EventType,
-                        AiRuntimeRecoveryForensicsEventType.ReplacementRuntimeSelected,
+                        AiEngineEvents.Recovery.ReplacementRuntimeSelected,
                         StringComparison.Ordinal))?.RuntimeInstanceId
                 ?? timeline.FirstOrDefault(item =>
                     string.Equals(
                         item.EventType,
-                        AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered,
+                        AiEngineEvents.Recovery.ReplacementLocalRunRegistered,
                         StringComparison.Ordinal))?.RuntimeInstanceId
                 ?? timeline.FirstOrDefault(item =>
                     string.Equals(
                         item.EventType,
-                        AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCompleted,
+                        AiEngineEvents.Recovery.ExecutionRecoveryCompleted,
                         StringComparison.Ordinal))?.RuntimeInstanceId;
         }
 
@@ -218,17 +219,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Result
                 ?? timeline.FirstOrDefault(item =>
                     string.Equals(
                         item.EventType,
-                        AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered,
+                        AiEngineEvents.Recovery.ReplacementLocalRunRegistered,
                         StringComparison.Ordinal))?.LocalRunId
                 ?? timeline.FirstOrDefault(item =>
                     string.Equals(
                         item.EventType,
-                        AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded,
+                        AiEngineEvents.Recovery.ResumeContextSeeded,
                         StringComparison.Ordinal))?.LocalRunId
                 ?? timeline.FirstOrDefault(item =>
                     string.Equals(
                         item.EventType,
-                        AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCompleted,
+                        AiEngineEvents.Recovery.ExecutionRecoveryCompleted,
                         StringComparison.Ordinal))?.LocalRunId;
         }
 

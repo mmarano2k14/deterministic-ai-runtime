@@ -1,4 +1,4 @@
-using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.Rbac.Core.Runtime;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
+using Multiplexed.Abstractions.AI.Observability.Events;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Completion;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation;
@@ -37,7 +38,8 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Conti
             relation.ParentResumedAtUtc = null;
             var relationStore = new InMemoryAiChildExecutionRelationStore(relation);
             var controller = new CapturingSharedRuntimeController();
-            var coordinator = CreateCoordinator(executionStore, relationStore, controller);
+            var observer = new CapturingAiControlPlaneObserver();
+            var coordinator = CreateCoordinator(executionStore, relationStore, controller, observer: observer);
 
             var attempts = Enumerable.Range(0, 8)
                 .Select(_ => coordinator.EnqueueContinuationAsync(relation.ToInvocationIdentity()))
@@ -66,6 +68,13 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Conti
                 controller.Requests
                     .Select(request => request.RunRequest!.ExternalWaitContinuation!.ContinuationId)
                     .Distinct(StringComparer.Ordinal));
+
+            var scheduledEvent = Assert.Single(
+                observer.Events.Where(controlPlaneEvent =>
+                    controlPlaneEvent.SemanticEventType == AiEngineEvents.ChildDag.ContinuationScheduled));
+            Assert.Equal(
+                $"{AiEngineEvents.ChildDag.ContinuationScheduled}:{relation.ChildInvocationKey}",
+                scheduledEvent.EventId);
         }
 
         [Fact]
@@ -157,13 +166,22 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Conti
                     version: relation.ParentContinuationScheduledStepVersion!.Value + 1));
             var relationStore = new InMemoryAiChildExecutionRelationStore(relation);
             var controller = new CapturingSharedRuntimeController();
-            var coordinator = CreateCoordinator(executionStore, relationStore, controller);
+            var observer = new CapturingAiControlPlaneObserver();
+            var coordinator = CreateCoordinator(executionStore, relationStore, controller, observer: observer);
 
             var resumed = await coordinator.ReconcileScheduledAsync(relation);
 
             Assert.Equal(AiChildContinuationStatus.Resumed, resumed.ContinuationStatus);
             Assert.NotNull(resumed.ParentResumedAtUtc);
             Assert.Empty(controller.Requests);
+            Assert.Collection(
+                observer.Events,
+                consumed => Assert.Equal(
+                    AiEngineEvents.ChildDag.ContinuationConsumed,
+                    consumed.SemanticEventType),
+                parentResumed => Assert.Equal(
+                    AiEngineEvents.ChildDag.ParentContinuationResumed,
+                    parentResumed.SemanticEventType));
         }
 
         [Fact]
@@ -466,15 +484,20 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Conti
             MemoryAiExecutionStore executionStore,
             InMemoryAiChildExecutionRelationStore relationStore,
             CapturingSharedRuntimeController controller,
-            InMemoryAiSharedQueue? sharedQueue = null)
+            InMemoryAiSharedQueue? sharedQueue = null,
+            CapturingAiControlPlaneObserver? observer = null)
         {
             var engineServices = new TestAiDagExecutionEngineServices(executionStore);
-            var scheduler = new AiChildContinuationScheduler(controller, sharedQueue ?? new InMemoryAiSharedQueue());
+            var scheduler = new AiChildContinuationScheduler(
+                controller,
+                sharedQueue ?? new InMemoryAiSharedQueue(),
+                observer);
             return new AiChildContinuationCoordinator(
                 relationStore,
                 new StaticAiControlPlaneIdResolver(ChildDagCompositionTestData.ControlPlaneId),
                 engineServices,
-                scheduler);
+                scheduler,
+                observer);
         }
     }
 }

@@ -7,6 +7,8 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Claims;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Execution;
+using Multiplexed.Abstractions.AI.Observability.Events;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Execution
 {
@@ -110,7 +112,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 "runtime-recovery:execution-a1:shared-run-01:local-a1-flight:execution.recovery.candidate.detected",
                 candidateEvent.EventId);
             Assert.Equal(
-                AiRuntimeRecoveryForensicsEventType
+                AiEngineEvents.Recovery
                     .ExecutionRecoveryCandidateDetected,
                 candidateEvent.EventType);
             Assert.Equal(
@@ -135,12 +137,48 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                 bool.TrueString,
                 candidateEvent.Metadata["candidate.canRecover"]);
 
-            Assert.Equal(
-                2,
-                observer.Events.Count);
+            var canonicalCandidateEvent =
+                Assert.Single(
+                    observer.Events.Where(evt =>
+                        string.Equals(
+                            evt.SemanticEventType,
+                            AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected,
+                            StringComparison.Ordinal)));
+
+            Assert.Equal(candidateEvent.EventId, canonicalCandidateEvent.EventId);
+
+            var workReleasedEvents =
+                observer.Events
+                    .Where(evt =>
+                        string.Equals(
+                            evt.SemanticEventType,
+                            AiRuntimeLifecycleEvents.WorkReleased,
+                            StringComparison.Ordinal))
+                    .ToArray();
+
+            Assert.Equal(2, workReleasedEvents.Length);
+            Assert.Contains(
+                workReleasedEvents,
+                evt => string.Equals(
+                    evt.Correlation.RunId,
+                    "shared-run-01",
+                    StringComparison.Ordinal));
+            Assert.Contains(
+                workReleasedEvents,
+                evt => string.Equals(
+                    evt.Correlation.RunId,
+                    "shared-run-02",
+                    StringComparison.Ordinal));
+
+            var legacyRecoveryEvents =
+                observer.Events
+                    .Where(evt => string.IsNullOrWhiteSpace(evt.SemanticEventType))
+                    .ToArray();
+
+            Assert.Equal(2, legacyRecoveryEvents.Length);
 
             Assert.All(
-                observer.Events,
+                legacyRecoveryEvents,
                 evt =>
                 {
                     Assert.Equal(
@@ -159,7 +197,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
 
             var inFlightLedgerEvent =
                 Assert.Single(
-                    observer.Events.Where(evt =>
+                    legacyRecoveryEvents.Where(evt =>
                         string.Equals(
                             evt.Correlation.ExecutionId,
                             "execution-a1",
@@ -195,7 +233,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
 
             var localQueuedLedgerEvent =
                 Assert.Single(
-                    observer.Events.Where(evt =>
+                    legacyRecoveryEvents.Where(evt =>
                         string.Equals(
                             evt.Correlation.RunId,
                             "shared-run-02",
@@ -544,7 +582,26 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             Assert.Equal(
                 changed,
                 outcome.Transition.Changed);
-            Assert.Empty(observer.Events);
+            var candidateEvent =
+                Assert.Single(observer.Events);
+
+            Assert.Equal(
+                AiEngineEvents.Recovery
+                    .ExecutionRecoveryCandidateDetected,
+                candidateEvent.SemanticEventType);
+
+            Assert.DoesNotContain(
+                observer.Events,
+                evt =>
+                    string.IsNullOrWhiteSpace(evt.SemanticEventType) &&
+                    evt.EventType ==
+                        AiControlPlaneEventType.OperationCompleted &&
+                    evt.Area == AiControlPlaneArea.Recovery &&
+                    string.Equals(
+                        evt.Operation,
+                        AiRuntimeRecoveryOperationNames
+                            .ExecutionRecoveryReconcile,
+                        StringComparison.Ordinal));
 
             await claimedWork.Lease!.DisposeAsync();
         }

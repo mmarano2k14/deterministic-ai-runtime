@@ -8,6 +8,7 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances.Forensics
 {
@@ -72,15 +73,15 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances.Forensics
 
                 await store.UpsertAsync(CreateRecord("mongo-forensics-002", "mongo-execution-002", "mongo-shared-run-002"));
 
-                await store.AppendEventAsync("mongo-forensics-002", CreateEvent("mongo-event-002-a", "mongo-forensics-002", AiRuntimeRecoveryForensicsEventType.SharedRunRequeuedForResume, "mongo-execution-002", "mongo-shared-run-002", "failed-local-run-002", "runtime-1", DateTimeOffset.UtcNow.AddSeconds(1)));
-                await store.AppendEventAsync("mongo-forensics-002", CreateEvent("mongo-event-002-b", "mongo-forensics-002", AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered, "mongo-execution-002", "mongo-shared-run-002", "replacement-local-run-002", "runtime-2", DateTimeOffset.UtcNow.AddSeconds(2)));
+                await store.AppendEventAsync("mongo-forensics-002", CreateEvent("mongo-event-002-a", "mongo-forensics-002", AiEngineEvents.Recovery.SharedRunRequeuedForResume, "mongo-execution-002", "mongo-shared-run-002", "failed-local-run-002", "runtime-1", DateTimeOffset.UtcNow.AddSeconds(1)));
+                await store.AppendEventAsync("mongo-forensics-002", CreateEvent("mongo-event-002-b", "mongo-forensics-002", AiEngineEvents.Recovery.ReplacementLocalRunRegistered, "mongo-execution-002", "mongo-shared-run-002", "replacement-local-run-002", "runtime-2", DateTimeOffset.UtcNow.AddSeconds(2)));
 
                 var loaded = await store.GetByForensicsIdAsync("mongo-forensics-002");
 
                 loaded.Should().NotBeNull();
                 loaded!.Events.Should().HaveCount(2);
-                loaded.Events.Select(x => x.EventType).Should().Contain(AiRuntimeRecoveryForensicsEventType.SharedRunRequeuedForResume);
-                loaded.Events.Select(x => x.EventType).Should().Contain(AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered);
+                loaded.Events.Select(x => x.EventType).Should().Contain(AiEngineEvents.Recovery.SharedRunRequeuedForResume);
+                loaded.Events.Select(x => x.EventType).Should().Contain(AiEngineEvents.Recovery.ReplacementLocalRunRegistered);
             }
         }
 
@@ -293,8 +294,8 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances.Forensics
                             $"mongo-event-concurrent-{index:D3}",
                             forensicsId,
                             index % 2 == 0
-                                ? AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded
-                                : AiRuntimeRecoveryForensicsEventType.DagResumeStarted,
+                                ? AiEngineEvents.Recovery.ResumeContextSeeded
+                                : AiEngineEvents.Recovery.DagResumeStarted,
                             executionId,
                             sharedRunId,
                             $"local-run-{index:D3}",
@@ -469,7 +470,7 @@ namespace Multiplexed.AI.Tests.Runtime.ControlPlane.RuntimeInstances.Forensics
                             CreateEvent(
                                 eventId,
                                 forensicsId,
-                                AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded,
+                                AiEngineEvents.Recovery.ResumeContextSeeded,
                                 executionId,
                                 sharedRunId,
                                 "replacement-local-run",

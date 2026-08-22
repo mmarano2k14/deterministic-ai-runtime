@@ -1,13 +1,13 @@
-﻿namespace Multiplexed.Abstractions.AI.Observability.Ledger
+﻿namespace Multiplexed.Abstractions.AI.Observability.Events
 {
     /// <summary>
-    /// Provides stable decision ledger event type constants grouped by runtime domain.
+    /// Provides canonical engine event type constants grouped by semantic runtime domain.
     /// </summary>
     /// <remarks>
-    /// Event types are represented as string constants to keep the ledger extensible
-    /// without creating a very large event enum.
+    /// Event types are represented as string constants so persisted and wire-visible semantic values
+    /// remain stable while all observability surfaces consume one canonical declaration.
     /// </remarks>
-    public static class AiDecisionLedgerEvents
+    public static class AiEngineEvents
     {
         /// <summary>
         /// Provides execution lifecycle event types.
@@ -129,6 +129,52 @@
         }
 
         /// <summary>
+        /// Provides recursive Child DAG execution and durable continuation event types.
+        /// </summary>
+        public static class ChildDag
+        {
+            /// <summary>
+            /// Indicates that the durable child execution identity was created.
+            /// </summary>
+            public const string ExecutionCreated = "child.execution.created";
+
+            /// <summary>
+            /// Indicates that the child execution started.
+            /// </summary>
+            public const string ExecutionStarted = "child.execution.started";
+
+            /// <summary>
+            /// Indicates that the child execution completed successfully.
+            /// </summary>
+            public const string ExecutionCompleted = "child.execution.completed";
+
+            /// <summary>
+            /// Indicates that the child execution failed.
+            /// </summary>
+            public const string ExecutionFailed = "child.execution.failed";
+
+            /// <summary>
+            /// Indicates that parent continuation delivery became durably scheduled.
+            /// </summary>
+            public const string ContinuationScheduled = "child.continuation.scheduled";
+
+            /// <summary>
+            /// Indicates that the deterministic continuation was accepted for delivery.
+            /// </summary>
+            public const string ContinuationDelivered = "child.continuation.delivered";
+
+            /// <summary>
+            /// Indicates that durable parent progress proves scheduled continuation consumption.
+            /// </summary>
+            public const string ContinuationConsumed = "child.continuation.consumed";
+
+            /// <summary>
+            /// Indicates that the durable parent-child relation converged to resumed.
+            /// </summary>
+            public const string ParentContinuationResumed = "parent.continuation.resumed";
+        }
+
+        /// <summary>
         /// Provides distributed claim and lease event types.
         /// </summary>
         public static class Claim
@@ -224,6 +270,79 @@
             /// Indicates that an execution was recovered.
             /// </summary>
             public const string ExecutionRecovered = "recovery.execution_recovered";
+
+            /// <summary>
+            /// Indicates that a runtime failure was detected.
+            /// </summary>
+            public const string RuntimeFailureDetected = "runtime.failure.detected";
+
+            /// <summary>
+            /// Indicates that runtime health was suppressed or marked unsafe.
+            /// </summary>
+            public const string RuntimeHealthSuppressed = "runtime.health.suppressed";
+
+            /// <summary>
+            /// Indicates that runtime capacity was removed or suppressed.
+            /// </summary>
+            public const string RuntimeCapacityRemoved = "runtime.capacity.removed";
+
+            /// <summary>
+            /// Indicates that an execution recovery candidate was detected.
+            /// </summary>
+            public const string ExecutionRecoveryCandidateDetected = "execution.recovery.candidate.detected";
+
+            /// <summary>
+            /// Indicates that a shared run was requeued for in-flight resume recovery.
+            /// </summary>
+            public const string SharedRunRequeuedForResume = "shared.run.requeued.for.resume";
+
+            /// <summary>
+            /// Indicates that a shared run was requeued for local-queued recovery.
+            /// </summary>
+            /// <remarks>
+            /// The historical physical value is intentionally preserved for persisted forensics compatibility.
+            /// </remarks>
+            public const string SharedRunRequeuedForLocalQueuedRecovery = "SharedRunRequeuedForLocalQueuedRecovery";
+
+            /// <summary>
+            /// Indicates that a failed local run was marked requeued for recovery.
+            /// </summary>
+            public const string FailedLocalRunMarkedRequeuedForRecovery = "failed.local.run.marked.requeued.for.recovery";
+
+            /// <summary>
+            /// Indicates that a replacement runtime was selected.
+            /// </summary>
+            public const string ReplacementRuntimeSelected = "replacement.runtime.selected";
+
+            /// <summary>
+            /// Indicates that a replacement local run was registered.
+            /// </summary>
+            public const string ReplacementLocalRunRegistered = "replacement.local.run.registered";
+
+            /// <summary>
+            /// Indicates that resume context was seeded.
+            /// </summary>
+            public const string ResumeContextSeeded = "resume.context.seeded";
+
+            /// <summary>
+            /// Indicates that DAG resume started.
+            /// </summary>
+            public const string DagResumeStarted = "dag.resume.started";
+
+            /// <summary>
+            /// Indicates that DAG resume completed.
+            /// </summary>
+            public const string DagResumeCompleted = "dag.resume.completed";
+
+            /// <summary>
+            /// Indicates that execution recovery completed.
+            /// </summary>
+            public const string ExecutionRecoveryCompleted = "execution.recovery.completed";
+
+            /// <summary>
+            /// Indicates that execution recovery failed.
+            /// </summary>
+            public const string ExecutionRecoveryFailed = "execution.recovery.failed";
         }
 
         /// <summary>

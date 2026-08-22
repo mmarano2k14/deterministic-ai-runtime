@@ -30,8 +30,11 @@ namespace Multiplexed.AI.Runtime.Observability.Logging
 
             _logger.Log(
                 logLevel,
-                "AI control-plane event {EventType} area={Area} operation={Operation} outcome={Outcome} executionId={ExecutionId} runId={RunId} correlationId={CorrelationId} runtimeInstanceId={RuntimeInstanceId} workerId={WorkerId} durationMs={DurationMs} failureReason={FailureReason} message={Message} properties={Properties}",
+                "AI control-plane event {EventType} semanticEventType={SemanticEventType} eventId={EventId} causationId={CausationId} area={Area} operation={Operation} outcome={Outcome} executionId={ExecutionId} runId={RunId} correlationId={CorrelationId} runtimeInstanceId={RuntimeInstanceId} workerId={WorkerId} durationMs={DurationMs} failureReason={FailureReason} message={Message} properties={Properties}",
                 controlPlaneEvent.EventType,
+                controlPlaneEvent.SemanticEventType,
+                controlPlaneEvent.EventId,
+                controlPlaneEvent.CausationId,
                 controlPlaneEvent.Area.ToStableName(),
                 controlPlaneEvent.Operation,
                 controlPlaneEvent.Outcome,

@@ -4,6 +4,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers
 {
@@ -128,12 +129,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
                 var hasCompletionEvidence =
                     executionLedger.Any(entry =>
-                        string.Equals(entry.EventType, "execution.completed", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(entry.EventType, "finalization.completed", StringComparison.OrdinalIgnoreCase));
+                        string.Equals(entry.EventType, AiEngineEvents.Execution.Completed, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(entry.EventType, AiEngineEvents.Finalization.Completed, StringComparison.OrdinalIgnoreCase));
 
                 var hasStepCompletionEvidence =
                     executionLedger.Any(entry =>
-                        string.Equals(entry.EventType, "step.completed", StringComparison.OrdinalIgnoreCase));
+                        string.Equals(entry.EventType, AiEngineEvents.Step.Completed, StringComparison.OrdinalIgnoreCase));
 
                 Assert.True(
                     hasCompletionEvidence,

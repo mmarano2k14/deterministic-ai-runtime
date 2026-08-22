@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.Execution.Control;
 using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.AI.Runtime.Observability.Helpers;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.Execution.Control
 {
@@ -77,7 +78,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
 
             await RecordControlLedgerEventAsync(
                     state,
-                    AiDecisionLedgerEvents.Control.PauseRequested,
+                    AiEngineEvents.Control.PauseRequested,
                     AiDecisionLedgerOutcome.Applied,
                     reason ?? "Execution pause requested.",
                     CreateControlMetadata(state),
@@ -109,7 +110,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
 
             await RecordControlLedgerEventAsync(
                     state,
-                    AiDecisionLedgerEvents.Control.ResumeRequested,
+                    AiEngineEvents.Control.ResumeRequested,
                     AiDecisionLedgerOutcome.Applied,
                     "Execution resume requested.",
                     CreateControlMetadata(state),
@@ -142,7 +143,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
 
             await RecordControlLedgerEventAsync(
                     state,
-                    AiDecisionLedgerEvents.Control.CancelRequested,
+                    AiEngineEvents.Control.CancelRequested,
                     AiDecisionLedgerOutcome.Applied,
                     reason ?? "Execution cancellation requested.",
                     CreateControlMetadata(state),
@@ -190,7 +191,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
 
             await RecordHumanInputLedgerEventAsync(
                     state,
-                    AiDecisionLedgerEvents.HumanInput.Requested,
+                    AiEngineEvents.HumanInput.Requested,
                     AiDecisionLedgerOutcome.Applied,
                     reason ?? "Human input requested.",
                     metadata,
@@ -199,7 +200,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
 
             await RecordHumanInputLedgerEventAsync(
                     state,
-                    AiDecisionLedgerEvents.HumanInput.Waiting,
+                    AiEngineEvents.HumanInput.Waiting,
                     AiDecisionLedgerOutcome.Applied,
                     reason ?? "Execution is waiting for human input.",
                     metadata,
@@ -240,7 +241,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
 
             await RecordHumanInputLedgerEventAsync(
                     state,
-                    AiDecisionLedgerEvents.HumanInput.Submitted,
+                    AiEngineEvents.HumanInput.Submitted,
                     AiDecisionLedgerOutcome.Applied,
                     "Human input submitted.",
                     CreateHumanInputMetadata(state),
@@ -326,7 +327,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
 
             await RecordControlLedgerEventAsync(
                     state,
-                    AiDecisionLedgerEvents.Control.Paused,
+                    AiEngineEvents.Control.Paused,
                     AiDecisionLedgerOutcome.Applied,
                     "Execution marked as paused after active work drained.",
                     CreateControlMetadata(state),
@@ -358,7 +359,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
 
             await RecordControlLedgerEventAsync(
                     state,
-                    AiDecisionLedgerEvents.Control.Resumed,
+                    AiEngineEvents.Control.Resumed,
                     AiDecisionLedgerOutcome.Applied,
                     "Execution marked as running after resume or human input.",
                     CreateControlMetadata(state),
@@ -405,7 +406,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
 
             await RecordControlLedgerEventAsync(
                     state,
-                    AiDecisionLedgerEvents.Control.PauseRequested,
+                    AiEngineEvents.Control.PauseRequested,
                     applied
                         ? AiDecisionLedgerOutcome.Applied
                         : AiDecisionLedgerOutcome.Blocked,
@@ -455,7 +456,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
 
             await RecordControlLedgerEventAsync(
                     state,
-                    AiDecisionLedgerEvents.Control.ResumeRequested,
+                    AiEngineEvents.Control.ResumeRequested,
                     applied
                         ? AiDecisionLedgerOutcome.Applied
                         : AiDecisionLedgerOutcome.Blocked,
@@ -1018,7 +1019,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
 
             await RecordControlLedgerEventAsync(
                     state,
-                    AiDecisionLedgerEvents.Control.CancelObserved,
+                    AiEngineEvents.Control.CancelObserved,
                     AiDecisionLedgerOutcome.Applied,
                     "Execution cancellation was observed by the runtime.",
                     CreateControlMetadata(state),
@@ -1027,7 +1028,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
 
             await RecordControlLedgerEventAsync(
                     state,
-                    AiDecisionLedgerEvents.Control.StateChanged,
+                    AiEngineEvents.Control.StateChanged,
                     AiDecisionLedgerOutcome.Applied,
                     "Execution control state changed.",
                     CreateControlMetadata(state),
@@ -1083,7 +1084,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
         {
             await RecordControlLedgerEventAsync(
                     state,
-                    AiDecisionLedgerEvents.Control.StateChanged,
+                    AiEngineEvents.Control.StateChanged,
                     AiDecisionLedgerOutcome.Applied,
                     reason,
                     CreateControlMetadata(state),

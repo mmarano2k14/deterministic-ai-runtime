@@ -5,6 +5,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Control;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.Observability.Events;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
 
@@ -243,18 +244,33 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances
             });
 
             Assert.True(result.Success);
-            Assert.Equal(2, observer.Events.Count);
 
-            Assert.Equal(AiControlPlaneEventType.OperationStarted, observer.Events[0].EventType);
-            Assert.Equal(AiControlPlaneEventType.OperationCompleted, observer.Events[1].EventType);
+            var legacyEvents = observer.Events
+                .Where(controlPlaneEvent =>
+                    string.IsNullOrWhiteSpace(controlPlaneEvent.SemanticEventType))
+                .ToArray();
 
-            Assert.All(observer.Events, controlPlaneEvent =>
+            Assert.Equal(2, legacyEvents.Length);
+            Assert.Equal(AiControlPlaneEventType.OperationStarted, legacyEvents[0].EventType);
+            Assert.Equal(AiControlPlaneEventType.OperationCompleted, legacyEvents[1].EventType);
+
+            Assert.All(legacyEvents, controlPlaneEvent =>
             {
                 Assert.Equal(AiControlPlaneArea.InstanceRegistry, controlPlaneEvent.Area);
                 Assert.Equal("Register", controlPlaneEvent.Operation);
                 Assert.Equal("correlation-1", controlPlaneEvent.Correlation.CorrelationId);
                 Assert.Equal("runtime-1", controlPlaneEvent.Correlation.RuntimeInstanceId);
             });
+
+            Assert.Single(
+                observer.Events.Where(controlPlaneEvent =>
+                    controlPlaneEvent.SemanticEventType ==
+                    AiRuntimeLifecycleEvents.RuntimeRegistered));
+
+            Assert.Single(
+                observer.Events.Where(controlPlaneEvent =>
+                    controlPlaneEvent.SemanticEventType ==
+                    AiRuntimeLifecycleEvents.RuntimeReady));
         }
 
         private static AiRuntimeInstanceControlPlane CreateControlPlane(

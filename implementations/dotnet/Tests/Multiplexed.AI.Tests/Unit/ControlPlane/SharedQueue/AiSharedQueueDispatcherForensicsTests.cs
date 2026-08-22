@@ -17,6 +17,7 @@ using Multiplexed.AI.Tests.Fixtures;
 using Multiplexed.Rbac.Core.ExecutionContext;
 using Xunit;
 using RbacExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
 {
@@ -210,7 +211,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedQueue
             var forensicEvent = Assert.Single(forensicsRecorder.Events);
 
             Assert.Equal("runtime-recovery:execution-1:shared-run-1:local-run-failed-1", forensicEvent.ForensicsId);
-            Assert.Equal(AiRuntimeRecoveryForensicsEventType.ReplacementRuntimeSelected, forensicEvent.EventType);
+            Assert.Equal(AiEngineEvents.Recovery.ReplacementRuntimeSelected, forensicEvent.EventType);
             Assert.Equal("selected", forensicEvent.Outcome);
             Assert.Equal("execution-1", forensicEvent.ExecutionId);
             Assert.Equal("shared-run-1", forensicEvent.SharedRunId);

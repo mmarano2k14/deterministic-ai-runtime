@@ -9,6 +9,7 @@ using Multiplexed.AI.Runtime.Execution.Engine.Helpers;
 using Multiplexed.AI.Runtime.Execution.Engine.Models;
 using Multiplexed.AI.Runtime.Execution.Engine.Retention;
 using Multiplexed.AI.Runtime.Execution.Persistence.Replay;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
 {
@@ -297,7 +298,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                     null,
                     null,
                     AiDecisionLedgerCategory.Finalization,
-                    AiDecisionLedgerEvents.Finalization.Started,
+                    AiEngineEvents.Finalization.Started,
                     AiDecisionLedgerOutcome.Started,
                     "Execution finalization started.",
                     new Dictionary<string, string>
@@ -333,7 +334,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                     null,
                     null,
                     AiDecisionLedgerCategory.Finalization,
-                    AiDecisionLedgerEvents.Finalization.CancellationOverrideApplied,
+                    AiEngineEvents.Finalization.CancellationOverrideApplied,
                     AiDecisionLedgerOutcome.Applied,
                     "Final status overridden by execution control cancellation.",
                     new Dictionary<string, string>
@@ -368,7 +369,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                     null,
                     null,
                     AiDecisionLedgerCategory.Finalization,
-                    AiDecisionLedgerEvents.Finalization.Completed,
+                    AiEngineEvents.Finalization.Completed,
                     AiDecisionLedgerOutcome.Completed,
                     "Execution finalization completed.",
                     new Dictionary<string, string>
@@ -404,7 +405,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                     null,
                     null,
                     AiDecisionLedgerCategory.Finalization,
-                    AiDecisionLedgerEvents.Finalization.RaceLost,
+                    AiEngineEvents.Finalization.RaceLost,
                     AiDecisionLedgerOutcome.Denied,
                     reason,
                     new Dictionary<string, string>
@@ -441,7 +442,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                     null,
                     null,
                     AiDecisionLedgerCategory.Finalization,
-                    AiDecisionLedgerEvents.Finalization.Failed,
+                    AiEngineEvents.Finalization.Failed,
                     AiDecisionLedgerOutcome.Failed,
                     reason,
                     new Dictionary<string, string>
@@ -475,7 +476,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                     null,
                     null,
                     AiDecisionLedgerCategory.Execution,
-                    AiDecisionLedgerEvents.Execution.Finalized,
+                    AiEngineEvents.Execution.Finalized,
                     ToExecutionOutcome(finalStatus),
                     "Execution finalized.",
                     new Dictionary<string, string>
@@ -516,10 +517,10 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
         {
             return status switch
             {
-                AiExecutionStatus.Completed => AiDecisionLedgerEvents.Execution.Completed,
-                AiExecutionStatus.Failed => AiDecisionLedgerEvents.Execution.Failed,
-                AiExecutionStatus.Cancelled => AiDecisionLedgerEvents.Execution.Cancelled,
-                _ => AiDecisionLedgerEvents.Execution.Finalized
+                AiExecutionStatus.Completed => AiEngineEvents.Execution.Completed,
+                AiExecutionStatus.Failed => AiEngineEvents.Execution.Failed,
+                AiExecutionStatus.Cancelled => AiEngineEvents.Execution.Cancelled,
+                _ => AiEngineEvents.Execution.Finalized
             };
         }
 

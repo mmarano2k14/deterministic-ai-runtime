@@ -11,6 +11,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Dispatch;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
 using Multiplexed.Abstractions.AI.Execution;
@@ -18,6 +19,7 @@ using Multiplexed.Abstractions.AI.Execution.Scheduling;
 using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
 {
@@ -63,7 +65,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
 
         private readonly IAiRuntimeInstanceProviderCapabilityResolver providerCapabilityResolver;
         private readonly IAiRuntimeInstanceRegistry runtimeInstanceRegistry;
-        private readonly IAiRuntimeRecoveryForensicsRecorder forensicsRecorder;
         private readonly IAiControlPlaneObserver observer;
         private readonly ILogger<RemoteAiSharedRunDispatcher> logger;
 
@@ -146,8 +147,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
             this.providerCapabilityResolver = providerCapabilityResolver ?? throw new ArgumentNullException(nameof(providerCapabilityResolver));
             this.runtimeInstanceRegistry = runtimeInstanceRegistry ?? throw new ArgumentNullException(nameof(runtimeInstanceRegistry));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            this.forensicsRecorder = forensicsRecorder ?? throw new ArgumentNullException(nameof(forensicsRecorder));
-            this.observer = observer ?? throw new ArgumentNullException(nameof(observer));
+            ArgumentNullException.ThrowIfNull(forensicsRecorder);
+            ArgumentNullException.ThrowIfNull(observer);
+            this.observer = AiRecoveryObservabilityCompatibility.Compose(observer, forensicsRecorder);
         }
 
         /// <inheritdoc />
@@ -639,64 +641,50 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch
                 ? executionId
                 : resolvedExecutionId;
 
-            await this.forensicsRecorder
-                .RecordEventAsync(
-                    new AiRuntimeRecoveryForensicsEvent
-                    {
-                        EventId = string.Join(
-                            ":",
-                            forensicsId,
-                            AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered,
-                            runtimeInstanceId,
-                            localRunId),
-                        ForensicsId = forensicsId,
-                        TimestampUtc = DateTimeOffset.UtcNow,
-                        EventType = AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered,
-                        Outcome = "registered",
-                        Reason = "remote-replacement-local-run-registered-for-recovery-redispatch",
-                        ExecutionId = durableExecutionId,
-                        SharedRunId = request.SharedRun.SharedRunId,
-                        LocalRunId = localRunId,
-                        RuntimeInstanceId = runtimeInstanceId,
-                        Metadata = CreateRecoveryDispatchEventMetadata(
-                            request,
-                            metadata,
-                            runtimeInstanceId,
-                            localRunId,
-                            durableExecutionId,
-                            failedLocalRunId)
-                    },
+            var recoveryMetadata = CreateRecoveryDispatchEventMetadata(
+                request,
+                metadata,
+                runtimeInstanceId,
+                localRunId,
+                durableExecutionId,
+                failedLocalRunId);
+            var replacementRegisteredEventType =
+                AiEngineEvents.Recovery.ReplacementLocalRunRegistered;
+
+            await this.observer
+                .RecordAsync(
+                    AiRecoveryEngineEventFactory.Create(
+                        semanticEventType: replacementRegisteredEventType,
+                        eventId: string.Join(":", forensicsId, replacementRegisteredEventType, runtimeInstanceId, localRunId),
+                        forensicsId: forensicsId,
+                        timestampUtc: DateTimeOffset.UtcNow,
+                        outcome: "registered",
+                        reason: "remote-replacement-local-run-registered-for-recovery-redispatch",
+                        executionId: durableExecutionId,
+                        sharedRunId: request.SharedRun.SharedRunId,
+                        localRunId: localRunId,
+                        runtimeInstanceId: runtimeInstanceId,
+                        metadata: recoveryMetadata),
                     cancellationToken)
                 .ConfigureAwait(false);
 
+            var resumeContextSeededEventType =
+                AiEngineEvents.Recovery.ResumeContextSeeded;
 
-            await this.forensicsRecorder
-                .RecordEventAsync(
-                    new AiRuntimeRecoveryForensicsEvent
-                    {
-                        EventId = string.Join(
-                            ":",
-                            forensicsId,
-                            AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded,
-                            runtimeInstanceId,
-                            localRunId),
-                        ForensicsId = forensicsId,
-                        TimestampUtc = DateTimeOffset.UtcNow,
-                        EventType = AiRuntimeRecoveryForensicsEventType.ResumeContextSeeded,
-                        Outcome = "seeded",
-                        Reason = "remote-resume-context-seeded-from-shared-run-snapshot",
-                        ExecutionId = durableExecutionId,
-                        SharedRunId = request.SharedRun.SharedRunId,
-                        LocalRunId = localRunId,
-                        RuntimeInstanceId = runtimeInstanceId,
-                        Metadata = CreateRecoveryDispatchEventMetadata(
-                            request,
-                            metadata,
-                            runtimeInstanceId,
-                            localRunId,
-                            durableExecutionId,
-                            failedLocalRunId)
-                    },
+            await this.observer
+                .RecordAsync(
+                    AiRecoveryEngineEventFactory.Create(
+                        semanticEventType: resumeContextSeededEventType,
+                        eventId: string.Join(":", forensicsId, resumeContextSeededEventType, runtimeInstanceId, localRunId),
+                        forensicsId: forensicsId,
+                        timestampUtc: DateTimeOffset.UtcNow,
+                        outcome: "seeded",
+                        reason: "remote-resume-context-seeded-from-shared-run-snapshot",
+                        executionId: durableExecutionId,
+                        sharedRunId: request.SharedRun.SharedRunId,
+                        localRunId: localRunId,
+                        runtimeInstanceId: runtimeInstanceId,
+                        metadata: recoveryMetadata),
                     cancellationToken)
                 .ConfigureAwait(false);
         }

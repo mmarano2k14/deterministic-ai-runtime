@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Metrics.Execution;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.Observability.Metrics.Execution
 {
@@ -78,7 +79,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Execution
             Interlocked.Increment(ref _executionStartedCount);
 
             RecordMetric(
-                "execution.started",
+                AiEngineEvents.Execution.Started,
                 executionId);
         }
 
@@ -89,7 +90,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Execution
             Interlocked.Increment(ref _executionCompletedCount);
 
             RecordMetric(
-                "execution.completed",
+                AiEngineEvents.Execution.Completed,
                 executionId);
         }
 
@@ -100,7 +101,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Execution
             Interlocked.Increment(ref _executionFailedCount);
 
             RecordMetric(
-                "execution.failed",
+                AiEngineEvents.Execution.Failed,
                 executionId);
         }
 
@@ -143,7 +144,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Execution
             Interlocked.Increment(ref _stepCompletedCount);
 
             RecordMetric(
-                "step.completed",
+                AiEngineEvents.Step.Completed,
                 executionId,
                 new Dictionary<string, string>
                 {
@@ -159,7 +160,7 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Execution
             Interlocked.Increment(ref _stepFailedCount);
 
             RecordMetric(
-                "step.failed",
+                AiEngineEvents.Step.Failed,
                 executionId,
                 new Dictionary<string, string>
                 {

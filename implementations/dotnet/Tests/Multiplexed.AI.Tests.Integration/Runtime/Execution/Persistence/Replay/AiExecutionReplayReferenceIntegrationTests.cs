@@ -24,6 +24,7 @@ using Multiplexed.AI.Tests.Integration.Runtime.Execution.Fixtures;
 using Multiplexed.AI.Tests.Integration.Runtime.Execution.MultipleInstance.Worker.Chaos;
 using Xunit;
 using Xunit.Abstractions;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Persistence.Replay
 {
@@ -199,13 +200,13 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Persistence.Replay
                     replayResult.LedgerEvents,
                     entry =>
                         entry.Category == AiDecisionLedgerCategory.Replay &&
-                        entry.EventType == AiDecisionLedgerEvents.Replay.Requested);
+                        entry.EventType == AiEngineEvents.Replay.Requested);
 
                 Assert.Contains(
                     replayResult.LedgerEvents,
                     entry =>
                         entry.Category == AiDecisionLedgerCategory.Replay &&
-                        entry.EventType == AiDecisionLedgerEvents.Replay.Started);
+                        entry.EventType == AiEngineEvents.Replay.Started);
 
                 var restoredRecord = await dagStore.GetRecordAsync(
                     executionId);
@@ -250,22 +251,22 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Persistence.Replay
                 AssertLedgerContains(
                     ledgerAfterReplay,
                     AiDecisionLedgerCategory.Replay,
-                    AiDecisionLedgerEvents.Replay.Requested);
+                    AiEngineEvents.Replay.Requested);
 
                 AssertLedgerContains(
                     ledgerAfterReplay,
                     AiDecisionLedgerCategory.Replay,
-                    AiDecisionLedgerEvents.Replay.Started);
+                    AiEngineEvents.Replay.Started);
 
                 AssertLedgerContains(
                     ledgerAfterReplay,
                     AiDecisionLedgerCategory.Replay,
-                    AiDecisionLedgerEvents.Replay.ComparisonCompleted);
+                    AiEngineEvents.Replay.ComparisonCompleted);
 
                 AssertLedgerContains(
                     ledgerAfterReplay,
                     AiDecisionLedgerCategory.Replay,
-                    AiDecisionLedgerEvents.Replay.Completed);
+                    AiEngineEvents.Replay.Completed);
 
                 var replayEvents = ledgerAfterReplay
                     .Where(entry => entry.Category == AiDecisionLedgerCategory.Replay)

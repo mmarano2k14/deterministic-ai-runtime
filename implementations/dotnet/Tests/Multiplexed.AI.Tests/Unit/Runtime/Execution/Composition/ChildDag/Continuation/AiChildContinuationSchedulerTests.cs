@@ -1,7 +1,8 @@
-using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
+using Multiplexed.Abstractions.AI.Observability.Events;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Runtime.ControlPlane.SharedQueue;
 using Multiplexed.AI.Runtime.ControlPlane.ShareQueue;
@@ -19,7 +20,11 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Conti
         public async Task EnqueueContinuationAsync_Should_Reuse_Stable_Logical_And_Shared_Run_Identity_Without_Recovery_Metadata()
         {
             var controller = new CapturingSharedRuntimeController();
-            var scheduler = new AiChildContinuationScheduler(controller, new InMemoryAiSharedQueue());
+            var observer = new CapturingAiControlPlaneObserver();
+            var scheduler = new AiChildContinuationScheduler(
+                controller,
+                new InMemoryAiSharedQueue(),
+                observer);
             var relation = CreateCompletedScheduledRelation();
             var parentRecord = CreateParentRecord();
 
@@ -57,6 +62,19 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Conti
                 runRequest.ExternalWaitContinuation.ContinuationId);
             Assert.False(runRequest.Metadata.ContainsKey("recovery.mode"));
             Assert.Equal("true", runRequest.Metadata["external.wait.continuation"]);
+
+            Assert.Equal(2, observer.Events.Count);
+            Assert.All(
+                observer.Events,
+                controlPlaneEvent => Assert.Equal(
+                    AiEngineEvents.ChildDag.ContinuationDelivered,
+                    controlPlaneEvent.SemanticEventType));
+            Assert.Equal(
+                2,
+                observer.Events
+                    .Select(controlPlaneEvent => controlPlaneEvent.EventId)
+                    .Distinct(StringComparer.Ordinal)
+                    .Count());
         }
 
         private static AiChildExecutionRelation CreateCompletedScheduledRelation()

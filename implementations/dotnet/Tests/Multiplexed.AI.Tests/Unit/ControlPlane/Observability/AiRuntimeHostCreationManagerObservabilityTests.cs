@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Observability.Context;
+using Multiplexed.Abstractions.AI.Observability.Events;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
@@ -46,20 +47,29 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
 
             Assert.True(result.Success);
             Assert.Equal("runtime-1", result.RuntimeInstanceId);
-            Assert.Equal(2, observer.Events.Count);
-            AssertStartedEvent(observer.Events[0]);
-            Assert.Equal(AiControlPlaneEventType.OperationCompleted, observer.Events[1].EventType);
-            Assert.Equal(AiControlPlaneArea.Scaling, observer.Events[1].Area);
-            Assert.Equal("runtime-host-creation", observer.Events[1].Operation);
-            Assert.Equal(AiControlPlaneOperationOutcome.Succeeded, observer.Events[1].Outcome);
-            Assert.Null(observer.Events[1].FailureReason);
-            Assert.Equal("runtime-1", observer.Events[1].Correlation.RuntimeInstanceId);
-            Assert.Equal("runtime-1", observer.Events[1].Properties["runtimeInstanceId"]?.ToString());
-            Assert.Equal("http", observer.Events[1].Properties["providerName"]?.ToString());
-            Assert.Equal("Fixture", observer.Events[1].Properties["hostCreationMode"]?.ToString());
-            Assert.Equal(ExpectedTenantId, observer.Events[1].Properties["tenantId"]?.ToString());
-            Assert.Equal(ExpectedTenantGroupId, observer.Events[1].Properties["tenantGroupId"]?.ToString());
-            Assert.Equal("True", observer.Events[1].Properties["success"]?.ToString());
+
+            var legacyEvents = GetLegacyEvents(observer);
+
+            Assert.Equal(2, legacyEvents.Length);
+            AssertStartedEvent(legacyEvents[0]);
+            Assert.Equal(AiControlPlaneEventType.OperationCompleted, legacyEvents[1].EventType);
+            Assert.Equal(AiControlPlaneArea.Scaling, legacyEvents[1].Area);
+            Assert.Equal("runtime-host-creation", legacyEvents[1].Operation);
+            Assert.Equal(AiControlPlaneOperationOutcome.Succeeded, legacyEvents[1].Outcome);
+            Assert.Null(legacyEvents[1].FailureReason);
+            Assert.Equal("runtime-1", legacyEvents[1].Correlation.RuntimeInstanceId);
+            Assert.Equal("runtime-1", legacyEvents[1].Properties["runtimeInstanceId"]?.ToString());
+            Assert.Equal("http", legacyEvents[1].Properties["providerName"]?.ToString());
+            Assert.Equal("Fixture", legacyEvents[1].Properties["hostCreationMode"]?.ToString());
+            Assert.Equal(ExpectedTenantId, legacyEvents[1].Properties["tenantId"]?.ToString());
+            Assert.Equal(ExpectedTenantGroupId, legacyEvents[1].Properties["tenantGroupId"]?.ToString());
+            Assert.Equal("True", legacyEvents[1].Properties["success"]?.ToString());
+
+            AssertCanonicalLifecycleEvents(
+                observer,
+                AiRuntimeLifecycleEvents.HostCreationRequested,
+                AiRuntimeLifecycleEvents.HostCreationStarted,
+                AiRuntimeLifecycleEvents.HostCreationSucceeded);
         }
 
         /// <summary>
@@ -78,13 +88,21 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
 
             Assert.False(result.Success);
             Assert.Equal("runtime-host-creation-mode-not-registered:Fixture", result.FailureReason);
-            Assert.Equal(2, observer.Events.Count);
-            AssertStartedEvent(observer.Events[0]);
-            Assert.Equal(AiControlPlaneEventType.OperationFailed, observer.Events[1].EventType);
-            Assert.Equal(AiControlPlaneOperationOutcome.Denied, observer.Events[1].Outcome);
-            Assert.Equal("runtime-host-creation-mode-not-registered:Fixture", observer.Events[1].FailureReason);
-            Assert.Equal("runtime-1", observer.Events[1].Correlation.RuntimeInstanceId);
-            Assert.Equal("False", observer.Events[1].Properties["success"]?.ToString());
+
+            var legacyEvents = GetLegacyEvents(observer);
+
+            Assert.Equal(2, legacyEvents.Length);
+            AssertStartedEvent(legacyEvents[0]);
+            Assert.Equal(AiControlPlaneEventType.OperationFailed, legacyEvents[1].EventType);
+            Assert.Equal(AiControlPlaneOperationOutcome.Denied, legacyEvents[1].Outcome);
+            Assert.Equal("runtime-host-creation-mode-not-registered:Fixture", legacyEvents[1].FailureReason);
+            Assert.Equal("runtime-1", legacyEvents[1].Correlation.RuntimeInstanceId);
+            Assert.Equal("False", legacyEvents[1].Properties["success"]?.ToString());
+
+            AssertCanonicalLifecycleEvents(
+                observer,
+                AiRuntimeLifecycleEvents.HostCreationRequested,
+                AiRuntimeLifecycleEvents.HostCreationFailed);
         }
 
         /// <summary>
@@ -103,12 +121,21 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
 
             Assert.False(result.Success);
             Assert.Equal("strategy rejected", result.FailureReason);
-            Assert.Equal(2, observer.Events.Count);
-            AssertStartedEvent(observer.Events[0]);
-            Assert.Equal(AiControlPlaneEventType.OperationFailed, observer.Events[1].EventType);
-            Assert.Equal(AiControlPlaneOperationOutcome.Denied, observer.Events[1].Outcome);
-            Assert.Equal("strategy rejected", observer.Events[1].FailureReason);
-            Assert.Equal("False", observer.Events[1].Properties["success"]?.ToString());
+
+            var legacyEvents = GetLegacyEvents(observer);
+
+            Assert.Equal(2, legacyEvents.Length);
+            AssertStartedEvent(legacyEvents[0]);
+            Assert.Equal(AiControlPlaneEventType.OperationFailed, legacyEvents[1].EventType);
+            Assert.Equal(AiControlPlaneOperationOutcome.Denied, legacyEvents[1].Outcome);
+            Assert.Equal("strategy rejected", legacyEvents[1].FailureReason);
+            Assert.Equal("False", legacyEvents[1].Properties["success"]?.ToString());
+
+            AssertCanonicalLifecycleEvents(
+                observer,
+                AiRuntimeLifecycleEvents.HostCreationRequested,
+                AiRuntimeLifecycleEvents.HostCreationStarted,
+                AiRuntimeLifecycleEvents.HostCreationFailed);
         }
 
         /// <summary>
@@ -127,12 +154,20 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
                         .ConfigureAwait(false))
                 .ConfigureAwait(false);
 
-            Assert.Equal(2, observer.Events.Count);
-            AssertStartedEvent(observer.Events[0]);
-            Assert.Equal(AiControlPlaneEventType.OperationFailed, observer.Events[1].EventType);
-            Assert.Equal(AiControlPlaneOperationOutcome.Failed, observer.Events[1].Outcome);
-            Assert.Equal(nameof(InvalidOperationException), observer.Events[1].FailureReason);
-            Assert.Equal("strategy exploded", observer.Events[1].Properties["exception.message"]?.ToString());
+            var legacyEvents = GetLegacyEvents(observer);
+
+            Assert.Equal(2, legacyEvents.Length);
+            AssertStartedEvent(legacyEvents[0]);
+            Assert.Equal(AiControlPlaneEventType.OperationFailed, legacyEvents[1].EventType);
+            Assert.Equal(AiControlPlaneOperationOutcome.Failed, legacyEvents[1].Outcome);
+            Assert.Equal(nameof(InvalidOperationException), legacyEvents[1].FailureReason);
+            Assert.Equal("strategy exploded", legacyEvents[1].Properties["exception.message"]?.ToString());
+
+            AssertCanonicalLifecycleEvents(
+                observer,
+                AiRuntimeLifecycleEvents.HostCreationRequested,
+                AiRuntimeLifecycleEvents.HostCreationStarted,
+                AiRuntimeLifecycleEvents.HostCreationFailed);
         }
 
         /// <summary>
@@ -168,6 +203,38 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
             Assert.Equal(ExpectedTenantGroupId, ledger.Entries[1].Metadata!["tenantGroupId"]);
             Assert.Equal("Fixture", ledger.Entries[1].Metadata!["hostCreationMode"]);
             Assert.Equal("True", ledger.Entries[1].Metadata!["success"]);
+        }
+
+        /// <summary>
+        /// Gets the legacy operation-envelope events without canonical lifecycle facts.
+        /// </summary>
+        /// <param name="observer">The capturing observer.</param>
+        /// <returns>The legacy operation-envelope events in emission order.</returns>
+        private static AiControlPlaneEvent[] GetLegacyEvents(
+            CapturingControlPlaneObserver observer)
+        {
+            return observer.Events
+                .Where(controlPlaneEvent =>
+                    string.IsNullOrWhiteSpace(controlPlaneEvent.SemanticEventType))
+                .ToArray();
+        }
+
+        /// <summary>
+        /// Verifies the canonical host lifecycle facts independently from legacy envelopes.
+        /// </summary>
+        /// <param name="observer">The capturing observer.</param>
+        /// <param name="expectedEventTypes">The expected canonical event sequence.</param>
+        private static void AssertCanonicalLifecycleEvents(
+            CapturingControlPlaneObserver observer,
+            params string[] expectedEventTypes)
+        {
+            var canonicalEventTypes = observer.Events
+                .Where(controlPlaneEvent =>
+                    !string.IsNullOrWhiteSpace(controlPlaneEvent.SemanticEventType))
+                .Select(controlPlaneEvent => controlPlaneEvent.SemanticEventType!)
+                .ToArray();
+
+            Assert.Equal(expectedEventTypes, canonicalEventTypes);
         }
 
         /// <summary>

@@ -5,6 +5,7 @@ using FluentAssertions;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
 {
@@ -46,14 +47,14 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
 
             await store.UpsertAsync(CreateRecord("forensics-002", "execution-002", "shared-run-002"));
 
-            await store.AppendEventAsync("forensics-002", CreateEvent("event-002-b", "forensics-002", AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered, "execution-002", "shared-run-002", "replacement-local-run-001", "runtime-2", DateTimeOffset.UtcNow.AddSeconds(2)));
-            await store.AppendEventAsync("forensics-002", CreateEvent("event-002-a", "forensics-002", AiRuntimeRecoveryForensicsEventType.SharedRunRequeuedForResume, "execution-002", "shared-run-002", "failed-local-run-001", "runtime-1", DateTimeOffset.UtcNow.AddSeconds(1)));
+            await store.AppendEventAsync("forensics-002", CreateEvent("event-002-b", "forensics-002", AiEngineEvents.Recovery.ReplacementLocalRunRegistered, "execution-002", "shared-run-002", "replacement-local-run-001", "runtime-2", DateTimeOffset.UtcNow.AddSeconds(2)));
+            await store.AppendEventAsync("forensics-002", CreateEvent("event-002-a", "forensics-002", AiEngineEvents.Recovery.SharedRunRequeuedForResume, "execution-002", "shared-run-002", "failed-local-run-001", "runtime-1", DateTimeOffset.UtcNow.AddSeconds(1)));
 
             var loaded = await store.GetByForensicsIdAsync("forensics-002");
 
             loaded.Should().NotBeNull();
             loaded!.Events.Should().HaveCount(2);
-            loaded.Events.Select(x => x.EventType).Should().ContainInOrder(AiRuntimeRecoveryForensicsEventType.SharedRunRequeuedForResume, AiRuntimeRecoveryForensicsEventType.ReplacementLocalRunRegistered);
+            loaded.Events.Select(x => x.EventType).Should().ContainInOrder(AiEngineEvents.Recovery.SharedRunRequeuedForResume, AiEngineEvents.Recovery.ReplacementLocalRunRegistered);
         }
 
         /// <summary>
@@ -66,7 +67,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
 
             await store.UpsertAsync(CreateRecord("forensics-003", "execution-003", "shared-run-003"));
 
-            var evt = CreateEvent("event-003", "forensics-003", AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected, "execution-003", "shared-run-003", "local-run-003", "runtime-1", DateTimeOffset.UtcNow);
+            var evt = CreateEvent("event-003", "forensics-003", AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected, "execution-003", "shared-run-003", "local-run-003", "runtime-1", DateTimeOffset.UtcNow);
 
             await store.AppendEventAsync("forensics-003", evt);
             await store.AppendEventAsync("forensics-003", evt);

@@ -11,6 +11,7 @@ using Multiplexed.AI.Runtime.Execution.Instance;
 using Multiplexed.AI.Runtime.Observability.Context;
 using NSubstitute;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 {
@@ -44,7 +45,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Control &&
-                entry.EventType == AiDecisionLedgerEvents.Control.PauseRequested &&
+                entry.EventType == AiEngineEvents.Control.PauseRequested &&
                 entry.Outcome == AiDecisionLedgerOutcome.Applied &&
                 entry.CorrelationContext.StepKey == "_control");
         }
@@ -73,7 +74,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Control &&
-                entry.EventType == AiDecisionLedgerEvents.Control.ResumeRequested &&
+                entry.EventType == AiEngineEvents.Control.ResumeRequested &&
                 entry.Outcome == AiDecisionLedgerOutcome.Applied &&
                 entry.CorrelationContext.StepKey == "_control");
         }
@@ -103,7 +104,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Control &&
-                entry.EventType == AiDecisionLedgerEvents.Control.CancelRequested &&
+                entry.EventType == AiEngineEvents.Control.CancelRequested &&
                 entry.Outcome == AiDecisionLedgerOutcome.Applied &&
                 entry.CorrelationContext.StepKey == "_control");
         }
@@ -139,13 +140,13 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.HumanInput &&
-                entry.EventType == AiDecisionLedgerEvents.HumanInput.Requested &&
+                entry.EventType == AiEngineEvents.HumanInput.Requested &&
                 entry.Outcome == AiDecisionLedgerOutcome.Applied &&
                 entry.CorrelationContext.StepKey == waitingStepKey);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.HumanInput &&
-                entry.EventType == AiDecisionLedgerEvents.HumanInput.Waiting &&
+                entry.EventType == AiEngineEvents.HumanInput.Waiting &&
                 entry.Outcome == AiDecisionLedgerOutcome.Applied &&
                 entry.CorrelationContext.StepKey == waitingStepKey);
         }
@@ -190,7 +191,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.HumanInput &&
-                entry.EventType == AiDecisionLedgerEvents.HumanInput.Submitted &&
+                entry.EventType == AiEngineEvents.HumanInput.Submitted &&
                 entry.Outcome == AiDecisionLedgerOutcome.Applied &&
                 entry.CorrelationContext.StepKey == waitingStepKey);
         }
@@ -225,7 +226,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Control &&
-                entry.EventType == AiDecisionLedgerEvents.Control.Paused &&
+                entry.EventType == AiEngineEvents.Control.Paused &&
                 entry.Outcome == AiDecisionLedgerOutcome.Applied &&
                 entry.CorrelationContext.StepKey == "_control");
         }
@@ -259,7 +260,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Control &&
-                entry.EventType == AiDecisionLedgerEvents.Control.Resumed &&
+                entry.EventType == AiEngineEvents.Control.Resumed &&
                 entry.Outcome == AiDecisionLedgerOutcome.Applied &&
                 entry.CorrelationContext.StepKey == "_control");
         }

@@ -1,3 +1,5 @@
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,6 +15,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Reco
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Failure
 {
@@ -32,6 +35,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         private readonly AiKubernetesRuntimePoolOptions poolOptions;
         private readonly AiKubernetesRuntimePoolHostOptions hostOptions;
         private readonly AiRuntimeLifecycleEventWriter lifecycleWriter;
+        private readonly IAiControlPlaneObserver observer;
 
         /// <summary>
         /// Initializes a new replacement coordinator.
@@ -59,7 +63,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 membershipEnumerator,
             IOptions<AiKubernetesRuntimePoolOptions> poolOptions,
             IOptions<AiKubernetesRuntimePoolHostOptions> hostOptions,
-            IAiRuntimeLifecycleJournal lifecycleJournal)
+            IAiRuntimeLifecycleJournal lifecycleJournal,
+            IAiControlPlaneObserver? observer = null)
         {
             this.hostCreationStrategies =
                 hostCreationStrategies?.ToArray()
@@ -82,6 +87,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             this.lifecycleWriter = new AiRuntimeLifecycleEventWriter(
                 lifecycleJournal
                 ?? throw new ArgumentNullException(nameof(lifecycleJournal)));
+            this.observer = AiRuntimeLifecycleObservabilityCompatibility.Compose(
+                observer ?? new NoopAiControlPlaneObserver(),
+                lifecycleJournal);
         }
 
         /// <inheritdoc />
@@ -267,14 +275,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                await this.lifecycleWriter.AppendOnceAsync(
+                await this.observer.RecordLifecycleAsync(
                     new AiRuntimeLifecycleEvent
                     {
                         EventId = AiRuntimeLifecycleEventWriter.CreateEventId(
-                            AiRuntimeLifecycleEventType.RuntimeReplacementRequested,
+                            AiRuntimeLifecycleEvents.RuntimeReplacementRequested,
                             runtimeInstanceId,
                             claim.FailureId),
-                        EventType = AiRuntimeLifecycleEventType.RuntimeReplacementRequested,
+                        EventType = AiRuntimeLifecycleEvents.RuntimeReplacementRequested,
                         TimestampUtc = DateTimeOffset.UtcNow,
                         ControlPlaneId = controlPlaneId,
                         HostCreationMode = AiRuntimeHostCreationMode.KubernetesPool,
@@ -291,7 +299,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         RuntimeFailureIncidentId = claim.FailureId,
                         CorrelationId = claim.FailureId,
                         CausationId = AiRuntimeLifecycleEventWriter.CreateEventId(
-                            AiRuntimeLifecycleEventType.HostDisappeared,
+                            AiRuntimeLifecycleEvents.HostDisappeared,
                             claim.HostId,
                             claim.FailureId),
                         PreviousStatus = "suppressed",
@@ -321,14 +329,14 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                await this.lifecycleWriter.AppendOnceAsync(
+                await this.observer.RecordLifecycleAsync(
                     new AiRuntimeLifecycleEvent
                     {
                         EventId = AiRuntimeLifecycleEventWriter.CreateEventId(
-                            AiRuntimeLifecycleEventType.RuntimeReplacementRegistered,
+                            AiRuntimeLifecycleEvents.RuntimeReplacementRegistered,
                             member.RuntimeInstanceId,
                             claim.FailureId),
-                        EventType = AiRuntimeLifecycleEventType.RuntimeReplacementRegistered,
+                        EventType = AiRuntimeLifecycleEvents.RuntimeReplacementRegistered,
                         TimestampUtc = DateTimeOffset.UtcNow,
                         ControlPlaneId = controlPlaneId,
                         HostCreationMode = AiRuntimeHostCreationMode.KubernetesPool,
@@ -345,7 +353,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         RuntimeFailureIncidentId = claim.FailureId,
                         CorrelationId = claim.FailureId,
                         CausationId = AiRuntimeLifecycleEventWriter.CreateEventId(
-                            AiRuntimeLifecycleEventType.HostDisappeared,
+                            AiRuntimeLifecycleEvents.HostDisappeared,
                             claim.HostId,
                             claim.FailureId),
                         PreviousStatus = "replacement-requested",

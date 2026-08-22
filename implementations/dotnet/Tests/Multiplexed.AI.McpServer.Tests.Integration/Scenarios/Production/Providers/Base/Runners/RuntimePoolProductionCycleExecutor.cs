@@ -8,6 +8,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Runners
 {
@@ -527,7 +528,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     .Where(
                         entry => string.Equals(
                             entry.EventType,
-                            "step.completed",
+                            AiEngineEvents.Step.Completed,
                             StringComparison.OrdinalIgnoreCase))
                     .ToArray();
 

@@ -29,6 +29,7 @@ using Multiplexed.AI.Stores;
 using Multiplexed.AI.Tests.Integration.Helpers;
 using NSubstitute;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 {
@@ -84,26 +85,26 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Finalization &&
-                entry.EventType == AiDecisionLedgerEvents.Finalization.Started &&
+                entry.EventType == AiEngineEvents.Finalization.Started &&
                 entry.Outcome == AiDecisionLedgerOutcome.Started);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Finalization &&
-                entry.EventType == AiDecisionLedgerEvents.Finalization.Completed &&
+                entry.EventType == AiEngineEvents.Finalization.Completed &&
                 entry.Outcome == AiDecisionLedgerOutcome.Completed);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Execution &&
-                entry.EventType == AiDecisionLedgerEvents.Execution.Finalized &&
+                entry.EventType == AiEngineEvents.Execution.Finalized &&
                 entry.Outcome == AiDecisionLedgerOutcome.Completed);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Execution &&
-                entry.EventType == AiDecisionLedgerEvents.Execution.Completed &&
+                entry.EventType == AiEngineEvents.Execution.Completed &&
                 entry.Outcome == AiDecisionLedgerOutcome.Completed);
 
             Assert.DoesNotContain(entries, entry =>
-                entry.EventType == AiDecisionLedgerEvents.Finalization.CancellationOverrideApplied);
+                entry.EventType == AiEngineEvents.Finalization.CancellationOverrideApplied);
 
             var finalizationAndExecutionEntries = entries
                 .Where(entry =>
@@ -176,27 +177,27 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Finalization &&
-                entry.EventType == AiDecisionLedgerEvents.Finalization.Started &&
+                entry.EventType == AiEngineEvents.Finalization.Started &&
                 entry.Outcome == AiDecisionLedgerOutcome.Started);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Finalization &&
-                entry.EventType == AiDecisionLedgerEvents.Finalization.CancellationOverrideApplied &&
+                entry.EventType == AiEngineEvents.Finalization.CancellationOverrideApplied &&
                 entry.Outcome == AiDecisionLedgerOutcome.Applied);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Finalization &&
-                entry.EventType == AiDecisionLedgerEvents.Finalization.Completed &&
+                entry.EventType == AiEngineEvents.Finalization.Completed &&
                 entry.Outcome == AiDecisionLedgerOutcome.Completed);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Execution &&
-                entry.EventType == AiDecisionLedgerEvents.Execution.Finalized &&
+                entry.EventType == AiEngineEvents.Execution.Finalized &&
                 entry.Outcome == AiDecisionLedgerOutcome.Cancelled);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Execution &&
-                entry.EventType == AiDecisionLedgerEvents.Execution.Cancelled &&
+                entry.EventType == AiEngineEvents.Execution.Cancelled &&
                 entry.Outcome == AiDecisionLedgerOutcome.Cancelled);
 
             await services.DagStore!.Received(1).TryFinalizeExecutionAsync(
@@ -263,25 +264,25 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Finalization &&
-                entry.EventType == AiDecisionLedgerEvents.Finalization.Started &&
+                entry.EventType == AiEngineEvents.Finalization.Started &&
                 entry.Outcome == AiDecisionLedgerOutcome.Started);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Finalization &&
-                entry.EventType == AiDecisionLedgerEvents.Finalization.RaceLost &&
+                entry.EventType == AiEngineEvents.Finalization.RaceLost &&
                 entry.Outcome == AiDecisionLedgerOutcome.Denied);
 
             Assert.DoesNotContain(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Finalization &&
-                entry.EventType == AiDecisionLedgerEvents.Finalization.Failed);
+                entry.EventType == AiEngineEvents.Finalization.Failed);
 
             Assert.DoesNotContain(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Finalization &&
-                entry.EventType == AiDecisionLedgerEvents.Finalization.Completed);
+                entry.EventType == AiEngineEvents.Finalization.Completed);
 
             Assert.DoesNotContain(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Execution &&
-                entry.EventType == AiDecisionLedgerEvents.Execution.Finalized);
+                entry.EventType == AiEngineEvents.Execution.Finalized);
         }
 
         private static AiDagExecutionFinalizationService CreateService(

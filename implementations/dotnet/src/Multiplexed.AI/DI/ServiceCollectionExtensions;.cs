@@ -696,6 +696,8 @@ namespace Multiplexed.AI.DI
             // control pane
             // ------------------------------------------------------------
             services.AddAiControlPlane();
+            services.AddAiControlPlaneRuntimeObservability();
+            services.AddAiControlPlanePolicyMetrics();
 
             return services;
         }

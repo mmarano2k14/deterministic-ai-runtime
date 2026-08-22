@@ -21,6 +21,9 @@
                 AiControlPlaneArea.SharedQueue => "shared-queue",
                 AiControlPlaneArea.SharedController => "shared-controller",
                 AiControlPlaneArea.Scaling => "scaling",
+                AiControlPlaneArea.Recovery => "recovery",
+                AiControlPlaneArea.ChildDag => "child-dag",
+                AiControlPlaneArea.Policy => "policy",
 
                 _ => throw new ArgumentOutOfRangeException(
                     nameof(area),

@@ -1,4 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Observability;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
@@ -13,6 +15,7 @@ using Multiplexed.AI.Stores;
 using System.Globalization;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transition
 {
@@ -36,12 +39,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
     /// </remarks>
     public sealed class AiRuntimeExecutionRecoveryTransitionService : IAiRuntimeExecutionRecoveryTransitionService
     {
-        private const string RecoveryKindInFlightExecutionResume = "in-flight-execution-resume";
         private const int InFlightRecoveryQueuePriority = -100;
 
         private readonly IAiSharedQueue sharedQueue;
         private readonly IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex;
-        private readonly IAiRuntimeRecoveryForensicsRecorder forensicsRecorder;
+        private readonly IAiControlPlaneObserver observer;
         private readonly IAiExecutionControlService? executionControlService;
         private readonly IAiDagExecutionStore? dagExecutionStore;
         private readonly AiRuntimeExecutionRecoveryReconciliationOptions options;
@@ -100,7 +102,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
 
             this.sharedQueue = sharedQueue;
             this.runtimeRunExecutionIndex = runtimeRunExecutionIndex;
-            this.forensicsRecorder = forensicsRecorder;
+            this.observer = AiRecoveryObservabilityCompatibility.Create(forensicsRecorder);
             this.executionControlService = null;
             this.dagExecutionStore = null;
             this.options = options.Value;
@@ -130,7 +132,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
 
             this.sharedQueue = sharedQueue;
             this.runtimeRunExecutionIndex = runtimeRunExecutionIndex;
-            this.forensicsRecorder = forensicsRecorder;
+            this.observer = AiRecoveryObservabilityCompatibility.Create(forensicsRecorder);
             this.executionControlService = executionControlService;
             this.dagExecutionStore = null;
             this.options = options.Value;
@@ -163,7 +165,43 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
 
             this.sharedQueue = sharedQueue;
             this.runtimeRunExecutionIndex = runtimeRunExecutionIndex;
-            this.forensicsRecorder = forensicsRecorder;
+            this.observer = AiRecoveryObservabilityCompatibility.Create(forensicsRecorder);
+            this.executionControlService = executionControlService;
+            this.dagExecutionStore = dagExecutionStore;
+            this.options = options.Value;
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AiRuntimeExecutionRecoveryTransitionService"/> class
+        /// with the centralized Event Manager used for recovery observability projection.
+        /// </summary>
+        /// <param name="sharedQueue">The shared queue.</param>
+        /// <param name="runtimeRunExecutionIndex">The runtime run execution index.</param>
+        /// <param name="options">The runtime execution recovery reconciliation options.</param>
+        /// <param name="forensicsRecorder">The runtime recovery forensics recorder retained for direct-construction compatibility.</param>
+        /// <param name="executionControlService">The durable execution control service.</param>
+        /// <param name="dagExecutionStore">The distributed DAG execution store.</param>
+        /// <param name="observer">The centralized control-plane Event Manager.</param>
+        public AiRuntimeExecutionRecoveryTransitionService(
+            IAiSharedQueue sharedQueue,
+            IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex,
+            IOptions<AiRuntimeExecutionRecoveryReconciliationOptions> options,
+            IAiRuntimeRecoveryForensicsRecorder forensicsRecorder,
+            IAiExecutionControlService executionControlService,
+            IAiDagExecutionStore dagExecutionStore,
+            IAiControlPlaneObserver observer)
+        {
+            ArgumentNullException.ThrowIfNull(sharedQueue);
+            ArgumentNullException.ThrowIfNull(runtimeRunExecutionIndex);
+            ArgumentNullException.ThrowIfNull(options);
+            ArgumentNullException.ThrowIfNull(forensicsRecorder);
+            ArgumentNullException.ThrowIfNull(executionControlService);
+            ArgumentNullException.ThrowIfNull(dagExecutionStore);
+            ArgumentNullException.ThrowIfNull(observer);
+
+            this.sharedQueue = sharedQueue;
+            this.runtimeRunExecutionIndex = runtimeRunExecutionIndex;
+            this.observer = AiRecoveryObservabilityCompatibility.Compose(observer, forensicsRecorder);
             this.executionControlService = executionControlService;
             this.dagExecutionStore = dagExecutionStore;
             this.options = options.Value;
@@ -560,7 +598,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
             bool isLocalQueuedRecovery,
             CancellationToken cancellationToken)
         {
-            var now = DateTimeOffset.UtcNow;
+            var timestampUtc = DateTimeOffset.UtcNow;
             var metadata = CreateRecoveryForensicsMetadata(
                 ownership,
                 reason,
@@ -570,101 +608,49 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 correlationId,
                 causationId,
                 isLocalQueuedRecovery);
+            var sharedRunRequeuedEventType = isLocalQueuedRecovery
+                ? AiEngineEvents.Recovery.SharedRunRequeuedForLocalQueuedRecovery
+                : AiEngineEvents.Recovery.SharedRunRequeuedForResume;
 
-            var recoveryMode = isLocalQueuedRecovery
-                ? AiRuntimeRecoveryModes.RequeueLocalQueuedRun
-                : AiRuntimeRecoveryModes.ResumeExistingExecution;
-
-            var recoveryKind = isLocalQueuedRecovery
-                ? "local-queued-run-requeue"
-                : RecoveryKindInFlightExecutionResume;
-
-            var record = new AiRuntimeRecoveryForensicsRecord
-            {
-                Identity = new AiRuntimeRecoveryForensicsIdentity
-                {
-                    ForensicsId = forensicsId,
-                    ExecutionId = ownership.ExecutionId ?? string.Empty,
-                    SharedRunId = ownership.SharedRunId,
-                    TenantId = ResolveMetadataValue(metadata, AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantId, AiRuntimeInstanceIsolationMetadataKeys.TenantId),
-                    TenantGroupId = ResolveMetadataValue(metadata, AiRuntimeInstanceIsolationMetadataKeys.CamelCaseTenantGroupId, AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId),
-                    ControlPlaneId = ResolveMetadataValue(metadata, AiControlPlaneMetadataKeys.ControlPlaneId, AiControlPlaneMetadataKeys.LegacyDottedControlPlaneId),
-                    PipelineName = ResolveMetadataValue(metadata, AiPipelineMetadataKeys.CamelCasePipelineName, AiPipelineMetadataKeys.Name, AiPipelineMetadataKeys.CamelCasePipelineKey, AiPipelineMetadataKeys.Key)
-                },
-                Failure = new AiRuntimeRecoveryFailureInfo
-                {
-                    RuntimeFailureIncidentId = runtimeFailureIncidentId,
-                    FailedRuntimeInstanceId = ownership.RuntimeInstanceId,
-                    FailedLocalRunId = ownership.LocalRunId,
-                    FailureSignal = "runtime-execution-recovery",
-                    SuppressCapacityReason = reason,
-                    FailureDetectedAtUtc = now
-                },
-                Recovery = new AiRuntimeRecoveryInfo
-                {
-                    RecoveryMode = recoveryMode,
-                    RecoveryKind = recoveryKind,
-                    Outcome = "requeued",
-                    Reason = reason,
-                    RecoveryStartedAtUtc = now
-                },
-                Artifacts = new AiRuntimeRecoveryArtifacts
-                {
-                    Restored = isLocalQueuedRecovery
-                        ?
-                        [
-                            AiRuntimeRecoveryArtifactName.SharedRunMetadata,
-                            AiRuntimeRecoveryArtifactName.RecoveryMetadata
-                        ]
-                        :
-                        [
-                            AiRuntimeRecoveryArtifactName.DurableExecutionId,
-                            AiRuntimeRecoveryArtifactName.SharedRunMetadata,
-                            AiRuntimeRecoveryArtifactName.RecoveryMetadata
-                        ],
-                    Recreated =
-                    [
-                        AiRuntimeRecoveryArtifactName.DispatchAssignment
-                    ],
-                    LostVolatile =
-                    [
-                        AiRuntimeRecoveryArtifactName.FailedRuntimeLocalQueueMemory,
-                        AiRuntimeRecoveryArtifactName.OldClaimToken,
-                        AiRuntimeRecoveryArtifactName.OldLease,
-                        AiRuntimeRecoveryArtifactName.OldLocalRunAsActiveWork
-                    ]
-                },
-                Events =
-                [
-                    CreateForensicsEvent(
-                        forensicsId,
-                        isLocalQueuedRecovery
-                            ? "SharedRunRequeuedForLocalQueuedRecovery"
-                            : AiRuntimeRecoveryForensicsEventType.SharedRunRequeuedForResume,
-                        "requeued",
-                        reason,
-                        ownership,
-                        now,
-                        metadata),
-                    CreateForensicsEvent(
-                        forensicsId,
-                        AiRuntimeRecoveryForensicsEventType.FailedLocalRunMarkedRequeuedForRecovery,
-                        "requeued",
-                        reason,
-                        ownership,
-                        now,
-                        metadata)
-                ],
-                Metadata = metadata,
-                CreatedAtUtc = now,
-                UpdatedAtUtc = now
-            };
-
-            await this.forensicsRecorder
+            await this.observer
                 .RecordAsync(
-                    record,
+                    AiRecoveryEngineEventFactory.Create(
+                        semanticEventType: sharedRunRequeuedEventType,
+                        eventId: string.Join(":", forensicsId, sharedRunRequeuedEventType),
+                        forensicsId: forensicsId,
+                        timestampUtc: timestampUtc,
+                        outcome: "requeued",
+                        reason: reason,
+                        executionId: ownership.ExecutionId,
+                        sharedRunId: ownership.SharedRunId,
+                        localRunId: ownership.LocalRunId,
+                        runtimeInstanceId: ownership.RuntimeInstanceId,
+                        metadata: metadata,
+                        causationId: causationId),
                     cancellationToken)
                 .ConfigureAwait(false);
+
+            var localRunMarkedEventType =
+                AiEngineEvents.Recovery.FailedLocalRunMarkedRequeuedForRecovery;
+
+            await this.observer
+                .RecordAsync(
+                    AiRecoveryEngineEventFactory.Create(
+                        semanticEventType: localRunMarkedEventType,
+                        eventId: string.Join(":", forensicsId, localRunMarkedEventType),
+                        forensicsId: forensicsId,
+                        timestampUtc: timestampUtc,
+                        outcome: "requeued",
+                        reason: reason,
+                        executionId: ownership.ExecutionId,
+                        sharedRunId: ownership.SharedRunId,
+                        localRunId: ownership.LocalRunId,
+                        runtimeInstanceId: ownership.RuntimeInstanceId,
+                        metadata: metadata,
+                        causationId: causationId),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
         }
 
 
@@ -758,70 +744,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
             };
         }
 
-        /// <summary>
-        /// Creates a recovery forensics event.
-        /// </summary>
-        /// <param name="forensicsId">The forensics identifier.</param>
-        /// <param name="eventType">The event type.</param>
-        /// <param name="outcome">The event outcome.</param>
-        /// <param name="reason">The event reason.</param>
-        /// <param name="ownership">The resolved shared run ownership.</param>
-        /// <param name="timestampUtc">The event timestamp.</param>
-        /// <param name="metadata">The recovery metadata.</param>
-        /// <returns>The recovery forensics event.</returns>
-        private static AiRuntimeRecoveryForensicsEvent CreateForensicsEvent(
-            string forensicsId,
-            string eventType,
-            string outcome,
-            string reason,
-            AiSharedRunOwnershipResolutionResult ownership,
-            DateTimeOffset timestampUtc,
-            IReadOnlyDictionary<string, string> metadata)
-        {
-            return new AiRuntimeRecoveryForensicsEvent
-            {
-                EventId = string.Join(
-                    ":",
-                    forensicsId,
-                    eventType),
-                ForensicsId = forensicsId,
-                TimestampUtc = timestampUtc,
-                EventType = eventType,
-                Outcome = outcome,
-                Reason = reason,
-                ExecutionId = ownership.ExecutionId,
-                SharedRunId = ownership.SharedRunId,
-                LocalRunId = ownership.LocalRunId,
-                RuntimeInstanceId = ownership.RuntimeInstanceId,
-                Metadata = metadata
-            };
-        }
 
-        private static string? ResolveMetadataValue(
-            IReadOnlyDictionary<string, string> metadata,
-            params string[] keys)
-        {
-            foreach (var key in keys)
-            {
-                if (metadata.TryGetValue(key, out var value) &&
-                    !string.IsNullOrWhiteSpace(value))
-                {
-                    return value;
-                }
-            }
-
-            foreach (var key in keys)
-            {
-                var match = metadata.FirstOrDefault(pair =>
-                    string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase));
-
-                if (!string.IsNullOrWhiteSpace(match.Value))
-                {
-                    return match.Value;
-                }
-            }
-
-            return null;
-        }
     }
 }

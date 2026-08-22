@@ -8,6 +8,7 @@ using Multiplexed.AI.Runtime.Execution.Engine.Helpers;
 using Multiplexed.AI.Runtime.Execution.Retention;
 using Multiplexed.AI.Runtime.Execution.Retention.Models;
 using Multiplexed.Abstractions.AI.Policies;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
 {
@@ -92,7 +93,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                             claimToken: null,
                             concurrencyContext: null,
                             AiDecisionLedgerCategory.Retention,
-                            AiDecisionLedgerEvents.Retention.Evaluated,
+                            AiEngineEvents.Retention.Evaluated,
                             AiDecisionLedgerOutcome.Started,
                             "Retention evaluation started.",
                             new Dictionary<string, string>
@@ -142,7 +143,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                 claimToken: null,
                                 concurrencyContext: null,
                                 AiDecisionLedgerCategory.Retention,
-                                AiDecisionLedgerEvents.Retention.Skipped,
+                                AiEngineEvents.Retention.Skipped,
                                 AiDecisionLedgerOutcome.Skipped,
                                 reason,
                                 new Dictionary<string, string>
@@ -174,7 +175,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                 claimToken: null,
                                 concurrencyContext: null,
                                 AiDecisionLedgerCategory.Retention,
-                                AiDecisionLedgerEvents.Retention.Triggered,
+                                AiEngineEvents.Retention.Triggered,
                                 AiDecisionLedgerOutcome.Triggered,
                                 result.Decision?.Reason ?? "Retention policy triggered.",
                                 new Dictionary<string, string>
@@ -204,7 +205,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     claimToken: null,
                                     concurrencyContext: null,
                                     AiDecisionLedgerCategory.Retention,
-                                    AiDecisionLedgerEvents.Retention.Compacted,
+                                    AiEngineEvents.Retention.Compacted,
                                     AiDecisionLedgerOutcome.Applied,
                                     "Retention compacted step payloads.",
                                     new Dictionary<string, string>
@@ -226,7 +227,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     claimToken: null,
                                     concurrencyContext: null,
                                     AiDecisionLedgerCategory.Payload,
-                                    AiDecisionLedgerEvents.Payload.Externalized,
+                                    AiEngineEvents.Payload.Externalized,
                                     AiDecisionLedgerOutcome.Persisted,
                                     "Step payloads externalized during retention compaction.",
                                     new Dictionary<string, string>
@@ -256,7 +257,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     claimToken: null,
                                     concurrencyContext: null,
                                     AiDecisionLedgerCategory.Retention,
-                                    AiDecisionLedgerEvents.Retention.Evicted,
+                                    AiEngineEvents.Retention.Evicted,
                                     AiDecisionLedgerOutcome.Applied,
                                     "Retention evicted archived steps from hot state.",
                                     new Dictionary<string, string>
@@ -401,7 +402,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                             claimToken: null,
                             concurrencyContext: null,
                             AiDecisionLedgerCategory.Retention,
-                            AiDecisionLedgerEvents.Retention.Evaluated,
+                            AiEngineEvents.Retention.Evaluated,
                             AiDecisionLedgerOutcome.Started,
                             "Batch retention evaluation started.",
                             new Dictionary<string, string>
@@ -453,7 +454,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                 claimToken: null,
                                 concurrencyContext: null,
                                 AiDecisionLedgerCategory.Retention,
-                                AiDecisionLedgerEvents.Retention.Skipped,
+                                AiEngineEvents.Retention.Skipped,
                                 AiDecisionLedgerOutcome.Skipped,
                                 reason,
                                 new Dictionary<string, string>
@@ -485,7 +486,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                 claimToken: null,
                                 concurrencyContext: null,
                                 AiDecisionLedgerCategory.Retention,
-                                AiDecisionLedgerEvents.Retention.Triggered,
+                                AiEngineEvents.Retention.Triggered,
                                 AiDecisionLedgerOutcome.Triggered,
                                 result.Decision?.Reason ?? "Batch retention policy triggered.",
                                 new Dictionary<string, string>
@@ -516,7 +517,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     claimToken: null,
                                     concurrencyContext: null,
                                     AiDecisionLedgerCategory.Retention,
-                                    AiDecisionLedgerEvents.Retention.Compacted,
+                                    AiEngineEvents.Retention.Compacted,
                                     AiDecisionLedgerOutcome.Applied,
                                     "Batch retention compacted step payloads.",
                                     new Dictionary<string, string>
@@ -538,7 +539,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     claimToken: null,
                                     concurrencyContext: null,
                                     AiDecisionLedgerCategory.Payload,
-                                    AiDecisionLedgerEvents.Payload.Externalized,
+                                    AiEngineEvents.Payload.Externalized,
                                     AiDecisionLedgerOutcome.Persisted,
                                     "Step payloads externalized during batch retention compaction.",
                                     new Dictionary<string, string>
@@ -568,7 +569,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     claimToken: null,
                                     concurrencyContext: null,
                                     AiDecisionLedgerCategory.Retention,
-                                    AiDecisionLedgerEvents.Retention.Evicted,
+                                    AiEngineEvents.Retention.Evicted,
                                     AiDecisionLedgerOutcome.Applied,
                                     "Batch retention evicted archived steps from hot state.",
                                     new Dictionary<string, string>
@@ -597,7 +598,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                                     claimToken: null,
                                     concurrencyContext: null,
                                     AiDecisionLedgerCategory.Retention,
-                                    AiDecisionLedgerEvents.Retention.Skipped,
+                                    AiEngineEvents.Retention.Skipped,
                                     AiDecisionLedgerOutcome.Skipped,
                                     result.Decision?.Reason ?? "Batch retention did not apply any atomic hot-state changes.",
                                     new Dictionary<string, string>

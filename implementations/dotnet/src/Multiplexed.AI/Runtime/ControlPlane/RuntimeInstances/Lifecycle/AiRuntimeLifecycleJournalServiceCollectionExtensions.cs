@@ -3,6 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle
 {
@@ -20,6 +22,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle
             ArgumentNullException.ThrowIfNull(services);
 
             services.AddSingleton<IAiRuntimeLifecycleJournal, InMemoryAiRuntimeLifecycleJournal>();
+            RegisterProjectionSink(services);
 
             return services;
         }
@@ -43,6 +46,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle
             }
 
             services.AddSingleton<IAiRuntimeLifecycleJournal, MongoAiRuntimeLifecycleJournal>();
+            RegisterProjectionSink(services);
 
             return services;
         }
@@ -77,5 +81,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle
 
             return services.AddMongoAiRuntimeLifecycleJournal();
         }
+        /// <summary>
+        /// Registers exactly one centralized lifecycle-journal projection owner.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        private static void RegisterProjectionSink(IServiceCollection services)
+        {
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IAiControlPlaneEventSink, RuntimeLifecycleJournalAiControlPlaneEventSink>());
+        }
+
     }
 }

@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Capacity;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Environment;
@@ -14,6 +16,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
 {
@@ -46,6 +49,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
         private readonly AiRuntimeInstanceRegistrationOptions options;
         private readonly ILogger<AiRuntimeInstanceRegistrationHostedService> logger;
         private readonly IAiRuntimeLifecycleJournal lifecycleJournal;
+        private readonly IAiControlPlaneObserver observer;
 
         private string? poolId;
         private string? hostId;
@@ -98,7 +102,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             IEnumerable<IAiRuntimeInstanceCapacityStore> capacityStores,
             IOptions<AiRuntimeInstanceRegistrationOptions> options,
             ILogger<AiRuntimeInstanceRegistrationHostedService> logger,
-            IAiRuntimeLifecycleJournal lifecycleJournal)
+            IAiRuntimeLifecycleJournal lifecycleJournal,
+            IAiControlPlaneObserver? observer = null)
         {
             this.registry = registry ?? throw new ArgumentNullException(nameof(registry));
             this.environmentProvider = environmentProvider ?? throw new ArgumentNullException(nameof(environmentProvider));
@@ -109,6 +114,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
             this.options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
             this.lifecycleJournal = lifecycleJournal ?? throw new ArgumentNullException(nameof(lifecycleJournal));
+            this.observer = AiRuntimeLifecycleObservabilityCompatibility.Compose(
+                observer ?? new NoopAiControlPlaneObserver(),
+                this.lifecycleJournal);
 
             SafeLogInformation(
                 "Runtime capacity stores resolved. Count={StoreCount}, Stores={Stores}, RegistryType={RegistryType}",
@@ -469,7 +477,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
 
             var registeredLifecycleEvent =
                 await this.AppendRuntimeLifecycleEventOnceAsync(
-                        AiRuntimeLifecycleEventType.RuntimeRegistered,
+                        AiRuntimeLifecycleEvents.RuntimeRegistered,
                         snapshot,
                         providerName,
                         causationId: null,
@@ -528,7 +536,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 .ConfigureAwait(false);
 
             await this.AppendRuntimeLifecycleEventOnceAsync(
-                    AiRuntimeLifecycleEventType.RuntimeReady,
+                    AiRuntimeLifecycleEvents.RuntimeReady,
                     snapshot,
                     providerName,
                     registeredLifecycleEvent.EventId,
@@ -574,11 +582,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 ?? snapshot.HostId
                 ?? $"{snapshot.ControlPlaneId}:{snapshot.RuntimeInstanceId}:{registeredAtUtc.UtcDateTime.Ticks}";
 
-            var timestampUtc = eventType == AiRuntimeLifecycleEventType.RuntimeRegistered
+            var timestampUtc = eventType == AiRuntimeLifecycleEvents.RuntimeRegistered
                 ? registeredAtUtc
                 : DateTimeOffset.UtcNow;
 
-            if (eventType != AiRuntimeLifecycleEventType.RuntimeRegistered &&
+            if (eventType != AiRuntimeLifecycleEvents.RuntimeRegistered &&
                 timestampUtc <= registeredAtUtc)
             {
                 timestampUtc = registeredAtUtc.AddTicks(1);
@@ -610,8 +618,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                 Metadata = CreateRuntimeLifecycleMetadata(snapshot)
             };
 
-            await this.lifecycleJournal
-                .AppendAsync(lifecycleEvent, cancellationToken)
+            await this.observer
+                .RecordLifecycleAsync(lifecycleEvent, cancellationToken)
                 .ConfigureAwait(false);
 
             return lifecycleEvent;
@@ -910,7 +918,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
                     ?? "unknown";
 
                 await this.AppendRuntimeLifecycleEventOnceAsync(
-                        AiRuntimeLifecycleEventType.RuntimeStopped,
+                        AiRuntimeLifecycleEvents.RuntimeStopped,
                         snapshot,
                         providerName,
                         causationId: null,
@@ -1193,6 +1201,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Registry
 
                 transportEndpointSource =
                     "preserved-sibling-capacity-descriptor";
+            }
+            else if (existingDescriptor is not null)
+            {
+                var existingTransportEndpointSource =
+                    GetMetadataValue(
+                        existingDescriptor.Metadata,
+                        AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpointSource);
+
+                if (!string.IsNullOrWhiteSpace(existingTransportEndpointSource))
+                {
+                    transportEndpointSource = existingTransportEndpointSource;
+                }
             }
 
             if (existingDescriptor is not null &&

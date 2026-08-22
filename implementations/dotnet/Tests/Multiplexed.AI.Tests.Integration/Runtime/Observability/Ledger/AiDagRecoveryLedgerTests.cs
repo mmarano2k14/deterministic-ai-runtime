@@ -22,6 +22,7 @@ using Multiplexed.AI.Runtime.Observability.Logging;
 using Multiplexed.AI.Stores;
 using NSubstitute;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 {
@@ -193,12 +194,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
                 entries,
                 entry =>
                     entry.Category == AiDecisionLedgerCategory.Claim &&
-                    entry.EventType == AiDecisionLedgerEvents.Claim.Attempted &&
+                    entry.EventType == AiEngineEvents.Claim.Attempted &&
                     entry.Outcome == AiDecisionLedgerOutcome.Started);
 
             var recoveryDetected = Assert.Single(entries, entry =>
                     entry.Category == AiDecisionLedgerCategory.Recovery &&
-                    entry.EventType == AiDecisionLedgerEvents.Recovery.Detected);
+                    entry.EventType == AiEngineEvents.Recovery.Detected);
 
             Assert.Equal(executionId, recoveryDetected.CorrelationContext.ExecutionId);
             Assert.Equal(pipelineKey, recoveryDetected.CorrelationContext.PipelineName);
@@ -209,7 +210,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             var recoveryApplied = Assert.Single(entries, entry =>
                     entry.Category == AiDecisionLedgerCategory.Recovery &&
-                    entry.EventType == AiDecisionLedgerEvents.Recovery.Applied);
+                    entry.EventType == AiEngineEvents.Recovery.Applied);
 
             Assert.Equal(AiDecisionLedgerOutcome.Applied, recoveryApplied.Outcome);
             Assert.Equal(executionId, recoveryApplied.CorrelationContext.ExecutionId);
@@ -221,7 +222,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             var stepRecovered = Assert.Single(entries, entry =>
                     entry.Category == AiDecisionLedgerCategory.Recovery &&
-                    entry.EventType == AiDecisionLedgerEvents.Recovery.StepRecovered);
+                    entry.EventType == AiEngineEvents.Recovery.StepRecovered);
 
             Assert.Equal(AiDecisionLedgerOutcome.Applied, stepRecovered.Outcome);
             Assert.Equal(executionId, stepRecovered.CorrelationContext.ExecutionId);
@@ -241,7 +242,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
                 entries,
                 entry =>
                     entry.Category == AiDecisionLedgerCategory.Claim &&
-                    entry.EventType == AiDecisionLedgerEvents.Claim.Denied &&
+                    entry.EventType == AiEngineEvents.Claim.Denied &&
                     entry.Outcome == AiDecisionLedgerOutcome.Denied);
         }
 

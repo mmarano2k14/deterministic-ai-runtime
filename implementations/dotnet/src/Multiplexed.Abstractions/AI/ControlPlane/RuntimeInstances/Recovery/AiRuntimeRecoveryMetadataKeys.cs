@@ -113,5 +113,30 @@
         /// Gets the metadata key identifying the source of the recovery resume context.
         /// </summary>
         public const string ResumeSource = "resume.source";
+
+        /// <summary>
+        /// Gets the internal Event Manager projection key carrying the recovery forensics identifier.
+        /// </summary>
+        public const string ProjectionForensicsId = "recovery.projection.forensicsId";
+
+        /// <summary>
+        /// Gets the internal Event Manager projection key carrying the recovery outcome.
+        /// </summary>
+        public const string ProjectionOutcome = "recovery.projection.outcome";
+
+        /// <summary>
+        /// Gets the internal Event Manager projection key carrying the recovery reason.
+        /// </summary>
+        public const string ProjectionReason = "recovery.projection.reason";
+
+        /// <summary>
+        /// Gets the internal Event Manager projection key carrying the shared run identifier.
+        /// </summary>
+        public const string ProjectionSharedRunId = "recovery.projection.sharedRunId";
+
+        /// <summary>
+        /// Gets the internal Event Manager projection key carrying the local run identifier.
+        /// </summary>
+        public const string ProjectionLocalRunId = "recovery.projection.localRunId";
     }
 }

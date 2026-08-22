@@ -10,6 +10,7 @@ using Multiplexed.Abstractions.AI.Execution.Payloads.Stores;
 using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.Execution.Payloads
 {
@@ -231,7 +232,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads
                         stepName,
                         payload),
                     AiDecisionLedgerCategory.Payload,
-                    AiDecisionLedgerEvents.Payload.Rehydrated,
+                    AiEngineEvents.Payload.Rehydrated,
                     AiDecisionLedgerOutcome.Applied,
                     "Step payload was rehydrated.",
                     new Dictionary<string, string>
@@ -281,7 +282,7 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads
                         stepName,
                         payload),
                     AiDecisionLedgerCategory.Payload,
-                    AiDecisionLedgerEvents.Payload.ResolutionFailed,
+                    AiEngineEvents.Payload.ResolutionFailed,
                     AiDecisionLedgerOutcome.Failed,
                     reason,
                     new Dictionary<string, string>

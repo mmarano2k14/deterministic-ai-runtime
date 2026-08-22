@@ -4,6 +4,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Results;
 using System;
 using System.Collections.Generic;
 using Xunit.Abstractions;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions
 {
@@ -48,15 +49,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assert
             var expectedTimeline =
                 new[]
                 {
-                    "execution.recovery.candidate.detected",
-                    "shared.run.requeued.for.resume",
-                    "failed.local.run.marked.requeued.for.recovery",
-                    "replacement.runtime.selected",
-                    "replacement.local.run.registered",
-                    "resume.context.seeded",
-                    "dag.resume.started",
-                    "dag.resume.completed",
-                    "execution.recovery.completed"
+                    AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected,
+                    AiEngineEvents.Recovery.SharedRunRequeuedForResume,
+                    AiEngineEvents.Recovery.FailedLocalRunMarkedRequeuedForRecovery,
+                    AiEngineEvents.Recovery.ReplacementRuntimeSelected,
+                    AiEngineEvents.Recovery.ReplacementLocalRunRegistered,
+                    AiEngineEvents.Recovery.ResumeContextSeeded,
+                    AiEngineEvents.Recovery.DagResumeStarted,
+                    AiEngineEvents.Recovery.DagResumeCompleted,
+                    AiEngineEvents.Recovery.ExecutionRecoveryCompleted
                 };
 
             var deadline =
@@ -174,20 +175,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assert
             Assert.Contains(
                 timeline,
                 item =>
-                    string.Equals(item.EventType, "replacement.runtime.selected", StringComparison.Ordinal) &&
+                    string.Equals(item.EventType, AiEngineEvents.Recovery.ReplacementRuntimeSelected, StringComparison.Ordinal) &&
                     string.Equals(item.RuntimeInstanceId, replacementRuntimeInstanceId, StringComparison.Ordinal));
 
             Assert.Contains(
                 timeline,
                 item =>
-                    string.Equals(item.EventType, "replacement.local.run.registered", StringComparison.Ordinal) &&
+                    string.Equals(item.EventType, AiEngineEvents.Recovery.ReplacementLocalRunRegistered, StringComparison.Ordinal) &&
                     string.Equals(item.RuntimeInstanceId, replacementRuntimeInstanceId, StringComparison.Ordinal) &&
                     string.Equals(item.LocalRunId, replacementLocalRunId, StringComparison.Ordinal));
 
             Assert.Contains(
                 timeline,
                 item =>
-                    string.Equals(item.EventType, "execution.recovery.completed", StringComparison.Ordinal) &&
+                    string.Equals(item.EventType, AiEngineEvents.Recovery.ExecutionRecoveryCompleted, StringComparison.Ordinal) &&
                     string.Equals(item.RuntimeInstanceId, replacementRuntimeInstanceId, StringComparison.Ordinal) &&
                     string.Equals(item.LocalRunId, replacementLocalRunId, StringComparison.Ordinal));
 

@@ -8,6 +8,7 @@ using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
 {
@@ -99,15 +100,15 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
             Assert.Equal(
                 new[]
                 {
-                    "execution.recovery.candidate.detected",
-                    "shared.run.requeued.for.resume",
-                    "failed.local.run.marked.requeued.for.recovery",
-                    "replacement.runtime.selected",
-                    "replacement.local.run.registered",
-                    "resume.context.seeded",
-                    "dag.resume.started",
-                    "dag.resume.completed",
-                    "execution.recovery.completed"
+                    AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected,
+                    AiEngineEvents.Recovery.SharedRunRequeuedForResume,
+                    AiEngineEvents.Recovery.FailedLocalRunMarkedRequeuedForRecovery,
+                    AiEngineEvents.Recovery.ReplacementRuntimeSelected,
+                    AiEngineEvents.Recovery.ReplacementLocalRunRegistered,
+                    AiEngineEvents.Recovery.ResumeContextSeeded,
+                    AiEngineEvents.Recovery.DagResumeStarted,
+                    AiEngineEvents.Recovery.DagResumeCompleted,
+                    AiEngineEvents.Recovery.ExecutionRecoveryCompleted
                 },
                 model.Timeline.Select(x => x.EventType).ToArray());
 
@@ -212,7 +213,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
                 .SearchAsync(
                     new AiRuntimeRecoveryForensicsQuery
                     {
-                        EventType = "dag.resume.completed"
+                        EventType = AiEngineEvents.Recovery.DagResumeCompleted
                     })
                 .ConfigureAwait(false);
 
@@ -220,7 +221,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
             Assert.Equal(FullTimelineForensicsId, result.Items.Single().ForensicsId);
             Assert.Contains(
                 result.Items.Single().Timeline,
-                item => string.Equals(item.EventType, "dag.resume.completed", StringComparison.Ordinal));
+                item => string.Equals(item.EventType, AiEngineEvents.Recovery.DagResumeCompleted, StringComparison.Ordinal));
         }
 
         /// <summary>
@@ -245,7 +246,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
             Assert.Equal("execution-failed", result.Items.Single().ExecutionId);
             Assert.Contains(
                 result.Items.Single().Timeline,
-                item => string.Equals(item.EventType, "execution.recovery.failed", StringComparison.Ordinal));
+                item => string.Equals(item.EventType, AiEngineEvents.Recovery.ExecutionRecoveryFailed, StringComparison.Ordinal));
         }
 
         /// <summary>
@@ -262,8 +263,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
                 .ConfigureAwait(false);
 
             Assert.Equal(9, timeline.Count);
-            Assert.Equal("execution.recovery.candidate.detected", timeline[0].EventType);
-            Assert.Equal("execution.recovery.completed", timeline[^1].EventType);
+            Assert.Equal(AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected, timeline[0].EventType);
+            Assert.Equal(AiEngineEvents.Recovery.ExecutionRecoveryCompleted, timeline[^1].EventType);
         }
 
         /// <summary>
@@ -370,7 +371,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
                             forensicsId,
                             executionId,
                             sharedRunId,
-                            "execution.recovery.candidate.detected",
+                            AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected,
                             "detected",
                             failedRuntimeInstanceId,
                             "local-run-failed-1",
@@ -389,15 +390,15 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
         {
             return new[]
             {
-                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", "execution.recovery.candidate.detected", "detected", "runtime-failed-1", "local-run-failed-1", startedAtUtc.AddSeconds(1)),
-                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", "shared.run.requeued.for.resume", "requeued", "runtime-failed-1", "local-run-failed-1", startedAtUtc.AddSeconds(2)),
-                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", "failed.local.run.marked.requeued.for.recovery", "requeued", "runtime-failed-1", "local-run-failed-1", startedAtUtc.AddSeconds(3)),
-                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", "replacement.runtime.selected", "selected", "runtime-replacement-1", "local-run-failed-1", startedAtUtc.AddSeconds(4)),
-                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", "replacement.local.run.registered", "registered", "runtime-replacement-1", "local-run-replacement-1", startedAtUtc.AddSeconds(5)),
-                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", "resume.context.seeded", "seeded", "runtime-replacement-1", "local-run-replacement-1", startedAtUtc.AddSeconds(6)),
-                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", "dag.resume.started", "started", "runtime-replacement-1", "local-run-replacement-1", startedAtUtc.AddSeconds(7)),
-                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", "dag.resume.completed", "completed", "runtime-replacement-1", "local-run-replacement-1", startedAtUtc.AddSeconds(8)),
-                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", "execution.recovery.completed", "completed", "runtime-replacement-1", "local-run-replacement-1", startedAtUtc.AddSeconds(9))
+                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected, "detected", "runtime-failed-1", "local-run-failed-1", startedAtUtc.AddSeconds(1)),
+                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", AiEngineEvents.Recovery.SharedRunRequeuedForResume, "requeued", "runtime-failed-1", "local-run-failed-1", startedAtUtc.AddSeconds(2)),
+                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", AiEngineEvents.Recovery.FailedLocalRunMarkedRequeuedForRecovery, "requeued", "runtime-failed-1", "local-run-failed-1", startedAtUtc.AddSeconds(3)),
+                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", AiEngineEvents.Recovery.ReplacementRuntimeSelected, "selected", "runtime-replacement-1", "local-run-failed-1", startedAtUtc.AddSeconds(4)),
+                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", AiEngineEvents.Recovery.ReplacementLocalRunRegistered, "registered", "runtime-replacement-1", "local-run-replacement-1", startedAtUtc.AddSeconds(5)),
+                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", AiEngineEvents.Recovery.ResumeContextSeeded, "seeded", "runtime-replacement-1", "local-run-replacement-1", startedAtUtc.AddSeconds(6)),
+                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", AiEngineEvents.Recovery.DagResumeStarted, "started", "runtime-replacement-1", "local-run-replacement-1", startedAtUtc.AddSeconds(7)),
+                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", AiEngineEvents.Recovery.DagResumeCompleted, "completed", "runtime-replacement-1", "local-run-replacement-1", startedAtUtc.AddSeconds(8)),
+                CreateEvent(FullTimelineForensicsId, "execution-1", "shared-run-1", AiEngineEvents.Recovery.ExecutionRecoveryCompleted, "completed", "runtime-replacement-1", "local-run-replacement-1", startedAtUtc.AddSeconds(9))
             };
         }
 
@@ -421,9 +422,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Forensics
         {
             return new[]
             {
-                CreateEvent(forensicsId, executionId, sharedRunId, "execution.recovery.candidate.detected", "detected", failedRuntimeInstanceId, "local-run-failed-1", startedAtUtc.AddSeconds(1)),
-                CreateEvent(forensicsId, executionId, sharedRunId, "replacement.runtime.selected", "selected", replacementRuntimeInstanceId, "local-run-replacement-1", startedAtUtc.AddSeconds(2)),
-                CreateEvent(forensicsId, executionId, sharedRunId, "execution.recovery.failed", "failed", replacementRuntimeInstanceId, "local-run-replacement-1", startedAtUtc.AddSeconds(3))
+                CreateEvent(forensicsId, executionId, sharedRunId, AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected, "detected", failedRuntimeInstanceId, "local-run-failed-1", startedAtUtc.AddSeconds(1)),
+                CreateEvent(forensicsId, executionId, sharedRunId, AiEngineEvents.Recovery.ReplacementRuntimeSelected, "selected", replacementRuntimeInstanceId, "local-run-replacement-1", startedAtUtc.AddSeconds(2)),
+                CreateEvent(forensicsId, executionId, sharedRunId, AiEngineEvents.Recovery.ExecutionRecoveryFailed, "failed", replacementRuntimeInstanceId, "local-run-replacement-1", startedAtUtc.AddSeconds(3))
             };
         }
 

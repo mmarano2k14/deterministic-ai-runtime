@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using System.Collections.Concurrent;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
@@ -12,6 +12,7 @@ using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
 using Multiplexed.Abstractions.AI.ControlPlane;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
@@ -71,8 +72,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
         {
             _registry = registry ?? throw new ArgumentNullException(nameof(registry));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-            _observer = observer ?? throw new ArgumentNullException(nameof(observer));
+            ArgumentNullException.ThrowIfNull(observer);
             _lifecycleJournal = lifecycleJournal ?? throw new ArgumentNullException(nameof(lifecycleJournal));
+            _observer = AiRuntimeLifecycleObservabilityCompatibility.Compose(
+                observer,
+                _lifecycleJournal);
         }
 
         /// <inheritdoc />
@@ -591,10 +595,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
                 if (existingRegisteredEvent is null)
                 {
-                    await _lifecycleJournal.AppendAsync(
+                    await _observer.RecordLifecycleAsync(
                         CreateRuntimeLifecycleEvent(
                             registeredEventId,
-                            AiRuntimeLifecycleEventType.RuntimeRegistered,
+                            AiRuntimeLifecycleEvents.RuntimeRegistered,
                             ResolveRegisteredTimestampUtc(instance),
                             instance,
                             lifecycleCorrelationId,
@@ -624,7 +628,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             {
                 await AppendRuntimeStatusOnceAsync(
                     instance,
-                    AiRuntimeLifecycleEventType.RuntimeDraining,
+                    AiRuntimeLifecycleEvents.RuntimeDraining,
                     lifecycleCorrelationId,
                     CreateReadyEventId(instance),
                     "ready",
@@ -637,7 +641,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             {
                 await AppendRuntimeStatusOnceAsync(
                     instance,
-                    AiRuntimeLifecycleEventType.RuntimeStopped,
+                    AiRuntimeLifecycleEvents.RuntimeStopped,
                     lifecycleCorrelationId,
                     causationId: null,
                     previousStatus: null,
@@ -665,7 +669,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 return;
             }
 
-            await _lifecycleJournal.AppendAsync(
+            await _observer.RecordLifecycleAsync(
                 CreateRuntimeLifecycleEvent(
                     eventId,
                     eventType,
@@ -718,10 +722,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                     return;
                 }
 
-                await _lifecycleJournal.AppendAsync(
+                await _observer.RecordLifecycleAsync(
                     CreateRuntimeLifecycleEvent(
                         eventId,
-                        AiRuntimeLifecycleEventType.RuntimeReady,
+                        AiRuntimeLifecycleEvents.RuntimeReady,
                         ResolveReadyTimestampUtc(instance),
                         instance,
                         correlationId,

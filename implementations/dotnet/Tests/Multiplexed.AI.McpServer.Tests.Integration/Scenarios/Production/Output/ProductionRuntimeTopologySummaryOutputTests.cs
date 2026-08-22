@@ -1,6 +1,7 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 {
@@ -343,7 +344,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 
             events.Add(CreateLifecycleEvent(
                 "work-assigned",
-                AiRuntimeLifecycleEventType.WorkAssigned,
+                AiRuntimeLifecycleEvents.WorkAssigned,
                 start.AddSeconds(10),
                 "control-plane-replacement-release",
                 runtimeInstanceId: "failed-runtime",
@@ -359,7 +360,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 
             events.Add(CreateLifecycleEvent(
                 "host-disappeared",
-                AiRuntimeLifecycleEventType.HostDisappeared,
+                AiRuntimeLifecycleEvents.HostDisappeared,
                 start.AddSeconds(20),
                 "control-plane-replacement-release",
                 poolId: "pool-a",
@@ -370,7 +371,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 
             events.Add(CreateLifecycleEvent(
                 "runtime-suppressed",
-                AiRuntimeLifecycleEventType.RuntimeSuppressed,
+                AiRuntimeLifecycleEvents.RuntimeSuppressed,
                 start.AddSeconds(21),
                 "control-plane-replacement-release",
                 runtimeInstanceId: "failed-runtime",
@@ -395,7 +396,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 
             events.Add(CreateLifecycleEvent(
                 "work-reassigned",
-                AiRuntimeLifecycleEventType.WorkReassigned,
+                AiRuntimeLifecycleEvents.WorkReassigned,
                 start.AddSeconds(31),
                 "control-plane-replacement-release",
                 runtimeInstanceId: "replacement-runtime",
@@ -412,7 +413,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 
             events.Add(CreateLifecycleEvent(
                 "work-released-after-recovery",
-                AiRuntimeLifecycleEventType.WorkReleased,
+                AiRuntimeLifecycleEvents.WorkReleased,
                 start.AddSeconds(40),
                 "control-plane-replacement-release",
                 runtimeInstanceId: "replacement-runtime",
@@ -502,7 +503,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                 new()
                 {
                     EventId = "work-released-1",
-                    EventType = AiRuntimeLifecycleEventType.WorkReleased,
+                    EventType = AiRuntimeLifecycleEvents.WorkReleased,
                     TimestampUtc = start,
                     ControlPlaneId = "control-plane-incident",
                     HostCreationMode = AiRuntimeHostCreationMode.KubernetesPool,
@@ -522,7 +523,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                     new AiRuntimeLifecycleEvent
                     {
                         EventId = $"runtime-unhealthy-{index}",
-                        EventType = AiRuntimeLifecycleEventType.RuntimeUnhealthy,
+                        EventType = AiRuntimeLifecycleEvents.RuntimeUnhealthy,
                         TimestampUtc = start.AddTicks(index),
                         ControlPlaneId = "runtime-lifecycle",
                         HostCreationMode = AiRuntimeHostCreationMode.KubernetesPool,
@@ -565,7 +566,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                 new()
                 {
                     EventId = "initial-work-assigned",
-                    EventType = AiRuntimeLifecycleEventType.WorkAssigned,
+                    EventType = AiRuntimeLifecycleEvents.WorkAssigned,
                     TimestampUtc = start,
                     ControlPlaneId = "control-plane-runtime-seed",
                     HostCreationMode = AiRuntimeHostCreationMode.KubernetesPool,
@@ -582,7 +583,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                     new AiRuntimeLifecycleEvent
                     {
                         EventId = $"runtime-unhealthy-seeded-{index}",
-                        EventType = AiRuntimeLifecycleEventType.RuntimeUnhealthy,
+                        EventType = AiRuntimeLifecycleEvents.RuntimeUnhealthy,
                         TimestampUtc = start.AddTicks(index),
                         ControlPlaneId = "runtime-lifecycle",
                         HostCreationMode = AiRuntimeHostCreationMode.KubernetesPool,
@@ -723,7 +724,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 
             events.Add(CreateLifecycleEvent(
                 "work-assigned-impacted",
-                AiRuntimeLifecycleEventType.WorkAssigned,
+                AiRuntimeLifecycleEvents.WorkAssigned,
                 start.AddSeconds(10),
                 "control-plane-durable",
                 runtimeInstanceId: "initial-runtime-1",
@@ -738,7 +739,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                 executionId: "execution-1"));
             events.Add(CreateLifecycleEvent(
                 "work-assigned-safe",
-                AiRuntimeLifecycleEventType.WorkAssigned,
+                AiRuntimeLifecycleEvents.WorkAssigned,
                 start.AddSeconds(11),
                 "control-plane-durable",
                 runtimeInstanceId: "safe-runtime",
@@ -753,7 +754,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                 executionId: "execution-safe"));
             events.Add(CreateLifecycleEvent(
                 "work-released-safe-after-completion",
-                AiRuntimeLifecycleEventType.WorkReleased,
+                AiRuntimeLifecycleEvents.WorkReleased,
                 start.AddSeconds(19),
                 "control-plane-durable",
                 runtimeInstanceId: "safe-runtime",
@@ -769,7 +770,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 
             events.Add(CreateLifecycleEvent(
                 "host-disappeared",
-                AiRuntimeLifecycleEventType.HostDisappeared,
+                AiRuntimeLifecycleEvents.HostDisappeared,
                 start.AddSeconds(20),
                 "control-plane-durable",
                 poolId: "pool-a",
@@ -782,7 +783,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             {
                 events.Add(CreateLifecycleEvent(
                     $"runtime-suppressed-{index}",
-                    AiRuntimeLifecycleEventType.RuntimeSuppressed,
+                    AiRuntimeLifecycleEvents.RuntimeSuppressed,
                     start.AddSeconds(20 + index),
                     "control-plane-durable",
                     runtimeInstanceId: $"initial-runtime-{index}",
@@ -800,7 +801,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 
             events.Add(CreateLifecycleEvent(
                 "work-released-impacted",
-                AiRuntimeLifecycleEventType.WorkReleased,
+                AiRuntimeLifecycleEvents.WorkReleased,
                 start.AddSeconds(40),
                 "control-plane-durable",
                 runtimeInstanceId: "initial-runtime-1",
@@ -813,7 +814,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                 forensicsId: "forensics-1"));
             events.Add(CreateLifecycleEvent(
                 "work-reassigned-impacted",
-                AiRuntimeLifecycleEventType.WorkReassigned,
+                AiRuntimeLifecycleEvents.WorkReassigned,
                 start.AddSeconds(41),
                 "control-plane-durable",
                 runtimeInstanceId: "replacement-runtime-1",
@@ -831,7 +832,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                 forensicsId: "forensics-1"));
             events.Add(CreateLifecycleEvent(
                 "work-released-local-queued",
-                AiRuntimeLifecycleEventType.WorkReleased,
+                AiRuntimeLifecycleEvents.WorkReleased,
                 start.AddSeconds(42),
                 "control-plane-durable",
                 runtimeInstanceId: "initial-runtime-2",
@@ -851,7 +852,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                 }));
             events.Add(CreateLifecycleEvent(
                 "work-reassigned-local-queued",
-                AiRuntimeLifecycleEventType.WorkReassigned,
+                AiRuntimeLifecycleEvents.WorkReassigned,
                 start.AddSeconds(43),
                 "control-plane-durable",
                 runtimeInstanceId: "replacement-runtime-2",
@@ -883,7 +884,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                 44);
             events.Add(CreateLifecycleEvent(
                 "transient-runtime-stopped",
-                AiRuntimeLifecycleEventType.RuntimeStopped,
+                AiRuntimeLifecycleEvents.RuntimeStopped,
                 start.AddSeconds(46),
                 "control-plane-durable",
                 runtimeInstanceId: "transient-runtime",
@@ -894,7 +895,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                 kubernetesPodName: "transient-pod"));
             events.Add(CreateLifecycleEvent(
                 "transient-host-deleted",
-                AiRuntimeLifecycleEventType.HostDeleted,
+                AiRuntimeLifecycleEvents.HostDeleted,
                 start.AddSeconds(47),
                 "control-plane-durable",
                 poolId: "pool-transient",
@@ -904,7 +905,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
 
             events.Add(CreateLifecycleEvent(
                 "foreign-runtime",
-                AiRuntimeLifecycleEventType.RuntimeReady,
+                AiRuntimeLifecycleEvents.RuntimeReady,
                 start.AddSeconds(50),
                 "foreign-control-plane",
                 runtimeInstanceId: "foreign-runtime",
@@ -930,8 +931,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
             events.Add(CreateLifecycleEvent(
                 $"{runtimeInstanceId}-registered",
                 replacement
-                    ? AiRuntimeLifecycleEventType.RuntimeReplacementRegistered
-                    : AiRuntimeLifecycleEventType.RuntimeRegistered,
+                    ? AiRuntimeLifecycleEvents.RuntimeReplacementRegistered
+                    : AiRuntimeLifecycleEvents.RuntimeRegistered,
                 start.AddSeconds(secondOffset),
                 controlPlaneId,
                 runtimeInstanceId: runtimeInstanceId,
@@ -942,7 +943,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output
                 kubernetesPodName: podName));
             events.Add(CreateLifecycleEvent(
                 $"{runtimeInstanceId}-ready",
-                AiRuntimeLifecycleEventType.RuntimeReady,
+                AiRuntimeLifecycleEvents.RuntimeReady,
                 start.AddSeconds(secondOffset + 1),
                 controlPlaneId,
                 runtimeInstanceId: runtimeInstanceId,

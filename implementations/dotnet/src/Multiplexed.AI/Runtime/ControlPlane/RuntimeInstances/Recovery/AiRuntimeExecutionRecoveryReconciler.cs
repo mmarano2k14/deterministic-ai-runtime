@@ -17,11 +17,13 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
@@ -58,7 +60,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
         private readonly IAiRuntimeRunExecutionIndex runtimeRunExecutionIndex;
         private readonly IAiSharedRunOwnershipResolver sharedRunOwnershipResolver;
         private readonly IAiRuntimeExecutionRecoveryTransitionService transitionService;
-        private readonly IAiRuntimeRecoveryForensicsRecorder forensicsRecorder;
         private readonly IAiControlPlaneObserver observer;
         private readonly AiRuntimeExecutionRecoveryReconciliationOptions options;
         private readonly ConcurrentDictionary<string, DateTimeOffset>
@@ -174,8 +175,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
             this.runtimeRunExecutionIndex = runtimeRunExecutionIndex;
             this.sharedRunOwnershipResolver = sharedRunOwnershipResolver;
             this.transitionService = transitionService;
-            this.forensicsRecorder = forensicsRecorder;
-            this.observer = observer;
+            this.observer = AiRecoveryObservabilityCompatibility.Compose(observer, forensicsRecorder);
             this.options = options.Value;
 
             if (this.options.OrphanedRuntimeInstanceConfirmationPeriod < TimeSpan.Zero)
@@ -922,30 +922,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery
                 sharedRunId,
                 localRunId);
 
-            await this.forensicsRecorder
-                .RecordEventAsync(
-                    new AiRuntimeRecoveryForensicsEvent
-                    {
-                        EventId = string.Join(
-                            ":",
-                            forensicsId,
-                            AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected),
-                        ForensicsId = forensicsId,
-                        TimestampUtc = DateTimeOffset.UtcNow,
-                        EventType = AiRuntimeRecoveryForensicsEventType.ExecutionRecoveryCandidateDetected,
-                        Outcome = canRecover ? AiRuntimeRecoveryOutcomeCodes.Recoverable : AiRuntimeRecoveryOutcomeCodes.NotRecoverable,
-                        Reason = reason,
-                        ExecutionId = executionId,
-                        SharedRunId = sharedRunId,
-                        LocalRunId = localRunId,
-                        RuntimeInstanceId = runtimeInstanceId,
-                        Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            var eventType = AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected;
+            var timestampUtc = DateTimeOffset.UtcNow;
+
+            await this.observer
+                .RecordAsync(
+                    AiRecoveryEngineEventFactory.Create(
+                        semanticEventType: eventType,
+                        eventId: string.Join(":", forensicsId, eventType),
+                        forensicsId: forensicsId,
+                        timestampUtc: timestampUtc,
+                        outcome: canRecover
+                            ? AiRuntimeRecoveryOutcomeCodes.Recoverable
+                            : AiRuntimeRecoveryOutcomeCodes.NotRecoverable,
+                        reason: reason,
+                        executionId: executionId,
+                        sharedRunId: sharedRunId,
+                        localRunId: localRunId,
+                        runtimeInstanceId: runtimeInstanceId,
+                        metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                         {
                             [AiRuntimeInstanceIsolationMetadataKeys.TenantId] = tenantId ?? string.Empty,
                             [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] = tenantGroupId ?? string.Empty,
                             ["candidate.canRecover"] = canRecover.ToString()
-                        }
-                    },
+                        }),
                     cancellationToken)
                 .ConfigureAwait(false);
 

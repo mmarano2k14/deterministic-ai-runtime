@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,6 +13,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -20,6 +21,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Runtime.Execution.Instance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.Pool;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Execution
@@ -40,8 +42,6 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         private readonly IAiSharedRunOwnershipResolver ownershipResolver;
         private readonly IAiRuntimeExecutionRecoveryTransitionService
             transitionService;
-        private readonly IAiRuntimeRecoveryForensicsRecorder
-            forensicsRecorder;
         private readonly IAiControlPlaneObserver observer;
         private readonly AiRuntimeLifecycleEventWriter lifecycleWriter;
 
@@ -114,15 +114,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             this.transitionService =
                 transitionService
                 ?? throw new ArgumentNullException(nameof(transitionService));
-            this.forensicsRecorder =
-                forensicsRecorder
-                ?? throw new ArgumentNullException(nameof(forensicsRecorder));
-            this.observer =
-                observer
-                ?? throw new ArgumentNullException(nameof(observer));
-            this.lifecycleWriter = new AiRuntimeLifecycleEventWriter(
-                lifecycleJournal
-                ?? throw new ArgumentNullException(nameof(lifecycleJournal)));
+            ArgumentNullException.ThrowIfNull(forensicsRecorder);
+            ArgumentNullException.ThrowIfNull(observer);
+            ArgumentNullException.ThrowIfNull(lifecycleJournal);
+            var recoveryObserver = AiRecoveryObservabilityCompatibility.Compose(
+                observer,
+                forensicsRecorder);
+            this.observer = AiRuntimeLifecycleObservabilityCompatibility.Compose(
+                recoveryObserver,
+                lifecycleJournal);
+            this.lifecycleWriter = new AiRuntimeLifecycleEventWriter(lifecycleJournal);
         }
 
         public async Task<IReadOnlyList<AiRuntimePoolRecoveryCandidateOutcome>>
@@ -281,44 +282,32 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                     candidate,
                     ownership);
 
-            await this.forensicsRecorder
-                .RecordEventAsync(
-                    new AiRuntimeRecoveryForensicsEvent
-                    {
-                        EventId =
-                            string.Join(
-                                ":",
-                                forensicsId,
-                                AiRuntimeRecoveryForensicsEventType
-                                    .ExecutionRecoveryCandidateDetected),
-                        ForensicsId = forensicsId,
-                        TimestampUtc = DateTimeOffset.UtcNow,
-                        EventType =
-                            AiRuntimeRecoveryForensicsEventType
-                                .ExecutionRecoveryCandidateDetected,
-                        Outcome = ownership.CanRecover
+            var eventType =
+                AiEngineEvents.Recovery.ExecutionRecoveryCandidateDetected;
+
+            await this.observer
+                .RecordAsync(
+                    AiRecoveryEngineEventFactory.Create(
+                        semanticEventType: eventType,
+                        eventId: string.Join(":", forensicsId, eventType),
+                        forensicsId: forensicsId,
+                        timestampUtc: DateTimeOffset.UtcNow,
+                        outcome: ownership.CanRecover
                             ? AiRuntimeRecoveryOutcomeCodes.Recoverable
                             : AiRuntimeRecoveryOutcomeCodes.NotRecoverable,
-                        Reason = ownership.Reason,
-                        ExecutionId = candidate.ExecutionId,
-                        SharedRunId = ownership.SharedRunId,
-                        LocalRunId = candidate.LocalRunId,
-                        RuntimeInstanceId =
-                            candidate.RuntimeInstanceId,
-                        Metadata =
-                            new Dictionary<string, string>(
-                                StringComparer.OrdinalIgnoreCase)
-                            {
-                                [AiRuntimeInstanceIsolationMetadataKeys.TenantId] =
-                                    candidate.TenantId ??
-                                    string.Empty,
-                                [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] =
-                                    candidate.TenantGroupId ??
-                                    string.Empty,
-                                ["candidate.canRecover"] =
-                                    ownership.CanRecover.ToString()
-                            }
-                    },
+                        reason: ownership.Reason,
+                        executionId: candidate.ExecutionId,
+                        sharedRunId: ownership.SharedRunId,
+                        localRunId: candidate.LocalRunId,
+                        runtimeInstanceId: candidate.RuntimeInstanceId,
+                        metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantId] =
+                                candidate.TenantId ?? string.Empty,
+                            [AiRuntimeInstanceIsolationMetadataKeys.TenantGroupId] =
+                                candidate.TenantGroupId ?? string.Empty,
+                            ["candidate.canRecover"] = ownership.CanRecover.ToString()
+                        }),
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -433,16 +422,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
             var forensicsId = CreateForensicsId(candidate, ownership);
             var eventId = AiRuntimeLifecycleEventWriter.CreateEventId(
-                AiRuntimeLifecycleEventType.WorkReleased,
+                AiRuntimeLifecycleEvents.WorkReleased,
                 candidate.LocalRunId,
                 failureId);
 
-            await this.lifecycleWriter
-                .AppendOnceAsync(
+            await this.observer
+                .RecordLifecycleAsync(
                     new AiRuntimeLifecycleEvent
                     {
                         EventId = eventId,
-                        EventType = AiRuntimeLifecycleEventType.WorkReleased,
+                        EventType = AiRuntimeLifecycleEvents.WorkReleased,
                         TimestampUtc = DateTimeOffset.UtcNow,
                         ControlPlaneId = context.ControlPlaneId,
                         HostCreationMode = context.HostCreationMode,

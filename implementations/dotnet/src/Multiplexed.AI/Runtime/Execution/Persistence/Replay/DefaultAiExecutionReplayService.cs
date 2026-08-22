@@ -10,6 +10,7 @@ using Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Normalization;
 using Multiplexed.AI.Runtime.Observability.Helpers;
 using Multiplexed.AI.Runtime.Observability.Logging;
 using Multiplexed.AI.Stores;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
 {
@@ -99,7 +100,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
                         {
                             await RecordReplayLedgerEventAsync(
                                     executionId,
-                                    AiDecisionLedgerEvents.Replay.Requested,
+                                    AiEngineEvents.Replay.Requested,
                                     AiDecisionLedgerOutcome.Started,
                                     "Replay request received.",
                                     new Dictionary<string, string>
@@ -122,7 +123,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
 
                                 await RecordReplayLedgerEventAsync(
                                         executionId,
-                                        AiDecisionLedgerEvents.Replay.Failed,
+                                        AiEngineEvents.Replay.Failed,
                                         AiDecisionLedgerOutcome.Failed,
                                         "Replay failed because snapshot was not found.",
                                         new Dictionary<string, string>
@@ -143,7 +144,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
 
                             await RecordReplayLedgerEventAsync(
                                     executionId,
-                                    AiDecisionLedgerEvents.Replay.Started,
+                                    AiEngineEvents.Replay.Started,
                                     AiDecisionLedgerOutcome.Started,
                                     "Replay snapshot loaded.",
                                     new Dictionary<string, string>
@@ -166,7 +167,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
 
                                 await RecordReplayLedgerEventAsync(
                                         executionId,
-                                        AiDecisionLedgerEvents.Replay.Failed,
+                                        AiEngineEvents.Replay.Failed,
                                         AiDecisionLedgerOutcome.Failed,
                                         validationError,
                                         new Dictionary<string, string>
@@ -208,7 +209,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
 
                             await RecordReplayLedgerEventAsync(
                                     executionId,
-                                    AiDecisionLedgerEvents.Replay.ComparisonCompleted,
+                                    AiEngineEvents.Replay.ComparisonCompleted,
                                     replayReport.ReplayValid
                                         ? AiDecisionLedgerOutcome.Completed
                                         : AiDecisionLedgerOutcome.Failed,
@@ -239,7 +240,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
 
                                 await RecordReplayLedgerEventAsync(
                                         executionId,
-                                        AiDecisionLedgerEvents.Replay.Completed,
+                                        AiEngineEvents.Replay.Completed,
                                         AiDecisionLedgerOutcome.Completed,
                                         "Replay completed without restore because a compatible runtime execution already exists.",
                                         new Dictionary<string, string>
@@ -265,7 +266,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
                             {
                                 await RecordReplayLedgerEventAsync(
                                         executionId,
-                                        AiDecisionLedgerEvents.Replay.Completed,
+                                        AiEngineEvents.Replay.Completed,
                                         AiDecisionLedgerOutcome.Completed,
                                         "Replay audit completed without restoring runtime state.",
                                         new Dictionary<string, string>
@@ -311,7 +312,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
 
                             await RecordReplayLedgerEventAsync(
                                     executionId,
-                                    AiDecisionLedgerEvents.Replay.Completed,
+                                    AiEngineEvents.Replay.Completed,
                                     AiDecisionLedgerOutcome.Completed,
                                     "Replay completed and runtime state was restored.",
                                     new Dictionary<string, string>
@@ -337,7 +338,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay
             {
                 await RecordReplayLedgerEventAsync(
                         executionId,
-                        AiDecisionLedgerEvents.Replay.Failed,
+                        AiEngineEvents.Replay.Failed,
                         AiDecisionLedgerOutcome.Failed,
                         exception.Message,
                         new Dictionary<string, string>

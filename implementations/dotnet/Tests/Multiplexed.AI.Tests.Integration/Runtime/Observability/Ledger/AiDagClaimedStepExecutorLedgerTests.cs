@@ -21,6 +21,7 @@ using Multiplexed.AI.Runtime.Observability.Context;
 using Multiplexed.AI.Runtime.Observability.Logging;
 using NSubstitute;
 using Xunit;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 {
@@ -129,17 +130,17 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Step &&
-                entry.EventType == AiDecisionLedgerEvents.Step.Started &&
+                entry.EventType == AiEngineEvents.Step.Started &&
                 entry.Outcome == AiDecisionLedgerOutcome.Started);
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Step &&
-                entry.EventType == AiDecisionLedgerEvents.Step.Completed &&
+                entry.EventType == AiEngineEvents.Step.Completed &&
                 entry.Outcome == AiDecisionLedgerOutcome.Completed);
 
             Assert.DoesNotContain(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Concurrency &&
-                entry.EventType == AiDecisionLedgerEvents.Concurrency.LeaseReleased);
+                entry.EventType == AiEngineEvents.Concurrency.LeaseReleased);
 
             foreach (var entry in entries)
             {
@@ -253,12 +254,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.Contains(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Step &&
-                entry.EventType == AiDecisionLedgerEvents.Step.Started &&
+                entry.EventType == AiEngineEvents.Step.Started &&
                 entry.Outcome == AiDecisionLedgerOutcome.Started);
 
             var failed = Assert.Single(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Step &&
-                entry.EventType == AiDecisionLedgerEvents.Step.Failed &&
+                entry.EventType == AiEngineEvents.Step.Failed &&
                 entry.Outcome == AiDecisionLedgerOutcome.Failed);
 
             Assert.Equal("Boom.", failed.Reason);
@@ -267,7 +268,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
 
             Assert.DoesNotContain(entries, entry =>
                 entry.Category == AiDecisionLedgerCategory.Concurrency &&
-                entry.EventType == AiDecisionLedgerEvents.Concurrency.LeaseReleased);
+                entry.EventType == AiEngineEvents.Concurrency.LeaseReleased);
 
             _ = services.ConcurrencyGate.DidNotReceive().ReleaseAsync(
                 Arg.Any<AiConcurrencyContext>(),

@@ -1,15 +1,18 @@
-﻿using Multiplexed.Abstractions.AI.Execution;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
+using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Observability;
-using Multiplexed.Abstractions.AI.Observability.Ledger;
+using Multiplexed.Abstractions.AI.Observability.Context;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
 using Multiplexed.AI.Abstractions.AI.Policies;
 using Multiplexed.AI.Runtime.Execution.Context;
-using Multiplexed.AI.Runtime.Observability.Helpers;
 using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Multiplexed.Abstractions.AI.Policies;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.AI.Policies
 {
@@ -18,8 +21,8 @@ namespace Multiplexed.AI.Runtime.AI.Policies
     /// </summary>
     /// <remarks>
     /// This base class is responsible for resolving step-scoped policy configuration,
-    /// resolving registered policies, executing those policies, recording policy metrics,
-    /// recording policy traces, and recording execution-correlated policy ledger events.
+    /// resolving registered policies, executing those policies, emitting canonical policy facts
+    /// through the existing Event Manager, and recording implementation-level policy traces.
     ///
     /// It does not own domain-specific decisions such as retry, retention, eviction,
     /// concurrency admission, or recovery. Domain-specific runtime consequences remain
@@ -29,8 +32,10 @@ namespace Multiplexed.AI.Runtime.AI.Policies
     {
         private const string PolicyPipelineFallback = "policy-engine";
         private const string PolicyWorkerFallback = "policy-engine";
+        private const string PolicyExecutionOperation = "policy.execute";
 
         private readonly IAiPolicyRegistry policyRegistry;
+        private readonly IAiControlPlaneObserver observer;
 
         public readonly IAiRuntimeObservability _obs;
 
@@ -52,6 +57,7 @@ namespace Multiplexed.AI.Runtime.AI.Policies
             this.policyRegistry = policyRegistry ?? throw new ArgumentNullException(nameof(policyRegistry));
             StepContext = stepContext ?? throw new ArgumentNullException(nameof(stepContext));
             _obs = obs ?? throw new ArgumentNullException(nameof(obs));
+            this.observer = AiPolicyObservabilityCompatibility.Compose(StepContext.Services, _obs);
         }
 
         /// <inheritdoc />
@@ -133,21 +139,20 @@ namespace Multiplexed.AI.Runtime.AI.Policies
                 {
                     ExecutionId = executionId,
                     StepId = stepName,
-                    Operation = "policy.execute"
+                    Operation = PolicyExecutionOperation
                 };
 
                 using var scope = _obs.Tracer.StartStep(traceContext);
 
                 var start = DateTime.UtcNow;
 
-                await RecordPolicyLedgerEventAsync(
+                await RecordPolicyEventAsync(
                         executionId,
                         pipelineKey,
                         stepName,
                         workerId,
                         policyName,
-                        AiDecisionLedgerEvents.Policy.Evaluated,
-                        AiDecisionLedgerOutcome.Started,
+                        AiEngineEvents.Policy.Evaluated,
                         "Policy evaluation started.",
                         null,
                         cancellationToken)
@@ -167,34 +172,22 @@ namespace Multiplexed.AI.Runtime.AI.Policies
                     scope?.SetTag("kind", Kind.ToString());
                     scope?.SetTag("success", result.IsSuccess);
                     scope?.SetTag(AiObservabilityMetadataKeys.DurationMs, duration.TotalMilliseconds);
-                    scope?.SetTag("result.kind", result.Kind.ToString());
+                    scope?.SetTag(AiPolicyMetadataKeys.ResultKind, result.Kind.ToString());
                     scope?.SetTag("result.message", result.Message);
 
-                    _obs.Metrics.Policy.RecordExecution(
-                        executionId,
-                        policyName,
-                        result.IsSuccess,
-                        duration);
-
-                    _obs.Metrics.Policy.RecordDecision(
-                        executionId,
-                        policyName,
-                        result.Kind);
-
-                    await RecordPolicyLedgerEventAsync(
+                    await RecordPolicyEventAsync(
                             executionId,
                             pipelineKey,
                             stepName,
                             workerId,
                             policyName,
                             ResolvePolicyDecisionEventType(result),
-                            ResolvePolicyDecisionOutcome(result),
                             result.Message ?? ResolvePolicyDecisionReason(result),
                             new Dictionary<string, string>
                             {
-                                ["duration.ms"] = duration.TotalMilliseconds.ToString("F2"),
-                                ["result.kind"] = result.Kind.ToString(),
-                                ["result.success"] = result.IsSuccess.ToString()
+                                [AiObservabilityMetadataKeys.DottedDurationMs] = duration.TotalMilliseconds.ToString("F2"),
+                                [AiPolicyMetadataKeys.ResultKind] = result.Kind.ToString(),
+                                [AiPolicyMetadataKeys.ResultSuccess] = result.IsSuccess.ToString()
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
@@ -206,18 +199,13 @@ namespace Multiplexed.AI.Runtime.AI.Policies
                     scope?.SetTag("exception", true);
                     scope?.SetTag("error", ex.Message);
 
-                    _obs.Metrics.Policy.RecordFailure(
-                        executionId,
-                        policyName);
-
-                    await RecordPolicyLedgerEventAsync(
+                    await RecordPolicyEventAsync(
                             executionId,
                             pipelineKey,
                             stepName,
                             workerId,
                             policyName,
-                            AiDecisionLedgerEvents.Policy.Failed,
-                            AiDecisionLedgerOutcome.Failed,
+                            AiEngineEvents.Policy.Failed,
                             ex.Message,
                             new Dictionary<string, string>
                             {
@@ -234,31 +222,27 @@ namespace Multiplexed.AI.Runtime.AI.Policies
         }
 
         /// <summary>
-        /// Records a policy decision ledger event.
+        /// Emits one canonical policy event through the existing Event Manager.
         /// </summary>
-        private async Task RecordPolicyLedgerEventAsync(
+        private async Task RecordPolicyEventAsync(
             string executionId,
             string pipelineKey,
             string stepName,
             string workerId,
             string policyName,
             string eventType,
-            AiDecisionLedgerOutcome outcome,
             string? reason,
             IReadOnlyDictionary<string, string>? additionalMetadata,
             CancellationToken cancellationToken)
         {
-            if (_obs.Ledger is null)
-            {
-                return;
-            }
-
-            var metadata = new Dictionary<string, string>
+            var properties = new Dictionary<string, object?>
             {
                 [AiPolicyMetadataKeys.Name] = policyName,
-                ["policy.kind"] = Kind.ToString(),
+                [AiPolicyMetadataKeys.Kind] = Kind.ToString(),
                 [AiPipelineMetadataKeys.Key] = pipelineKey,
                 [AiStepMetadataKeys.StepName] = stepName,
+                [AiStepMetadataKeys.StepId] = stepName,
+                [AiStepMetadataKeys.StepKey] = stepName,
                 [AiWorkerMetadataKeys.WorkerId] = workerId
             };
 
@@ -266,28 +250,82 @@ namespace Multiplexed.AI.Runtime.AI.Policies
             {
                 foreach (var pair in additionalMetadata)
                 {
-                    metadata[pair.Key] = pair.Value;
+                    properties[pair.Key] = pair.Value;
                 }
             }
 
-            var correlationContext = AiRuntimeCorrelationContextHelper.Create(
-                executionId,
-                pipelineKey,
-                stepName,
-                workerId,
-                claimToken: null,
-                concurrencyContext: null);
-
-            await _obs.Ledger
+            await this.observer
                 .RecordAsync(
-                    correlationContext,
-                    AiDecisionLedgerCategory.Policy,
-                    eventType,
-                    outcome,
-                    reason,
-                    metadata,
+                    new AiControlPlaneEvent
+                    {
+                        SemanticEventType = eventType,
+                        EventType = ResolveControlPlaneEventType(eventType),
+                        Area = AiControlPlaneArea.Policy,
+                        Operation = PolicyExecutionOperation,
+                        Outcome = ResolveControlPlaneOutcome(eventType),
+                        Message = reason,
+                        FailureReason = string.Equals(eventType, AiEngineEvents.Policy.Failed, StringComparison.Ordinal)
+                            ? reason
+                            : null,
+                        Correlation = new AiRuntimeExecutionCorrelationContext
+                        {
+                            CorrelationId = executionId,
+                            ExecutionId = executionId,
+                            PipelineName = pipelineKey,
+                            PipelineKey = pipelineKey,
+                            RuntimeInstanceId = workerId,
+                            WorkerId = workerId
+                        },
+                        Properties = properties
+                    },
                     cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Resolves the generic control-plane phase envelope for a canonical policy event.
+        /// </summary>
+        private static AiControlPlaneEventType ResolveControlPlaneEventType(string eventType)
+        {
+            if (string.Equals(eventType, AiEngineEvents.Policy.Evaluated, StringComparison.Ordinal))
+            {
+                return AiControlPlaneEventType.OperationStarted;
+            }
+
+            if (string.Equals(eventType, AiEngineEvents.Policy.Denied, StringComparison.Ordinal))
+            {
+                return AiControlPlaneEventType.OperationDenied;
+            }
+
+            if (string.Equals(eventType, AiEngineEvents.Policy.Failed, StringComparison.Ordinal))
+            {
+                return AiControlPlaneEventType.OperationFailed;
+            }
+
+            return AiControlPlaneEventType.OperationCompleted;
+        }
+
+        /// <summary>
+        /// Resolves the generic control-plane outcome for a canonical policy event.
+        /// </summary>
+        private static AiControlPlaneOperationOutcome? ResolveControlPlaneOutcome(string eventType)
+        {
+            if (string.Equals(eventType, AiEngineEvents.Policy.Evaluated, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            if (string.Equals(eventType, AiEngineEvents.Policy.Denied, StringComparison.Ordinal))
+            {
+                return AiControlPlaneOperationOutcome.Denied;
+            }
+
+            if (string.Equals(eventType, AiEngineEvents.Policy.Failed, StringComparison.Ordinal))
+            {
+                return AiControlPlaneOperationOutcome.Failed;
+            }
+
+            return AiControlPlaneOperationOutcome.Succeeded;
         }
 
         /// <summary>
@@ -298,28 +336,12 @@ namespace Multiplexed.AI.Runtime.AI.Policies
         {
             if (result.Kind == AiPolicyResultKind.Block)
             {
-                return AiDecisionLedgerEvents.Policy.Denied;
+                return AiEngineEvents.Policy.Denied;
             }
 
             return result.IsSuccess
-                ? AiDecisionLedgerEvents.Policy.Allowed
-                : AiDecisionLedgerEvents.Policy.Failed;
-        }
-
-        /// <summary>
-        /// Resolves the policy decision ledger outcome from a policy result.
-        /// </summary>
-        private static AiDecisionLedgerOutcome ResolvePolicyDecisionOutcome(
-            AiPolicyResult result)
-        {
-            if (result.Kind == AiPolicyResultKind.Block)
-            {
-                return AiDecisionLedgerOutcome.Denied;
-            }
-
-            return result.IsSuccess
-                ? AiDecisionLedgerOutcome.Allowed
-                : AiDecisionLedgerOutcome.Failed;
+                ? AiEngineEvents.Policy.Allowed
+                : AiEngineEvents.Policy.Failed;
         }
 
         /// <summary>

@@ -9,9 +9,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
     /// <summary>
     /// Writes structured control-plane events to the runtime logging layer.
     /// </summary>
-    public sealed class LoggingAiControlPlaneEventSink : IAiControlPlaneEventSink
+    public sealed class LoggingAiControlPlaneEventSink : IAiControlPlaneEventProjectionSink
     {
         private readonly IAiControlPlaneLogger logger;
+
+        /// <inheritdoc />
+        public AiEngineEventProjectionTarget ProjectionTarget => AiEngineEventProjectionTarget.Logging;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="LoggingAiControlPlaneEventSink"/> class.

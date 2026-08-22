@@ -1,3 +1,5 @@
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -5,6 +7,7 @@ using System.Threading.Tasks;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Capacity;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.Abstractions.AI.Observability.Events;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Failure
 {
@@ -17,6 +20,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         private readonly IAiRuntimePoolFailureObserver journalObserver;
         private readonly IAiRuntimePoolCapacitySafetyWriter safetyWriter;
         private readonly AiRuntimeLifecycleEventWriter lifecycleWriter;
+        private readonly IAiControlPlaneObserver observer;
 
         /// <summary>
         /// Preserves existing composition with a no-op lifecycle journal.
@@ -37,7 +41,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         public AiRuntimePoolFailureSafetyObserver(
             IAiRuntimePoolFailureObserver journalObserver,
             IAiRuntimePoolCapacitySafetyWriter safetyWriter,
-            IAiRuntimeLifecycleJournal lifecycleJournal)
+            IAiRuntimeLifecycleJournal lifecycleJournal,
+            IAiControlPlaneObserver? observer = null)
         {
             this.journalObserver = journalObserver
                 ?? throw new ArgumentNullException(nameof(journalObserver));
@@ -46,6 +51,9 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             this.lifecycleWriter = new AiRuntimeLifecycleEventWriter(
                 lifecycleJournal
                 ?? throw new ArgumentNullException(nameof(lifecycleJournal)));
+            this.observer = AiRuntimeLifecycleObservabilityCompatibility.Compose(
+                observer ?? new NoopAiControlPlaneObserver(),
+                lifecycleJournal);
         }
 
         /// <inheritdoc />
@@ -102,8 +110,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             var isHostFailure = observation.Scope ==
                 AiRuntimePoolFailureScope.Host;
             var eventType = isHostFailure
-                ? AiRuntimeLifecycleEventType.HostDisappeared
-                : AiRuntimeLifecycleEventType.RuntimeSuppressed;
+                ? AiRuntimeLifecycleEvents.HostDisappeared
+                : AiRuntimeLifecycleEvents.RuntimeSuppressed;
             var subjectId = isHostFailure
                 ? observation.HostId
                 : observation.RuntimeInstanceId;
@@ -113,8 +121,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 return;
             }
 
-            await this.lifecycleWriter
-                .AppendOnceAsync(
+            await this.observer
+                .RecordLifecycleAsync(
                     new AiRuntimeLifecycleEvent
                     {
                         EventId = AiRuntimeLifecycleEventWriter.CreateEventId(

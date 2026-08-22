@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.AI.Runtime.ControlPlane.Observability;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 {
@@ -21,6 +22,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             ArgumentNullException.ThrowIfNull(services);
 
             services.TryAddSingleton<IAiRuntimeRecoveryForensicsRecorder, NoopAiRuntimeRecoveryForensicsRecorder>();
+            AddRecoveryForensicsProjectionSink(services);
 
             return services;
         }
@@ -48,6 +50,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 
             services.AddSingleton<IAiRuntimeRecoveryForensicsStore, InMemoryAiRuntimeRecoveryForensicsStore>();
             services.AddSingleton<IAiRuntimeRecoveryForensicsRecorder, BestEffortAiRuntimeRecoveryForensicsRecorder>();
+            AddRecoveryForensicsProjectionSink(services);
 
             return services;
         }
@@ -86,6 +89,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 
             services.AddSingleton<IAiRuntimeRecoveryForensicsStore, MongoAiRuntimeRecoveryForensicsStore>();
             services.AddSingleton<IAiRuntimeRecoveryForensicsRecorder, BestEffortAiRuntimeRecoveryForensicsRecorder>();
+            AddRecoveryForensicsProjectionSink(services);
             services.AddSingleton<IAiRuntimeRecoveryForensicsQueryService, MongoAiRuntimeRecoveryForensicsQueryService>();
 
             return services;
@@ -128,5 +132,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 
             return services.AddMongoAiRuntimeRecoveryForensics(configureForensics, null);
         }
+        /// <summary>
+        /// Registers the single Event Manager projection sink for runtime recovery forensics.
+        /// </summary>
+        /// <param name="services">The service collection.</param>
+        private static void AddRecoveryForensicsProjectionSink(IServiceCollection services)
+        {
+            services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IAiControlPlaneEventSink, RecoveryForensicsAiControlPlaneEventSink>());
+        }
+
     }
 }

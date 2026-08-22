@@ -18,6 +18,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Dispatch;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Pump;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances;
@@ -693,13 +694,10 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
 
             services.AddAiControlPlane();
 
-            var runtimeObservabilitySinkRegistrations =
-                services.Where(
-                    serviceDescriptor =>
-                        serviceDescriptor.ServiceType == typeof(IAiControlPlaneEventSink) &&
-                        serviceDescriptor.ImplementationType == typeof(RuntimeObservabilityAiControlPlaneEventSink));
-
-            Assert.Empty(runtimeObservabilitySinkRegistrations);
+            Assert.DoesNotContain(
+                services,
+                serviceDescriptor =>
+                    serviceDescriptor.ServiceType == typeof(RuntimeObservabilityAiControlPlaneEventSink));
         }
 
         /// <summary>
@@ -713,13 +711,81 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             services.AddAiControlPlane();
             services.AddAiControlPlaneRuntimeObservability();
 
-            var runtimeObservabilitySinkRegistrations =
-                services.Where(
-                    serviceDescriptor =>
-                        serviceDescriptor.ServiceType == typeof(IAiControlPlaneEventSink) &&
-                        serviceDescriptor.ImplementationType == typeof(RuntimeObservabilityAiControlPlaneEventSink));
+            var concreteRegistration = services.Single(
+                serviceDescriptor =>
+                    serviceDescriptor.ServiceType == typeof(RuntimeObservabilityAiControlPlaneEventSink));
 
-            Assert.Single(runtimeObservabilitySinkRegistrations);
+            var sinkRegistration = services.Single(
+                serviceDescriptor =>
+                    serviceDescriptor.ServiceType == typeof(IAiControlPlaneEventSink));
+
+            Assert.Equal(ServiceLifetime.Singleton, concreteRegistration.Lifetime);
+            Assert.Equal(ServiceLifetime.Singleton, sinkRegistration.Lifetime);
+            Assert.NotNull(concreteRegistration.ImplementationFactory);
+            Assert.NotNull(sinkRegistration.ImplementationFactory);
+        }
+
+        /// <summary>
+        /// Verifies that runtime observability registration remains idempotent.
+        /// </summary>
+        [Fact]
+        public void AddAiControlPlaneRuntimeObservability_Should_Be_Idempotent()
+        {
+            var services = new ServiceCollection();
+
+            services.AddAiControlPlaneRuntimeObservability();
+            services.AddAiControlPlaneRuntimeObservability();
+
+            Assert.Single(
+                services.Where(serviceDescriptor =>
+                    serviceDescriptor.ServiceType == typeof(RuntimeObservabilityAiControlPlaneEventSink)));
+
+            Assert.Single(
+                services.Where(serviceDescriptor =>
+                    serviceDescriptor.ServiceType == typeof(IAiControlPlaneEventSink)));
+        }
+
+        /// <summary>
+        /// Verifies that the singleton Ledger projection resolves directly from the singleton-safe Ledger recorder.
+        /// </summary>
+        [Fact]
+        public void AddAiControlPlaneRuntimeObservability_Should_Resolve_Without_Scoped_RuntimeObservability()
+        {
+            var services = new ServiceCollection();
+            services.AddSingleton<IAiDecisionLedgerRecorder, NoOpAiDecisionLedgerRecorder>();
+            services.AddAiControlPlaneRuntimeObservability();
+
+            using var provider = services.BuildServiceProvider(
+                new ServiceProviderOptions
+                {
+                    ValidateScopes = true
+                });
+
+            var sink = provider.GetRequiredService<RuntimeObservabilityAiControlPlaneEventSink>();
+            var eventSink = Assert.Single(provider.GetServices<IAiControlPlaneEventSink>());
+
+            Assert.Same(sink, eventSink);
+        }
+
+        /// <summary>
+        /// Verifies that the canonical Policy Metrics projection is registered once and remains singleton-safe.
+        /// </summary>
+        [Fact]
+        public void AddAiControlPlanePolicyMetrics_Should_Register_PolicyMetrics_Sink_Idempotently()
+        {
+            var services = new ServiceCollection();
+
+            services.AddAiControlPlanePolicyMetrics();
+            services.AddAiControlPlanePolicyMetrics();
+
+            var registrations = services
+                .Where(serviceDescriptor =>
+                    serviceDescriptor.ServiceType == typeof(IAiControlPlaneEventSink) &&
+                    serviceDescriptor.ImplementationType == typeof(PolicyMetricsAiControlPlaneEventSink))
+                .ToArray();
+
+            var registration = Assert.Single(registrations);
+            Assert.Equal(ServiceLifetime.Singleton, registration.Lifetime);
         }
 
         /// <summary>
@@ -774,7 +840,12 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             Assert.Contains(
                 sinkRegistrations,
                 serviceDescriptor =>
-                    serviceDescriptor.ImplementationType == typeof(RuntimeObservabilityAiControlPlaneEventSink));
+                    serviceDescriptor.ImplementationFactory is not null);
+
+            Assert.Contains(
+                services,
+                serviceDescriptor =>
+                    serviceDescriptor.ServiceType == typeof(RuntimeObservabilityAiControlPlaneEventSink));
         }
 
         /// <summary>

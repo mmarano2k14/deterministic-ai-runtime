@@ -21,6 +21,11 @@ namespace Multiplexed.Abstractions.AI.Observability
         public const string DurationMs = "durationMs";
 
         /// <summary>
+        /// Gets the historical dotted metadata key carrying an operation duration in milliseconds.
+        /// </summary>
+        public const string DottedDurationMs = "duration.ms";
+
+        /// <summary>
         /// Gets the camel-case metadata key carrying a failure reason.
         /// </summary>
         public const string FailureReason = "failureReason";
