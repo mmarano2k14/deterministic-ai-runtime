@@ -1,6 +1,6 @@
 # Durable Runtime Lifecycle Journal
 
-**Status:** Implemented with append-only MongoDB persistence and validated for host, Pod, runtime, failure, replacement, and run-placement reconstruction.
+**Status:** Implemented with append-only MongoDB persistence and validated as the durable infrastructure-lifecycle projection behind the centralized Event Manager for host, Pod, runtime, failure, replacement, and run-placement reconstruction.
 
 The Runtime Lifecycle Journal is the durable source of infrastructure history. It complements, but does not replace, the current Runtime Registry, Decision Ledger, Runtime Pool Failure Journal, or Recovery Forensics store.
 
@@ -150,21 +150,21 @@ It is also used by the final Runtime Pool production proofs for lifecycle and to
 
 ---
 
-## Engine Lifecycle Observation Expansion
+## Centralized Engine Lifecycle Observation
 
-The current Runtime Lifecycle Journal is intentionally strongest around **infrastructure lifecycle**: hosts, Pods, runtime processes, incidents, replacements, and placement history.
+The Runtime Lifecycle Journal remains strongest around **infrastructure lifecycle**: hosts, Pods, runtime processes, incidents, replacements, and placement history. It is now a centralized projection of canonical engine events rather than an independently orchestrated write path for migrated lifecycle facts.
 
-A separate near-term hardening effort is to expose the complete **execution-engine lifecycle** through the existing lifecycle event infrastructure and align it with the durable Ledger and Forensics. This includes Child DAG transitions such as child completion, continuation scheduling/delivery/consumption, and parent resume.
+The broader execution-engine lifecycle is correlated through the same Event Manager architecture with the durable Ledger and Recovery Forensics. Child DAG transitions such as child completion, continuation scheduling/delivery/consumption, and parent resume are canonical semantic facts and are available to deterministic EventDriven observation without turning this journal into a competing execution store.
 
-This expansion does **not** change the journal into a competing execution store and does not introduce another event bus. It closes the observability gap between infrastructure lifecycle and nested execution lifecycle.
+The EventDriven production scenarios validate `host.disappeared` and replacement lifecycle evidence from the real journal after physical ProcessHost/Pod failures. Recursive Child DAG validation now reaches Depth3, so Child DAG composition is documented as **Implemented / validated**.
 
-Child DAG composition remains **Experimental** until this engine-lifecycle observation contract and deeper nested validation are complete.
-
-See [Durable Child DAG Composition](child-dag-composition.md).
+See [Engine Event Observation and Lifecycle Catalog](engine-event-observation.md) and [Durable Child DAG Composition](child-dag-composition.md).
 
 ---
 
 ## Related Documents
+
+- [Engine Event Observation and Lifecycle Catalog](engine-event-observation.md)
 
 - [Runtime Pool Architecture](runtime-pool-architecture.md)
 - [Runtime Pool Failure Authority](runtime-pool-failure-authority.md)

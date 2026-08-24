@@ -576,7 +576,7 @@ Context-building logic belongs in context helpers.
 
 ---
 
-### 7A. Durable Child DAG Composition — Experimental
+### 7A. Durable Child DAG Composition — Implemented / Validated
 
 The DAG engine now includes a native durable Child DAG composition path for delegating work to another DAG execution without introducing a second orchestration engine.
 
@@ -598,7 +598,7 @@ same Parent ExecutionId resumes
 
 The composition path reuses the existing execution store, DAG state, Policy Engine, shared queue, dispatch, recovery, replay, Ledger, tracing, and Forensics infrastructure. The waiting parent releases its claim, concurrency lease, and runtime capacity instead of holding a physical worker while the child executes.
 
-The capability is currently labeled **Experimental**. The full `ChildDepth = 1` gRPC Kubernetes Runtime Pool warm-reuse production proof is green, but promotion beyond Experimental is intentionally blocked on complete engine lifecycle observation and deeper nested closure. Lifecycle Events, durable Ledger evidence, and Forensics must expose the same child-completion / continuation / parent-resume transitions with the same correlation identities.
+The capability is now **Implemented / validated**. Recursive validation reaches `ChildDepth = 3`, including an intermediate `3×3×3×2×Depth3` proof and larger `5×5×5×2×Depth3` high-scale scenarios. Canonical Child DAG and continuation facts are observed through the existing Event Manager and correlated with durable Ledger, Runtime Lifecycle Journal, replay, trace, and Recovery Forensics evidence. The same durable parent `ExecutionId` resumes after physical runtime failure.
 
 See [Durable Child DAG Composition](child-dag-composition.md).
 
@@ -1434,7 +1434,7 @@ Plugins remain responsible for domain-specific execution.
 | Area | Status |
 |---|---|
 | DAG execution | Implemented |
-| Durable Child DAG composition / `ExecuteChildDag` | **Experimental** — implemented; full `ChildDepth = 1` warm-reuse production proof green; complete engine lifecycle observation and deeper nested closure pending |
+| Durable Child DAG composition / `ExecuteChildDag` | **Implemented / validated** — recursive production validation through Depth3, centralized EventDriven lifecycle observation, warm reuse, recovery, replay, Ledger, trace, and Forensics evidence |
 | Redis hot state | Implemented |
 | Redis Lua atomic coordination | Implemented |
 | Distributed workers | Implemented |
@@ -1698,13 +1698,27 @@ resume.context.seeded
 These validations prove that recovery is not treated as a global panic button. The control plane recovers assigned work for impacted unsafe runtime instances while unrelated tenant runtime capacity continues normally.
 
 
-## Experimental Child DAG Validation Boundary
+## Recursive Child DAG Validation Boundary
 
-Native durable Child DAG composition is implemented on top of the existing runtime primitives. The current validated high-water mark is a full `ChildDepth = 1` gRPC Kubernetes Runtime Pool warm-reuse scenario with 5 Pods × 5 runtime processes, 2 cycles, 100 parent DAGs, 5,100 parent logical steps, one exact in-Pod runtime failure/recovery per cycle, one distinct busy Pod failure/recovery per cycle, replay/Ledger/trace/Forensics proof, warm reuse, bounded capacity, and deterministic cleanup.
+Native durable Child DAG composition is implemented on top of the existing runtime primitives and is documented as **Implemented / validated**.
 
-Focused `ChildDepth = 2` scenarios validate nominal nesting and several failure boundaries, but the complete bounded warm-reuse closure is not yet green. For that reason, and because the full child-completion → continuation → parent-resume lifecycle is not yet exposed coherently across Lifecycle Events, Ledger, and Forensics, the capability remains **Experimental**.
+The recursive validation ladder is now:
 
-See [Durable Child DAG Composition](child-dag-composition.md).
+```text
+ChildDepth = 0 compatibility     GREEN
+ChildDepth = 1 recovery          GREEN
+ChildDepth = 2 recursion         GREEN
+3×3×3×2×Depth3                  GREEN
+5×5×5×2×Depth3                  GREEN — high-scale
+```
+
+The Depth3 scenarios validate durable child execution, parent `WaitingForExternal`, deterministic continuation, real child-runtime failure, distinct parent ProcessHost/Pod failure, same-`ExecutionId` resume, warm reuse across cycles, replay, Ledger, trace, Runtime Lifecycle Journal, and Recovery Forensics evidence.
+
+The centralized Event Manager now exposes canonical child-completion, continuation, recovery, and infrastructure lifecycle facts to deterministic EventDriven waits. This closes the former engine-lifecycle observation promotion gate.
+
+The proof boundary remains explicit: high-scale logical-step exactness currently counts root parent steps; exact child-level step accounting at every recursive level remains separate hardening work.
+
+See [Durable Child DAG Composition](child-dag-composition.md) and [Engine Event Observation and Lifecycle Catalog](engine-event-observation.md).
 
 ---
 

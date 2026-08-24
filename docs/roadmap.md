@@ -804,8 +804,8 @@ All roadmap work should respect these principles:
 The current priorities are:
 
 ```text
-Engine Lifecycle Observation: align Lifecycle Events + durable Ledger + Forensics
-Experimental Child DAG: preserve the green Depth 1 baseline and close deeper nesting after lifecycle observation
+EventDriven Engine Observation: maintain canonical events, centralized projections, and deterministic lifecycle waits
+Recursive Child DAG: maintain the green Depth3 baseline and harden exact nested step proof / deterministic multi-seed failure coverage
 Multi-agent orchestration proof on top of durable Child DAG composition
 Enterprise demo polish
 Recovery / replay / ledger / lifecycle / trace documentation
@@ -830,6 +830,6 @@ Phase 0 documentation restructure is complete as V1.
 
 The runtime foundations are already implemented and validated through distributed integration scenarios, MCP control-plane scenarios, HTTP process-host scenarios, replay/ledger/trace scenarios, and runtime crash recovery scenarios.
 
-The Runtime Pool correctness phase is now closed at the current proof boundary. Native durable Child DAG composition is implemented and has a full green `ChildDepth = 1` warm-reuse production proof, but it remains **Experimental**. The immediate focus is complete engine lifecycle observation by aligning the existing Lifecycle Events, durable Ledger, and Forensics before closing deeper nested Child DAG validation and building the multi-agent orchestration proof. Operational polish, clearer API/controller surfaces, recovery and replay tooling, MLOps-oriented platform direction, broader Kubernetes operations, and public positioning continue alongside that work.
+The Runtime Pool correctness phase is closed at the current proof boundary. Native durable Child DAG composition is implemented and validated through recursive `ChildDepth = 3` scenarios, including an intermediate Depth3 proof and larger high-scale profiles. Centralized EventDriven engine observation is in place through canonical events, the existing Event Manager, durable Ledger, Runtime Lifecycle Journal, and Recovery Forensics. The immediate hardening focus is exact nested child-step accounting, deterministic multi-seed failure coverage, runtime ownership proof, and datastore efficiency while multi-agent orchestration, operational polish, recovery/replay tooling, broader Kubernetes operations, and public positioning continue.
 
 The dedicated long-term platform direction is documented in [`docs/road-to-mlops.md`](road-to-mlops.md).

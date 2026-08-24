@@ -6,6 +6,350 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.8.4 - 2026-08-24 — Event-Driven Depth-3 (Child DAG) Runtime Pool Validation
+
+**Status:** Validation complete for the current runtime-pool and transport matrix. The implementation is considered stable for this release baseline.
+
+**Scope:** Deterministic event-driven validation of recursive Child DAG execution, bounded warm runtime pools, physical runtime failure, parent failure-boundary replacement, durable recovery, replay, lifecycle observation, and cross-cycle reuse.
+
+### Validation coverage
+
+The recursive validation sequence now includes:
+
+```text
+Depth 1                    GREEN
+Depth 2                    GREEN
+3×3×3×2×Depth3             GREEN
+5×5×5×2×Depth3             GREEN — high-scale validation
+```
+
+The `3×3×3×2×Depth3` scenario validates the Depth-3 execution model before scale is increased.
+
+The `5×5×5×2×Depth3` scenario validates the same recursive contract under a larger bounded-capacity workload.
+
+### Runtime-pool and transport parity
+
+The current transport and host-boundary matrix is considered complete for this release baseline:
+
+| Runtime pool | HTTP | gRPC |
+|---|---|---|
+| KubernetesPool | Validated | Validated |
+| ProcessHostPool | Validated | Validated |
+
+The high-scale `5×5×5×2×Depth3` profile was executed on:
+
+- gRPC KubernetesPool;
+- HTTP ProcessHostPool;
+- gRPC ProcessHostPool.
+
+HTTP KubernetesPool transport parity is considered validated through the shared KubernetesPool execution path, existing HTTP coverage, and the same event-driven recovery and lifecycle contracts. The long-running high-scale profile is not repeated solely for a transport permutation when it does not add a new failure boundary or recovery mechanism.
+
+### ProcessHostPool Child DAG composition
+
+ProcessHostPool configuration now propagates Child DAG composition to both required process layers:
+
+```text
+external parent ProcessHost
++
+local RuntimeInstanceOnly children
+```
+
+Depth-zero scenarios retain their historical behavior and do not enable Child DAG composition.
+
+Positive-depth scenarios use the same recursive execution model across ProcessHostPool and KubernetesPool.
+
+### Deterministic lifecycle observation
+
+Production scenarios now support:
+
+```text
+ChildDepth > 0
++
+ProductionRecoveryObservationMode.EventDriven
+```
+
+Historical scenarios remain backward compatible:
+
+```text
+ChildDepth = 0
+RecoveryObservationMode = Polling
+```
+
+The event-driven path uses canonical lifecycle events for post-failure synchronization while retaining durable state as the authority for the pre-failure crash threshold.
+
+### Child runtime failure and same-execution recovery
+
+Positive-depth scenarios use a deterministic crash checkpoint:
+
+```text
+KillAfterCompletedStepCount = 25
+CheckpointStepIndex = 26
+```
+
+One exact runtime process is terminated while executing durable work.
+
+Recovery validates:
+
+- failed `RuntimeInstanceId`;
+- failed `LocalRunId`;
+- `SharedRunId`;
+- `ExecutionId` before recovery;
+- replacement `RuntimeInstanceId`;
+- replacement `LocalRunId`;
+- `ExecutionId` after recovery.
+
+For in-flight recovery, the required invariant is:
+
+```text
+ExecutionIdBefore == ExecutionIdAfter
+```
+
+The recovered work is synchronized through the canonical recovery event:
+
+```text
+shared.run.requeued.for.resume
+```
+
+### Hierarchical parent failure recovery
+
+After child-runtime recovery and workload drain, the scenario injects a second and distinct failure boundary.
+
+For ProcessHostPool:
+
+```text
+fully busy parent ProcessHost
+→ parent process terminated
+→ complete child runtime tree disappears
+→ replacement ProcessHost created
+→ runtime membership restored
+→ affected SharedRuns recovered
+```
+
+For KubernetesPool:
+
+```text
+fully busy Pod
+→ Pod deleted
+→ physical Pod identity disappears
+→ replacement Pod created
+→ runtime membership restored
+→ affected SharedRuns recovered
+```
+
+This validates hierarchical recovery rather than repeating the same failure class twice.
+
+### Warm reuse across cycles
+
+The full-failure production scenarios execute two cycles without intermediate cleanup.
+
+Cycle 2 therefore starts from the topology already modified by Cycle 1.
+
+Validated invariant:
+
+```text
+Cycle 1
+→ runtime failure
+→ parent failure-boundary replacement
+→ recovery
+→ workload drain
+→ no intermediate cleanup
+→ Cycle 2 reuses the mutated warm topology
+```
+
+Final cleanup occurs only after the last cycle.
+
+### MCP replay validation
+
+Replay is explicitly exercised after execution and recovery.
+
+For both HTTP and gRPC ProcessHostPool high-scale scenarios:
+
+```text
+Cycle 1 replay proof = 125 / 125
+Cycle 2 replay proof = 125 / 125
+Total replay proof   = 250 / 250
+```
+
+The final validation also confirms:
+
+```text
+ReplayValidated = true
+LedgerValidated = true
+TraceValidated = true
+RuntimeLifecycleJournalValidated = true
+RecoveryForensicsValidated = true
+```
+
+Replay includes executions that experienced a real physical runtime failure and resumed with the same durable `ExecutionId`.
+
+### Exact root logical-step proof
+
+The high-scale scenarios execute:
+
+```text
+250 parent DAGs
+× 51 root logical steps
+= 12,750 exact root logical steps
+```
+
+The durable ledger proof confirms:
+
+```text
+RawStepCompletedLedgerEntryCount = 12,750
+DistinctLogicalStepCompletedLedgerCount = 12,750
+RecoveryCoveredDuplicateStepCompletedLedgerEntryCount = 0
+```
+
+This guarantee currently applies to root parent logical steps.
+
+Nested Child DAG levels are validated through authoritative durable execution terminality. Separate exact child-level step accounting remains a future proof-hardening activity.
+
+Current proof scope:
+
+```text
+Root step exactness              validated
+Nested Child DAG terminality     validated
+Nested child step exactness      not yet independently proven
+```
+
+### Recovery forensics authority
+
+Recovery completeness is now based on:
+
+```text
+exact recovery outcomes
++
+durable recovery forensics
+```
+
+Periodic binding-history sampling is retained as diagnostic information only and is no longer treated as the authority for recovery completeness.
+
+This preserves exact durable dispatch and recovery-outcome validation while avoiding timing-sensitive assertions.
+
+Transient simultaneous runtime ownership remains a separate invariant and should ultimately be proven from the atomic claim, lease, or fencing contract rather than from periodic sampling.
+
+### High-scale ProcessHostPool results
+
+Both ProcessHostPool transports completed the same `5×5×5×2×Depth3` production scenario.
+
+Validated aggregate result per transport:
+
+```text
+5 ProcessHosts
+25 runtime slots
+
+250 / 250 parent DAGs completed
+12,750 exact root logical steps
+
+2 child runtime crashes
+2 parent ProcessHost crashes
+12 recovered SharedRuns
+
+250 / 250 MCP replay proofs
+
+0 lost runs
+0 failed runs
+0 duplicate durable dispatch detected
+0 configured capacity violations
+```
+
+This closes HTTP/gRPC ProcessHostPool parity for the current release baseline.
+
+### Datastore traffic observation
+
+High-scale validation now records Redis and MongoDB server-side traffic.
+
+The measurements show a strongly read-oriented Redis profile, with `GET` and `HGETALL` among the dominant commands.
+
+These measurements are operational evidence rather than correctness failures.
+
+A dedicated performance review is planned to investigate:
+
+- Redis read amplification;
+- hot `HGETALL` call sites;
+- opportunities for targeted `HGET` or `HMGET` access where semantically safe;
+- MongoDB connection churn relative to process creation and runtime replacement.
+
+No datastore optimization should change persisted or wire semantics.
+
+### Validation terminology
+
+The documentation now distinguishes between:
+
+```text
+GREEN RUN
+    one exact scenario execution passed
+
+VALIDATED SCENARIO
+    the exact topology and deterministic failure schedule passed
+    with the required correctness proofs
+
+HIGH-SCALE VALIDATION
+    the validated scenario passed under the larger
+    5×5×5×2×Depth3 workload
+
+BROAD CERTIFICATION
+    reserved for a future multi-interleaving,
+    multi-seed adversarial validation matrix
+```
+
+This keeps claims aligned with the evidence produced by the test suite.
+
+### Remaining proof-hardening work
+
+Future validation work is intentionally separated from the current release baseline.
+
+Planned areas include:
+
+1. exact recursive Child DAG step accounting;
+2. deterministic seeded failure schedules using multiple crash positions and targets;
+3. atomic runtime ownership and lease-overlap proof;
+4. Redis read-amplification analysis;
+5. MongoDB connection-churn analysis.
+
+The current implementation does not require another observability architecture redesign.
+
+### Release status
+
+The current event-driven runtime-pool validation baseline is considered complete.
+
+Closed areas include:
+
+```text
+canonical event governance
+central Event Manager projection architecture
+Recovery Forensics projection
+Runtime Lifecycle Journal projection
+Policy projection
+Child DAG lifecycle events
+deterministic lifecycle observation
+EventDriven runtime-pool recovery
+Depth3 recursive execution validation
+HTTP/gRPC ProcessHostPool parity
+HTTP/gRPC KubernetesPool parity
+warm topology reuse
+MCP replay validation
+high-scale 5×5×5×2×Depth3 validation
+```
+
+The core architectural invariant remains:
+
+```text
+ONE ENGINE FACT
+=
+ONE CANONICAL EVENT
+=
+ONE CANONICAL DECLARATION
+=
+ONE CENTRAL DISPATCH PATH
+```
+
+The engine emits semantic facts. The Event Manager projects them.
+
+No second event bus, ledger, forensics store, lifecycle store, or parallel observability framework has been introduced.
+
+---
+
 ## 1.0.8.3 - 2026-08-22 — Centralized Engine Event Observation
 
 

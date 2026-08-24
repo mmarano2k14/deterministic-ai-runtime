@@ -14,7 +14,7 @@ The current foundation already covers several critical areas required for produc
 
 - deterministic runtime execution foundation;
 - DAG-based workflow execution;
-- **Experimental durable Child DAG composition** with durable parent suspension, deterministic continuation, and existing recovery reuse;
+- **Validated durable Child DAG composition** with durable parent suspension, deterministic continuation, recursive Depth3 execution, EventDriven recovery observation, and existing recovery reuse;
 - execution state management;
 - step lifecycle and status tracking;
 - distributed worker execution model;
@@ -101,7 +101,7 @@ The DAG execution model provides the foundation for future visual pipeline build
 
 ---
 
-## 2A. Durable Child DAG Composition — Experimental
+## 2A. Durable Child DAG Composition — Implemented / Validated
 
 The platform now includes native durable Child DAG composition for nested workflow execution.
 
@@ -118,9 +118,9 @@ The implementation provides:
 - reuse of existing runtime/process/Pod recovery semantics;
 - replay, Ledger, trace, lifecycle, and recovery Forensics integration.
 
-The strongest current closure is a full `ChildDepth = 1` gRPC Kubernetes Runtime Pool warm-reuse production scenario. Focused `ChildDepth = 2` scenarios are also implemented, but the complete bounded warm-reuse closure is not yet green.
+The recursive closure is now green through `ChildDepth = 3`, including an intermediate `3×3×3×2×Depth3` proof and larger `5×5×5×2×Depth3` high-scale validation. EventDriven lifecycle observation aligns canonical events with the existing Ledger, Runtime Lifecycle Journal, replay, trace, and Recovery Forensics surfaces.
 
-For that reason the capability is deliberately labeled **Experimental** until full engine lifecycle observation is aligned across existing Lifecycle Events, the durable Ledger, and Forensics, and deeper nesting reaches the same proof standard.
+The capability is therefore documented as **Implemented / validated**. Exact nested child-step accounting and multi-seed adversarial certification remain separate proof-hardening activities rather than blockers on the current implemented/validated capability status.
 
 See [Durable Child DAG Composition](../ai/child-dag-composition.md).
 
@@ -1796,7 +1796,7 @@ The project already has strong foundations in the following areas:
 |---|---|
 | Deterministic runtime execution | Foundation exists |
 | DAG-based workflow execution | Foundation exists |
-| Durable Child DAG composition | **Experimental** — native composition implemented; full Depth 1 warm-reuse proof green; lifecycle-observation and deeper-nesting closure pending |
+| Durable Child DAG composition | **Implemented / validated** — recursive Depth3 validation, EventDriven lifecycle observation, same-`ExecutionId` recovery, warm reuse, replay, Ledger, trace, and Forensics evidence |
 | Execution state management | Foundation exists |
 | Step lifecycle tracking | Foundation exists |
 | Distributed worker model | Foundation exists |

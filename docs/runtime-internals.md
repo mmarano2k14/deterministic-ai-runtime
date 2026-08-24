@@ -6937,7 +6937,7 @@ A key direction of the runtime is to support both agentic systems and machine le
 
 #### Agentic Systems
 
-The runtime now includes an **Experimental durable Child DAG composition** primitive that allows one durable execution to delegate to another DAG, park through `WaitingForExternal`, recover nested work through the existing recovery path, and resume through deterministic continuation. The full `ChildDepth = 1` production proof is green; the capability remains Experimental until complete engine lifecycle observation and deeper nested closure are finished.
+The runtime includes a **validated durable Child DAG composition** primitive that allows one durable execution to delegate to another DAG, park through `WaitingForExternal`, recover nested work through the existing recovery path, and resume through deterministic continuation. Recursive production validation now reaches `ChildDepth = 3`, with EventDriven lifecycle observation and the existing Ledger, Runtime Lifecycle Journal, replay, trace, and Recovery Forensics providing correlated proof.
 
 Future work will continue enabling more advanced agentic behavior within the runtime.
 
@@ -7191,7 +7191,7 @@ Agent-based systems introduce:
 
 Most agent frameworks lack system-level guarantees.
 
-The runtime now also has an **Experimental durable Child DAG composition** foundation for nested execution and future multi-agent orchestration. It reuses the same deterministic execution, queue, recovery, Ledger, and Forensics boundaries; it is not yet presented as fully production-ready until complete engine lifecycle observation and deeper nesting validation are closed.
+The runtime also has a **validated durable Child DAG composition** foundation for nested execution and future multi-agent orchestration. It reuses the same deterministic execution, queue, recovery, canonical event observation, Ledger, Runtime Lifecycle Journal, replay, trace, and Forensics boundaries. Recursive validation is green through Depth3; broader multi-interleaving certification and exact nested child-step accounting remain distinct future hardening work.
 
 Multiplex AI Runtime provides the execution layer required to run these systems safely:
 

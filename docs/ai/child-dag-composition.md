@@ -1,8 +1,8 @@
 # Durable Child DAG Composition
 
-**Status:** **Experimental**  
-**Status date:** 2026-08-19  
-**Validation boundary:** native durable Child DAG composition is implemented and the full `ChildDepth = 1` gRPC Kubernetes Runtime Pool warm-reuse production scenario is green. The capability remains **Experimental until full engine lifecycle observation is completed and aligned across Lifecycle Events, the durable Ledger, and Forensics, and deeper nested validation is closed.**
+**Status:** **Implemented / validated**  
+**Status date:** 2026-08-24  
+**Validation boundary:** native durable Child DAG composition is implemented and validated through recursive `ChildDepth = 3` production scenarios. The lifecycle-observation promotion gate is closed through the centralized Event Manager, canonical events, Runtime Lifecycle Journal, durable Ledger, Recovery Forensics, replay, and EventDriven production validation. The high-scale `5×5×5×2×Depth3` profiles validate the same recursive contract at larger bounded capacity. Exact nested child-step accounting remains a separate proof-hardening item and is not implied by the root-step ledger proof.
 
 ---
 
@@ -32,11 +32,11 @@ The runtime remains the execution authority. Child DAG composition reuses the ex
 
 ---
 
-## Why the Capability Is Marked Experimental
+## Historical Promotion Gate — Now Closed
 
-The core composition and recovery semantics are implemented, and the strongest current `ChildDepth = 1` production proof is green. However, nested execution introduces additional lifecycle transitions that must be directly observable rather than reconstructed indirectly from polling and timeout diagnostics.
+The capability was previously held behind a promotion gate while recursive execution transitions were still inferred too heavily from polling and timeout diagnostics. That gate has now been closed.
 
-Before this capability is promoted beyond Experimental, the engine lifecycle observation contract must expose and correlate the complete chain across the existing observability surfaces:
+The engine lifecycle observation contract now centralizes and correlates the nested lifecycle through canonical events and the existing observability surfaces:
 
 ```text
 Lifecycle Events
@@ -274,9 +274,9 @@ The production composition primitive is generic. `ChildDepth` is a **validation-
 
 The existing non-child execution behavior remains the compatibility baseline and must remain unchanged.
 
-### Full nested proof — `ChildDepth = 1`
+### Recursive baseline — `ChildDepth = 1`
 
-The current validated high-water mark is a full gRPC Kubernetes Runtime Pool warm-reuse production scenario:
+The historical Depth1 production baseline is a full gRPC Kubernetes Runtime Pool warm-reuse scenario:
 
 ```text
 5 Pods × 5 runtime processes
@@ -305,21 +305,28 @@ The scenario proves, per cycle:
 - no Pod/runtime capacity exceed;
 - deterministic final cleanup.
 
-### Deeper nesting — `ChildDepth = 2`
+### Recursive closure — `ChildDepth = 2`
 
-Focused scenarios already validate important parts of deeper composition, including nominal nested convergence, ProcessHost HTTP/gRPC parity, Kubernetes nominal execution, and intermediate child/runtime failure recovery.
+The complete recursive path has been validated beyond the earlier focused Depth-2 scenarios. The previous final-continuation ambiguity was addressed through deterministic lifecycle observation and authoritative durable DAG-state verification rather than by increasing watchdogs.
 
-The complete bounded gRPC Kubernetes warm-reuse closure at `ChildDepth = 2` is **not yet considered closed**. A reproduced state can leave a parent at the final continuation boundary while no physical child run remains active. That boundary is one of the primary reasons full engine lifecycle observation is required before deeper production claims are made.
+`ChildDepth = 2` is now part of the green recursive validation ladder.
 
-### `ChildDepth = 3`
+### Recursive validation — `ChildDepth = 3`
 
-Not yet part of the validated closure boundary.
+Depth 3 is now validated through both an intermediate recursive proof and a larger high-scale profile:
+
+```text
+3×3×3×2×Depth3       GREEN — recursive Depth3 validation
+5×5×5×2×Depth3       GREEN — high-scale validation
+```
+
+The high-scale profile executes 250 parent DAGs across two warm-reuse cycles and proves 12,750 exact **root parent** logical steps together with recursive durable terminality, real child-runtime failure, distinct parent-boundary failure, same-`ExecutionId` resume, replay, lifecycle, Ledger, trace, and Recovery Forensics evidence.
 
 ---
 
-## Engine Lifecycle Observation Gate
+## Engine Lifecycle Observation — Implemented
 
-Promotion beyond Experimental requires lifecycle observation to make nested execution state directly explainable.
+Nested execution state is now directly explainable through the centralized event architecture.
 
 The implementation must reuse and align the existing:
 
@@ -345,18 +352,22 @@ rather than being inferred only from a timeout after several minutes.
 
 ---
 
-## Production Readiness Boundary
+## Production Validation Boundary
 
-Child DAG composition should remain labeled **Experimental** until all of the following are true:
+The former promotion gates are now closed for the current recursive validation baseline:
 
-- full engine lifecycle transitions are observable through the existing event infrastructure;
-- durable Ledger and Forensics carry matching lifecycle semantics and correlation identities;
-- the complete `ChildDepth = 2` warm-reuse recovery scenario is green;
-- the agreed deeper nesting matrix is green;
-- `ChildDepth = 0` and the full `ChildDepth = 1` regression remain green;
+- full engine lifecycle transitions are observable through the centralized canonical event infrastructure;
+- durable Ledger, Runtime Lifecycle Journal, and Recovery Forensics carry correlated lifecycle evidence;
+- `ChildDepth = 2` recursive recovery is green;
+- `ChildDepth = 3` is green at both intermediate and high-scale profiles;
+- `ChildDepth = 0` compatibility and the `ChildDepth = 1` recovery baseline remain green;
 - replay, Ledger, trace, lifecycle, and Forensics remain coherent after nested recovery;
-- no duplicate logical child or effective continuation is observed;
-- no timeout increase is used as a substitute for a missing correctness transition.
+- no duplicate durable dispatch or lost parent run is detected in the validated scenarios;
+- no timeout increase was used as a substitute for a missing correctness transition.
+
+The capability is therefore documented as **Implemented / validated** under the current proof boundary.
+
+This promotion does not overstate the proof boundary. Current high-scale exact logical-step accounting covers root parent steps. Exact recursive child-step accounting across every nested level, deterministic multi-seed failure schedules, and atomic runtime-ownership overlap proof remain future hardening work.
 
 ---
 
@@ -403,6 +414,7 @@ Child DAG composition does not:
 - [Runtime Process Crash Recovery](runtime-process-crash-recovery.md)
 - [Runtime Recovery Forensics](runtime-recovery-forensics.md)
 - [Execution-Correlated Decision Ledger](execution-correlated-ledger.md)
+- [Engine Event Observation and Lifecycle Catalog](engine-event-observation.md)
 - [Durable Runtime Lifecycle Journal](runtime-lifecycle-journal.md)
 - [Observability](observability.md)
 - [Testing Strategy](testing-strategy.md)

@@ -84,25 +84,23 @@ The roadmap is to harden, structure, export, visualize, and productize the obser
 
 ---
 
-## Near-Term Hardening: Complete Engine Lifecycle Observation
+## Centralized Engine Lifecycle Observation — Implemented
 
-The near-term observability priority is to make the **engine lifecycle** directly observable using the existing event and durable evidence mechanisms.
-
-The target is not a new event bus. It is one aligned contract:
+The engine lifecycle is now directly observable through the existing event and durable evidence mechanisms. The architecture did not add a second event bus. It aligned one canonical semantic contract behind the existing Event Manager:
 
 ```text
-Existing Lifecycle Events
+Canonical Lifecycle Events
         +
 Existing Durable Ledger
         +
-Existing Forensics
+Existing Forensics / Runtime Lifecycle Journal
         =
 One correlated engine lifecycle
 ```
 
-This work is a promotion gate for Experimental Child DAG composition because nested execution must make child completion, continuation scheduling/delivery/consumption, and parent resume directly visible and durable.
+The resulting EventDriven observer is used by recursive Runtime Pool canaries, including Depth3 recovery validation. This closes the former lifecycle-observation promotion gate for durable Child DAG composition.
 
-See [Durable Child DAG Composition](../ai/child-dag-composition.md).
+See [Engine Event Observation and Lifecycle Catalog](../ai/engine-event-observation.md) and [Durable Child DAG Composition](../ai/child-dag-composition.md).
 
 ---
 

@@ -428,6 +428,42 @@ Those require separate evidence and should not be inferred from this matrix.
 
 ---
 
+## EventDriven Recursive Validation Baseline
+
+The Runtime Pool production validation now also includes recursive Child DAG execution using deterministic EventDriven post-failure synchronization.
+
+Reference progression:
+
+```text
+3×3×3×2×Depth3       GREEN — recursive Depth3 validation
+5×5×5×2×Depth3       GREEN — high-scale validation
+```
+
+Validated high-scale variants include gRPC KubernetesPool and both HTTP/gRPC ProcessHostPool transports. HTTP KubernetesPool transport parity is closed through the shared KubernetesPool production path and existing HTTP coverage without requiring another long-running high-scale permutation solely for transport.
+
+The current EventDriven full-failure contract validates:
+
+```text
+real child-runtime process kill after durable progress
+same ExecutionId resume
+replacement runtime membership
+distinct busy parent ProcessHost or Pod failure
+exact affected-work recovery
+warm topology reuse across two cycles
+canonical RuntimeLifecycleJournal evidence
+MCP replay
+Ledger / trace / Recovery Forensics
+no lost run
+no duplicate durable dispatch
+no configured capacity violation
+```
+
+The `5×5×5×2×Depth3` profile completes 250 parent DAGs and 12,750 exact **root parent** logical steps. Recursive child terminality is verified through authoritative durable DAG execution records. Exact child-level step accounting is intentionally tracked as separate proof hardening.
+
+See [Engine Event Observation and Lifecycle Catalog](engine-event-observation.md) and [Testing Strategy](testing-strategy.md).
+
+---
+
 ## Related Documents
 
 - [Runtime Pool Architecture](runtime-pool-architecture.md)

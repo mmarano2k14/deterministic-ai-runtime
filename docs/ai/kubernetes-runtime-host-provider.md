@@ -18,6 +18,8 @@ Related documents:
 - [Testing Strategy](testing-strategy.md)
 - [Runtime Pool Architecture](runtime-pool-architecture.md)
 - [Runtime Pool Production Validation](runtime-pool-production-validation.md)
+- [Local Kubernetes and Minikube Environment](kubernetes-local-environment.md)
+- [Engine Event Observation and Lifecycle Catalog](engine-event-observation.md)
 
 ---
 
@@ -1002,6 +1004,35 @@ The Kubernetes implementation must preserve these invariants:
 13. Registry/capacity removal accompanies successful host termination.
 14. Normal shared queue dispatch remains the path after scale-out fulfillment.
 ```
+
+---
+
+## Local Kubernetes Image and Environment Contract
+
+The integration scenarios take their runtime image from the shared source contract:
+
+```text
+implementations\dotnet\Tests\Multiplexed.AI.McpServer.Tests.Integration\Scenarios\Production\Providers\Base\KubernetesSdkScenarioConstants.cs
+```
+
+`KubernetesSdkScenarioConstants.RuntimeImage` is the authority for the image tag. The current documented example is `multiplexed-ai-runtime:k8s-debug-131`, but operators should always verify the source constant before building or loading an image.
+
+The image is built from:
+
+```text
+implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Dockerfile
+```
+
+From the repository root:
+
+```powershell
+docker build -f .\implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Dockerfile -t multiplexed-ai-runtime:k8s-debug-131 .
+minikube image load multiplexed-ai-runtime:k8s-debug-131
+```
+
+Because the test contract uses `ImagePullPolicy = Never`, the exact image must already be present in Minikube.
+
+For the complete fresh-cluster setup, Gateway API/Envoy installation, Redis/Mongo connectivity checks, resource sizing, image build/load flow, and crash diagnostics, see [Local Kubernetes and Minikube Environment](kubernetes-local-environment.md).
 
 ---
 

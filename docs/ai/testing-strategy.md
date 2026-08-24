@@ -2127,28 +2127,116 @@ The P5 Kubernetes gate remains compatibility evidence for the existing one-runti
 
 ---
 
-## Experimental Child DAG Validation
+## Recursive Child DAG and EventDriven Reference Validation
 
-Child DAG composition is validated as an extension of the existing production runtime scenarios rather than through a separate test runtime.
+Child DAG composition is validated as an extension of the existing production runtime scenarios rather than through a separate test runtime. The capability is **implemented / validated**, with recursive Depth3 production evidence now forming the reference baseline.
 
-Current evidence includes:
+Current recursive evidence includes:
 
 - historical `ChildDepth = 0` compatibility;
-- nominal Child DAG execution;
 - durable parent suspension through `WaitingForExternal`;
-- child completion and deterministic parent continuation;
-- ProcessHost HTTP/gRPC parity;
-- Kubernetes Runtime Pool execution;
-- real in-Pod child process failure and same-`ExecutionId` recovery;
-- full Pod failure recovery;
-- replay, Ledger, trace, lifecycle, and recovery Forensics evidence;
-- a full `ChildDepth = 1` 5-Pod × 5-runtime, 2-cycle gRPC Kubernetes warm-reuse production proof.
+- deterministic child identity and parent continuation;
+- ProcessHost HTTP/gRPC transport parity;
+- KubernetesPool execution;
+- real child-runtime process failure and same-`ExecutionId` recovery;
+- distinct parent ProcessHost or Pod failure and replacement;
+- warm topology reuse across two cycles;
+- canonical Runtime Lifecycle Journal evidence;
+- MCP replay, Ledger, trace, and Recovery Forensics evidence;
+- recursive `ChildDepth = 3` validation at `3×3×3×2×Depth3`;
+- high-scale `5×5×5×2×Depth3` validation.
 
-The capability remains **Experimental** because complete engine lifecycle observation is still being aligned across existing Lifecycle Events, the durable Ledger, and Forensics, and the full bounded `ChildDepth = 2` warm-reuse closure is not yet complete.
+### Reference observation profile
 
-Deeper tests must not be made green by extending watchdogs or timeouts. A stalled nested execution must first identify the missing durable lifecycle transition.
+EventDriven canaries are the reference synchronization profile for current recursive Runtime Pool validation.
 
-See [Durable Child DAG Composition](child-dag-composition.md).
+```csharp
+[Theory]
+[Trait("ObservationMode", "EventDriven")]
+[Trait("ValidationProfile", "Canary")]
+[InlineData(5, 5, 5, 2, 3)]
+public Task Grpc_ProcessHostPool_EventDriven_Canary_Should_Reuse_The_Same_FullFailure_Scenario(
+    int maximumProcessHostCount,
+    int runtimeCountPerHost,
+    int submissionIterationCount,
+    int executionCycleCount,
+    int childDepth)
+{
+    return this.ExecuteFullFailureProductionScenarioAsync(
+        maximumProcessHostCount,
+        runtimeCountPerHost,
+        submissionIterationCount,
+        executionCycleCount,
+        childDepth,
+        ProductionRecoveryObservationMode.EventDriven);
+}
+```
+
+The shared scenario core remains the same. `ProductionRecoveryObservationMode.EventDriven` changes how recovery completion is synchronized; it does not create a second recovery implementation.
+
+### Reference canary matrix
+
+The canonical reference profile is the EventDriven recursive full-failure scenario. Transport/host variants reuse the shared scenario semantics rather than defining different correctness contracts.
+
+| Provider / host model | Reference canary | High-scale profile | Validation role |
+|---|---|---:|---|
+| gRPC / ProcessHostPool | `Grpc_ProcessHostPool_EventDriven_Canary_Should_Reuse_The_Same_FullFailure_Scenario` | `5×5×5×2×Depth3` | Reference ProcessHostPool recovery + recursive Child DAG proof |
+| HTTP / ProcessHostPool | `Http_ProcessHostPool_EventDriven_Canary_Should_Reuse_The_Same_FullFailure_Scenario` | `5×5×5×2×Depth3` | HTTP transport parity on the same ProcessHostPool semantics |
+| gRPC / KubernetesPool | `Grpc_KubernetesPool_EventDriven_Canary_Should_Reuse_The_Same_FullFailure_Scenario` | Depth3 reference / high-scale validation | Kubernetes Pod-boundary + in-Pod runtime recovery proof |
+| HTTP / KubernetesPool | `Http_KubernetesPool_EventDriven_Canary_Should_Reuse_The_Same_FullFailure_Scenario` | Depth3 parity profile | HTTP transport parity on the shared KubernetesPool scenario |
+
+The long high-scale gates are intentionally not duplicated merely to prove transport syntax. A parity variant must reuse the same production scenario contract and be exercised at the appropriate gate without weakening any invariant.
+
+### Running the reference canaries
+
+Build once:
+
+```powershell
+dotnet build .\implementations\dotnet\Tests\Multiplexed.AI.McpServer.Tests.Integration\Multiplexed.AI.McpServer.Tests.Integration.csproj
+```
+
+Then run a named EventDriven canary using an exact/partial fully-qualified-name filter, for example:
+
+```powershell
+dotnet test .\implementations\dotnet\Tests\Multiplexed.AI.McpServer.Tests.Integration\Multiplexed.AI.McpServer.Tests.Integration.csproj `
+  --no-build `
+  --filter "FullyQualifiedName~Grpc_ProcessHostPool_EventDriven_Canary_Should_Reuse_The_Same_FullFailure_Scenario" `
+  --logger "console;verbosity=normal"
+```
+
+For KubernetesPool gates, complete the [Local Kubernetes and Minikube Environment](kubernetes-local-environment.md) pre-flight first. ProcessHostPool and KubernetesPool long-running full-failure scenarios should be run deliberately rather than in parallel on a resource-constrained development workstation.
+
+### EventDriven wait contract
+
+For post-failure recovery, tests use canonical lifecycle events with durable evidence protection against missed realtime events:
+
+```text
+durable evidence check
+→ realtime subscribe
+→ durable evidence re-check
+→ await canonical event
+→ final durable-state verification
+```
+
+The pre-kill crash threshold may still read durable progress state. This is intentional: the durable execution store is the authority for deciding that exactly N steps have completed before injecting a failure.
+
+Historical Polling scenarios remain compatibility/fallback regression coverage. Do not delete proven Polling tests merely because EventDriven is now the reference profile.
+
+### Reference proof ladder
+
+```text
+Depth0 compatibility          GREEN
+Depth1 recovery               GREEN
+Depth2 recursive closure      GREEN
+3×3×3×2×Depth3               GREEN — recursive Depth3 validation
+5×5×5×2×Depth3               GREEN — high-scale validation
+```
+
+The high-scale exact logical-step proof applies to root parent steps. Nested child execution is currently proven through authoritative durable DAG terminality; separate child-level exact-step accounting remains a proof-hardening item.
+
+Deeper tests must never be made green by extending watchdogs or timeouts. A stalled nested execution must identify the missing durable transition or infrastructure condition first.
+
+See [Durable Child DAG Composition](child-dag-composition.md) and [Engine Event Observation and Lifecycle Catalog](engine-event-observation.md).
 
 ---
 
