@@ -4,11 +4,15 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
+using Multiplexed.Abstractions.AI.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Capacity;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Failure;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Client;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Failure;
@@ -494,6 +498,77 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.DI
             Assert.Equal(
                 ServiceLifetime.Singleton,
                 fullCoordinatorDescriptor.Lifetime);
+        }
+
+        /// <summary>
+        /// Verifies that Kubernetes Runtime Pool failure observation reuses the registered
+        /// Runtime Lifecycle Journal instead of silently falling back to the compatibility no-op.
+        /// </summary>
+        [Fact]
+        public async Task Add_Should_Project_HostFailure_To_Registered_RuntimeLifecycleJournal()
+        {
+            const string controlPlaneId = "control-plane-lifecycle-01";
+            const string poolId = "pool-lifecycle-01";
+            const string podUid = "pod-uid-lifecycle-01";
+            const string failureId = "pod-failure-lifecycle-01";
+
+            var services = new ServiceCollection();
+            var lifecycleJournal = new InMemoryAiRuntimeLifecycleJournal();
+
+            await lifecycleJournal.AppendAsync(
+                new AiRuntimeLifecycleEvent
+                {
+                    EventId = "seed-host-creation-lifecycle-01",
+                    EventType = AiRuntimeLifecycleEvents.HostCreationSucceeded,
+                    TimestampUtc = DateTimeOffset.UtcNow.AddSeconds(-1),
+                    ControlPlaneId = controlPlaneId,
+                    HostCreationMode = AiRuntimeHostCreationMode.KubernetesPool,
+                    ProviderName = "grpc",
+                    PoolId = poolId,
+                    HostId = podUid,
+                    KubernetesPodUid = podUid,
+                    KubernetesNamespace = "ai-runtime",
+                    KubernetesPodName = "runtime-pool-lifecycle-01"
+                });
+
+            services.AddLogging();
+            services.AddSingleton<IAiRuntimeLifecycleJournal>(lifecycleJournal);
+            services.AddAiKubernetesRuntimePoolHostProvider();
+
+            using var serviceProvider = services.BuildServiceProvider();
+
+            var failureObserver =
+                serviceProvider.GetRequiredService<IAiRuntimePoolFailureObserver>();
+
+            await failureObserver.RecordAsync(
+                new AiRuntimePoolFailureObservation
+                {
+                    FailureId = failureId,
+                    Scope = AiRuntimePoolFailureScope.Host,
+                    PoolId = poolId,
+                    HostId = podUid,
+                    Kind = AiRuntimePoolFailureKind.UnexpectedPodDeletion,
+                    ObservedAtUtc = DateTimeOffset.UtcNow,
+                    FailureMessage = "integration-test-pod-deletion"
+                });
+
+            var lifecycleEvents =
+                await lifecycleJournal.ListByHostIdAsync(podUid);
+
+            var disappearedEvent = Assert.Single(
+                lifecycleEvents.Where(
+                    lifecycleEvent =>
+                        string.Equals(
+                            lifecycleEvent.EventType,
+                            AiRuntimeLifecycleEvents.HostDisappeared,
+                            StringComparison.Ordinal)));
+
+            Assert.Equal(controlPlaneId, disappearedEvent.ControlPlaneId);
+            Assert.Equal(poolId, disappearedEvent.PoolId);
+            Assert.Equal(podUid, disappearedEvent.HostId);
+            Assert.Equal(podUid, disappearedEvent.KubernetesPodUid);
+            Assert.Equal(failureId, disappearedEvent.RuntimeFailureIncidentId);
+            Assert.Equal(failureId, disappearedEvent.CorrelationId);
         }
 
         private sealed class EmptyMembershipReader :

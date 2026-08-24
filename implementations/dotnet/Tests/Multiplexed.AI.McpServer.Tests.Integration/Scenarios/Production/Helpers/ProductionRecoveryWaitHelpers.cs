@@ -1,4 +1,6 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+﻿using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Health;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
@@ -9,6 +11,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.State;
+using Multiplexed.Abstractions.AI.Observability.Events;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Multiplexed.AI.Stores;
 using Xunit;
@@ -1135,6 +1138,168 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                    string.Equals(entry.Status, "queued", StringComparison.OrdinalIgnoreCase);
         }
 
+
+        /// <summary>
+        /// Waits for the canonical recovery event proving that failed work was durably requeued.
+        /// </summary>
+        /// <param name="lifecycleObserver">The deterministic canonical lifecycle observer.</param>
+        /// <param name="semanticEventType">The exact canonical recovery event type.</param>
+        /// <param name="sharedRunId">The durable shared-run identifier.</param>
+        /// <param name="failedRuntimeInstanceId">The failed runtime instance identifier.</param>
+        /// <param name="executionId">The optional durable execution identifier.</param>
+        /// <param name="timeout">The hard watchdog timeout.</param>
+        /// <returns>The matching canonical recovery event.</returns>
+        public static async Task<AiControlPlaneEvent> WaitForRecoveryRequeueEventAsync(
+            IAiDeterministicLifecycleObserver lifecycleObserver,
+            string semanticEventType,
+            string sharedRunId,
+            string failedRuntimeInstanceId,
+            string? executionId,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(lifecycleObserver);
+            ArgumentException.ThrowIfNullOrWhiteSpace(semanticEventType);
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
+
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeout),
+                    timeout,
+                    "The event-driven recovery wait timeout must be greater than zero.");
+            }
+
+            using var watchdog = new CancellationTokenSource(timeout);
+
+            try
+            {
+                return await lifecycleObserver
+                    .WaitForAsync(
+                        new AiDeterministicLifecycleEventCriteria
+                        {
+                            SemanticEventType = semanticEventType,
+                            SharedRunId = sharedRunId,
+                            RuntimeInstanceId = failedRuntimeInstanceId,
+                            ExecutionId = string.IsNullOrWhiteSpace(executionId)
+                                ? null
+                                : executionId
+                        },
+                        watchdog.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (watchdog.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    "Canonical recovery requeue event was not observed within the hard watchdog. " +
+                    $"EventType='{semanticEventType}', SharedRunId='{sharedRunId}', " +
+                    $"FailedRuntimeInstanceId='{failedRuntimeInstanceId}', ExecutionId='{executionId}', " +
+                    $"Timeout='{timeout}', RecentEvents='{FormatRecentCanonicalEvents(lifecycleObserver)}'.");
+            }
+        }
+
+        /// <summary>
+        /// Waits for canonical work reassignment and then reads the already-durable shared-run state once.
+        /// </summary>
+        /// <param name="lifecycleObserver">The deterministic canonical lifecycle observer.</param>
+        /// <param name="sharedRunStore">The shared run store used for final durable-state verification.</param>
+        /// <param name="sharedRunId">The durable shared-run identifier.</param>
+        /// <param name="failedRuntimeInstanceId">The failed runtime instance identifier.</param>
+        /// <param name="failedLocalRunId">The failed local run identifier.</param>
+        /// <param name="timeout">The hard watchdog timeout.</param>
+        /// <returns>The redispatched durable shared-run record.</returns>
+        public static async Task<AiSharedRunRecord> WaitForRecoveredRunRedispatchedEventDrivenAsync(
+            IAiDeterministicLifecycleObserver lifecycleObserver,
+            IAiSharedRunStore sharedRunStore,
+            string sharedRunId,
+            string failedRuntimeInstanceId,
+            string failedLocalRunId,
+            TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(lifecycleObserver);
+            ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(failedRuntimeInstanceId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(failedLocalRunId);
+
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeout),
+                    timeout,
+                    "The event-driven redispatch wait timeout must be greater than zero.");
+            }
+
+            using var watchdog = new CancellationTokenSource(timeout);
+
+            AiControlPlaneEvent reassignedEvent;
+
+            try
+            {
+                reassignedEvent = await lifecycleObserver
+                    .WaitForAsync(
+                        new AiDeterministicLifecycleEventCriteria
+                        {
+                            SemanticEventType = AiRuntimeLifecycleEvents.WorkReassigned,
+                            SharedRunId = sharedRunId
+                        },
+                        watchdog.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (watchdog.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    "Canonical work reassignment event was not observed within the hard watchdog. " +
+                    $"SharedRunId='{sharedRunId}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', " +
+                    $"FailedLocalRunId='{failedLocalRunId}', Timeout='{timeout}', " +
+                    $"RecentEvents='{FormatRecentCanonicalEvents(lifecycleObserver)}'.");
+            }
+
+            var durableRun = await sharedRunStore
+                .GetAsync(sharedRunId)
+                .ConfigureAwait(false);
+
+            if (durableRun is null ||
+                string.IsNullOrWhiteSpace(durableRun.AssignedRuntimeInstanceId) ||
+                string.IsNullOrWhiteSpace(durableRun.LocalRunId) ||
+                string.Equals(
+                    durableRun.AssignedRuntimeInstanceId,
+                    failedRuntimeInstanceId,
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    durableRun.LocalRunId,
+                    failedLocalRunId,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Canonical work reassignment was observed but the durable shared-run state did not prove replacement ownership. " +
+                    $"SharedRunId='{sharedRunId}', EventId='{reassignedEvent.EventId}', " +
+                    $"EventRuntimeInstanceId='{reassignedEvent.Correlation.RuntimeInstanceId}', " +
+                    $"DurableRuntimeInstanceId='{durableRun?.AssignedRuntimeInstanceId}', " +
+                    $"DurableLocalRunId='{durableRun?.LocalRunId}', " +
+                    $"FailedRuntimeInstanceId='{failedRuntimeInstanceId}', FailedLocalRunId='{failedLocalRunId}'.");
+            }
+
+            return durableRun;
+        }
+
+        /// <summary>
+        /// Formats recent canonical events for deterministic wait timeout diagnostics.
+        /// </summary>
+        private static string FormatRecentCanonicalEvents(
+            IAiDeterministicLifecycleObserver lifecycleObserver)
+        {
+            return string.Join(
+                " | ",
+                lifecycleObserver
+                    .GetRecentEvents()
+                    .TakeLast(20)
+                    .Select(
+                        item =>
+                            $"Type='{item.SemanticEventType}', EventId='{item.EventId}', " +
+                            $"RunId='{item.Correlation.RunId}', ExecutionId='{item.Correlation.ExecutionId}', " +
+                            $"RuntimeInstanceId='{item.Correlation.RuntimeInstanceId}'"));
+        }
 
         /// <summary>
         /// Waits until a runtime instance is no longer considered safe for routing.

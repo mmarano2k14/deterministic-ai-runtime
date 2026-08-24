@@ -65,6 +65,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Reads the Kubernetes Endpoints resource backing a service.
+        /// </summary>
+        /// <param name="serviceName">The service name.</param>
+        /// <param name="namespaceName">The Kubernetes namespace.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The Kubernetes Endpoints resource.</returns>
+        Task<V1Endpoints> ReadEndpointsAsync(
+            string serviceName,
+            string namespaceName,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Lists Kubernetes services in a namespace.
         /// </summary>
         /// <param name="namespaceName">The Kubernetes namespace.</param>

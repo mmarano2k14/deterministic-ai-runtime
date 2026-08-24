@@ -13,7 +13,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <summary>
         /// The current local Kubernetes runtime image used by Minikube-based integration tests.
         /// </summary>
-        public const string RuntimeImage = "multiplexed-ai-runtime:k8s-debug-127";
+        public const string RuntimeImage = "multiplexed-ai-runtime:k8s-debug-132";
 
         /// <summary>
         /// The Kubernetes image pull policy used for locally built Minikube images.

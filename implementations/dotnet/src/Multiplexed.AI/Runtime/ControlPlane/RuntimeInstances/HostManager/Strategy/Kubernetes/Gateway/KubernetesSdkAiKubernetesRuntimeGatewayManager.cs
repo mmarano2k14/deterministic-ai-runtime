@@ -443,10 +443,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         ///
         /// In local port-forward mode, a controller-managed LoadBalancer Service can
         /// remain without an external address and therefore report
-        /// <c>Programmed=False/AddressNotAssigned</c>, even though the listener,
-        /// Envoy data plane, and backing Service are ready. In that precise case the
-        /// Service is the transport boundary and its presence is sufficient because
-        /// kubectl port-forward does not use the external LoadBalancer address.
+        /// <c>Programmed=False/AddressNotAssigned</c>. In that precise case the
+        /// Service is the transport boundary because kubectl port-forward does not
+        /// use the external LoadBalancer address. The subsequent Service readiness
+        /// gate additionally requires a ready backend endpoint before port-forward starts.
         /// </remarks>
         private async Task<AiKubernetesGatewayResource> WaitUntilGatewayReadyAsync(
             string gatewayName,
@@ -546,11 +546,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// <summary>
         /// Waits until the Gateway controller exposes a Service for the shared Gateway.
         /// </summary>
+        /// <remarks>
+        /// In local port-forward mode, Service creation alone is not sufficient readiness.
+        /// A freshly created Gateway data-plane Pod can still be Pending while the
+        /// controller-managed Service already exists. <c>kubectl port-forward service/...</c>
+        /// can then select that non-running Pod and exit before startup.
+        ///
+        /// The local transport therefore waits for the Service Endpoints resource to
+        /// contain at least one ready address. This is readiness-driven rather than
+        /// delay-driven and remains correct across fast and slow Kubernetes nodes.
+        /// Non-port-forward transports preserve the historical Service-presence behavior.
+        /// </remarks>
         private async Task<V1Service> WaitUntilGatewayServiceAvailableAsync(
             string gatewayName,
             DateTimeOffset deadline,
             CancellationToken cancellationToken)
         {
+            string? lastServiceIdentity = null;
+            var readyEndpointObserved = false;
+
             while (DateTimeOffset.UtcNow < deadline)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -564,7 +578,43 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                 if (gatewayService is not null &&
                     HasGatewayServicePort(gatewayService, this.options.GatewayPort))
                 {
-                    return gatewayService;
+                    var serviceName =
+                        gatewayService.Metadata?.Name;
+
+                    var serviceNamespace =
+                        gatewayService.Metadata?.NamespaceProperty;
+
+                    lastServiceIdentity =
+                        $"{serviceNamespace ?? "(null)"}/{serviceName ?? "(null)"}";
+
+                    if (!this.options.UsePortForwardTransportEndpoint)
+                    {
+                        return gatewayService;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(serviceName) &&
+                        !string.IsNullOrWhiteSpace(serviceNamespace))
+                    {
+                        readyEndpointObserved =
+                            await this.HasReadyGatewayServiceEndpointAsync(
+                                    serviceName,
+                                    serviceNamespace,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+
+                        if (readyEndpointObserved)
+                        {
+                            this.logger.LogInformation(
+                                "KUBERNETES GATEWAY SERVICE READY FOR PORT-FORWARD GatewayName={GatewayName} GatewayNamespace={GatewayNamespace} ServiceName={ServiceName} ServiceNamespace={ServiceNamespace} ServicePort={ServicePort} ReadyEndpoint=True",
+                                gatewayName,
+                                this.options.Namespace,
+                                serviceName,
+                                serviceNamespace,
+                                this.options.GatewayPort);
+
+                            return gatewayService;
+                        }
+                    }
                 }
 
                 await DelayUntilNextPollAsync(
@@ -575,7 +625,39 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
             }
 
             throw new TimeoutException(
-                $"kubernetes-gateway-service-timeout: No Kubernetes Service exposing listener port '{this.options.GatewayPort}' was resolved for Gateway '{this.options.Namespace}/{gatewayName}' within '{this.options.GatewayReadinessTimeout}'.");
+                $"kubernetes-gateway-service-timeout: No transport-ready Kubernetes Service exposing listener port '{this.options.GatewayPort}' was resolved for Gateway '{this.options.Namespace}/{gatewayName}' within '{this.options.GatewayReadinessTimeout}'. " +
+                $"UsePortForward='{this.options.UsePortForwardTransportEndpoint}', LastService='{lastServiceIdentity ?? "none"}', ReadyEndpointObserved='{readyEndpointObserved}'.");
+        }
+
+        /// <summary>
+        /// Determines whether the Gateway Service currently exposes at least one ready backend address.
+        /// </summary>
+        /// <param name="serviceName">The Gateway Service name.</param>
+        /// <param name="serviceNamespace">The Gateway Service namespace.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><see langword="true"/> when Kubernetes reports at least one ready endpoint address.</returns>
+        private async Task<bool> HasReadyGatewayServiceEndpointAsync(
+            string serviceName,
+            string serviceNamespace,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                var endpoints =
+                    await this.client
+                        .ReadEndpointsAsync(
+                            serviceName,
+                            serviceNamespace,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                return endpoints.Subsets?.Any(subset =>
+                           subset.Addresses is { Count: > 0 }) == true;
+            }
+            catch (Exception exception) when (IsNotFound(exception))
+            {
+                return false;
+            }
         }
 
         /// <summary>

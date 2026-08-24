@@ -5,7 +5,9 @@ using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
@@ -54,6 +56,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private const int BoundaryFailureCrashCheckpointStateTtlMinutes = 30;
         private const int BoundaryFailureAdmissionBackpressureTimeoutMinutes = 5;
         private const int ExternalBoundaryFailureWaitTimeoutMinutes = 15;
+        private const int ScenarioProgressLogIntervalSeconds = 30;
 
         protected readonly ITestOutputHelper output;
         protected readonly IRuntimePoolCrashRecoveryScenarioRuntimeProfile profile;
@@ -185,13 +188,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="submissionIterationCount">The number of full-capacity submission waves per cycle.</param>
         /// <param name="executionCycleCount">The number of sequential warm-pool execution cycles.</param>
         /// <param name="childDepth">The number of nested child DAG levels composed by every submitted parent DAG. Zero preserves the historical workload shape.</param>
+        /// <param name="recoveryObservationMode">The recovery synchronization mode. Polling remains the compatibility baseline; event-driven mode uses canonical engine events for post-kill recovery waits.</param>
         /// <returns>A task that completes after the hierarchical runtime and Pod failure proof converges across every cycle.</returns>
         protected Task ExecuteFullFailureProductionScenarioAsync(
             int maximumPodCount,
             int runtimeCountPerPod,
             int submissionIterationCount,
             int executionCycleCount,
-            int childDepth = 0)
+            int childDepth = 0,
+            ProductionRecoveryObservationMode recoveryObservationMode = ProductionRecoveryObservationMode.Polling)
         {
             return ExecuteReusableBoundedCapacityPodFailureProductionScenarioCoreAsync(
                 maximumPodCount,
@@ -199,7 +204,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 submissionIterationCount,
                 executionCycleCount,
                 injectChildRuntimeFailure: true,
-                childDepth: childDepth);
+                childDepth: childDepth,
+                recoveryObservationMode: recoveryObservationMode);
         }
 
         /// <summary>
@@ -215,13 +221,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="submissionIterationCount">The number of full-capacity submission waves per cycle.</param>
         /// <param name="executionCycleCount">The number of sequential warm-pool execution cycles.</param>
         /// <param name="childDepth">The number of nested child DAG levels composed by every submitted parent DAG. Zero preserves the historical workload shape.</param>
+        /// <param name="recoveryObservationMode">The recovery synchronization mode. Polling remains the compatibility baseline.</param>
         /// <returns>A task that completes after the external Pod failure and hierarchical recovery proof converges across every cycle.</returns>
         protected Task ExecuteFullFailureProductionScenarioAwaitExternalPodFailureAsync(
             int maximumPodCount,
             int runtimeCountPerPod,
             int submissionIterationCount,
             int executionCycleCount,
-            int childDepth = 0)
+            int childDepth = 0,
+            ProductionRecoveryObservationMode recoveryObservationMode = ProductionRecoveryObservationMode.Polling)
         {
             var signalPath =
                 ManualExternalFailureGateSignal.PrepareKubernetesWatch();
@@ -236,7 +244,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 executionCycleCount,
                 injectChildRuntimeFailure: true,
                 waitForExternalPodDeletion: true,
-                childDepth: childDepth);
+                childDepth: childDepth,
+                recoveryObservationMode: recoveryObservationMode);
         }
 
         private async Task ExecuteBoundedCapacityScenarioAsync(
@@ -1667,12 +1676,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             int executionCycleCount,
             bool injectChildRuntimeFailure,
             bool waitForExternalPodDeletion = false,
-            int childDepth = 0)
+            int childDepth = 0,
+            ProductionRecoveryObservationMode recoveryObservationMode = ProductionRecoveryObservationMode.Polling)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumPodCount);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(runtimeCountPerPod);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(submissionIterationCount);
             ArgumentOutOfRangeException.ThrowIfNegative(childDepth);
+
+            if (recoveryObservationMode != ProductionRecoveryObservationMode.Polling &&
+                recoveryObservationMode != ProductionRecoveryObservationMode.HybridSignals &&
+                recoveryObservationMode != ProductionRecoveryObservationMode.EventDriven)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(recoveryObservationMode),
+                    recoveryObservationMode,
+                    "The production recovery observation mode is not supported.");
+            }
 
             if (executionCycleCount < 2)
             {
@@ -1816,6 +1836,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             settings["Tests:UseMongoRuntimeLifecycleJournal"] = "true";
             settings["AiRuntimeRecoveryForensics:StrictPersistence"] = "true";
 
+            if (recoveryObservationMode == ProductionRecoveryObservationMode.EventDriven)
+            {
+                settings["Tests:UseDeterministicLifecycleObservation"] = "true";
+            }
+
             await using var dataStoreTrafficObserver =
                 await ProductionDataStoreTrafficObserver
                     .StartAsync(output)
@@ -1869,6 +1894,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             output.WriteLine($"  KillAfterCompletedStepCount='{(injectChildRuntimeFailure ? FinalScenarioKillAfterCompletedStepCount : 0)}'");
             output.WriteLine($"  PodFailureTrigger='{(waitForExternalPodDeletion ? "external-manual" : "automatic")}'");
             output.WriteLine("  CleanupPolicy='after-final-cycle-only'");
+
+            var scenarioCompleted = false;
 
             try
             {
@@ -1934,6 +1961,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     host.Services.GetRequiredService<
                         IAiRuntimeRecoveryForensicsQueryService>();
 
+                var runtimeLifecycleJournal =
+                    host.Services.GetRequiredService<
+                        IAiRuntimeLifecycleJournal>();
+
+                var deterministicLifecycleObserver =
+                    recoveryObservationMode == ProductionRecoveryObservationMode.EventDriven
+                        ? host.Services.GetRequiredService<IAiDeterministicLifecycleObserver>()
+                        : null;
+
+                output.WriteLine(
+                    $"  RecoveryObservationMode='{recoveryObservationMode}'");
+
                 var redisConnection =
                     host.Services.GetRequiredService<
                         IConnectionMultiplexer>();
@@ -1952,8 +1991,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 var cycleProofs =
                     new List<BoundedCapacityWarmReuseCycleProof>(
                         executionCycleCount);
+                var deferredCycleAudits =
+                    new List<Func<Task<BoundedCapacityWarmReuseCycleProof>>>(
+                        executionCycleCount);
 
-                BoundedCapacityWarmReuseCycleProof? previousCycleProof = null;
+                IReadOnlySet<string>? previousFinalPodUids = null;
+                IReadOnlySet<string>? previousFinalRuntimeInstanceIds = null;
 
                 for (var cycleNumber = 1;
                      cycleNumber <= executionCycleCount;
@@ -1968,7 +2011,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                     BoundedCapacityPoolMembershipSnapshot? warmStartMembership = null;
 
-                    if (previousCycleProof is not null)
+                    if (previousFinalPodUids is not null &&
+                        previousFinalRuntimeInstanceIds is not null)
                     {
                         warmStartMembership =
                             await WaitForBoundedCapacityPoolMembershipAsync(
@@ -1981,12 +2025,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 .ConfigureAwait(false);
 
                         RuntimePoolProductionCycleExecutor.AssertSameIdentitySet(
-                            previousCycleProof.FinalPodUids,
+                            previousFinalPodUids,
                             warmStartMembership.PodUids,
                             $"Cycle {cycleNumber} warm Pod reuse");
 
                         RuntimePoolProductionCycleExecutor.AssertSameIdentitySet(
-                            previousCycleProof.FinalRuntimeInstanceIds,
+                            previousFinalRuntimeInstanceIds,
                             warmStartMembership.RuntimeInstanceIds,
                             $"Cycle {cycleNumber} warm runtime reuse");
 
@@ -2058,8 +2102,42 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 ? submissionIterationCount - 1
                                 : submissionIterationCount;
 
-                        var admissionProof =
-                            await RuntimePoolProductionCycleExecutor
+                        ProductionCrashCheckpointGate?
+                            childRuntimeFailureCrashGate = null;
+
+                        if (injectChildRuntimeFailure && childDepth > 0)
+                        {
+                            /*
+                             * Positive ChildDepth extends the parent DAG after its historical root steps.
+                             * Without a deterministic crash window the initial full-capacity wave may finish
+                             * while Kubernetes is still bringing the final Pod online, leaving no parent
+                             * execution in the runtime index when the physical child-process failure target
+                             * is selected. Hold exactly one root execution immediately after the required
+                             * progress threshold. The runtime process is still killed from outside; the gate
+                             * only makes the already-proven failure boundary deterministic for any nested
+                             * ChildDepth.
+                             */
+                            childRuntimeFailureCrashGate =
+                                await ProductionCrashCheckpointGate
+                                    .ArmAsync(
+                                        redisConnection,
+                                        output,
+                                        controlPlaneId,
+                                        tenant.TenantId,
+                                        $"{scenario.Name}-cycle-{cycleNumber:000}-runtime-child-process-kill",
+                                        checkpointStepIndex:
+                                            FinalScenarioKillAfterCompletedStepCount + 1,
+                                        stateTtl:
+                                            TimeSpan.FromMinutes(
+                                                BoundaryFailureCrashCheckpointStateTtlMinutes))
+                                    .ConfigureAwait(false);
+                        }
+
+                        var childRuntimeFailureCrashCheckpoint =
+                            childRuntimeFailureCrashGate?.Definition;
+
+                        var initialAdmissionTask =
+                            RuntimePoolProductionCycleExecutor
                                 .SubmitQueueFirstWavesAsync(
                                     cycleSubmissionMcp,
                                     tenant,
@@ -2072,7 +2150,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     maximumConcurrentMcpSubmissions,
                                     maximumAdmissionAttemptCount,
                                     cycleNumber,
-                                    startingIterationNumber: 1)
+                                    startingIterationNumber: 1,
+                                    crashCheckpointFactory:
+                                        childRuntimeFailureCrashCheckpoint is null
+                                            ? null
+                                            : (iteration, runNumber) =>
+                                                iteration == 1 && runNumber == 1
+                                                    ? childRuntimeFailureCrashCheckpoint
+                                                    : null);
+
+                        var admissionProof =
+                            await AwaitScenarioOperationWithProgressAsync(
+                                    initialAdmissionTask,
+                                    phase:
+                                        $"cycle-{cycleNumber:000}-initial-admission",
+                                    totalStopwatch)
                                 .ConfigureAwait(false);
 
                         var admissionTooManyRequestsRetryCount =
@@ -2082,6 +2174,32 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             admissionProof.SharedRunIds;
                         IReadOnlySet<string> podFailureCandidateSharedRunIds =
                             submittedSharedRunIds;
+                        IReadOnlySet<string> childRuntimeFailureCandidateSharedRunIds =
+                            submittedSharedRunIds;
+
+                        if (childRuntimeFailureCrashGate is not null)
+                        {
+                            var gatedAdmissionResult =
+                                admissionProof.Results[0];
+
+                            Assert.False(
+                                string.IsNullOrWhiteSpace(
+                                    gatedAdmissionResult.SharedRunId));
+
+                            childRuntimeFailureCandidateSharedRunIds =
+                                new HashSet<string>(StringComparer.Ordinal)
+                                {
+                                    gatedAdmissionResult.SharedRunId!
+                                };
+
+                            output.WriteLine(
+                                $"[{boundedCapacityProfile.LogPrefix} CHILD RUNTIME FAILURE GATE] " +
+                                $"Cycle='{cycleNumber}', " +
+                                $"ChildDepth='{childDepth}', " +
+                                $"SharedRunId='{gatedAdmissionResult.SharedRunId}', " +
+                                $"CheckpointStepIndex='{childRuntimeFailureCrashGate.Definition.StepIndex}', " +
+                                "Purpose='preserve-one-active-root-execution-until-full-runtime-pool-membership'.");
+                        }
 
                         output.WriteLine(
                             $"[{boundedCapacityProfile.LogPrefix} WARM REUSE MCP ADMISSION INITIAL] " +
@@ -2101,7 +2219,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     runtimeCountPerPod,
                                     requireAvailableCapacity: false,
                                     TimeSpan.FromMinutes(10),
-                                    hardTimeout: TimeSpan.FromMinutes(20))
+                                    hardTimeout: TimeSpan.FromMinutes(20),
+                                    progressLabel:
+                                        $"cycle-{cycleNumber:000}-pre-failure-topology")
                                 .ConfigureAwait(false);
 
                         if (warmStartMembership is not null)
@@ -2133,19 +2253,48 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                         if (injectChildRuntimeFailure)
                         {
-                            childRuntimeFailureTarget =
-                                await WaitForBoundedCapacityBusyChildRuntimeFailureTargetAsync(
-                                        registry,
-                                        sharedRunStore,
-                                        runExecutionIndex,
-                                        submittedSharedRunIds,
-                                        controlPlaneId,
-                                        poolId,
-                                        tenant.TenantId,
-                                        runtimeCountPerPod,
-                                        maximumRuntimeCapacity,
-                                        TimeSpan.FromMinutes(10))
+                            if (childRuntimeFailureCrashGate is not null)
+                            {
+                                var crashGateWaitTask =
+                                    childRuntimeFailureCrashGate
+                                        .WaitUntilReachedAsync(
+                                            TimeSpan.FromMinutes(3));
+
+                                await AwaitScenarioOperationWithProgressAsync(
+                                        crashGateWaitTask,
+                                        phase:
+                                            $"cycle-{cycleNumber:000}-child-runtime-crash-gate",
+                                        totalStopwatch)
                                     .ConfigureAwait(false);
+                            }
+
+                            try
+                            {
+                                childRuntimeFailureTarget =
+                                    await WaitForBoundedCapacityBusyChildRuntimeFailureTargetAsync(
+                                            registry,
+                                            sharedRunStore,
+                                            runExecutionIndex,
+                                            childRuntimeFailureCandidateSharedRunIds,
+                                            controlPlaneId,
+                                            poolId,
+                                            tenant.TenantId,
+                                            runtimeCountPerPod,
+                                            maximumRuntimeCapacity,
+                                            TimeSpan.FromMinutes(10))
+                                        .ConfigureAwait(false);
+                            }
+                            catch
+                            {
+                                if (childRuntimeFailureCrashGate is not null)
+                                {
+                                    await childRuntimeFailureCrashGate
+                                        .ReleaseAsync()
+                                        .ConfigureAwait(false);
+                                }
+
+                                throw;
+                            }
 
                             var childInventory =
                                 CreateBoundedCapacityChildRuntimeFailureInventory(
@@ -2156,33 +2305,50 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             observation.MarkIntentionalFailedRuntimeInstance(
                                 childRuntimeFailureTarget.Runtime.RuntimeInstanceId);
 
-                            childRuntimeRecoveryProof =
-                                await ProductionRealRuntimeCrashRecoveryTestHelpers
-                                    .KillRuntimeAndRecoverAssignedInventoryAsync(
-                                        output,
-                                        CreateRuntimePoolChildProcessControl(
+                            try
+                            {
+                                childRuntimeRecoveryProof =
+                                    await ProductionRealRuntimeCrashRecoveryTestHelpers
+                                        .KillRuntimeAndRecoverAssignedInventoryAsync(
+                                            output,
+                                            CreateRuntimePoolChildProcessControl(
+                                                registry,
+                                                poolId,
+                                                boundedCapacityProfile.LogPrefix),
                                             registry,
-                                            poolId,
-                                            boundedCapacityProfile.LogPrefix),
-                                        registry,
-                                        runExecutionIndex,
-                                        sharedRunStore,
-                                        sharedQueue,
-                                        dagStore,
-                                        childInventory,
-                                        minimumCompletedStepsBeforeKill:
-                                            FinalScenarioKillAfterCompletedStepCount,
-                                        progressTimeout: TimeSpan.FromMinutes(3),
-                                        unsafeTimeout: TimeSpan.FromMinutes(3),
-                                        requeueTimeout: TimeSpan.FromMinutes(2),
-                                        redispatchTimeout: TimeSpan.FromMinutes(3),
-                                        executionResolveTimeout:
-                                            TimeSpan.FromMinutes(2),
-                                        observationMode:
-                                            ProductionRecoveryObservationMode.Polling,
-                                        runtimeTenantOwnershipAssertion:
-                                            AssertRuntimeBelongsToTenantAsync)
-                                    .ConfigureAwait(false);
+                                            runExecutionIndex,
+                                            sharedRunStore,
+                                            sharedQueue,
+                                            dagStore,
+                                            childInventory,
+                                            minimumCompletedStepsBeforeKill:
+                                                FinalScenarioKillAfterCompletedStepCount,
+                                            progressTimeout: TimeSpan.FromMinutes(3),
+                                            unsafeTimeout: TimeSpan.FromMinutes(3),
+                                            requeueTimeout: TimeSpan.FromMinutes(2),
+                                            redispatchTimeout: TimeSpan.FromMinutes(3),
+                                            executionResolveTimeout:
+                                                TimeSpan.FromMinutes(2),
+                                            observationMode:
+                                                recoveryObservationMode,
+                                            lifecycleObserver:
+                                                deterministicLifecycleObserver,
+                                            crashCheckpointGate:
+                                                childRuntimeFailureCrashGate,
+                                            runtimeTenantOwnershipAssertion:
+                                                AssertRuntimeBelongsToTenantAsync)
+                                        .ConfigureAwait(false);
+                            }
+                            finally
+                            {
+                                if (childRuntimeFailureCrashGate is not null)
+                                {
+                                    // Idempotent safety release also covers recovery failures after target selection.
+                                    await childRuntimeFailureCrashGate
+                                        .ReleaseAsync()
+                                        .ConfigureAwait(false);
+                                }
+                            }
 
                             childRuntimeRecoveryForensics =
                                 await ProductionRealRuntimeCrashRecoveryTestHelpers
@@ -2785,6 +2951,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             childRecoveryForensicsIds
                                 .Concat(podFailureProof.RecoveryForensicsIds)
                                 .ToHashSet(StringComparer.Ordinal);
+                        var podRecoveryForensicsSharedRunIds =
+                            new HashSet<string>(StringComparer.Ordinal);
 
                         foreach (var forensicsId in
                                  podFailureProof.RecoveryForensicsIds
@@ -2809,6 +2977,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             Assert.Contains(
                                 exactRecord.ExecutionId,
                                 podFailureProof.ImpactedExecutionIds);
+
+                            podRecoveryForensicsSharedRunIds.Add(
+                                exactRecord.SharedRunId!);
                         }
 
                         observation.ObserveFinalDispatchBindings(
@@ -2827,6 +2998,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             childRecoveredSharedRunIds
                                 .Concat(podFailureProof.RecoveredSharedRunIds)
                                 .ToHashSet(StringComparer.Ordinal);
+                        var childRecoveryForensicsSharedRunIds =
+                            childRuntimeRecoveryForensics
+                                .Select(record => record.SharedRunId)
+                                .Where(value => !string.IsNullOrWhiteSpace(value))
+                                .Cast<string>()
+                                .ToHashSet(StringComparer.Ordinal);
+                        var durableRecoveryForensicsSharedRunIds =
+                            childRecoveryForensicsSharedRunIds
+                                .Concat(podRecoveryForensicsSharedRunIds)
+                                .ToHashSet(StringComparer.Ordinal);
+
+                        RuntimePoolProductionCycleExecutor.AssertSameIdentitySet(
+                            recoveredSharedRunIds,
+                            durableRecoveryForensicsSharedRunIds,
+                            $"Cycle {cycleNumber} durable recovery-forensics SharedRunId coverage");
+
+                        Assert.Equal(
+                            recoveredSharedRunIds.Count,
+                            cycleRecoveryForensicsIds.Count);
+
                         var childRecoveredExecutionIds =
                             childRuntimeRecoveryProof is null
                                 ? new HashSet<string>(StringComparer.Ordinal)
@@ -2860,12 +3051,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 item => Math.Max(0, item.Value.Count - 1));
 
                         Assert.Equal(0, duplicateDispatchCount);
-                        Assert.Equal(
-                            recoveredSharedRunIds.Count,
+
+                        var observedRecoveryRedispatchBindingCount =
                             duplicateDispatchBindings.Count(
                                 item =>
                                     recoveredSharedRunIds.Contains(item.Key) &&
-                                    item.Value.Count == 2));
+                                    item.Value.Count == 2);
+
+                        output.WriteLine(
+                            $"[{boundedCapacityProfile.LogPrefix} RECOVERY DISPATCH BINDING PROOF] " +
+                            $"Cycle='{cycleNumber}', " +
+                            $"RecoveredSharedRunCount='{recoveredSharedRunIds.Count}', " +
+                            $"DurableRecoveryForensicsSharedRunCount='{durableRecoveryForensicsSharedRunIds.Count}', " +
+                            $"ObservedDualBindingRecoveryCount='{observedRecoveryRedispatchBindingCount}', " +
+                            "SampledBindingHistory='diagnostic-only', " +
+                            "RecoveryAuthority='exact-recovery-outcomes+durable-forensics'.");
 
                         var finalMembership =
                             await WaitForBoundedCapacityPoolMembershipAsync(
@@ -2918,6 +3118,31 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                         Assert.Empty(finalQueueItems);
 
+                        // Warm-reuse continuity is a runtime proof, not an audit proof. Capture it
+                        // immediately after the cycle has converged so EventDriven mode can start
+                        // the next cycle without waiting for replay/ledger/trace audit traffic.
+                        previousFinalPodUids =
+                            finalMembership.PodUids.ToHashSet(StringComparer.Ordinal);
+                        previousFinalRuntimeInstanceIds =
+                            finalMembership.RuntimeInstanceIds.ToHashSet(StringComparer.Ordinal);
+
+                        output.WriteLine(string.Empty);
+                        output.WriteLine(
+                            $"# WARM REUSE CYCLE {cycleNumber} RUNTIME PROOF");
+                        output.WriteLine($"CycleNumber='{cycleNumber}'");
+                        output.WriteLine($"FinalPodCount='{finalMembership.PodUids.Count}'");
+                        output.WriteLine($"FinalRuntimeCount='{finalMembership.RuntimeInstanceIds.Count}'");
+                        output.WriteLine($"ChildDepth='{childDepth}'");
+                        output.WriteLine($"RecoveredSharedRunCount='{recoveredSharedRunIds.Count}'");
+                        output.WriteLine(
+                            $"AuditMode='{(recoveryObservationMode == ProductionRecoveryObservationMode.EventDriven ? "deferred-after-runtime-cycles" : "inline-historical")}'");
+
+                        var auditCycleNumber = cycleNumber;
+
+                        async Task<BoundedCapacityWarmReuseCycleProof> ExecuteCurrentCycleAuditAsync()
+                        {
+                            var auditStopwatch = Stopwatch.StartNew();
+
                         using var forensicsProofHttpClient =
                             host.CreateClient();
 
@@ -2966,7 +3191,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             observation.GetScaleOutRequests(
                                 submittedSharedRunIds);
 
-                        if (cycleNumber == 1)
+                        if (auditCycleNumber == 1)
                         {
                             Assert.True(
                                 scaleOutRequests.Count > 0,
@@ -2975,9 +3200,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                         output.WriteLine(
                             $"[{boundedCapacityProfile.LogPrefix} WARM REUSE SCALE-OUT OBSERVATION] " +
-                            $"Cycle='{cycleNumber}', " +
+                            $"Cycle='{auditCycleNumber}', " +
                             $"ScaleOutRequestCount='{scaleOutRequests.Count}', " +
-                            $"ColdStart='{(cycleNumber == 1).ToString().ToLowerInvariant()}'.");
+                            $"ColdStart='{(auditCycleNumber == 1).ToString().ToLowerInvariant()}'.");
 
                         using var replayProofHttpClient =
                             host.CreateClient();
@@ -2997,6 +3222,58 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                         var phase5TooManyRequestsRetryCount = 0;
 
+                        async Task<IReadOnlyList<AiDecisionLedgerEntry>> QueryPhase5LedgerWithFreshContextAsync(
+                            AiDecisionLedgerQuery query,
+                            string operationName)
+                        {
+                            ArgumentNullException.ThrowIfNull(query);
+                            ArgumentException.ThrowIfNullOrWhiteSpace(operationName);
+
+                            // A rotating RBAC execution context is request-scoped for this
+                            // parallel proof path. Sharing one context across concurrent MCP
+                            // requests can make independent responses race the same rotation
+                            // key and can leave TestServer requests waiting behind a stale
+                            // context for far longer than the ledger operation itself.
+                            using var ledgerHttpClient =
+                                host.CreateClient();
+
+                            ledgerHttpClient.Timeout =
+                                TimeSpan.FromSeconds(45);
+
+                            var ledgerMcp =
+                                await McpRbacTestClientHelper
+                                    .CreateConfiguredClientAsync(
+                                        host,
+                                        ledgerHttpClient,
+                                        boundedCapacityProfile.RequestedBy,
+                                        tenantId: tenant.TenantId,
+                                        tenantGroupId: tenant.TenantGroupId)
+                                    .ConfigureAwait(false);
+
+                            using var queryWatchdog =
+                                new CancellationTokenSource(
+                                    TimeSpan.FromSeconds(30));
+
+                            try
+                            {
+                                return await McpBackpressureRetryHelper
+                                    .ExecuteAsync(
+                                        () => ledgerMcp.QueryLedgerAsync(
+                                            query,
+                                            queryWatchdog.Token),
+                                        operationName,
+                                        onRetry: ObservePhase5BackpressureRetry,
+                                        cancellationToken: queryWatchdog.Token)
+                                    .ConfigureAwait(false);
+                            }
+                            catch (OperationCanceledException)
+                                when (queryWatchdog.IsCancellationRequested)
+                            {
+                                throw new TimeoutException(
+                                    $"Phase 5 MCP ledger proof operation '{operationName}' exceeded the 30-second hard watchdog.");
+                            }
+                        }
+
                         void ObservePhase5BackpressureRetry(
                             string operationName,
                             int attempt,
@@ -3009,6 +3286,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             Interlocked.Increment(
                                 ref phase5TooManyRequestsRetryCount);
                         }
+
+                        var replayProofStopwatch =
+                            Stopwatch.StartNew();
 
                         var replayProofs =
                             await RecoveredExecutionReplayProofAssertions
@@ -3025,11 +3305,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             submittedRunCountPerCycle,
                             replayProofs.Count);
 
+                        replayProofStopwatch.Stop();
+
+                        output.WriteLine(
+                            $"[{boundedCapacityProfile.LogPrefix} WARM REUSE PHASE 5 TIMING] " +
+                            $"Cycle='{auditCycleNumber}', Proof='replay-ledger-trace-through-mcp', Duration='{replayProofStopwatch.Elapsed}'.");
+
                         var ledgerTimelineToUtc =
                             DateTimeOffset.UtcNow.AddSeconds(5);
 
                         var executionLedgerEntries =
                             new List<AiDecisionLedgerEntry>();
+
+                        var executionLedgerStopwatch =
+                            Stopwatch.StartNew();
 
                         foreach (var executionIdBatch in replayProofs
                                      .Select(proof => proof.ExecutionId)
@@ -3040,17 +3329,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 await Task.WhenAll(
                                         executionIdBatch.Select(
                                             executionId =>
-                                                McpBackpressureRetryHelper
-                                                    .ExecuteAsync(
-                                                        () => replayProofMcp.QueryLedgerAsync(
-                                                            new AiDecisionLedgerQuery
-                                                            {
-                                                                ExecutionId = executionId,
-                                                                TimestampFromUtc = ledgerTimelineFromUtc,
-                                                                TimestampToUtc = ledgerTimelineToUtc
-                                                            }),
-                                                        $"observability.ledger.warm-reuse.execution:{cycleNumber}:{executionId}",
-                                                        onRetry: ObservePhase5BackpressureRetry)))
+                                                QueryPhase5LedgerWithFreshContextAsync(
+                                                    new AiDecisionLedgerQuery
+                                                    {
+                                                        ExecutionId = executionId,
+                                                        TimestampFromUtc = ledgerTimelineFromUtc,
+                                                        TimestampToUtc = ledgerTimelineToUtc
+                                                    },
+                                                    $"observability.ledger.warm-reuse.execution:{auditCycleNumber}:{executionId}")))
                                     .ConfigureAwait(false);
 
                             Assert.All(
@@ -3061,8 +3347,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 currentBatch.SelectMany(entries => entries));
                         }
 
+                        executionLedgerStopwatch.Stop();
+
+                        output.WriteLine(
+                            $"[{boundedCapacityProfile.LogPrefix} WARM REUSE PHASE 5 TIMING] " +
+                            $"Cycle='{auditCycleNumber}', Proof='execution-ledger', Duration='{executionLedgerStopwatch.Elapsed}', EntryCount='{executionLedgerEntries.Count}'.");
+
                         var controlPlaneLedgerEntries =
                             new List<AiDecisionLedgerEntry>();
+
+                        var controlPlaneLedgerStopwatch =
+                            Stopwatch.StartNew();
 
                         foreach (var sharedRunIdBatch in submittedSharedRunIds
                                      .OrderBy(value => value, StringComparer.Ordinal)
@@ -3072,18 +3367,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 await Task.WhenAll(
                                         sharedRunIdBatch.Select(
                                             sharedRunId =>
-                                                McpBackpressureRetryHelper
-                                                    .ExecuteAsync(
-                                                        () => replayProofMcp.QueryLedgerAsync(
-                                                            new AiDecisionLedgerQuery
-                                                            {
-                                                                ExecutionId =
-                                                                    $"control-plane-run:{sharedRunId}",
-                                                                TimestampFromUtc = ledgerTimelineFromUtc,
-                                                                TimestampToUtc = ledgerTimelineToUtc
-                                                            }),
-                                                        $"observability.ledger.warm-reuse.control-plane-run:{cycleNumber}:{sharedRunId}",
-                                                        onRetry: ObservePhase5BackpressureRetry)))
+                                                QueryPhase5LedgerWithFreshContextAsync(
+                                                    new AiDecisionLedgerQuery
+                                                    {
+                                                        ExecutionId =
+                                                            $"control-plane-run:{sharedRunId}",
+                                                        TimestampFromUtc = ledgerTimelineFromUtc,
+                                                        TimestampToUtc = ledgerTimelineToUtc
+                                                    },
+                                                    $"observability.ledger.warm-reuse.control-plane-run:{auditCycleNumber}:{sharedRunId}")))
                                     .ConfigureAwait(false);
 
                             Assert.All(
@@ -3093,6 +3385,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             controlPlaneLedgerEntries.AddRange(
                                 currentBatch.SelectMany(entries => entries));
                         }
+
+                        controlPlaneLedgerStopwatch.Stop();
+
+                        output.WriteLine(
+                            $"[{boundedCapacityProfile.LogPrefix} WARM REUSE PHASE 5 TIMING] " +
+                            $"Cycle='{auditCycleNumber}', Proof='control-plane-ledger', Duration='{controlPlaneLedgerStopwatch.Elapsed}', EntryCount='{controlPlaneLedgerEntries.Count}'.");
 
                         var runtimeLifecycleLedgerEntries =
                             new List<AiDecisionLedgerEntry>();
@@ -3121,30 +3419,91 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 .OrderBy(value => value, StringComparer.Ordinal)
                                 .ToArray();
 
-                        foreach (var runtimeInstanceIdBatch in
-                                 assignedRuntimeInstanceIds.Chunk(8))
-                        {
-                            var currentBatch =
-                                await Task.WhenAll(
-                                        runtimeInstanceIdBatch.Select(
-                                            runtimeInstanceId =>
-                                                McpBackpressureRetryHelper
-                                                    .ExecuteAsync(
-                                                        () => replayProofMcp.QueryLedgerAsync(
-                                                            new AiDecisionLedgerQuery
-                                                            {
-                                                                ExecutionId =
-                                                                    $"control-plane-runtime-instance:{runtimeInstanceId}",
-                                                                TimestampFromUtc = ledgerTimelineFromUtc,
-                                                                TimestampToUtc = ledgerTimelineToUtc
-                                                            }),
-                                                        $"observability.ledger.warm-reuse.runtime-instance:{cycleNumber}:{runtimeInstanceId}",
-                                                        onRetry: ObservePhase5BackpressureRetry)))
-                                    .ConfigureAwait(false);
+                        var runtimeLifecycleProofStopwatch =
+                            Stopwatch.StartNew();
 
-                            runtimeLifecycleLedgerEntries.AddRange(
-                                currentBatch.SelectMany(entries => entries));
+                        if (recoveryObservationMode ==
+                            ProductionRecoveryObservationMode.EventDriven)
+                        {
+                            // Step 11 makes the Runtime Lifecycle Journal the durable
+                            // authority for canonical runtime infrastructure facts. Do not
+                            // re-query the legacy runtime-instance Decision Ledger surface
+                            // in EventDriven mode: those broad payloads can become enormous
+                            // during long warm-pool runs and are not the canonical owner.
+                            var runtimeLifecycleEvents =
+                                (await runtimeLifecycleJournal
+                                    .ListByPoolIdAsync(poolId)
+                                    .ConfigureAwait(false))
+                                .Where(lifecycleEvent =>
+                                    lifecycleEvent.TimestampUtc >= ledgerTimelineFromUtc &&
+                                    lifecycleEvent.TimestampUtc <= ledgerTimelineToUtc)
+                                .ToArray();
+
+                            Assert.NotEmpty(runtimeLifecycleEvents);
+
+                            if (injectChildRuntimeFailure)
+                            {
+                                Assert.Contains(
+                                    runtimeLifecycleEvents,
+                                    lifecycleEvent =>
+                                        string.Equals(
+                                            lifecycleEvent.EventType,
+                                            AiRuntimeLifecycleEvents.RuntimeReplacementRegistered,
+                                            StringComparison.Ordinal));
+                            }
+
+                            Assert.Contains(
+                                runtimeLifecycleEvents,
+                                lifecycleEvent =>
+                                    string.Equals(
+                                        lifecycleEvent.EventType,
+                                        AiRuntimeLifecycleEvents.HostDisappeared,
+                                        StringComparison.Ordinal) &&
+                                    (string.Equals(
+                                         lifecycleEvent.KubernetesPodUid,
+                                         podFailureProof.FailedPodUid,
+                                         StringComparison.Ordinal) ||
+                                     string.Equals(
+                                         lifecycleEvent.HostId,
+                                         podFailureProof.FailedPodUid,
+                                         StringComparison.Ordinal)));
+
+                            output.WriteLine(
+                                $"[{boundedCapacityProfile.LogPrefix} WARM REUSE CANONICAL RUNTIME LIFECYCLE PROOF] " +
+                                $"Cycle='{auditCycleNumber}', EventCount='{runtimeLifecycleEvents.Length}', " +
+                                $"DurableSource='RuntimeLifecycleJournal', LegacyRuntimeLedgerQuery='skipped'.");
                         }
+                        else
+                        {
+                            foreach (var runtimeInstanceIdBatch in
+                                     assignedRuntimeInstanceIds.Chunk(8))
+                            {
+                                var currentBatch =
+                                    await Task.WhenAll(
+                                            runtimeInstanceIdBatch.Select(
+                                                runtimeInstanceId =>
+                                                    QueryPhase5LedgerWithFreshContextAsync(
+                                                        new AiDecisionLedgerQuery
+                                                        {
+                                                            ExecutionId =
+                                                                $"control-plane-runtime-instance:{runtimeInstanceId}",
+                                                            TimestampFromUtc = ledgerTimelineFromUtc,
+                                                            TimestampToUtc = ledgerTimelineToUtc
+                                                        },
+                                                        $"observability.ledger.warm-reuse.runtime-instance:{auditCycleNumber}:{runtimeInstanceId}")))
+                                        .ConfigureAwait(false);
+
+                                runtimeLifecycleLedgerEntries.AddRange(
+                                    currentBatch.SelectMany(entries => entries));
+                            }
+                        }
+
+                        runtimeLifecycleProofStopwatch.Stop();
+
+                        output.WriteLine(
+                            $"[{boundedCapacityProfile.LogPrefix} WARM REUSE PHASE 5 TIMING] " +
+                            $"Cycle='{auditCycleNumber}', Proof='runtime-lifecycle', Duration='{runtimeLifecycleProofStopwatch.Elapsed}', " +
+                            $"Mode='{recoveryObservationMode}', LegacyLedgerEntryCount='{runtimeLifecycleLedgerEntries.Count}'.");
 
                         var combinedLedgerEntries =
                             executionLedgerEntries
@@ -3171,7 +3530,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                         .ToHashSet(StringComparer.Ordinal),
                                     recoveredExecutionIds,
                                     parentLogicalStepCount,
-                                    $"Warm reuse cycle {cycleNumber} logical step completion ledger proof");
+                                    $"Warm reuse cycle {auditCycleNumber} logical step completion ledger proof");
 
                         var dispatchLedgerProof =
                             RuntimePoolProductionCycleExecutor
@@ -3179,7 +3538,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     submittedSharedRunIds,
                                     recoveredSharedRunIds,
                                     controlPlaneLedgerEntries,
-                                    $"Warm reuse cycle {cycleNumber} durable dispatch ledger proof");
+                                    $"Warm reuse cycle {auditCycleNumber} durable dispatch ledger proof");
 
                         var dispatchedSharedRunCount =
                             dispatchLedgerProof
@@ -3192,7 +3551,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                         output.WriteLine(
                             $"[{boundedCapacityProfile.LogPrefix} WARM REUSE STEP LEDGER PROOF] " +
-                            $"Cycle='{cycleNumber}', " +
+                            $"Cycle='{auditCycleNumber}', " +
                             $"ExpectedLogicalStepCount='{logicalStepCountPerCycle}', " +
                             $"DistinctLogicalStepCompletedCount='{stepCompletionLedgerProof.DistinctLogicalStepCompletedCount}', " +
                             $"RawStepCompletedEntryCount='{stepCompletionLedgerProof.RawStepCompletedEntryCount}', " +
@@ -3201,14 +3560,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                         output.WriteLine(
                             $"[{boundedCapacityProfile.LogPrefix} WARM REUSE DISPATCH LEDGER PROOF] " +
-                            $"Cycle='{cycleNumber}', " +
+                            $"Cycle='{auditCycleNumber}', " +
                             $"SubmittedRunCount='{submittedRunCountPerCycle}', " +
                             $"InitialDispatchSucceededCount='{dispatchLedgerProof.InitialDispatchSucceededSharedRunIds.Count}', " +
                             $"RecoveryCoveredMissingInitialDispatchCount='{dispatchLedgerProof.RecoveryCoveredSharedRunIds.Count}', " +
                             $"DurableDispatchProvenCount='{dispatchedSharedRunCount}', " +
                             $"RecoveryCoveredSharedRunIds='{string.Join(",", dispatchLedgerProof.RecoveryCoveredSharedRunIds.OrderBy(value => value, StringComparer.Ordinal))}'.");
 
-                        if (cycleNumber == 1)
+                        if (auditCycleNumber == 1)
                         {
                             Assert.Contains(
                                 controlPlaneLedgerEntries,
@@ -3217,15 +3576,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     StringComparison.OrdinalIgnoreCase));
                         }
 
-                        Assert.Contains(
-                            combinedLedgerEntries,
-                            entry => entry.EventType.StartsWith(
-                                "control.recovery.",
-                                StringComparison.OrdinalIgnoreCase));
+                        if (recoveryObservationMode ==
+                            ProductionRecoveryObservationMode.EventDriven)
+                        {
+                            Assert.NotEmpty(cycleRecoveryForensicsIds);
+                        }
+                        else
+                        {
+                            Assert.Contains(
+                                combinedLedgerEntries,
+                                entry => entry.EventType.StartsWith(
+                                    "control.recovery.",
+                                    StringComparison.OrdinalIgnoreCase));
+                        }
 
                         ProductionTenantLedgerSummaryOutput.Write(
                             output,
-                            $"WARM REUSE CYCLE {cycleNumber} TENANT LEDGER SUMMARY",
+                            $"WARM REUSE CYCLE {auditCycleNumber} TENANT LEDGER SUMMARY",
                             new[]
                             {
                                 new ProductionTenantLedgerSummary(
@@ -3249,7 +3616,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                         var cycleProof =
                             new BoundedCapacityWarmReuseCycleProof(
-                                cycleNumber,
+                                auditCycleNumber,
                                 warmStartMembership?.PodUids ??
                                     new HashSet<string>(StringComparer.Ordinal),
                                 warmStartMembership?.RuntimeInstanceIds ??
@@ -3271,13 +3638,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 Volatile.Read(ref phase5TooManyRequestsRetryCount),
                                 cycleStopwatch.Elapsed);
 
-                        cycleProofs.Add(cycleProof);
-                        previousCycleProof = cycleProof;
+                        auditStopwatch.Stop();
 
                         output.WriteLine(string.Empty);
                         output.WriteLine(
-                            $"# WARM REUSE CYCLE {cycleNumber} PROOF");
-                        output.WriteLine($"CycleNumber='{cycleNumber}'");
+                            $"# WARM REUSE CYCLE {auditCycleNumber} AUDIT PROOF");
+                        output.WriteLine($"CycleNumber='{auditCycleNumber}'");
                         output.WriteLine($"SubmittedRunCount='{submittedSharedRunIds.Count}'");
                         output.WriteLine($"CompletedRunCount='{finalRuns.Count}'");
                         output.WriteLine($"LogicalStepCount='{logicalStepCountPerCycle}'");
@@ -3298,8 +3664,33 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         output.WriteLine($"DistinctLogicalStepCompletedLedgerCount='{stepCompletionLedgerProof.DistinctLogicalStepCompletedCount}'");
                         output.WriteLine($"RecoveryCoveredDuplicateStepCompletedLedgerEntryCount='{stepCompletionLedgerProof.DuplicateStepCompletedEntryCount}'");
                         output.WriteLine($"Phase5TooManyRequestsRetryCount='{Volatile.Read(ref phase5TooManyRequestsRetryCount)}'");
-                        output.WriteLine($"CycleDuration='{cycleStopwatch.Elapsed}'");
+                        output.WriteLine($"RuntimeCycleDuration='{cycleStopwatch.Elapsed}'");
+                        output.WriteLine($"AuditDuration='{auditStopwatch.Elapsed}'");
                         output.WriteLine("CleanupExecuted='false'");
+
+                        return cycleProof;
+                        }
+
+                        if (recoveryObservationMode ==
+                            ProductionRecoveryObservationMode.EventDriven)
+                        {
+                            cycleStopwatch.Stop();
+                            deferredCycleAudits.Add(ExecuteCurrentCycleAuditAsync);
+
+                            output.WriteLine(
+                                $"[{boundedCapacityProfile.LogPrefix} WARM REUSE AUDIT DEFERRED] " +
+                                $"Cycle='{cycleNumber}', " +
+                                $"RuntimeDuration='{cycleStopwatch.Elapsed}', " +
+                                "Reason='preserve-runtime-cycle-continuity-before-expensive-audit'.");
+                        }
+                        else
+                        {
+                            var cycleProof =
+                                await ExecuteCurrentCycleAuditAsync()
+                                    .ConfigureAwait(false);
+
+                            cycleProofs.Add(cycleProof);
+                        }
                     }
                     finally
                     {
@@ -3307,6 +3698,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                         await observationTask
                             .ConfigureAwait(false);
+                    }
+                }
+
+                if (recoveryObservationMode ==
+                    ProductionRecoveryObservationMode.EventDriven)
+                {
+                    output.WriteLine(string.Empty);
+                    output.WriteLine(
+                        $"# WARM REUSE DEFERRED AUDIT {deferredCycleAudits.Count} CYCLE(S)");
+
+                    foreach (var deferredCycleAudit in deferredCycleAudits)
+                    {
+                        var cycleProof =
+                            await deferredCycleAudit()
+                                .ConfigureAwait(false);
+
+                        cycleProofs.Add(cycleProof);
                     }
                 }
 
@@ -3430,6 +3838,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine("LostRunDetected='false'");
                 output.WriteLine("PodCapacityExceeded='false'");
                 output.WriteLine("RuntimeCapacityExceeded='false'");
+
+                scenarioCompleted = true;
             }
             catch (Exception exception)
             {
@@ -3450,7 +3860,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     $"ControlPlaneId='{controlPlaneId}', " +
                     $"PoolId='{poolId}', " +
                     $"ExecutionCycleCount='{executionCycleCount}', " +
-                    "CleanupTrigger='final-cycle-completed'.");
+                    $"CleanupTrigger='{(scenarioCompleted ? "final-cycle-completed" : "failure-cleanup")}'.");
 
                 await OnCrashRecoveryScenarioCompletedAsync(controlPlaneId)
                     .ConfigureAwait(false);
@@ -4581,7 +4991,116 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             };
         }
 
-        private static async Task<BoundedCapacityPoolMembershipSnapshot>
+        private async Task<T> AwaitScenarioOperationWithProgressAsync<T>(
+            Task<T> operationTask,
+            string phase,
+            Stopwatch totalStopwatch)
+        {
+            ArgumentNullException.ThrowIfNull(operationTask);
+            ArgumentException.ThrowIfNullOrWhiteSpace(phase);
+            ArgumentNullException.ThrowIfNull(totalStopwatch);
+
+            var phaseStopwatch =
+                Stopwatch.StartNew();
+
+            output.WriteLine(
+                $"[KUBERNETES RUNTIME POOL SCENARIO PHASE START] Phase='{phase}', TotalElapsed='{totalStopwatch.Elapsed}'.");
+
+            try
+            {
+                while (!operationTask.IsCompleted)
+                {
+                    var completedTask =
+                        await Task.WhenAny(
+                                operationTask,
+                                Task.Delay(
+                                    TimeSpan.FromSeconds(
+                                        ScenarioProgressLogIntervalSeconds)))
+                            .ConfigureAwait(false);
+
+                    if (completedTask == operationTask)
+                    {
+                        break;
+                    }
+
+                    output.WriteLine(
+                        $"[KUBERNETES RUNTIME POOL SCENARIO HEARTBEAT] Phase='{phase}', PhaseElapsed='{phaseStopwatch.Elapsed}', TotalElapsed='{totalStopwatch.Elapsed}', Observation='passive-no-registry-no-redis-read'.");
+                }
+
+                var result =
+                    await operationTask.ConfigureAwait(false);
+
+                output.WriteLine(
+                    $"[KUBERNETES RUNTIME POOL SCENARIO PHASE COMPLETE] Phase='{phase}', PhaseElapsed='{phaseStopwatch.Elapsed}', TotalElapsed='{totalStopwatch.Elapsed}'.");
+
+                return result;
+            }
+            catch (Exception exception)
+            {
+                output.WriteLine(
+                    $"[KUBERNETES RUNTIME POOL SCENARIO PHASE FAILED] Phase='{phase}', PhaseElapsed='{phaseStopwatch.Elapsed}', TotalElapsed='{totalStopwatch.Elapsed}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+                throw;
+            }
+        }
+
+        private async Task AwaitScenarioOperationWithProgressAsync(
+            Task operationTask,
+            string phase,
+            Stopwatch totalStopwatch)
+        {
+            ArgumentNullException.ThrowIfNull(operationTask);
+            ArgumentException.ThrowIfNullOrWhiteSpace(phase);
+            ArgumentNullException.ThrowIfNull(totalStopwatch);
+
+            var phaseStopwatch =
+                Stopwatch.StartNew();
+
+            output.WriteLine(
+                $"[KUBERNETES RUNTIME POOL SCENARIO PHASE START] Phase='{phase}', TotalElapsed='{totalStopwatch.Elapsed}'.");
+
+            try
+            {
+                while (!operationTask.IsCompleted)
+                {
+                    var completedTask =
+                        await Task.WhenAny(
+                                operationTask,
+                                Task.Delay(
+                                    TimeSpan.FromSeconds(
+                                        ScenarioProgressLogIntervalSeconds)))
+                            .ConfigureAwait(false);
+
+                    if (completedTask == operationTask)
+                    {
+                        break;
+                    }
+
+                    output.WriteLine(
+                        $"[KUBERNETES RUNTIME POOL SCENARIO HEARTBEAT] Phase='{phase}', PhaseElapsed='{phaseStopwatch.Elapsed}', TotalElapsed='{totalStopwatch.Elapsed}', Observation='passive-no-registry-no-redis-read'.");
+                }
+
+                await operationTask.ConfigureAwait(false);
+
+                output.WriteLine(
+                    $"[KUBERNETES RUNTIME POOL SCENARIO PHASE COMPLETE] Phase='{phase}', PhaseElapsed='{phaseStopwatch.Elapsed}', TotalElapsed='{totalStopwatch.Elapsed}'.");
+            }
+            catch (Exception exception)
+            {
+                output.WriteLine(
+                    $"[KUBERNETES RUNTIME POOL SCENARIO PHASE FAILED] Phase='{phase}', PhaseElapsed='{phaseStopwatch.Elapsed}', TotalElapsed='{totalStopwatch.Elapsed}', ExceptionType='{exception.GetType().FullName}', Message='{exception.Message}'.");
+                throw;
+            }
+        }
+
+        private static TimeSpan MaxZero(
+            TimeSpan value)
+        {
+            return value > TimeSpan.Zero
+                ? value
+                : TimeSpan.Zero;
+        }
+
+        private async Task<BoundedCapacityPoolMembershipSnapshot>
             WaitForBoundedCapacityPoolMembershipAsync(
                 IAiRuntimeInstanceRegistry registry,
                 string poolId,
@@ -4589,12 +5108,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 int runtimeCountPerPod,
                 bool requireAvailableCapacity,
                 TimeSpan timeout,
-                TimeSpan? hardTimeout = null)
+                TimeSpan? hardTimeout = null,
+                string progressLabel = "bounded-capacity-topology")
         {
             ArgumentNullException.ThrowIfNull(registry);
             ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(expectedPodCount);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(runtimeCountPerPod);
+            ArgumentException.ThrowIfNullOrWhiteSpace(progressLabel);
 
             if (timeout <= TimeSpan.Zero)
             {
@@ -4631,6 +5152,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var highestRuntimeCount = 0;
             var highestReadyRuntimeCount = 0;
             var highestAvailableRuntimeCount = 0;
+            var nextProgressLogUtc =
+                startedAtUtc.AddSeconds(ScenarioProgressLogIntervalSeconds);
+
+            output.WriteLine(
+                $"[KUBERNETES RUNTIME POOL TOPOLOGY WAIT START] Phase='{progressLabel}', PoolId='{poolId}', ExpectedPodCount='{expectedPodCount}', ExpectedRuntimeCount='{expectedRuntimeCount}', RuntimeCountPerPod='{runtimeCountPerPod}', RequireAvailableCapacity='{requireAvailableCapacity}', ProgressTimeout='{timeout}', HardTimeout='{hardTimeout ?? timeout}'.");
 
             while (DateTimeOffset.UtcNow < hardDeadlineUtc &&
                    DateTimeOffset.UtcNow < progressDeadlineUtc)
@@ -4703,8 +5229,30 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     !requireAvailableCapacity ||
                     runtimes.All(runtime => runtime.CanAcceptRun);
 
+                var nowUtc =
+                    DateTimeOffset.UtcNow;
+
+                if (nowUtc >= nextProgressLogUtc)
+                {
+                    var hostDistribution =
+                        string.Join(
+                            ",",
+                            pods
+                                .OrderBy(pod => pod.Key, StringComparer.Ordinal)
+                                .Select(pod => $"{pod.Key}:{pod.Count()}"));
+
+                    output.WriteLine(
+                        $"[KUBERNETES RUNTIME POOL TOPOLOGY HEARTBEAT] Phase='{progressLabel}', Elapsed='{nowUtc - startedAtUtc}', PodCount='{lastPodCount}/{expectedPodCount}', RuntimeCount='{lastRuntimeCount}/{expectedRuntimeCount}', ReadyRuntimeCount='{lastReadyRuntimeCount}/{expectedRuntimeCount}', AvailableRuntimeCount='{lastAvailableRuntimeCount}', ExactTopology='{exactTopology}', AvailabilitySatisfied='{availabilitySatisfied}', HostDistribution='{hostDistribution}', ProgressDeadlineRemaining='{MaxZero(progressDeadlineUtc - nowUtc)}', HardDeadlineRemaining='{MaxZero(hardDeadlineUtc - nowUtc)}'.");
+
+                    nextProgressLogUtc =
+                        nowUtc.AddSeconds(ScenarioProgressLogIntervalSeconds);
+                }
+
                 if (exactTopology && availabilitySatisfied)
                 {
+                    output.WriteLine(
+                        $"[KUBERNETES RUNTIME POOL TOPOLOGY WAIT COMPLETE] Phase='{progressLabel}', Elapsed='{DateTimeOffset.UtcNow - startedAtUtc}', PodCount='{lastPodCount}', RuntimeCount='{lastRuntimeCount}', ReadyRuntimeCount='{lastReadyRuntimeCount}', AvailableRuntimeCount='{lastAvailableRuntimeCount}'.");
+
                     return new BoundedCapacityPoolMembershipSnapshot(
                         pods
                             .Select(pod => pod.Key)

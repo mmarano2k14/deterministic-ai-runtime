@@ -1,4 +1,5 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager.ProcessControl;
@@ -113,7 +114,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(minimumCompletedStepsBeforeKill);
 
             if (observationMode != ProductionRecoveryObservationMode.Polling &&
-                observationMode != ProductionRecoveryObservationMode.HybridSignals)
+                observationMode != ProductionRecoveryObservationMode.HybridSignals &&
+                observationMode != ProductionRecoveryObservationMode.EventDriven)
             {
                 throw new ArgumentOutOfRangeException(
                     nameof(observationMode),
@@ -724,6 +726,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <param name="executionResolveTimeout">The maximum durable execution resolution duration.</param>
         /// <param name="observationMode">The production recovery observation mode.</param>
         /// <param name="signalSubscriber">The runtime signal subscriber used only in hybrid mode.</param>
+        /// <param name="lifecycleObserver">The deterministic canonical lifecycle observer used only in event-driven mode.</param>
         /// <param name="controlPlaneId">The logical control-plane identifier used only in hybrid mode.</param>
         /// <param name="hybridFallbackPollInterval">The slow durable fallback interval used only in hybrid mode.</param>
         /// <param name="crashCheckpointGate">The optional durable crash checkpoint released immediately after process termination.</param>
@@ -749,6 +752,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 ProductionRecoveryObservationMode observationMode =
                     ProductionRecoveryObservationMode.Polling,
                 IAiRuntimeSignalSubscriber? signalSubscriber = null,
+                IAiDeterministicLifecycleObserver? lifecycleObserver = null,
                 string? controlPlaneId = null,
                 TimeSpan? hybridFallbackPollInterval = null,
                 ProductionCrashCheckpointGate? crashCheckpointGate = null,
@@ -776,12 +780,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             }
 
             if (observationMode != ProductionRecoveryObservationMode.Polling &&
-                observationMode != ProductionRecoveryObservationMode.HybridSignals)
+                observationMode != ProductionRecoveryObservationMode.HybridSignals &&
+                observationMode != ProductionRecoveryObservationMode.EventDriven)
             {
                 throw new ArgumentOutOfRangeException(
                     nameof(observationMode),
                     observationMode,
                     "The production recovery observation mode is not supported.");
+            }
+
+            if (observationMode == ProductionRecoveryObservationMode.EventDriven)
+            {
+                ArgumentNullException.ThrowIfNull(lifecycleObserver);
             }
 
             var resolvedHybridFallbackPollInterval =
@@ -825,6 +835,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 var localQueuedPreKillSnapshotTasks = inventory.LocalQueuedRuns
                     .Select(CaptureLocalQueuedPreKillSnapshotAsync)
                     .ToArray();
+
+                if (observationMode == ProductionRecoveryObservationMode.EventDriven)
+                {
+                    output.WriteLine(
+                        "[REAL RUNTIME INVENTORY EVENT-DRIVEN MODE] " +
+                        "Canonical events drive post-kill recovery synchronization; " +
+                        "the historical durable progress read remains the crash-threshold authority.");
+                }
 
                 var killObservation =
                     observationMode == ProductionRecoveryObservationMode.HybridSignals
@@ -1078,6 +1096,32 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
                 foreach (var work in inventory.Works)
                 {
+                    if (observationMode == ProductionRecoveryObservationMode.EventDriven)
+                    {
+                        var requeueEventType =
+                            work.Kind == RealRuntimeCrashWorkKind.InFlightExecution
+                                ? AiEngineEvents.Recovery.SharedRunRequeuedForResume
+                                : AiEngineEvents.Recovery.SharedRunRequeuedForLocalQueuedRecovery;
+
+                        var requeueEvent = await ProductionRecoveryWaitHelpers
+                            .WaitForRecoveryRequeueEventAsync(
+                                lifecycleObserver!,
+                                requeueEventType,
+                                work.SharedRunId,
+                                inventory.RuntimeInstanceId,
+                                work.ExecutionId,
+                                requeueTimeout)
+                            .ConfigureAwait(false);
+
+                        output.WriteLine(
+                            $"[REAL RUNTIME INVENTORY EVENT-DRIVEN REQUEUE] " +
+                            $"EventType='{requeueEvent.SemanticEventType}', " +
+                            $"EventId='{requeueEvent.EventId}', " +
+                            $"SharedRunId='{work.SharedRunId}', " +
+                            $"ExecutionId='{work.ExecutionId}', " +
+                            $"FailedRuntimeInstanceId='{inventory.RuntimeInstanceId}'.");
+                    }
+
                     await WaitForWorkRequeuedForRecoveryAsync(
                             registry,
                             runExecutionIndex,
@@ -1088,7 +1132,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                             postKillSnapshots[work.LocalRunId],
                             killRequestedAtUtc,
                             killCompletedAtUtc,
-                            requeueTimeout)
+                            observationMode == ProductionRecoveryObservationMode.EventDriven
+                                ? TimeSpan.FromSeconds(Math.Min(5, requeueTimeout.TotalSeconds))
+                                : requeueTimeout)
                         .ConfigureAwait(false);
                 }
 
@@ -1097,27 +1143,37 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 foreach (var work in inventory.Works)
                 {
                     var redispatchedRun =
-                        observationMode == ProductionRecoveryObservationMode.HybridSignals
+                        observationMode == ProductionRecoveryObservationMode.EventDriven
                             ? await ProductionRecoveryWaitHelpers
-                                .WaitForRecoveredRunRedispatchedHybridAsync(
+                                .WaitForRecoveredRunRedispatchedEventDrivenAsync(
+                                    lifecycleObserver!,
                                     sharedRunStore,
-                                    sharedQueue,
-                                    work.SharedRunId,
-                                    inventory.RuntimeInstanceId,
-                                    work.LocalRunId,
-                                    sharedRunDispatchSignalTasks[work.SharedRunId],
-                                    redispatchTimeout,
-                                    resolvedHybridFallbackPollInterval)
-                                .ConfigureAwait(false)
-                            : await ProductionRecoveryWaitHelpers
-                                .WaitForRecoveredRunRedispatchedAsync(
-                                    sharedRunStore,
-                                    sharedQueue,
                                     work.SharedRunId,
                                     inventory.RuntimeInstanceId,
                                     work.LocalRunId,
                                     redispatchTimeout)
-                                .ConfigureAwait(false);
+                                .ConfigureAwait(false)
+                            : observationMode == ProductionRecoveryObservationMode.HybridSignals
+                                ? await ProductionRecoveryWaitHelpers
+                                    .WaitForRecoveredRunRedispatchedHybridAsync(
+                                        sharedRunStore,
+                                        sharedQueue,
+                                        work.SharedRunId,
+                                        inventory.RuntimeInstanceId,
+                                        work.LocalRunId,
+                                        sharedRunDispatchSignalTasks[work.SharedRunId],
+                                        redispatchTimeout,
+                                        resolvedHybridFallbackPollInterval)
+                                    .ConfigureAwait(false)
+                                : await ProductionRecoveryWaitHelpers
+                                    .WaitForRecoveredRunRedispatchedAsync(
+                                        sharedRunStore,
+                                        sharedQueue,
+                                        work.SharedRunId,
+                                        inventory.RuntimeInstanceId,
+                                        work.LocalRunId,
+                                        redispatchTimeout)
+                                    .ConfigureAwait(false);
 
                     Assert.False(string.IsNullOrWhiteSpace(redispatchedRun.AssignedRuntimeInstanceId));
                     Assert.False(string.IsNullOrWhiteSpace(redispatchedRun.LocalRunId));

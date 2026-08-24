@@ -62,33 +62,79 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 Events = NormalizeEvents(record.Events)
             };
 
-            var filter = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(
-                x => x.Id,
-                normalized.Identity.ForensicsId);
-
-            var existing = await _collection
-                .Find(filter)
-                .FirstOrDefaultAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            if (existing is not null)
+            while (true)
             {
-                normalized = normalized with
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var idFilter = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(
+                    x => x.Id,
+                    normalized.Identity.ForensicsId);
+
+                var existing = await _collection
+                    .Find(idFilter)
+                    .FirstOrDefaultAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (existing is null)
+                {
+                    var insertedDocument = MongoAiRuntimeRecoveryForensicsDocument
+                        .FromRecord(normalized) with
+                    {
+                        Version = 1
+                    };
+
+                    try
+                    {
+                        await _collection
+                            .InsertOneAsync(
+                                insertedDocument,
+                                cancellationToken: cancellationToken)
+                            .ConfigureAwait(false);
+
+                        return;
+                    }
+                    catch (MongoWriteException exception) when (IsDuplicateKey(exception))
+                    {
+                        // Another writer created this forensics record after our read.
+                        // Re-read and merge rather than replacing that writer's events.
+                        continue;
+                    }
+                }
+
+                var merged = normalized with
                 {
                     Identity = MergeIdentity(existing.Record.Identity, normalized.Identity),
-                    CreatedAtUtc = existing.Record.CreatedAtUtc == default ? normalized.CreatedAtUtc : existing.Record.CreatedAtUtc,
-                    Events = NormalizeEvents(existing.Record.Events.Concat(normalized.Events).ToList())
+                    CreatedAtUtc = existing.Record.CreatedAtUtc == default
+                        ? normalized.CreatedAtUtc
+                        : existing.Record.CreatedAtUtc,
+                    Events = NormalizeEvents(
+                        existing.Record.Events
+                            .Concat(normalized.Events)
+                            .ToList())
                 };
+
+                var replacementDocument = MongoAiRuntimeRecoveryForensicsDocument
+                    .FromRecord(merged) with
+                {
+                    Version = existing.Version + 1
+                };
+
+                var replaceResult = await _collection
+                    .ReplaceOneAsync(
+                        CreateVersionedDocumentFilter(existing),
+                        replacementDocument,
+                        new ReplaceOptions { IsUpsert = false },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (replaceResult.MatchedCount == 1)
+                {
+                    return;
+                }
+
+                // A concurrent writer changed the document after our read. Re-read,
+                // merge its durable state, and retry with the new persistence version.
             }
-
-            var document = MongoAiRuntimeRecoveryForensicsDocument.FromRecord(normalized);
-
-            await _collection.ReplaceOneAsync(
-                    filter,
-                    document,
-                    new ReplaceOptions { IsUpsert = true },
-                    cancellationToken)
-                .ConfigureAwait(false);
         }
 
         /// <inheritdoc />
@@ -110,40 +156,87 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 TimestampUtc = evt.TimestampUtc == default ? now : evt.TimestampUtc
             };
 
-            var filter = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(
-                x => x.Id,
-                forensicsId);
-
-            var existing = await _collection
-                .Find(filter)
-                .FirstOrDefaultAsync(cancellationToken)
-                .ConfigureAwait(false);
-
             var eventIdentity = CreateIdentityFromEvent(forensicsId, normalizedEvent);
 
-            var record = existing?.Record ?? new AiRuntimeRecoveryForensicsRecord
+            while (true)
             {
-                Identity = eventIdentity,
-                CreatedAtUtc = now,
-                UpdatedAtUtc = now,
-                Events = Array.Empty<AiRuntimeRecoveryForensicsEvent>()
-            };
+                cancellationToken.ThrowIfCancellationRequested();
 
-            var normalized = record with
-            {
-                Identity = MergeIdentity(record.Identity, eventIdentity),
-                UpdatedAtUtc = now,
-                Events = NormalizeEvents(record.Events.Concat(new[] { normalizedEvent }).ToList())
-            };
+                var idFilter = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(
+                    x => x.Id,
+                    forensicsId);
 
-            var document = MongoAiRuntimeRecoveryForensicsDocument.FromRecord(normalized);
+                var existing = await _collection
+                    .Find(idFilter)
+                    .FirstOrDefaultAsync(cancellationToken)
+                    .ConfigureAwait(false);
 
-            await _collection.ReplaceOneAsync(
-                    filter,
-                    document,
-                    new ReplaceOptions { IsUpsert = true },
-                    cancellationToken)
-                .ConfigureAwait(false);
+                if (existing is null)
+                {
+                    var newRecord = new AiRuntimeRecoveryForensicsRecord
+                    {
+                        Identity = eventIdentity,
+                        CreatedAtUtc = now,
+                        UpdatedAtUtc = now,
+                        Events = NormalizeEvents(new[] { normalizedEvent })
+                    };
+
+                    var insertedDocument = MongoAiRuntimeRecoveryForensicsDocument
+                        .FromRecord(newRecord) with
+                    {
+                        Version = 1
+                    };
+
+                    try
+                    {
+                        await _collection
+                            .InsertOneAsync(
+                                insertedDocument,
+                                cancellationToken: cancellationToken)
+                            .ConfigureAwait(false);
+
+                        return;
+                    }
+                    catch (MongoWriteException exception) when (IsDuplicateKey(exception))
+                    {
+                        // Another writer created the record concurrently. Re-read it so
+                        // this event is merged with the durable event timeline.
+                        continue;
+                    }
+                }
+
+                var mergedRecord = existing.Record with
+                {
+                    Identity = MergeIdentity(existing.Record.Identity, eventIdentity),
+                    UpdatedAtUtc = now,
+                    Events = NormalizeEvents(
+                        existing.Record.Events
+                            .Concat(new[] { normalizedEvent })
+                            .ToList())
+                };
+
+                var replacementDocument = MongoAiRuntimeRecoveryForensicsDocument
+                    .FromRecord(mergedRecord) with
+                {
+                    Version = existing.Version + 1
+                };
+
+                var replaceResult = await _collection
+                    .ReplaceOneAsync(
+                        CreateVersionedDocumentFilter(existing),
+                        replacementDocument,
+                        new ReplaceOptions { IsUpsert = false },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (replaceResult.MatchedCount == 1)
+                {
+                    return;
+                }
+
+                // A concurrent append/upsert won the compare-and-swap. Re-read the
+                // latest timeline and retry so no uniquely identified event is lost.
+            }
         }
 
         /// <inheritdoc />
@@ -272,6 +365,38 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 .ConfigureAwait(false);
 
             return documents.Select(x => x.Record).ToList();
+        }
+
+        /// <summary>
+        /// Creates the compare-and-swap filter for a previously read persistence document.
+        /// </summary>
+        /// <param name="existing">The document snapshot used to build the replacement.</param>
+        /// <returns>A filter that matches only while the document has not been changed by another writer.</returns>
+        private static FilterDefinition<MongoAiRuntimeRecoveryForensicsDocument> CreateVersionedDocumentFilter(
+            MongoAiRuntimeRecoveryForensicsDocument existing)
+        {
+            var filters = Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter;
+            var idFilter = filters.Eq(x => x.Id, existing.Id);
+            var versionFilter = filters.Eq(x => x.Version, existing.Version);
+
+            if (existing.Version == 0)
+            {
+                versionFilter = filters.Or(
+                    versionFilter,
+                    filters.Exists(x => x.Version, false));
+            }
+
+            return filters.And(idFilter, versionFilter);
+        }
+
+        /// <summary>
+        /// Determines whether a MongoDB write failure is a duplicate-key conflict.
+        /// </summary>
+        /// <param name="exception">The MongoDB write exception.</param>
+        /// <returns>True when another writer inserted the same persistence identity concurrently.</returns>
+        private static bool IsDuplicateKey(MongoWriteException exception)
+        {
+            return exception.WriteError?.Category == ServerErrorCategory.DuplicateKey;
         }
 
         /// <summary>

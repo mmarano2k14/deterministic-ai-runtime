@@ -114,6 +114,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         }
 
         /// <inheritdoc />
+        public Task<V1Endpoints> ReadEndpointsAsync(
+            string serviceName,
+            string namespaceName,
+            CancellationToken cancellationToken = default)
+        {
+            return this.client.CoreV1.ReadNamespacedEndpointsAsync(
+                name: serviceName,
+                namespaceParameter: namespaceName,
+                cancellationToken: cancellationToken);
+        }
+
+        /// <inheritdoc />
         public async Task<IReadOnlyList<V1Service>> ListServicesAsync(
             string namespaceName,
             string? labelSelector = null,

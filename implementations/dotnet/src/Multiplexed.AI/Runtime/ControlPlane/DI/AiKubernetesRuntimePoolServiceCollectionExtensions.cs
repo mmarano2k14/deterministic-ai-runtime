@@ -3,6 +3,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Capacity;
@@ -17,6 +19,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Reco
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strategy.Kubernetes.Client.Factory;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.DI
@@ -172,7 +175,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                         serviceProvider.GetRequiredService<
                             IAiRuntimePoolFailureJournal>(),
                         serviceProvider.GetRequiredService<
-                            IAiRuntimePoolCapacitySafetyWriter>()));
+                            IAiRuntimePoolCapacitySafetyWriter>(),
+                        serviceProvider.GetService<
+                            IAiRuntimeLifecycleJournal>()
+                        ?? NoopAiRuntimeLifecycleJournal.Instance,
+                        serviceProvider.GetService<
+                            IAiControlPlaneObserver>()));
 
             services.TryAddSingleton<
                 IAiRuntimePoolCapacitySafetyBatchWriter>(

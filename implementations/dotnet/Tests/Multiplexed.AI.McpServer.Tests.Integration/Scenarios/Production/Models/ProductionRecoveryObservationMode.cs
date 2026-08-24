@@ -13,6 +13,13 @@
         /// <summary>
         /// Uses targeted runtime signals with durable-store fallback polling.
         /// </summary>
-        HybridSignals = 1
+        HybridSignals = 1,
+
+        /// <summary>
+        /// Uses canonical engine events through the deterministic lifecycle observer,
+        /// then verifies the resulting durable runtime state without replacing the
+        /// historical polling mode used by existing scenarios.
+        /// </summary>
+        EventDriven = 2
     }
 }

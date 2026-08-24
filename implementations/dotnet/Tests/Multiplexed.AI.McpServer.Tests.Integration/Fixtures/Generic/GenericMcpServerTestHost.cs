@@ -47,6 +47,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         private const string HttpScaleOutHostManagerMode = "HostManager";
         private const string UseCapturingLedgerRecorderSettingKey = "Tests:UseCapturingLedgerRecorder";
         private const string UseMongoRuntimeLifecycleJournalSettingKey = "Tests:UseMongoRuntimeLifecycleJournal";
+        private const string UseDeterministicLifecycleObservationSettingKey = "Tests:UseDeterministicLifecycleObservation";
 
         /// <summary>
         /// The configuration settings used to start the test host.
@@ -215,6 +216,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
                     services.AddMongoAiRuntimeLifecycleJournal();
                     Console.WriteLine(
                         "[TEST MCP HOST] Durable Mongo runtime lifecycle journal registered.");
+                }
+
+                if (ShouldUseDeterministicLifecycleObservation(settings))
+                {
+                    services.AddAiControlPlaneDeterministicLifecycleObservation();
+                    Console.WriteLine(
+                        "[TEST MCP HOST] Deterministic canonical lifecycle observation registered.");
                 }
 
                 RegisterHostManagerModeTestServices(services);
@@ -389,6 +397,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
         {
             return settings.TryGetValue(
                     UseMongoRuntimeLifecycleJournalSettingKey,
+                    out var value) &&
+                bool.TryParse(value, out var enabled) &&
+                enabled;
+        }
+
+        /// <summary>
+        /// Determines whether the test host enables deterministic canonical lifecycle observation.
+        /// </summary>
+        /// <param name="settings">The test host settings.</param>
+        /// <returns><c>true</c> when deterministic lifecycle observation is enabled.</returns>
+        private static bool ShouldUseDeterministicLifecycleObservation(
+            IReadOnlyDictionary<string, string?> settings)
+        {
+            return settings.TryGetValue(
+                    UseDeterministicLifecycleObservationSettingKey,
                     out var value) &&
                 bool.TryParse(value, out var enabled) &&
                 enabled;

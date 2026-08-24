@@ -57,6 +57,21 @@ namespace Multiplexed.AI.Tests.Fixtures
         public Exception? ListServicesException { get; set; }
 
         /// <summary>
+        /// Gets or sets the exception thrown when reading Endpoints.
+        /// </summary>
+        public Exception? ReadEndpointsException { get; set; }
+
+        /// <summary>
+        /// Gets or sets a callback invoked when Endpoints are read.
+        /// </summary>
+        public Action? ReadEndpointsCallback { get; set; }
+
+        /// <summary>
+        /// Gets or sets the Endpoints resource returned by Endpoints reads.
+        /// </summary>
+        public V1Endpoints? Endpoints { get; set; }
+
+        /// <summary>
         /// Gets or sets the exception thrown when reading a cluster-scoped custom resource.
         /// </summary>
         public Exception? ReadClusterCustomObjectException { get; set; }
@@ -135,6 +150,11 @@ namespace Multiplexed.AI.Tests.Fixtures
         /// Gets the number of service list calls.
         /// </summary>
         public int ListServicesCallCount { get; private set; }
+
+        /// <summary>
+        /// Gets the number of Endpoints read calls.
+        /// </summary>
+        public int ReadEndpointsCallCount { get; private set; }
 
         /// <summary>
         /// Gets the number of cluster custom-resource read calls.
@@ -355,6 +375,36 @@ namespace Multiplexed.AI.Tests.Fixtures
                             }
                     }
                 });
+        }
+
+        /// <inheritdoc />
+        public Task<V1Endpoints> ReadEndpointsAsync(
+            string serviceName,
+            string namespaceName,
+            CancellationToken cancellationToken = default)
+        {
+            this.ReadEndpointsCallCount++;
+            cancellationToken.ThrowIfCancellationRequested();
+            this.ReadEndpointsCallback?.Invoke();
+
+            if (this.ReadEndpointsException is not null)
+            {
+                throw this.ReadEndpointsException;
+            }
+
+            var endpoints =
+                this.Endpoints ??
+                new V1Endpoints
+                {
+                    Metadata =
+                        new V1ObjectMeta
+                        {
+                            Name = serviceName,
+                            NamespaceProperty = namespaceName
+                        }
+                };
+
+            return Task.FromResult(endpoints);
         }
 
         /// <inheritdoc />

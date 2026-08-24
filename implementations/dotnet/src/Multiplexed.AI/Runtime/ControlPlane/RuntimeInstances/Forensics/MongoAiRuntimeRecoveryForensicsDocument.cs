@@ -26,6 +26,17 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
         public string Id { get; init; } = string.Empty;
 
         /// <summary>
+        /// Gets the optimistic-concurrency version of this persistence document.
+        /// </summary>
+        /// <remarks>
+        /// The value is persistence-only and is incremented on every successful
+        /// mutation so concurrent read/merge/replace writers cannot silently
+        /// overwrite recovery-forensics events appended by another writer.
+        /// Documents created before this field existed deserialize with version zero.
+        /// </remarks>
+        public long Version { get; init; }
+
+        /// <summary>
         /// Gets the persisted runtime recovery forensics domain record.
         /// </summary>
         public AiRuntimeRecoveryForensicsRecord Record { get; init; } = default!;
