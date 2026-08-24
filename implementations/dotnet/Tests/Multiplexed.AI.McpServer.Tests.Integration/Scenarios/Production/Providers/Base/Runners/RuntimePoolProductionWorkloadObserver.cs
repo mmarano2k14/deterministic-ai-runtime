@@ -1,5 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
+using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
 using Multiplexed.AI.Stores;
 
@@ -24,7 +25,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 string controlPlaneId,
                 string tenantId,
                 TimeSpan timeout,
-                TimeSpan noProgressTimeout)
+                TimeSpan noProgressTimeout,
+                bool useDagExecutionCompletion = false)
         {
             ArgumentNullException.ThrowIfNull(sharedRunStore);
             ArgumentNullException.ThrowIfNull(runExecutionIndex);
@@ -33,6 +35,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
             ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
 
+            if (noProgressTimeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(noProgressTimeout));
+            }
+
             var deadline = DateTimeOffset.UtcNow.Add(timeout);
             var lastProgressAtUtc = DateTimeOffset.UtcNow;
             string? lastProgressSignature = null;
@@ -40,6 +47,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var nextDagProbeAtUtc = DateTimeOffset.UtcNow;
             IReadOnlyList<AiSharedRunRecord> lastRuns =
                 Array.Empty<AiSharedRunRecord>();
+            IReadOnlyList<AiRuntimeRunExecutionIndexEntry> lastUnfinishedRuntimeRuns =
+                Array.Empty<AiRuntimeRunExecutionIndexEntry>();
 
             while (DateTimeOffset.UtcNow < deadline)
             {
@@ -51,35 +60,60 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             tenantId)
                         .ConfigureAwait(false);
 
-                var indexEntries =
-                    new List<AiRuntimeRunExecutionIndexEntry>();
+                var observations =
+                    await Task.WhenAll(
+                            lastRuns.Select(
+                                async run =>
+                                {
+                                    AiRuntimeRunExecutionIndexEntry? indexEntry = null;
 
-                foreach (var run in lastRuns)
-                {
-                    if (string.IsNullOrWhiteSpace(run.LocalRunId))
-                    {
-                        continue;
-                    }
+                                    if (!string.IsNullOrWhiteSpace(run.LocalRunId))
+                                    {
+                                        indexEntry = await runExecutionIndex
+                                            .GetAsync(run.LocalRunId)
+                                            .ConfigureAwait(false);
+                                    }
 
-                    var entry =
-                        await runExecutionIndex
-                            .GetAsync(run.LocalRunId)
-                            .ConfigureAwait(false);
+                                    var executionId =
+                                        !string.IsNullOrWhiteSpace(run.ExecutionId)
+                                            ? run.ExecutionId
+                                            : indexEntry?.ExecutionId;
 
-                    if (entry is not null)
-                    {
-                        indexEntries.Add(entry);
-                    }
-                }
+                                    AiExecutionStatus? dagStatus = null;
+
+                                    if (useDagExecutionCompletion &&
+                                        !string.IsNullOrWhiteSpace(executionId))
+                                    {
+                                        var dagRecord = await dagStore
+                                            .GetRecordAsync(executionId)
+                                            .ConfigureAwait(false);
+                                        dagStatus = dagRecord?.Status;
+                                    }
+
+                                    var completed =
+                                        useDagExecutionCompletion
+                                            ? !string.IsNullOrWhiteSpace(executionId) &&
+                                              dagStatus == AiExecutionStatus.Completed
+                                            : indexEntry is not null &&
+                                              string.Equals(
+                                                  indexEntry.Status,
+                                                  "completed",
+                                                  StringComparison.OrdinalIgnoreCase);
+
+                                    return new
+                                    {
+                                        Run = run,
+                                        IndexEntry = indexEntry,
+                                        ExecutionId = executionId,
+                                        DagStatus = dagStatus,
+                                        Completed = completed
+                                    };
+                                }))
+                        .ConfigureAwait(false);
 
                 if (lastRuns.Count == submittedSharedRunIds.Count &&
-                    indexEntries.Count == submittedSharedRunIds.Count &&
-                    indexEntries.All(
-                        entry =>
-                            string.Equals(
-                                entry.Status,
-                                "completed",
-                                StringComparison.OrdinalIgnoreCase)))
+                    observations.Length == submittedSharedRunIds.Count &&
+                    observations.All(observation => observation.Completed))
                 {
                     return lastRuns;
                 }
@@ -94,36 +128,89 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     run.AssignedRuntimeInstanceId)),
                         lastRuns.Count(
                             run => !string.IsNullOrWhiteSpace(run.LocalRunId)),
-                        indexEntries.Count,
+                        observations.Count(
+                            observation => observation.IndexEntry is not null),
+                        observations.Count(
+                            observation =>
+                                !string.IsNullOrWhiteSpace(
+                                    observation.ExecutionId)),
+                        observations.Count(observation => observation.Completed),
                         string.Join(
                             ",",
-                            indexEntries
+                            observations
                                 .GroupBy(
-                                    entry => entry.Status ?? "(none)",
+                                    observation =>
+                                        observation.IndexEntry?.Status ??
+                                        "(index-missing)",
                                     StringComparer.OrdinalIgnoreCase)
                                 .OrderBy(
                                     group => group.Key,
                                     StringComparer.OrdinalIgnoreCase)
                                 .Select(
                                     group =>
-                                        $"{group.Key}:{group.Count()}")));
+                                        $"{group.Key}:{group.Count()}")),
+                        string.Join(
+                            ",",
+                            observations
+                                .Where(observation =>
+                                    observation.DagStatus.HasValue)
+                                .GroupBy(observation =>
+                                    observation.DagStatus!.Value)
+                                .OrderBy(group => group.Key)
+                                .Select(group =>
+                                    $"{group.Key}:{group.Count()}")));
 
                 var nowUtc = DateTimeOffset.UtcNow;
                 var durableDagProgressObserved = false;
 
                 if (nowUtc >= nextDagProbeAtUtc)
                 {
-                    var runningExecutionIds =
-                        indexEntries
+                    var submittedExecutionIds =
+                        observations
                             .Where(
-                                entry =>
-                                    string.Equals(
-                                        entry.Status,
-                                        "running",
-                                        StringComparison.OrdinalIgnoreCase) &&
+                                observation =>
+                                    !observation.Completed &&
+                                    (useDagExecutionCompletion ||
+                                     string.Equals(
+                                         observation.IndexEntry?.Status,
+                                         "running",
+                                         StringComparison.OrdinalIgnoreCase)) &&
                                     !string.IsNullOrWhiteSpace(
-                                        entry.ExecutionId))
-                            .Select(entry => entry.ExecutionId!)
+                                        observation.ExecutionId))
+                            .Select(observation => observation.ExecutionId!)
+                            .ToArray();
+
+                    var unfinishedExecutionIds = Array.Empty<string>();
+
+                    if (useDagExecutionCompletion)
+                    {
+                        var unfinishedRuntimeRuns = await runExecutionIndex
+                            .ListUnfinishedAsync()
+                            .ConfigureAwait(false);
+
+                        lastUnfinishedRuntimeRuns =
+                            unfinishedRuntimeRuns
+                                .Where(
+                                    entry =>
+                                        string.Equals(
+                                            entry.ExecutionContextSnapshot.TenantId,
+                                            tenantId,
+                                            StringComparison.Ordinal))
+                                .ToArray();
+
+                        unfinishedExecutionIds =
+                            lastUnfinishedRuntimeRuns
+                                .Where(
+                                    entry =>
+                                        !string.IsNullOrWhiteSpace(
+                                            entry.ExecutionId))
+                                .Select(entry => entry.ExecutionId!)
+                                .ToArray();
+                    }
+
+                    var activeExecutionIds =
+                        submittedExecutionIds
+                            .Concat(unfinishedExecutionIds)
                             .Distinct(StringComparer.Ordinal)
                             .OrderBy(value => value, StringComparer.Ordinal)
                             .ToArray();
@@ -132,7 +219,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         await ProductionRecoveryWaitHelpers
                             .ReadDurableDagProgressSignatureAsync(
                                 dagStore,
-                                runningExecutionIds)
+                                activeExecutionIds)
                             .ConfigureAwait(false);
 
                     durableDagProgressObserved =
@@ -156,8 +243,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 }
                 else if (nowUtc - lastProgressAtUtc >= noProgressTimeout)
                 {
+                    var childAwareDiagnostics =
+                        useDagExecutionCompletion
+                            ? $" UnfinishedTenantRuntimeRuns='{lastUnfinishedRuntimeRuns.Count}'."
+                            : string.Empty;
+
                     throw new TimeoutException(
-                        $"The Runtime Pool workload made no durable progress for '{noProgressTimeout}'. Expected='{submittedSharedRunIds.Count}', Observed='{lastRuns.Count}', Progress='{progressSignature}'.");
+                        $"The Runtime Pool workload made no durable progress for '{noProgressTimeout}'. Expected='{submittedSharedRunIds.Count}', Observed='{lastRuns.Count}', Progress='{progressSignature}'.{childAwareDiagnostics}");
                 }
 
                 await Task.Delay(TimeSpan.FromMilliseconds(500))

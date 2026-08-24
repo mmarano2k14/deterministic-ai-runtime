@@ -215,6 +215,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         "tests"
                 };
 
+            if (tenant.Run.ChildDepth > 0)
+            {
+                settings["AiChildDagComposition:Enabled"] = "true";
+                settings[
+                    "AiRuntimeProcessPoolRuntimeInstance:EnvironmentVariables:AiChildDagComposition__Enabled"] = "true";
+            }
+
             DisableLocalRuntimeCapacity(settings);
 
             CopyWhenPresent(

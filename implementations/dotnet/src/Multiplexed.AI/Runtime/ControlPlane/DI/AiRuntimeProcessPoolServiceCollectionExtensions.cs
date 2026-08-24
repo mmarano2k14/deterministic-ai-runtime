@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Recovery.Transition;
@@ -13,6 +15,7 @@ using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Proc
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.AssignedWork;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Claims;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Recovery.Execution;
+using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Grpc;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Http;
@@ -119,7 +122,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.DI
                         serviceProvider.GetRequiredService<
                             IAiRuntimePoolFailureJournal>(),
                         serviceProvider.GetRequiredService<
-                            IAiRuntimePoolCapacitySafetyWriter>()));
+                            IAiRuntimePoolCapacitySafetyWriter>(),
+                        serviceProvider.GetService<
+                            IAiRuntimeLifecycleJournal>()
+                        ?? NoopAiRuntimeLifecycleJournal.Instance,
+                        serviceProvider.GetService<
+                            IAiControlPlaneObserver>()));
 
             services.TryAddSingleton<
                 IAiRuntimePoolRouteRegistry,

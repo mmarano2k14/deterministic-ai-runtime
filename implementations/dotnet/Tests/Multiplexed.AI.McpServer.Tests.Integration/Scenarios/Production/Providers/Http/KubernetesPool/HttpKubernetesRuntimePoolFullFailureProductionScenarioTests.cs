@@ -1,4 +1,5 @@
-﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.KubernetesPool;
+﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.KubernetesPool;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles;
 using Xunit;
 using Xunit.Abstractions;
@@ -45,6 +46,38 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 runtimeCountPerPod,
                 submissionIterationCount,
                 executionCycleCount);
+        }
+
+        /// <summary>
+        /// Runs the same full hierarchical Kubernetes Runtime Pool proof through HTTP with canonical
+        /// event-driven post-kill recovery synchronization and the configured recursive Child DAG depth.
+        /// The shared harness remains the single authority for admission, failure injection, warm reuse,
+        /// replay, ledger, recovery-forensics, lifecycle, and exact terminal DAG assertions.
+        /// </summary>
+        /// <param name="maximumPodCount">The maximum number of Kubernetes Runtime Pool Pods.</param>
+        /// <param name="runtimeCountPerPod">The exact number of independently registered runtimes per Pod.</param>
+        /// <param name="submissionIterationCount">The number of full-capacity submission waves per cycle.</param>
+        /// <param name="executionCycleCount">The number of sequential warm-pool execution cycles.</param>
+        /// <param name="childDepth">The number of nested child DAG levels composed by every submitted parent DAG.</param>
+        /// <returns>A task that completes after the HTTP EventDriven full-failure proof converges.</returns>
+        [Theory]
+        [Trait("ObservationMode", "EventDriven")]
+        [Trait("ValidationProfile", "Canary")]
+        [InlineData(3, 3, 3, 2, 3)]
+        public Task Http_KubernetesPool_EventDriven_Canary_Should_Reuse_The_Same_FullFailure_Scenario(
+            int maximumPodCount,
+            int runtimeCountPerPod,
+            int submissionIterationCount,
+            int executionCycleCount,
+            int childDepth)
+        {
+            return ExecuteFullFailureProductionScenarioAsync(
+                maximumPodCount,
+                runtimeCountPerPod,
+                submissionIterationCount,
+                executionCycleCount,
+                childDepth,
+                ProductionRecoveryObservationMode.EventDriven);
         }
 
         /// <summary>

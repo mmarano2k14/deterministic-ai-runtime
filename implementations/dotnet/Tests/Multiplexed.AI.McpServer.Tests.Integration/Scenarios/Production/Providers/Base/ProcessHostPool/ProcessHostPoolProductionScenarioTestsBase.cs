@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Admission.Placement;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.HostManager;
@@ -12,6 +13,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Registry;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.Abstractions.AI.Observability.Events;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
@@ -124,7 +126,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             int maximumProcessHostCount,
             int runtimeCountPerHost,
             int submissionIterationCount,
-            int executionCycleCount)
+            int executionCycleCount,
+            int childDepth = 0,
+            ProductionRecoveryObservationMode recoveryObservationMode =
+                ProductionRecoveryObservationMode.Polling)
         {
             return this.ExecuteScenarioAsync(
                 maximumProcessHostCount,
@@ -132,7 +137,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 submissionIterationCount,
                 executionCycleCount,
                 injectChildRuntimeFailure: true,
-                injectParentHostFailure: true);
+                injectParentHostFailure: true,
+                childDepth: childDepth,
+                recoveryObservationMode: recoveryObservationMode);
         }
 
         /// <summary>
@@ -147,7 +154,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             int maximumProcessHostCount,
             int runtimeCountPerHost,
             int submissionIterationCount,
-            int executionCycleCount)
+            int executionCycleCount,
+            int childDepth = 0,
+            ProductionRecoveryObservationMode recoveryObservationMode =
+                ProductionRecoveryObservationMode.Polling)
         {
             var signalPath =
                 ManualExternalFailureGateSignal.PrepareProcessHostWatch();
@@ -162,7 +172,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 executionCycleCount,
                 injectChildRuntimeFailure: true,
                 injectParentHostFailure: true,
-                waitForExternalParentHostFailure: true);
+                waitForExternalParentHostFailure: true,
+                childDepth: childDepth,
+                recoveryObservationMode: recoveryObservationMode);
         }
 
         private async Task ExecuteScenarioAsync(
@@ -172,7 +184,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             int executionCycleCount,
             bool injectChildRuntimeFailure,
             bool injectParentHostFailure,
-            bool waitForExternalParentHostFailure = false)
+            bool waitForExternalParentHostFailure = false,
+            int childDepth = 0,
+            ProductionRecoveryObservationMode recoveryObservationMode =
+                ProductionRecoveryObservationMode.Polling)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
                 maximumProcessHostCount);
@@ -182,6 +197,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 submissionIterationCount);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
                 executionCycleCount);
+            ArgumentOutOfRangeException.ThrowIfNegative(childDepth);
+
+            if (recoveryObservationMode != ProductionRecoveryObservationMode.Polling &&
+                recoveryObservationMode != ProductionRecoveryObservationMode.HybridSignals &&
+                recoveryObservationMode != ProductionRecoveryObservationMode.EventDriven)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(recoveryObservationMode),
+                    recoveryObservationMode,
+                    "The production recovery observation mode is not supported.");
+            }
 
             if (waitForExternalParentHostFailure &&
                 !injectParentHostFailure)
@@ -222,8 +248,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 checked(maximumProcessHostCount * runtimeCountPerHost);
             var submittedRunCountPerCycle =
                 checked(totalRuntimeCount * submissionIterationCount);
+            var parentLogicalStepCount =
+                checked(StepCount + (childDepth > 0 ? 1 : 0));
             var logicalStepCountPerCycle =
-                checked(submittedRunCountPerCycle * StepCount);
+                checked(submittedRunCountPerCycle * parentLogicalStepCount);
             var workloadNoProgressTimeout =
                 ResolveWorkloadNoProgressTimeout(
                     submittedRunCountPerCycle);
@@ -234,7 +262,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     submittedRunCountPerCycle,
                     injectChildRuntimeFailure,
                     injectParentHostFailure,
-                    executionCycleCount);
+                    executionCycleCount,
+                    childDepth);
             var tenant = Assert.Single(scenario.Tenants);
             var controlPlaneId =
                 GenericMcpServerTestSettings.CreateControlPlaneId(
@@ -255,6 +284,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         runtimeHostAssemblyPath,
                         totalRuntimeCount);
 
+            if (recoveryObservationMode ==
+                ProductionRecoveryObservationMode.EventDriven)
+            {
+                controlPlaneSettings[
+                    "Tests:UseDeterministicLifecycleObservation"] = "true";
+            }
+
             await using var dataStoreTrafficObserver =
                 await ProductionDataStoreTrafficObserver
                     .StartAsync(this.output)
@@ -272,7 +308,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 poolId,
                 injectChildRuntimeFailure,
                 injectParentHostFailure,
-                waitForExternalParentHostFailure);
+                waitForExternalParentHostFailure,
+                childDepth,
+                recoveryObservationMode);
 
             var scenarioStopwatch = Stopwatch.StartNew();
 
@@ -330,6 +368,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var lifecycleJournal =
                 controlPlaneHost.Services.GetRequiredService<
                     IAiRuntimeLifecycleJournal>();
+            var deterministicLifecycleObserver =
+                recoveryObservationMode ==
+                    ProductionRecoveryObservationMode.EventDriven
+                    ? controlPlaneHost.Services.GetRequiredService<
+                        IAiDeterministicLifecycleObserver>()
+                    : null;
             var redisConnection =
                 controlPlaneHost.Services.GetRequiredService<
                     IConnectionMultiplexer>();
@@ -459,6 +503,30 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         ? submissionIterationCount - 1
                         : submissionIterationCount;
 
+                ProductionCrashCheckpointGate?
+                    childRuntimeFailureCrashGate = null;
+
+                if (injectChildRuntimeFailure && childDepth > 0)
+                {
+                    childRuntimeFailureCrashGate =
+                        await ProductionCrashCheckpointGate
+                            .ArmAsync(
+                                redisConnection,
+                                this.output,
+                                controlPlaneId,
+                                tenant.TenantId,
+                                $"{scenario.Name}-cycle-{cycleNumber:000}-runtime-child-process-kill",
+                                checkpointStepIndex:
+                                    KillAfterCompletedStepCount + 1,
+                                stateTtl:
+                                    TimeSpan.FromMinutes(
+                                        BoundaryFailureCrashCheckpointStateTtlMinutes))
+                            .ConfigureAwait(false);
+                }
+
+                var childRuntimeFailureCrashCheckpoint =
+                    childRuntimeFailureCrashGate?.Definition;
+
                 var submissionStopwatch = Stopwatch.StartNew();
                 var admission =
                     await RuntimePoolProductionCycleExecutor
@@ -480,7 +548,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 executionCycleCount > 1
                                     ? cycleNumber
                                     : null,
-                            startingIterationNumber: 1)
+                            startingIterationNumber: 1,
+                            crashCheckpointFactory:
+                                childRuntimeFailureCrashCheckpoint is null
+                                    ? null
+                                    : (iteration, runNumber) =>
+                                        iteration == 1 && runNumber == 1
+                                            ? childRuntimeFailureCrashCheckpoint
+                                            : null)
                         .ConfigureAwait(false);
                 submissionStopwatch.Stop();
 
@@ -531,20 +606,65 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     new HashSet<string>(StringComparer.Ordinal);
                 IReadOnlySet<string> parentFailureCandidateSharedRunIds =
                     admission.SharedRunIds;
+                IReadOnlySet<string> childRuntimeFailureCandidateSharedRunIds =
+                    admission.SharedRunIds;
+
+                if (childRuntimeFailureCrashGate is not null)
+                {
+                    var gatedAdmissionResult = admission.Results[0];
+
+                    Assert.False(
+                        string.IsNullOrWhiteSpace(
+                            gatedAdmissionResult.SharedRunId));
+
+                    childRuntimeFailureCandidateSharedRunIds =
+                        new HashSet<string>(StringComparer.Ordinal)
+                        {
+                            gatedAdmissionResult.SharedRunId!
+                        };
+
+                    this.output.WriteLine(
+                        $"[{this.profile.LogPrefix} CHILD RUNTIME FAILURE GATE] " +
+                        $"Cycle='{cycleNumber}', ChildDepth='{childDepth}', " +
+                        $"SharedRunId='{gatedAdmissionResult.SharedRunId}', " +
+                        $"CheckpointStepIndex='{childRuntimeFailureCrashGate.Definition.StepIndex}', " +
+                        "Purpose='preserve-one-active-root-execution-until-full-process-host-pool-membership'.");
+                }
 
                 if (injectChildRuntimeFailure)
                 {
-                    childRuntimeFailureTarget =
-                        await WaitForBusyChildRuntimeFailureTargetAsync(
-                                registry,
-                                sharedRunStore,
-                                runExecutionIndex,
-                                cluster,
-                                admission.SharedRunIds,
-                                controlPlaneId,
-                                tenant.TenantId,
-                                TimeSpan.FromMinutes(5))
+                    if (childRuntimeFailureCrashGate is not null)
+                    {
+                        await childRuntimeFailureCrashGate
+                            .WaitUntilReachedAsync(TimeSpan.FromMinutes(3))
                             .ConfigureAwait(false);
+                    }
+
+                    try
+                    {
+                        childRuntimeFailureTarget =
+                            await WaitForBusyChildRuntimeFailureTargetAsync(
+                                    registry,
+                                    sharedRunStore,
+                                    runExecutionIndex,
+                                    cluster,
+                                    childRuntimeFailureCandidateSharedRunIds,
+                                    controlPlaneId,
+                                    tenant.TenantId,
+                                    TimeSpan.FromMinutes(5))
+                                .ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        if (childRuntimeFailureCrashGate is not null)
+                        {
+                            await childRuntimeFailureCrashGate
+                                .ReleaseAsync()
+                                .ConfigureAwait(false);
+                        }
+
+                        throw;
+                    }
 
                     var childInventory =
                         CreateChildRuntimeFailureInventory(
@@ -560,42 +680,58 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             this.output,
                             this.profile.LogPrefix);
 
-                    childRuntimeRecoveryProof =
-                        await ProductionRealRuntimeCrashRecoveryTestHelpers
-                            .KillRuntimeAndRecoverAssignedInventoryAsync(
-                                this.output,
-                                childProcessControl,
-                                registry,
-                                runExecutionIndex,
-                                sharedRunStore,
-                                sharedQueue,
-                                dagStore,
-                                childInventory,
-                                minimumCompletedStepsBeforeKill:
-                                    KillAfterCompletedStepCount,
-                                progressTimeout: TimeSpan.FromMinutes(3),
-                                unsafeTimeout: TimeSpan.FromMinutes(3),
-                                requeueTimeout: TimeSpan.FromMinutes(2),
-                                redispatchTimeout: TimeSpan.FromMinutes(3),
-                                executionResolveTimeout:
-                                    TimeSpan.FromMinutes(2),
-                                observationMode:
-                                    ProductionRecoveryObservationMode.Polling,
-                                runtimeTenantOwnershipAssertion:
-                                    AssertRuntimeBelongsToTenantAsync,
-                                unsafeRuntimeRecoveryTrigger:
-                                    () => recoveryCoordinator
-                                        .RecoverChildRuntimeAsync(
-                                            cluster,
-                                            childRuntimeFailureTarget.Host,
-                                            childRuntimeFailureTarget.Runtime.RuntimeInstanceId,
-                                            childRuntimeFailureTarget.ActiveRun.SharedRunId,
-                                            childRuntimeFailureTarget.ActiveRun.LocalRunId,
-                                            childRuntimeFailureTarget.ActiveRun.ExecutionId,
-                                            cycleNumber,
-                                            $"mcp-{this.profile.ProviderName}-process-host-pool-child-cycle-{cycleNumber}",
-                                            TimeSpan.FromMinutes(3)))
-                            .ConfigureAwait(false);
+                    try
+                    {
+                        childRuntimeRecoveryProof =
+                            await ProductionRealRuntimeCrashRecoveryTestHelpers
+                                .KillRuntimeAndRecoverAssignedInventoryAsync(
+                                    this.output,
+                                    childProcessControl,
+                                    registry,
+                                    runExecutionIndex,
+                                    sharedRunStore,
+                                    sharedQueue,
+                                    dagStore,
+                                    childInventory,
+                                    minimumCompletedStepsBeforeKill:
+                                        KillAfterCompletedStepCount,
+                                    progressTimeout: TimeSpan.FromMinutes(3),
+                                    unsafeTimeout: TimeSpan.FromMinutes(3),
+                                    requeueTimeout: TimeSpan.FromMinutes(2),
+                                    redispatchTimeout: TimeSpan.FromMinutes(3),
+                                    executionResolveTimeout:
+                                        TimeSpan.FromMinutes(2),
+                                    observationMode:
+                                        recoveryObservationMode,
+                                    lifecycleObserver:
+                                        deterministicLifecycleObserver,
+                                    crashCheckpointGate:
+                                        childRuntimeFailureCrashGate,
+                                    runtimeTenantOwnershipAssertion:
+                                        AssertRuntimeBelongsToTenantAsync,
+                                    unsafeRuntimeRecoveryTrigger:
+                                        () => recoveryCoordinator
+                                            .RecoverChildRuntimeAsync(
+                                                cluster,
+                                                childRuntimeFailureTarget.Host,
+                                                childRuntimeFailureTarget.Runtime.RuntimeInstanceId,
+                                                childRuntimeFailureTarget.ActiveRun.SharedRunId,
+                                                childRuntimeFailureTarget.ActiveRun.LocalRunId,
+                                                childRuntimeFailureTarget.ActiveRun.ExecutionId,
+                                                cycleNumber,
+                                                $"mcp-{this.profile.ProviderName}-process-host-pool-child-cycle-{cycleNumber}",
+                                                TimeSpan.FromMinutes(3)))
+                                .ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        if (childRuntimeFailureCrashGate is not null)
+                        {
+                            await childRuntimeFailureCrashGate
+                                .ReleaseAsync()
+                                .ConfigureAwait(false);
+                        }
+                    }
 
                     childRuntimeRecoveryForensics =
                         await ProductionRealRuntimeCrashRecoveryTestHelpers
@@ -684,7 +820,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 controlPlaneId,
                                 tenant.TenantId,
                                 scenario.CompletionTimeout,
-                                noProgressTimeout: workloadNoProgressTimeout)
+                                noProgressTimeout: workloadNoProgressTimeout,
+                                useDagExecutionCompletion: childDepth > 0)
                             .ConfigureAwait(false);
 
                         var boundaryFailureFillerRunCount =
@@ -753,7 +890,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     controlPlaneId,
                                     tenant.TenantId,
                                     scenario.CompletionTimeout,
-                                    noProgressTimeout: workloadNoProgressTimeout)
+                                    noProgressTimeout: workloadNoProgressTimeout,
+                                    useDagExecutionCompletion: childDepth > 0)
                                 .ConfigureAwait(false);
                         }
 
@@ -1083,41 +1221,65 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             controlPlaneId,
                             tenant.TenantId,
                             scenario.CompletionTimeout,
-                            noProgressTimeout: workloadNoProgressTimeout)
+                            noProgressTimeout: workloadNoProgressTimeout,
+                            useDagExecutionCompletion: childDepth > 0)
                         .ConfigureAwait(false);
 
-                var finalStatuses =
-                    await McpTestWaitHelpers
-                        .WaitForTerminalRuntimeRunStatusesAsync(
-                            mcp,
-                            completedRuns,
-                            scenario.CompletionTimeout)
-                        .ConfigureAwait(false);
+                IReadOnlyList<AiRuntimeQueueControlPlaneResult> finalStatuses;
+
+                if (childDepth == 0)
+                {
+                    finalStatuses =
+                        await McpTestWaitHelpers
+                            .WaitForTerminalRuntimeRunStatusesAsync(
+                                mcp,
+                                completedRuns,
+                                scenario.CompletionTimeout)
+                            .ConfigureAwait(false);
+
+                    Assert.All(
+                        completedRuns,
+                        run => Assert.False(
+                            string.IsNullOrWhiteSpace(
+                                run.AssignedRuntimeInstanceId),
+                            $"SharedRunId '{run.SharedRunId}' completed without an assigned runtime identity."));
+
+                    Assert.All(
+                        finalStatuses,
+                        status =>
+                        {
+                            Assert.True(
+                                status.Success,
+                                status.FailureReason ?? status.Message);
+                            Assert.True(
+                                string.Equals(
+                                    status.RunState?.Status,
+                                    "completed",
+                                    StringComparison.OrdinalIgnoreCase),
+                                $"ProcessHostPool runtime work did not complete. RuntimeInstanceId='{status.RuntimeInstanceId}', RunId='{status.RunId}', ExecutionId='{status.ExecutionId ?? status.RunState?.ExecutionId}', Status='{status.RunState?.Status}', Failure='{status.FailureReason ?? status.RunState?.FailureReason}'.");
+                        });
+                }
+                else
+                {
+                    finalStatuses =
+                        await ProductionChildDagScenarioHelpers
+                            .WaitForDurableParentCompletionAsync(
+                                mcp,
+                                dagStore,
+                                completedRuns,
+                                scenario.CompletionTimeout)
+                            .ConfigureAwait(false);
+
+                    this.output.WriteLine(
+                        $"[{this.profile.LogPrefix} CHILD DAG TERMINAL PROOF] " +
+                        $"Cycle='{cycleNumber}', ChildDepth='{childDepth}', " +
+                        $"CompletedExecutionCount='{completedRuns.Count}', " +
+                        "Proof='authoritative-dag-execution-record', " +
+                        "RootLocalRunContract='waiting-physical-attempt-released-capacity'.");
+                }
 
                 Assert.Equal(submittedRunCountPerCycle, completedRuns.Count);
                 Assert.Equal(submittedRunCountPerCycle, finalStatuses.Count);
-
-                Assert.All(
-                    completedRuns,
-                    run => Assert.False(
-                        string.IsNullOrWhiteSpace(
-                            run.AssignedRuntimeInstanceId),
-                        $"SharedRunId '{run.SharedRunId}' completed without an assigned runtime identity."));
-
-                Assert.All(
-                    finalStatuses,
-                    status =>
-                    {
-                        Assert.True(
-                            status.Success,
-                            status.FailureReason ?? status.Message);
-                        Assert.True(
-                            string.Equals(
-                                status.RunState?.Status,
-                                "completed",
-                                StringComparison.OrdinalIgnoreCase),
-                            $"ProcessHostPool runtime work did not complete. RuntimeInstanceId='{status.RuntimeInstanceId}', RunId='{status.RunId}', ExecutionId='{status.ExecutionId ?? status.RunState?.ExecutionId}', Status='{status.RunState?.Status}', Failure='{status.FailureReason ?? status.RunState?.FailureReason}'.");
-                    });
 
                 drainStopwatch.Stop();
 
@@ -1291,17 +1453,67 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         .Cast<string>()
                         .Concat(recoveryRuntimeInstanceIds)
                         .ToHashSet(StringComparer.Ordinal);
-                var runtimeLifecycleLedgerEntries =
-                    await QueryRuntimeLifecycleLedgerAsync(
-                            mcp,
-                            ledgerRuntimeInstanceIds,
-                            cycleLedgerFromUtc,
-                            cycleLedgerToUtc,
-                            tenant.TenantId,
-                            onBackpressureRetry: (_, _, _) =>
-                                Interlocked.Increment(
-                                    ref replayTooManyRequestsRetryCount))
-                        .ConfigureAwait(false);
+                IReadOnlyList<AiDecisionLedgerEntry>
+                    runtimeLifecycleLedgerEntries;
+
+                if (recoveryObservationMode ==
+                    ProductionRecoveryObservationMode.EventDriven)
+                {
+                    runtimeLifecycleLedgerEntries =
+                        Array.Empty<AiDecisionLedgerEntry>();
+
+                    var runtimeLifecycleEvents =
+                        (await lifecycleJournal
+                            .ListByPoolIdAsync(poolId)
+                            .ConfigureAwait(false))
+                        .Where(
+                            lifecycleEvent =>
+                                lifecycleEvent.TimestampUtc >=
+                                    cycleLedgerFromUtc &&
+                                lifecycleEvent.TimestampUtc <=
+                                    cycleLedgerToUtc)
+                        .ToArray();
+
+                    Assert.NotEmpty(runtimeLifecycleEvents);
+
+                    if (recoveryProof is not null)
+                    {
+                        Assert.Contains(
+                            runtimeLifecycleEvents,
+                            lifecycleEvent =>
+                                string.Equals(
+                                    lifecycleEvent.EventType,
+                                    AiRuntimeLifecycleEvents.HostDisappeared,
+                                    StringComparison.Ordinal) &&
+                                string.Equals(
+                                    lifecycleEvent.HostId,
+                                    recoveryProof.FailedHost.HostId,
+                                    StringComparison.Ordinal) &&
+                                string.Equals(
+                                    lifecycleEvent.RuntimeFailureIncidentId,
+                                    recoveryProof.FailureId,
+                                    StringComparison.Ordinal));
+                    }
+
+                    this.output.WriteLine(
+                        $"[{this.profile.LogPrefix} CANONICAL RUNTIME LIFECYCLE PROOF] " +
+                        $"Cycle='{cycleNumber}', EventCount='{runtimeLifecycleEvents.Length}', " +
+                        "DurableSource='RuntimeLifecycleJournal', LegacyRuntimeLedgerQuery='skipped'.");
+                }
+                else
+                {
+                    runtimeLifecycleLedgerEntries =
+                        await QueryRuntimeLifecycleLedgerAsync(
+                                mcp,
+                                ledgerRuntimeInstanceIds,
+                                cycleLedgerFromUtc,
+                                cycleLedgerToUtc,
+                                tenant.TenantId,
+                                onBackpressureRetry: (_, _, _) =>
+                                    Interlocked.Increment(
+                                        ref replayTooManyRequestsRetryCount))
+                            .ConfigureAwait(false);
+                }
                 var combinedLedgerEntries =
                     executionLedgerEntries
                         .Concat(controlPlaneLedgerEntries)
@@ -1361,7 +1573,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             executionLedgerEntries,
                             expectedExecutionIds,
                             recoveredExecutionIds,
-                            StepCount,
+                            parentLogicalStepCount,
                             $"{this.profile.LogPrefix} cycle {cycleNumber} logical step ledger proof");
 
                 var dispatchLedgerProof =
@@ -1651,6 +1863,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 submissionIterationCount,
                 executionCycleCount,
                 totalRuntimeCount,
+                parentLogicalStepCount,
                 totalSubmittedRunCount,
                 totalCompletedRunCount,
                 totalReplayProofCount,
@@ -1670,7 +1883,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 scenarioStopwatch.Elapsed,
                 injectChildRuntimeFailure,
                 injectParentHostFailure,
-                waitForExternalParentHostFailure);
+                waitForExternalParentHostFailure,
+                childDepth,
+                recoveryObservationMode);
 
             if (finalProofStopwatch is null)
             {
@@ -1693,7 +1908,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 injectParentHostFailure);
 
             this.output.WriteLine(
-                $"[{this.profile.LogPrefix} FINAL PRODUCTION RESULT] ExecutionCycleCount='{executionCycleCount}', ProcessHostCount='{maximumProcessHostCount}', RuntimeCountPerHost='{runtimeCountPerHost}', TotalRuntimeCount='{totalRuntimeCount}', SubmissionIterationCountPerCycle='{submissionIterationCount}', TotalSubmittedRunCount='{totalSubmittedRunCount}', TotalCompletedRunCount='{totalCompletedRunCount}', TotalLogicalStepCount='{checked(totalSubmittedRunCount * StepCount)}', TotalReplayProofCount='{totalReplayProofCount}', ChildRuntimeCrashCount='{totalChildRuntimeCrashCount}', ParentHostCrashCount='{totalParentHostCrashCount}', ParentHostFailureTrigger='{(injectParentHostFailure ? (waitForExternalParentHostFailure ? "external-manual" : "automatic") : "none")}', RecoveredRunCount='{totalRecoveredRunCount}', FinalParentProcessCountAlive='{cluster.Hosts.Count(host => host.IsRunning)}', DurationBeforeCleanup='{scenarioStopwatch.Elapsed}', CleanupPolicy='after-final-cycle-only'.");
+                $"[{this.profile.LogPrefix} FINAL PRODUCTION RESULT] ExecutionCycleCount='{executionCycleCount}', ProcessHostCount='{maximumProcessHostCount}', RuntimeCountPerHost='{runtimeCountPerHost}', TotalRuntimeCount='{totalRuntimeCount}', SubmissionIterationCountPerCycle='{submissionIterationCount}', TotalSubmittedRunCount='{totalSubmittedRunCount}', TotalCompletedRunCount='{totalCompletedRunCount}', TotalLogicalStepCount='{checked(totalSubmittedRunCount * parentLogicalStepCount)}', TotalReplayProofCount='{totalReplayProofCount}', ChildRuntimeCrashCount='{totalChildRuntimeCrashCount}', ParentHostCrashCount='{totalParentHostCrashCount}', ParentHostFailureTrigger='{(injectParentHostFailure ? (waitForExternalParentHostFailure ? "external-manual" : "automatic") : "none")}', RecoveredRunCount='{totalRecoveredRunCount}', FinalParentProcessCountAlive='{cluster.Hosts.Count(host => host.IsRunning)}', DurationBeforeCleanup='{scenarioStopwatch.Elapsed}', CleanupPolicy='after-final-cycle-only'.");
         }
 
         private static void CaptureRuntimeTopologyHistory(
@@ -2278,6 +2493,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             int submissionIterationCount,
             int executionCycleCount,
             int totalRuntimeCount,
+            int parentLogicalStepCount,
             int totalSubmittedRunCount,
             int totalCompletedRunCount,
             int totalReplayProofCount,
@@ -2297,7 +2513,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             TimeSpan scenarioDuration,
             bool injectChildRuntimeFailure,
             bool injectParentHostFailure,
-            bool waitForExternalParentHostFailure)
+            bool waitForExternalParentHostFailure,
+            int childDepth,
+            ProductionRecoveryObservationMode recoveryObservationMode)
         {
             var recoveryInjected =
                 injectChildRuntimeFailure || injectParentHostFailure;
@@ -2320,7 +2538,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             this.output.WriteLine(
                 $"TotalCompletedRunCount='{totalCompletedRunCount}'");
             this.output.WriteLine(
-                $"TotalLogicalStepCount='{checked(totalSubmittedRunCount * StepCount)}'");
+                $"TotalLogicalStepCount='{checked(totalSubmittedRunCount * parentLogicalStepCount)}'");
+            this.output.WriteLine(
+                $"ChildDepth='{childDepth}'");
+            this.output.WriteLine(
+                $"ParentLogicalStepCount='{parentLogicalStepCount}'");
+            this.output.WriteLine(
+                $"RecoveryObservationMode='{recoveryObservationMode}'");
             this.output.WriteLine(
                 $"ChildRuntimeFailureInjected='{injectChildRuntimeFailure.ToString().ToLowerInvariant()}'");
             this.output.WriteLine(
@@ -2447,7 +2671,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             int submittedRunCountPerCycle,
             bool injectChildRuntimeFailure,
             bool injectParentHostFailure,
-            int executionCycleCount)
+            int executionCycleCount,
+            int childDepth)
         {
             var template =
                 ProductionRuntimeScenarioFactory
@@ -2471,7 +2696,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 ? 750
                                 : 150,
                         FlakyStepInterval = 0,
-                        EnableRetention = false
+                        EnableRetention = false,
+                        ChildDepth = childDepth
                     }
                 };
 
@@ -3569,7 +3795,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string poolId,
             bool injectChildRuntimeFailure,
             bool injectParentHostFailure,
-            bool waitForExternalParentHostFailure)
+            bool waitForExternalParentHostFailure,
+            int childDepth,
+            ProductionRecoveryObservationMode recoveryObservationMode)
         {
             this.output.WriteLine(
                 $"# {this.profile.LogPrefix} PRODUCTION PROOF");
@@ -3589,8 +3817,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 "  - [ON] Parent Process Hosts and child runtime membership never exceed their configured bounds.");
             this.output.WriteLine(
                 "  - [ON] Every shared run resolves to exactly one local run and one durable DAG execution.");
+            var parentLogicalStepCount =
+                checked(StepCount + (childDepth > 0 ? 1 : 0));
+
             this.output.WriteLine(
-                $"  - [ON] Every DAG completes exactly {StepCount} logical steps.");
+                $"  - [ON] Every submitted parent DAG completes exactly {parentLogicalStepCount} logical steps; ChildDepth='{childDepth}' composes the nested Child DAG contract before terminal completion.");
             this.output.WriteLine(
                 injectChildRuntimeFailure
                     ? $"  - [ON] One child runtime is killed after at least {KillAfterCompletedStepCount} completed steps while its parent and siblings survive; one distinct fully busy parent and its child tree are then force-killed; both recoveries are validated."
@@ -3613,6 +3844,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"  SubmittedRunCountPerCycle='{submittedRunCountPerCycle}'");
             this.output.WriteLine(
                 $"  LogicalStepCountPerCycle='{logicalStepCountPerCycle}'");
+            this.output.WriteLine(
+                $"  ChildDepth='{childDepth}'");
+            this.output.WriteLine(
+                $"  ParentLogicalStepCount='{parentLogicalStepCount}'");
             this.output.WriteLine(
                 $"  ExecutionCycleCount='{executionCycleCount}'");
             this.output.WriteLine(
@@ -3640,6 +3875,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"  ParentHostFailureTrigger='{(injectParentHostFailure ? (waitForExternalParentHostFailure ? "external-manual" : "automatic") : "none")}'");
             this.output.WriteLine(
                 "  TopologyContract='ProcessHostCount × RuntimeCountPerHost'");
+            this.output.WriteLine(
+                $"  RecoveryObservationMode='{recoveryObservationMode}'");
             this.output.WriteLine(
                 "  CleanupPolicy='after-final-cycle-only'");
         }

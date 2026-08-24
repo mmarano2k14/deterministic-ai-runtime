@@ -1,4 +1,5 @@
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.ProcessHostPool;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Profiles;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Http.Runners;
 using Xunit;
@@ -18,6 +19,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
 
         private const string KubernetesPoolChildDagEnabledSetting =
             "AiKubernetesRuntimePoolHost:ChildEnvironmentVariables:AiChildDagComposition__Enabled";
+
+        private const string ProcessHostPoolChildDagEnabledSetting =
+            "AiRuntimeProcessPoolRuntimeInstance:EnvironmentVariables:AiChildDagComposition__Enabled";
 
         /// <summary>
         /// Verifies that the historical zero-depth scenario does not enable child DAG composition in spawned runtimes.
@@ -110,6 +114,80 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                 settings["AiRuntimeExecutionRecoveryReconciliation:EnableDagExecutionResume"]);
             Assert.Equal("true", settings[ParentChildDagEnabledSetting]);
             Assert.Equal("true", settings[ProcessChildDagEnabledSetting]);
+        }
+
+        /// <summary>
+        /// Verifies that historical zero-depth ProcessHostPool children remain opted out of Child DAG composition.
+        /// </summary>
+        [Fact]
+        public void ProcessHostPool_Build_Should_Not_Enable_Child_Dag_Composition_When_ChildDepth_Is_Zero()
+        {
+            var scenario =
+                ProductionRuntimeScenarioFactory
+                    .CreateSingleTenantSharedRuntimeModeScenario();
+            var tenant = Assert.Single(scenario.Tenants);
+            var profile = ProcessHostPoolProductionScenarioProfile.CreateHttp();
+            var controlPlaneSettings =
+                ProcessHostPoolProductionScenarioSettingsComposer
+                    .BuildControlPlaneSettings(
+                        profile,
+                        scenario,
+                        "process-host-pool-child-depth-zero",
+                        "runtime-host.dll",
+                        totalRuntimeCount: 5);
+
+            var settings =
+                ProcessHostPoolProductionScenarioSettingsComposer
+                    .BuildProcessHostSettings(
+                        profile,
+                        controlPlaneSettings,
+                        "process-host-pool-child-depth-zero",
+                        "process-host-pool-child-depth-zero-pool",
+                        "runtime-host.dll",
+                        "http://127.0.0.1:5900",
+                        childBasePort: 5910,
+                        processHostOrdinal: 1,
+                        runtimeCountPerHost: 5,
+                        tenant: tenant);
+
+            Assert.False(settings.ContainsKey(ParentChildDagEnabledSetting));
+            Assert.False(settings.ContainsKey(ProcessHostPoolChildDagEnabledSetting));
+        }
+
+        /// <summary>
+        /// Verifies that positive-depth ProcessHostPool children receive the same Child DAG opt-in as their external parent Process Host.
+        /// </summary>
+        [Fact]
+        public void ProcessHostPool_Build_Should_Project_Child_Dag_Composition_To_RuntimeInstanceOnly_Children()
+        {
+            var scenario = ProductionChildDagScenarioFactory.CreateDepthOneScenario();
+            var tenant = Assert.Single(scenario.Tenants);
+            var profile = ProcessHostPoolProductionScenarioProfile.CreateHttp();
+            var controlPlaneSettings =
+                ProcessHostPoolProductionScenarioSettingsComposer
+                    .BuildControlPlaneSettings(
+                        profile,
+                        scenario,
+                        "process-host-pool-child-depth-one",
+                        "runtime-host.dll",
+                        totalRuntimeCount: 5);
+
+            var settings =
+                ProcessHostPoolProductionScenarioSettingsComposer
+                    .BuildProcessHostSettings(
+                        profile,
+                        controlPlaneSettings,
+                        "process-host-pool-child-depth-one",
+                        "process-host-pool-child-depth-one-pool",
+                        "runtime-host.dll",
+                        "http://127.0.0.1:5900",
+                        childBasePort: 5910,
+                        processHostOrdinal: 1,
+                        runtimeCountPerHost: 5,
+                        tenant: tenant);
+
+            Assert.Equal("true", settings[ParentChildDagEnabledSetting]);
+            Assert.Equal("true", settings[ProcessHostPoolChildDagEnabledSetting]);
         }
 
     }

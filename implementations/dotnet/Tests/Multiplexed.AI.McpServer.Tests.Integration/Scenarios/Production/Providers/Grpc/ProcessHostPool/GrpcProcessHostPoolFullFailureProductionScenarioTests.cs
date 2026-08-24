@@ -1,4 +1,6 @@
-﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.ProcessHostPool;
+﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.ProcessHostPool;
 using Xunit.Abstractions;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc.ProcessHostPool
@@ -38,6 +40,29 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 runtimeCountPerHost,
                 submissionIterationCount,
                 executionCycleCount);
+        }
+
+        /// <summary>
+        /// Certifies ChildDepth3 and canonical EventDriven recovery over the same bounded warm ProcessHostPool proof.
+        /// </summary>
+        [Theory]
+        [Trait("ObservationMode", "EventDriven")]
+        [Trait("ValidationProfile", "Canary")]
+        [InlineData(5, 5, 5, 2, 3)]
+        public Task Grpc_ProcessHostPool_EventDriven_Canary_Should_Reuse_The_Same_FullFailure_Scenario(
+            int maximumProcessHostCount,
+            int runtimeCountPerHost,
+            int submissionIterationCount,
+            int executionCycleCount,
+            int childDepth)
+        {
+            return this.ExecuteFullFailureProductionScenarioAsync(
+                maximumProcessHostCount,
+                runtimeCountPerHost,
+                submissionIterationCount,
+                executionCycleCount,
+                childDepth,
+                ProductionRecoveryObservationMode.EventDriven);
         }
 
         /// <summary>
