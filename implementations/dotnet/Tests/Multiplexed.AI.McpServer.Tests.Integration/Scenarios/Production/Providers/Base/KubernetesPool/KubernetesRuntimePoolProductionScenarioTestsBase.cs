@@ -53,7 +53,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
     public abstract class KubernetesRuntimePoolProductionScenarioTestsBase :
         ProcessHostRealRuntimeCrashRecoveryScenarioTestsBase
     {
-        private const int FinalScenarioKillAfterCompletedStepCount = 25;
+        private const int BoundaryFailureHoldAfterCompletedStepCount = 25;
         private const int BoundaryFailureCrashCheckpointStateTtlMinutes = 30;
         private const int BoundaryFailureAdmissionBackpressureTimeoutMinutes = 5;
         private const int ExternalBoundaryFailureWaitTimeoutMinutes = 15;
@@ -190,6 +190,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// <param name="executionCycleCount">The number of sequential warm-pool execution cycles.</param>
         /// <param name="childDepth">The number of nested child DAG levels composed by every submitted parent DAG. Zero preserves the historical workload shape.</param>
         /// <param name="recoveryObservationMode">The recovery synchronization mode. Polling remains the compatibility baseline; event-driven mode uses canonical engine events for post-kill recovery waits.</param>
+        /// <param name="adversarialSchedule">The optional deterministic Child DAG adversarial schedule. Null preserves the frozen baseline schedule.</param>
         /// <returns>A task that completes after the hierarchical runtime and Pod failure proof converges across every cycle.</returns>
         protected Task ExecuteFullFailureProductionScenarioAsync(
             int maximumPodCount,
@@ -197,7 +198,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             int submissionIterationCount,
             int executionCycleCount,
             int childDepth = 0,
-            ProductionRecoveryObservationMode recoveryObservationMode = ProductionRecoveryObservationMode.Polling)
+            ProductionRecoveryObservationMode recoveryObservationMode = ProductionRecoveryObservationMode.Polling,
+            ProductionChildDagAdversarialScheduleDefinition? adversarialSchedule = null)
         {
             return ExecuteReusableBoundedCapacityPodFailureProductionScenarioCoreAsync(
                 maximumPodCount,
@@ -206,7 +208,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 executionCycleCount,
                 injectChildRuntimeFailure: true,
                 childDepth: childDepth,
-                recoveryObservationMode: recoveryObservationMode);
+                recoveryObservationMode: recoveryObservationMode,
+                adversarialSchedule: adversarialSchedule);
         }
 
         /// <summary>
@@ -1693,7 +1696,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             bool injectChildRuntimeFailure,
             bool waitForExternalPodDeletion = false,
             int childDepth = 0,
-            ProductionRecoveryObservationMode recoveryObservationMode = ProductionRecoveryObservationMode.Polling)
+            ProductionRecoveryObservationMode recoveryObservationMode = ProductionRecoveryObservationMode.Polling,
+            ProductionChildDagAdversarialScheduleDefinition? adversarialSchedule = null)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumPodCount);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(runtimeCountPerPod);
@@ -1738,6 +1742,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             const int stepCount = 50;
             const int maximumAdmissionAttemptCount = 8;
+
+            var resolvedAdversarialSchedule =
+                adversarialSchedule ??
+                ProductionChildDagAdversarialScheduleDefinition.Baseline;
+
+            var childRuntimeFailureAfterCompletedStepCount =
+                injectChildRuntimeFailure
+                    ? resolvedAdversarialSchedule.KillAfterCompletedStepCount
+                    : 0;
+
+            var childRuntimeResumeCheckpointStepIndex =
+                injectChildRuntimeFailure
+                    ? resolvedAdversarialSchedule.ResolveCrashCheckpointStepIndex(
+                        stepCount)
+                    : 0;
 
             var parentLogicalStepCount =
                 checked(stepCount + (childDepth > 0 ? 1 : 0));
@@ -1884,8 +1903,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             output.WriteLine(
                 injectChildRuntimeFailure
                     ? waitForExternalPodDeletion
-                        ? $"  - [ON] Every cycle kills one exact child runtime after at least {FinalScenarioKillAfterCompletedStepCount} completed steps, preserves its Pod and siblings, then waits for an operator to force-delete one distinct fully busy Pod."
-                        : $"  - [ON] Every cycle kills one exact child runtime after at least {FinalScenarioKillAfterCompletedStepCount} completed steps, preserves its Pod and siblings, then force-deletes one distinct fully busy Pod."
+                        ? $"  - [ON] Every cycle kills one exact child runtime after at least {resolvedAdversarialSchedule.KillAfterCompletedStepCount} completed steps, preserves its Pod and siblings, then waits for an operator to force-delete one distinct fully busy Pod."
+                        : $"  - [ON] Every cycle kills one exact child runtime after at least {resolvedAdversarialSchedule.KillAfterCompletedStepCount} completed steps, preserves its Pod and siblings, then force-deletes one distinct fully busy Pod."
                     : "  - [ON] Every cycle force-deletes one fully busy Pod and recovers exactly its assigned work.");
             output.WriteLine(
                 $"  - [ON] Every submitted parent DAG completes exactly {parentLogicalStepCount} logical steps; ChildDepth='{childDepth}' composes the nested Child DAG contract before terminal completion.");
@@ -1907,7 +1926,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             output.WriteLine($"  ControlPlaneId='{controlPlaneId}'");
             output.WriteLine($"  PoolId='{poolId}'");
             output.WriteLine($"  InjectChildRuntimeFailure='{injectChildRuntimeFailure}'");
-            output.WriteLine($"  KillAfterCompletedStepCount='{(injectChildRuntimeFailure ? FinalScenarioKillAfterCompletedStepCount : 0)}'");
+            output.WriteLine($"  KillAfterCompletedStepCount='{childRuntimeFailureAfterCompletedStepCount}'");
             output.WriteLine($"  PodFailureTrigger='{(waitForExternalPodDeletion ? "external-manual" : "automatic")}'");
             output.WriteLine("  CleanupPolicy='after-final-cycle-only'");
 
@@ -2142,7 +2161,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                         tenant.TenantId,
                                         $"{scenario.Name}-cycle-{cycleNumber:000}-runtime-child-process-kill",
                                         checkpointStepIndex:
-                                            FinalScenarioKillAfterCompletedStepCount + 1,
+                                            childRuntimeResumeCheckpointStepIndex,
                                         stateTtl:
                                             TimeSpan.FromMinutes(
                                                 BoundaryFailureCrashCheckpointStateTtlMinutes))
@@ -2338,7 +2357,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                             dagStore,
                                             childInventory,
                                             minimumCompletedStepsBeforeKill:
-                                                FinalScenarioKillAfterCompletedStepCount,
+                                                childRuntimeFailureAfterCompletedStepCount,
                                             progressTimeout: TimeSpan.FromMinutes(3),
                                             unsafeTimeout: TimeSpan.FromMinutes(3),
                                             requeueTimeout: TimeSpan.FromMinutes(2),
@@ -2631,7 +2650,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                             tenant.TenantId,
                                             $"{scenario.Name}-cycle-{cycleNumber:000}-boundary-wave-{submissionIterationCount:000}",
                                             checkpointStepIndex:
-                                                FinalScenarioKillAfterCompletedStepCount + 1,
+                                                BoundaryFailureHoldAfterCompletedStepCount + 1,
                                             stateTtl:
                                                 TimeSpan.FromMinutes(
                                                     BoundaryFailureCrashCheckpointStateTtlMinutes))
@@ -4037,7 +4056,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine($"RecoveryCoveredDuplicateChildStepCompletedLedgerEntryCount='{totalRecursiveChildRecoveryCoveredDuplicateStepCompletedLedgerEntryCount}'");
                 output.WriteLine($"TotalLogicalStepCountIncludingRecursiveChildren='{checked(totalLogicalStepCount + expectedRecursiveChildLogicalStepCount)}'");
                 output.WriteLine($"ChildRuntimeFailureInjected='{injectChildRuntimeFailure}'");
-                output.WriteLine($"KillAfterCompletedStepCount='{(injectChildRuntimeFailure ? FinalScenarioKillAfterCompletedStepCount : 0)}'");
+                output.WriteLine($"KillAfterCompletedStepCount='{childRuntimeFailureAfterCompletedStepCount}'");
                 output.WriteLine($"ForcedChildRuntimeKillCount='{(injectChildRuntimeFailure ? executionCycleCount : 0)}'");
                 output.WriteLine($"PodFailureTrigger='{(waitForExternalPodDeletion ? "external-manual" : "automatic")}'");
                 output.WriteLine($"ForcedPodDeletionCount='{(waitForExternalPodDeletion ? 0 : executionCycleCount)}'");
@@ -4125,7 +4144,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     output.WriteLine(
                         $"ScenarioProfile='{boundedCapacityProfile.LogPrefix}'");
                     output.WriteLine($"ProofRunId='{controlPlaneId}'");
-                    output.WriteLine("MatrixScenarioId='baseline'");
+                    output.WriteLine($"MatrixScenarioId='{resolvedAdversarialSchedule.MatrixScenarioId}'");
                     output.WriteLine($"Transport='{proofTransport}'");
                     output.WriteLine("Provider='KubernetesPool'");
                     output.WriteLine($"ControlPlaneId='{controlPlaneId}'");
@@ -4199,15 +4218,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     output.WriteLine(string.Empty);
                     output.WriteLine("# FAILURE SCHEDULE");
                     output.WriteLine(
-                        "FailureScheduleMode='DeterministicBaseline'");
+                        $"FailureScheduleMode='{resolvedAdversarialSchedule.FailureScheduleMode}'");
                     output.WriteLine(
-                        "FailureScheduleSeed='baseline'");
+                        $"FailureScheduleSeed='{resolvedAdversarialSchedule.FailureSeed}'");
                     output.WriteLine(
                         $"ChildRuntimeFailureCount='{childRuntimeFailureCount}'");
                     output.WriteLine(
-                        $"ChildRuntimeFailureAfterCompletedStepCount='{(injectChildRuntimeFailure ? FinalScenarioKillAfterCompletedStepCount : 0)}'");
+                        $"ChildRuntimeFailureAfterCompletedStepCount='{childRuntimeFailureAfterCompletedStepCount}'");
                     output.WriteLine(
-                        $"ChildRuntimeResumeCheckpointStepIndex='{(injectChildRuntimeFailure ? FinalScenarioKillAfterCompletedStepCount + 1 : 0)}'");
+                        $"ChildRuntimeResumeCheckpointStepIndex='{childRuntimeResumeCheckpointStepIndex}'");
                     output.WriteLine(
                         $"BusyHostFailureCount='{busyHostFailureCount}'");
                     output.WriteLine(
@@ -4290,11 +4309,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     output.WriteLine(
                         "ProofAuthority='ExecutionLedger+Replay+Trace+Forensics+Lifecycle+ExactRecoveryOutcomes+AtomicRedisOwnership'");
                     output.WriteLine(
-                        "AdversarialScheduleMatrix='NOT_YET_VALIDATED'");
+                        $"AdversarialScheduleMatrix='{resolvedAdversarialSchedule.MatrixStatus}'");
 
                     output.WriteLine(string.Empty);
                     output.WriteLine(
-                        $"[RECURSIVE_CHILD_DAG_PROOF_RESULT] SchemaVersion='{proofSchemaVersion}', SchemaStatus='FROZEN', ProofRunId='{controlPlaneId}', MatrixScenarioId='baseline', Status='PASS', Transport='{proofTransport}', Provider='KubernetesPool', ChildDepth='{childDepth}', Cycles='{executionCycleCount}', ParentRunsTotal='{totalSubmittedRunCount}', ParentLogicalStepsTotal='{totalLogicalStepCount}', RecursiveChildExecutionsTotal='{totalRecursiveChildExecutionCount}', RecursiveChildLogicalStepsTotal='{expectedRecursiveChildLogicalStepCount}', AllExecutionsTotal='{totalExecutionCount}', AllLogicalStepsTotal='{totalLogicalStepCountIncludingRecursiveChildren}', ParentReplay='{totalReplayProofCount}/{totalSubmittedRunCount}', RecursiveChildReplay='NOT_EVALUATED', RecoveredSharedRunsTotal='{recoveredSharedRunCount}', MissingRecursiveChildStepsTotal='{missingChildLogicalStepCount}', UnexpectedDuplicateRecursiveChildStepsTotal='{unexpectedDuplicateChildLogicalStepCount}', OwnershipTransitionViolations='{totalRuntimeOwnershipTransitionViolationCount}', OwnershipIntervalProofIncluded='False', ProcessKillIdentityContinuity='{childRuntimeFailureCount}/{childRuntimeFailureCount}', ChildRuntimeFailures='{childRuntimeFailureCount}', BusyHostFailures='{busyHostFailureCount}', FailureSeed='baseline', Matrix='NOT_YET_VALIDATED'");
+                        $"[RECURSIVE_CHILD_DAG_PROOF_RESULT] SchemaVersion='{proofSchemaVersion}', SchemaStatus='FROZEN', ProofRunId='{controlPlaneId}', MatrixScenarioId='{resolvedAdversarialSchedule.MatrixScenarioId}', Status='PASS', Transport='{proofTransport}', Provider='KubernetesPool', ChildDepth='{childDepth}', Cycles='{executionCycleCount}', ParentRunsTotal='{totalSubmittedRunCount}', ParentLogicalStepsTotal='{totalLogicalStepCount}', RecursiveChildExecutionsTotal='{totalRecursiveChildExecutionCount}', RecursiveChildLogicalStepsTotal='{expectedRecursiveChildLogicalStepCount}', AllExecutionsTotal='{totalExecutionCount}', AllLogicalStepsTotal='{totalLogicalStepCountIncludingRecursiveChildren}', ParentReplay='{totalReplayProofCount}/{totalSubmittedRunCount}', RecursiveChildReplay='NOT_EVALUATED', RecoveredSharedRunsTotal='{recoveredSharedRunCount}', MissingRecursiveChildStepsTotal='{missingChildLogicalStepCount}', UnexpectedDuplicateRecursiveChildStepsTotal='{unexpectedDuplicateChildLogicalStepCount}', OwnershipTransitionViolations='{totalRuntimeOwnershipTransitionViolationCount}', OwnershipIntervalProofIncluded='False', ProcessKillIdentityContinuity='{childRuntimeFailureCount}/{childRuntimeFailureCount}', ChildRuntimeFailures='{childRuntimeFailureCount}', BusyHostFailures='{busyHostFailureCount}', FailureSeed='{resolvedAdversarialSchedule.FailureSeed}', Matrix='{resolvedAdversarialSchedule.MatrixStatus}'");
 
                     output.WriteLine(
                         "# RECURSIVE CHILD DAG PRODUCTION PROOF END");

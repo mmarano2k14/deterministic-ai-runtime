@@ -40,7 +40,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
     public abstract class ProcessHostPoolProductionScenarioTestsBase
     {
         private const int StepCount = 50;
-        private const int KillAfterCompletedStepCount = 25;
+        private const int BoundaryFailureHoldAfterCompletedStepCount = 25;
         private const int MaximumAdmissionAttemptCount = 8;
         private const int BoundaryFailureCrashCheckpointStateTtlMinutes = 30;
         private const int BoundaryFailureAdmissionBackpressureTimeoutMinutes = 5;
@@ -130,7 +130,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             int executionCycleCount,
             int childDepth = 0,
             ProductionRecoveryObservationMode recoveryObservationMode =
-                ProductionRecoveryObservationMode.Polling)
+                ProductionRecoveryObservationMode.Polling,
+            ProductionChildDagAdversarialScheduleDefinition? adversarialSchedule = null)
         {
             return this.ExecuteScenarioAsync(
                 maximumProcessHostCount,
@@ -140,7 +141,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 injectChildRuntimeFailure: true,
                 injectParentHostFailure: true,
                 childDepth: childDepth,
-                recoveryObservationMode: recoveryObservationMode);
+                recoveryObservationMode: recoveryObservationMode,
+                adversarialSchedule: adversarialSchedule);
         }
 
         /// <summary>
@@ -188,7 +190,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             bool waitForExternalParentHostFailure = false,
             int childDepth = 0,
             ProductionRecoveryObservationMode recoveryObservationMode =
-                ProductionRecoveryObservationMode.Polling)
+                ProductionRecoveryObservationMode.Polling,
+            ProductionChildDagAdversarialScheduleDefinition? adversarialSchedule = null)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
                 maximumProcessHostCount);
@@ -244,6 +247,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         "The final hierarchical failure proof requires at least two full-capacity waves so the last configured wave can be deferred until after child-runtime recovery.");
                 }
             }
+
+            var resolvedAdversarialSchedule =
+                adversarialSchedule ??
+                ProductionChildDagAdversarialScheduleDefinition.Baseline;
+
+            var childRuntimeFailureAfterCompletedStepCount =
+                injectChildRuntimeFailure
+                    ? resolvedAdversarialSchedule.KillAfterCompletedStepCount
+                    : 0;
+
+            var childRuntimeResumeCheckpointStepIndex =
+                injectChildRuntimeFailure
+                    ? resolvedAdversarialSchedule.ResolveCrashCheckpointStepIndex(
+                        StepCount)
+                    : 0;
 
             var totalRuntimeCount =
                 checked(maximumProcessHostCount * runtimeCountPerHost);
@@ -311,7 +329,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 injectParentHostFailure,
                 waitForExternalParentHostFailure,
                 childDepth,
-                recoveryObservationMode);
+                recoveryObservationMode,
+                resolvedAdversarialSchedule);
 
             var scenarioStopwatch = Stopwatch.StartNew();
 
@@ -525,7 +544,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 tenant.TenantId,
                                 $"{scenario.Name}-cycle-{cycleNumber:000}-runtime-child-process-kill",
                                 checkpointStepIndex:
-                                    KillAfterCompletedStepCount + 1,
+                                    childRuntimeResumeCheckpointStepIndex,
                                 stateTtl:
                                     TimeSpan.FromMinutes(
                                         BoundaryFailureCrashCheckpointStateTtlMinutes))
@@ -702,7 +721,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     dagStore,
                                     childInventory,
                                     minimumCompletedStepsBeforeKill:
-                                        KillAfterCompletedStepCount,
+                                        childRuntimeFailureAfterCompletedStepCount,
                                     progressTimeout: TimeSpan.FromMinutes(3),
                                     unsafeTimeout: TimeSpan.FromMinutes(3),
                                     requeueTimeout: TimeSpan.FromMinutes(2),
@@ -986,7 +1005,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     tenant.TenantId,
                                     $"{scenario.Name}-cycle-{cycleNumber:000}-boundary-wave-{submissionIterationCount:000}",
                                     checkpointStepIndex:
-                                        KillAfterCompletedStepCount + 1,
+                                        BoundaryFailureHoldAfterCompletedStepCount + 1,
                                     stateTtl:
                                         TimeSpan.FromMinutes(
                                             BoundaryFailureCrashCheckpointStateTtlMinutes))
@@ -2142,7 +2161,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 this.output.WriteLine(
                     $"ScenarioProfile='{this.profile.LogPrefix}'");
                 this.output.WriteLine($"ProofRunId='{controlPlaneId}'");
-                this.output.WriteLine("MatrixScenarioId='baseline'");
+                this.output.WriteLine($"MatrixScenarioId='{resolvedAdversarialSchedule.MatrixScenarioId}'");
                 this.output.WriteLine($"Transport='{proofTransport}'");
                 this.output.WriteLine("Provider='ProcessHostPool'");
                 this.output.WriteLine($"ControlPlaneId='{controlPlaneId}'");
@@ -2216,15 +2235,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 this.output.WriteLine(string.Empty);
                 this.output.WriteLine("# FAILURE SCHEDULE");
                 this.output.WriteLine(
-                    "FailureScheduleMode='DeterministicBaseline'");
+                    $"FailureScheduleMode='{resolvedAdversarialSchedule.FailureScheduleMode}'");
                 this.output.WriteLine(
-                    "FailureScheduleSeed='baseline'");
+                    $"FailureScheduleSeed='{resolvedAdversarialSchedule.FailureSeed}'");
                 this.output.WriteLine(
                     $"ChildRuntimeFailureCount='{totalChildRuntimeCrashCount}'");
                 this.output.WriteLine(
-                    $"ChildRuntimeFailureAfterCompletedStepCount='{(injectChildRuntimeFailure ? KillAfterCompletedStepCount : 0)}'");
+                    $"ChildRuntimeFailureAfterCompletedStepCount='{childRuntimeFailureAfterCompletedStepCount}'");
                 this.output.WriteLine(
-                    $"ChildRuntimeResumeCheckpointStepIndex='{(injectChildRuntimeFailure ? KillAfterCompletedStepCount + 1 : 0)}'");
+                    $"ChildRuntimeResumeCheckpointStepIndex='{childRuntimeResumeCheckpointStepIndex}'");
                 this.output.WriteLine(
                     $"BusyHostFailureCount='{busyHostFailureCount}'");
                 this.output.WriteLine(
@@ -2314,11 +2333,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 this.output.WriteLine(
                     "ProofAuthority='ExecutionLedger+Replay+Trace+Forensics+Lifecycle+ExactRecoveryOutcomes+AtomicRedisOwnership'");
                 this.output.WriteLine(
-                    "AdversarialScheduleMatrix='NOT_YET_VALIDATED'");
+                    $"AdversarialScheduleMatrix='{resolvedAdversarialSchedule.MatrixStatus}'");
 
                 this.output.WriteLine(string.Empty);
                 this.output.WriteLine(
-                    $"[RECURSIVE_CHILD_DAG_PROOF_RESULT] SchemaVersion='{proofSchemaVersion}', SchemaStatus='FROZEN', ProofRunId='{controlPlaneId}', MatrixScenarioId='baseline', Status='PASS', Transport='{proofTransport}', Provider='ProcessHostPool', ChildDepth='{childDepth}', Cycles='{executionCycleCount}', ParentRunsTotal='{totalSubmittedRunCount}', ParentLogicalStepsTotal='{totalParentLogicalStepCount}', RecursiveChildExecutionsTotal='{totalRecursiveChildExecutionCount}', RecursiveChildLogicalStepsTotal='{expectedRecursiveChildLogicalStepCount}', AllExecutionsTotal='{totalExecutionCount}', AllLogicalStepsTotal='{totalLogicalStepCountIncludingRecursiveChildren}', ParentReplay='{totalReplayProofCount}/{totalSubmittedRunCount}', RecursiveChildReplay='NOT_EVALUATED', RecoveredSharedRunsTotal='{totalRecoveredRunCount}', MissingRecursiveChildStepsTotal='{missingChildLogicalStepCount}', UnexpectedDuplicateRecursiveChildStepsTotal='{unexpectedDuplicateChildLogicalStepCount}', OwnershipTransitionViolations='{totalRuntimeOwnershipTransitionViolationCount}', OwnershipIntervalProofIncluded='False', ProcessKillIdentityContinuity='{totalChildRuntimeCrashCount}/{totalChildRuntimeCrashCount}', ChildRuntimeFailures='{totalChildRuntimeCrashCount}', BusyHostFailures='{busyHostFailureCount}', FailureSeed='baseline', Matrix='NOT_YET_VALIDATED'");
+                    $"[RECURSIVE_CHILD_DAG_PROOF_RESULT] SchemaVersion='{proofSchemaVersion}', SchemaStatus='FROZEN', ProofRunId='{controlPlaneId}', MatrixScenarioId='{resolvedAdversarialSchedule.MatrixScenarioId}', Status='PASS', Transport='{proofTransport}', Provider='ProcessHostPool', ChildDepth='{childDepth}', Cycles='{executionCycleCount}', ParentRunsTotal='{totalSubmittedRunCount}', ParentLogicalStepsTotal='{totalParentLogicalStepCount}', RecursiveChildExecutionsTotal='{totalRecursiveChildExecutionCount}', RecursiveChildLogicalStepsTotal='{expectedRecursiveChildLogicalStepCount}', AllExecutionsTotal='{totalExecutionCount}', AllLogicalStepsTotal='{totalLogicalStepCountIncludingRecursiveChildren}', ParentReplay='{totalReplayProofCount}/{totalSubmittedRunCount}', RecursiveChildReplay='NOT_EVALUATED', RecoveredSharedRunsTotal='{totalRecoveredRunCount}', MissingRecursiveChildStepsTotal='{missingChildLogicalStepCount}', UnexpectedDuplicateRecursiveChildStepsTotal='{unexpectedDuplicateChildLogicalStepCount}', OwnershipTransitionViolations='{totalRuntimeOwnershipTransitionViolationCount}', OwnershipIntervalProofIncluded='False', ProcessKillIdentityContinuity='{totalChildRuntimeCrashCount}/{totalChildRuntimeCrashCount}', ChildRuntimeFailures='{totalChildRuntimeCrashCount}', BusyHostFailures='{busyHostFailureCount}', FailureSeed='{resolvedAdversarialSchedule.FailureSeed}', Matrix='{resolvedAdversarialSchedule.MatrixStatus}'");
 
                 this.output.WriteLine(
                     "# RECURSIVE CHILD DAG PRODUCTION PROOF END");
@@ -2352,7 +2371,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 injectParentHostFailure,
                 waitForExternalParentHostFailure,
                 childDepth,
-                recoveryObservationMode);
+                recoveryObservationMode,
+                resolvedAdversarialSchedule);
 
             if (finalProofStopwatch is null)
             {
@@ -2982,7 +3002,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             bool injectParentHostFailure,
             bool waitForExternalParentHostFailure,
             int childDepth,
-            ProductionRecoveryObservationMode recoveryObservationMode)
+            ProductionRecoveryObservationMode recoveryObservationMode,
+            ProductionChildDagAdversarialScheduleDefinition adversarialSchedule)
         {
             var recoveryInjected =
                 injectChildRuntimeFailure || injectParentHostFailure;
@@ -3015,7 +3036,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             this.output.WriteLine(
                 $"ChildRuntimeFailureInjected='{injectChildRuntimeFailure.ToString().ToLowerInvariant()}'");
             this.output.WriteLine(
-                $"KillAfterCompletedStepCount='{(injectChildRuntimeFailure ? KillAfterCompletedStepCount : 0)}'");
+                $"KillAfterCompletedStepCount='{(injectChildRuntimeFailure ? adversarialSchedule.KillAfterCompletedStepCount : 0)}'");
             this.output.WriteLine(
                 $"ChildRuntimeCrashCount='{totalChildRuntimeCrashCount}'");
             this.output.WriteLine(
@@ -4264,7 +4285,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             bool injectParentHostFailure,
             bool waitForExternalParentHostFailure,
             int childDepth,
-            ProductionRecoveryObservationMode recoveryObservationMode)
+            ProductionRecoveryObservationMode recoveryObservationMode,
+            ProductionChildDagAdversarialScheduleDefinition adversarialSchedule)
         {
             this.output.WriteLine(
                 $"# {this.profile.LogPrefix} PRODUCTION PROOF");
@@ -4291,7 +4313,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"  - [ON] Every submitted parent DAG completes exactly {parentLogicalStepCount} logical steps; ChildDepth='{childDepth}' composes the nested Child DAG contract before terminal completion.");
             this.output.WriteLine(
                 injectChildRuntimeFailure
-                    ? $"  - [ON] One child runtime is killed after at least {KillAfterCompletedStepCount} completed steps while its parent and siblings survive; one distinct fully busy parent and its child tree are then force-killed; both recoveries are validated."
+                    ? $"  - [ON] One child runtime is killed after at least {adversarialSchedule.KillAfterCompletedStepCount} completed steps while its parent and siblings survive; one distinct fully busy parent and its child tree are then force-killed; both recoveries are validated."
                     : injectParentHostFailure
                         ? "  - [ON] One fully busy parent Process Host and its child-process tree are force-killed; exact membership suppression, replacement, recovery, replay, ledger, trace, forensics, and topology are validated."
                         : "  - [ON] Replay, ledger, trace, durable lifecycle topology, datastore traffic, and no-recovery contamination are validated.");
@@ -4335,7 +4357,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             this.output.WriteLine(
                 $"  InjectChildRuntimeFailure='{injectChildRuntimeFailure}'");
             this.output.WriteLine(
-                $"  KillAfterCompletedStepCount='{(injectChildRuntimeFailure ? KillAfterCompletedStepCount : 0)}'");
+                $"  KillAfterCompletedStepCount='{(injectChildRuntimeFailure ? adversarialSchedule.KillAfterCompletedStepCount : 0)}'");
             this.output.WriteLine(
                 $"  InjectParentHostFailure='{injectParentHostFailure}'");
             this.output.WriteLine(
