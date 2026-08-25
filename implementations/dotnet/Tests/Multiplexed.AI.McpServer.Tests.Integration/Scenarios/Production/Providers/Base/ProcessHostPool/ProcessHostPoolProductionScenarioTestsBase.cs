@@ -1289,6 +1289,21 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 Assert.Equal(submittedRunCountPerCycle, completedRuns.Count);
                 Assert.Equal(submittedRunCountPerCycle, finalStatuses.Count);
 
+                var recursiveChildParentExecutionProofTargets =
+                    childDepth > 0
+                        ? completedRuns
+                            .Select(
+                                (run, index) =>
+                                    ProductionChildDagParentExecutionProofTarget
+                                        .FromSharedRun(
+                                            run,
+                                            finalStatuses[index].ExecutionId ??
+                                            finalStatuses[index]
+                                                .RunState?
+                                                .ExecutionId))
+                            .ToArray()
+                        : Array.Empty<ProductionChildDagParentExecutionProofTarget>();
+
                 drainStopwatch.Stop();
 
                 this.output.WriteLine(
@@ -1636,7 +1651,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         await ProductionChildDagStepLedgerAssertions
                             .AssertExactRecursiveLogicalStepCompletionAsync(
                                 ProductionChildDagScenarioHelpers.CreateRelationStore(controlPlaneHost.Services),
-                                completedRuns,
+                                recursiveChildParentExecutionProofTargets,
                                 childDepth,
                                 StepCount,
                                 childExecutionIds =>
@@ -1678,12 +1693,27 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     }
                 }
 
+                var submittedParentDispatchLedgerEntries =
+                    controlPlaneLedgerEntries
+                        .Concat(
+                            executionLedgerEntries.Where(
+                                entry =>
+                                    entry.EventType.Contains(
+                                        "remote-shared-run-dispatch.succeeded",
+                                        StringComparison.OrdinalIgnoreCase) &&
+                                    !string.IsNullOrWhiteSpace(
+                                        entry.CorrelationContext.RunId) &&
+                                    admission.SharedRunIds.Contains(
+                                        entry.CorrelationContext.RunId)))
+                        .DistinctBy(entry => entry.EntryId)
+                        .ToArray();
+
                 var dispatchLedgerProof =
                     RuntimePoolProductionCycleExecutor
                         .AssertDurableDispatchEvidence(
                             admission.SharedRunIds,
                             recoveredSharedRunIds,
-                            controlPlaneLedgerEntries,
+                            submittedParentDispatchLedgerEntries,
                             $"{this.profile.LogPrefix} cycle {cycleNumber} durable dispatch ledger proof");
 
                 Assert.Equal(

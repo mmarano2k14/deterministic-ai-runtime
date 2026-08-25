@@ -1376,13 +1376,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             stepCount,
                             "Bounded-capacity logical step completion ledger proof");
 
+                var submittedParentDispatchLedgerEntries =
+                    controlPlaneLedgerEntries
+                        .Concat(
+                            executionLedgerEntries.Where(
+                                entry =>
+                                    entry.EventType.Contains(
+                                        "remote-shared-run-dispatch.succeeded",
+                                        StringComparison.OrdinalIgnoreCase) &&
+                                    !string.IsNullOrWhiteSpace(
+                                        entry.CorrelationContext.RunId) &&
+                                    submittedSharedRunIds.Contains(
+                                        entry.CorrelationContext.RunId)))
+                        .DistinctBy(entry => entry.EntryId)
+                        .ToArray();
+
                 var dispatchLedgerProof =
                     RuntimePoolProductionCycleExecutor
                         .AssertDurableDispatchEvidence(
                             submittedSharedRunIds,
                             podFailureProof?.RecoveredSharedRunIds ??
                                 new HashSet<string>(StringComparer.Ordinal),
-                            controlPlaneLedgerEntries,
+                            submittedParentDispatchLedgerEntries,
                             "Bounded-capacity durable dispatch ledger proof");
 
                 var dispatchedSharedRunCount =
@@ -3654,12 +3669,27 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             }
                         }
 
+                        var submittedParentDispatchLedgerEntries =
+                            controlPlaneLedgerEntries
+                                .Concat(
+                                    executionLedgerEntries.Where(
+                                        entry =>
+                                            entry.EventType.Contains(
+                                                "remote-shared-run-dispatch.succeeded",
+                                                StringComparison.OrdinalIgnoreCase) &&
+                                            !string.IsNullOrWhiteSpace(
+                                                entry.CorrelationContext.RunId) &&
+                                            submittedSharedRunIds.Contains(
+                                                entry.CorrelationContext.RunId)))
+                                .DistinctBy(entry => entry.EntryId)
+                                .ToArray();
+
                         var dispatchLedgerProof =
                             RuntimePoolProductionCycleExecutor
                                 .AssertDurableDispatchEvidence(
                                     submittedSharedRunIds,
                                     recoveredSharedRunIds,
-                                    controlPlaneLedgerEntries,
+                                    submittedParentDispatchLedgerEntries,
                                     $"Warm reuse cycle {auditCycleNumber} durable dispatch ledger proof");
 
                         var dispatchedSharedRunCount =
