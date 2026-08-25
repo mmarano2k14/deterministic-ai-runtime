@@ -70,6 +70,53 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
         }
 
         /// <summary>
+        /// Verifies that the child-invocation-boundary schedule stops at the final ordinary parent checkpoint
+        /// immediately before the ExecuteChildDag call-site can become runnable.
+        /// </summary>
+        [Fact]
+        public void ChildInvocationBoundary_Should_Stop_At_The_Final_Ordinary_Parent_Checkpoint()
+        {
+            const int productionParentStepCount = 50;
+
+            var schedule =
+                ProductionChildDagAdversarialScheduleDefinition.ChildInvocationBoundary;
+
+            Assert.Equal("child-invocation-boundary", schedule.MatrixScenarioId);
+            Assert.Equal("child-invocation-boundary", schedule.FailureSeed);
+            Assert.Equal("DeterministicAdversarial", schedule.FailureScheduleMode);
+            Assert.Equal("pre-child-invocation", schedule.FailurePosition);
+            Assert.Equal("IN_PROGRESS", schedule.MatrixStatus);
+            Assert.Equal(productionParentStepCount - 1, schedule.KillAfterCompletedStepCount);
+            Assert.Equal(
+                productionParentStepCount,
+                schedule.ResolveCrashCheckpointStepIndex(productionParentStepCount));
+        }
+
+        /// <summary>
+        /// Verifies that introducing the child-invocation-boundary row leaves the already-proven baseline and
+        /// crash-early coordinates unchanged.
+        /// </summary>
+        [Fact]
+        public void ChildInvocationBoundary_Should_Not_Mutate_Previous_Matrix_Coordinates()
+        {
+            var baseline =
+                ProductionChildDagAdversarialScheduleDefinition.Baseline;
+            var crashEarly =
+                ProductionChildDagAdversarialScheduleDefinition.CrashEarly;
+            var childInvocationBoundary =
+                ProductionChildDagAdversarialScheduleDefinition.ChildInvocationBoundary;
+
+            Assert.Equal(25, baseline.KillAfterCompletedStepCount);
+            Assert.Equal(26, baseline.ResolveCrashCheckpointStepIndex(50));
+
+            Assert.Equal(1, crashEarly.KillAfterCompletedStepCount);
+            Assert.Equal(2, crashEarly.ResolveCrashCheckpointStepIndex(50));
+
+            Assert.Equal(49, childInvocationBoundary.KillAfterCompletedStepCount);
+            Assert.Equal(50, childInvocationBoundary.ResolveCrashCheckpointStepIndex(50));
+        }
+
+        /// <summary>
         /// Verifies that a schedule cannot place the crash checkpoint outside the ordinary parent-step range.
         /// </summary>
         [Theory]

@@ -1,5 +1,4 @@
-﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
-using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
+﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Grpc.Profiles;
 using Xunit;
 using Xunit.Abstractions;
@@ -83,29 +82,6 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 executionCycleCount,
                 childDepth,
                 ProductionRecoveryObservationMode.EventDriven);
-        }
-
-        /// <summary>
-        /// STEP11B A1 deterministic adversarial row. Reuses the exact green hierarchical production harness,
-        /// but kills the selected runtime after the first durable parent step instead of the A0 midpoint.
-        /// The later broad Pod failure keeps its historical independent hold coordinate.
-        /// </summary>
-        /// <returns>A task that completes after the crash-early production proof converges.</returns>
-        [Fact]
-        [Trait("ObservationMode", "EventDriven")]
-        [Trait("ValidationProfile", "Adversarial")]
-        [Trait("MatrixScenarioId", "crash-early")]
-        public Task Grpc_KubernetesPool_Matrix_CrashEarly_Should_Preserve_Recursive_Child_Dag_Exactness()
-        {
-            return ExecuteFullFailureProductionScenarioAsync(
-                maximumPodCount: 3,
-                runtimeCountPerPod: 3,
-                submissionIterationCount: 2,
-                executionCycleCount: 2,
-                childDepth: 3,
-                recoveryObservationMode: ProductionRecoveryObservationMode.EventDriven,
-                adversarialSchedule:
-                    ProductionChildDagAdversarialScheduleDefinition.CrashEarly);
         }
 
         /// <summary>

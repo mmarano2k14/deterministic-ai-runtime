@@ -48,6 +48,27 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
             };
 
         /// <summary>
+        /// Gets the deterministic schedule that fails the selected parent at the final ordinary root checkpoint,
+        /// immediately before the ExecuteChildDag call-site can become runnable.
+        /// </summary>
+        /// <remarks>
+        /// The production matrix pipeline has fifty ordinary parent steps. ExecuteChildDag is appended after those
+        /// steps and depends on all of them. Holding step fifty after forty-nine durable completions therefore
+        /// creates the closest existing deterministic pre-invocation failure boundary without changing runtime
+        /// execution semantics or introducing a test-only Child DAG state machine.
+        /// </remarks>
+        public static ProductionChildDagAdversarialScheduleDefinition ChildInvocationBoundary { get; } =
+            new()
+            {
+                MatrixScenarioId = "child-invocation-boundary",
+                FailureSeed = "child-invocation-boundary",
+                FailureScheduleMode = "DeterministicAdversarial",
+                FailurePosition = "pre-child-invocation",
+                MatrixStatus = "IN_PROGRESS",
+                KillAfterCompletedStepCount = 49
+            };
+
+        /// <summary>
         /// Gets the stable matrix row identifier written into proof output.
         /// </summary>
         public required string MatrixScenarioId { get; init; }
