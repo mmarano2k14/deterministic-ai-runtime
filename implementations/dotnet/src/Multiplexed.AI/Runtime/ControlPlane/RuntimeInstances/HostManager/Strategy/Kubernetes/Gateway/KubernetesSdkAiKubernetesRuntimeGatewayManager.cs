@@ -441,12 +441,18 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
         /// A production Gateway normally requires the top-level
         /// <c>Programmed=True</c> condition.
         ///
-        /// In local port-forward mode, a controller-managed LoadBalancer Service can
+        /// For Service-backed transports, a controller-managed LoadBalancer Service can
         /// remain without an external address and therefore report
         /// <c>Programmed=False/AddressNotAssigned</c>. In that precise case the
-        /// Service is the transport boundary because kubectl port-forward does not
-        /// use the external LoadBalancer address. The subsequent Service readiness
-        /// gate additionally requires a ready backend endpoint before port-forward starts.
+        /// top-level Gateway condition gate accepts the controller's explicit
+        /// <c>AddressNotAssigned</c> state once the listener itself is ready.
+        ///
+        /// Transport readiness remains a separate mandatory gate immediately after this
+        /// method: <c>WaitUntilGatewayServiceAvailableAsync</c> requires the
+        /// controller-managed Service and expected listener port. When local port-forward
+        /// is enabled, that Service gate additionally requires a ready backend endpoint.
+        /// This avoids resolving the same Service twice while preserving the complete
+        /// transport-readiness contract.
         /// </remarks>
         private async Task<AiKubernetesGatewayResource> WaitUntilGatewayReadyAsync(
             string gatewayName,
@@ -489,40 +495,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Strat
                         AiKubernetesGatewayNames.FalseConditionStatus,
                         AiKubernetesGatewayNames.AddressNotAssignedReason);
 
-                var localPortForwardServiceReady = false;
-
-                if (accepted &&
-                    listenerReady &&
+                var addressNotAssignedAccepted =
                     this.options.RequireGatewayProgrammed &&
                     !programmed &&
-                    this.options.UsePortForwardTransportEndpoint &&
-                    addressNotAssigned)
-                {
-                    var gatewayService =
-                        await this.TryResolveGatewayServiceAsync(
-                                gatewayName,
-                                cancellationToken)
-                            .ConfigureAwait(false);
-
-                    localPortForwardServiceReady =
-                        gatewayService is not null &&
-                        HasGatewayServicePort(
-                            gatewayService,
-                            this.options.GatewayPort);
-                }
+                    addressNotAssigned;
 
                 if (accepted &&
                     listenerReady &&
                     (!this.options.RequireGatewayProgrammed ||
                      programmed ||
-                     localPortForwardServiceReady))
+                     addressNotAssignedAccepted))
                 {
-                    if (localPortForwardServiceReady)
+                    if (addressNotAssignedAccepted)
                     {
                         this.logger.LogInformation(
-                            "KUBERNETES GATEWAY READY THROUGH LOCAL SERVICE GatewayName={GatewayName} Namespace={Namespace} Reason=AddressNotAssigned PortForwardEnabled=True ListenerReady=True",
+                            "KUBERNETES GATEWAY CONDITION READY GatewayName={GatewayName} Namespace={Namespace} Reason=AddressNotAssigned ListenerReady=True TransportReadinessDeferredToServiceGate=True PortForwardEnabled={PortForwardEnabled}",
                             gatewayName,
-                            this.options.Namespace);
+                            this.options.Namespace,
+                            this.options.UsePortForwardTransportEndpoint);
                     }
 
                     return gateway;

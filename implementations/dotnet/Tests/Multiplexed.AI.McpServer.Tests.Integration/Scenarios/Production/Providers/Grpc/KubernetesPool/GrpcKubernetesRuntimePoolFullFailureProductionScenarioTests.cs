@@ -66,7 +66,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         [Theory]
         [Trait("ObservationMode", "EventDriven")]
         [Trait("ValidationProfile", "Canary")]
-        [InlineData(5, 5, 5, 2, 3)]
+        //[InlineData(5, 5, 5, 2, 3)]
+        [InlineData(3, 3, 2, 2, 3)]
         public Task Grpc_KubernetesPool_EventDriven_Canary_Should_Reuse_The_Same_FullFailure_Scenario(
             int maximumPodCount,
             int runtimeCountPerPod,

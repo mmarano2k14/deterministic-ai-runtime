@@ -25,6 +25,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Output;
@@ -3034,6 +3035,45 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 .Concat(podFailureProof.ImpactedExecutionIds)
                                 .ToHashSet(StringComparer.Ordinal);
 
+                        var failedRuntimeOwnershipIds =
+                            podFailureProof.FailedRuntimeInstanceIds
+                                .ToHashSet(StringComparer.Ordinal);
+
+                        if (childRuntimeFailureTarget is not null)
+                        {
+                            failedRuntimeOwnershipIds.Add(
+                                childRuntimeFailureTarget
+                                    .Runtime
+                                    .RuntimeInstanceId);
+                        }
+
+                        var runtimeOwnershipTransitionProof =
+                            ProductionRuntimeOwnershipTransitionAssertions
+                                .AssertExactRecoveredFinalOwnership(
+                                    finalRuns
+                                        .Select(
+                                            run =>
+                                                ProductionRuntimeOwnershipFinalTarget
+                                                    .FromSharedRun(
+                                                        run.SharedRun,
+                                                        run.ExecutionId))
+                                        .ToArray(),
+                                    recoveredSharedRunIds,
+                                    recoveredExecutionIds,
+                                    failedRuntimeOwnershipIds,
+                                    $"{boundedCapacityProfile.LogPrefix} cycle {cycleNumber} recovered runtime ownership transition proof");
+
+                        output.WriteLine(
+                            $"[{boundedCapacityProfile.LogPrefix} VALID RUNTIME OWNERSHIP TRANSITION PROOF] " +
+                            $"Cycle='{cycleNumber}', " +
+                            $"ExpectedRecoveredSharedRunCount='{runtimeOwnershipTransitionProof.ExpectedRecoveredSharedRunCount}', " +
+                            $"ObservedRecoveredSharedRunCount='{runtimeOwnershipTransitionProof.ObservedRecoveredSharedRunCount}', " +
+                            $"FinalReplacementBindingCount='{runtimeOwnershipTransitionProof.FinalReplacementBindingCount}', " +
+                            $"TransitionViolationCount='{runtimeOwnershipTransitionProof.TransitionViolationCount}', " +
+                            "ScenarioAuthority='exact-recovery-outcomes+durable-final-shared-run-ownership', " +
+                            "IntervalAuthority='RedisSharedQueueClaimToken+RedisSharedRunCAS', " +
+                            "TemporalSampling='not-used'.");
+
                         var unexpectedDuplicateDispatchBindings =
                             duplicateDispatchBindings
                                 .Where(
@@ -3532,6 +3572,88 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     parentLogicalStepCount,
                                     $"Warm reuse cycle {auditCycleNumber} logical step completion ledger proof");
 
+                        ProductionChildDagRecursiveStepLedgerProof? recursiveChildStepLedgerProof = null;
+
+                        if (childDepth > 0)
+                        {
+                            async Task<IReadOnlyList<AiDecisionLedgerEntry>> QueryRecursiveChildExecutionLedgerAsync(
+                                IReadOnlySet<string> childExecutionIds)
+                            {
+                                var entries = new List<AiDecisionLedgerEntry>();
+
+                                foreach (var childExecutionIdBatch in childExecutionIds
+                                             .OrderBy(value => value, StringComparer.Ordinal)
+                                             .Chunk(8))
+                                {
+                                    var currentBatch =
+                                        await Task.WhenAll(
+                                                childExecutionIdBatch.Select(
+                                                    executionId =>
+                                                        QueryPhase5LedgerWithFreshContextAsync(
+                                                            new AiDecisionLedgerQuery
+                                                            {
+                                                                ExecutionId = executionId,
+                                                                TimestampFromUtc = ledgerTimelineFromUtc,
+                                                                TimestampToUtc = ledgerTimelineToUtc
+                                                            },
+                                                            $"observability.ledger.warm-reuse.child-execution:{auditCycleNumber}:{executionId}")))
+                                            .ConfigureAwait(false);
+
+                                    Assert.All(
+                                        currentBatch,
+                                        batchEntries => Assert.NotEmpty(batchEntries));
+
+                                    entries.AddRange(
+                                        currentBatch.SelectMany(batchEntries => batchEntries));
+                                }
+
+                                return entries;
+                            }
+
+                            recursiveChildStepLedgerProof =
+                                await ProductionChildDagStepLedgerAssertions
+                                    .AssertExactRecursiveLogicalStepCompletionAsync(
+                                        ProductionChildDagScenarioHelpers.CreateRelationStore(host.Services),
+                                        finalRuns
+                                            .Select(
+                                                run =>
+                                                    ProductionChildDagParentExecutionProofTarget
+                                                        .FromSharedRun(
+                                                            run.SharedRun,
+                                                            run.ExecutionId))
+                                            .ToArray(),
+                                        childDepth,
+                                        stepCount,
+                                        QueryRecursiveChildExecutionLedgerAsync,
+                                        recoveredExecutionIds,
+                                        $"Warm reuse cycle {auditCycleNumber} recursive Child DAG logical step ledger proof",
+                                        TimeSpan.FromMinutes(2))
+                                    .ConfigureAwait(false);
+
+                            output.WriteLine(
+                                $"[{boundedCapacityProfile.LogPrefix} WARM REUSE RECURSIVE CHILD STEP LEDGER PROOF] " +
+                                $"Cycle='{auditCycleNumber}', " +
+                                $"ChildDepth='{childDepth}', " +
+                                $"ExpectedChildExecutionCount='{recursiveChildStepLedgerProof.ExpectedChildExecutionCount}', " +
+                                $"ExpectedChildLogicalStepCount='{recursiveChildStepLedgerProof.ExpectedLogicalStepCount}', " +
+                                $"DistinctChildLogicalStepCompletedCount='{recursiveChildStepLedgerProof.DistinctLogicalStepCompletedCount}', " +
+                                $"RawChildStepCompletedEntryCount='{recursiveChildStepLedgerProof.RawStepCompletedEntryCount}', " +
+                                $"RecoveryCoveredDuplicateChildEntryCount='{recursiveChildStepLedgerProof.DuplicateStepCompletedEntryCount}'.");
+
+                            foreach (var depthProof in recursiveChildStepLedgerProof.DepthProofs)
+                            {
+                                output.WriteLine(
+                                    $"[{boundedCapacityProfile.LogPrefix} WARM REUSE RECURSIVE CHILD STEP LEDGER DEPTH] " +
+                                    $"Cycle='{auditCycleNumber}', Depth='{depthProof.Depth}', " +
+                                    $"ExpectedExecutionCount='{depthProof.ExpectedExecutionCount}', " +
+                                    $"ExpectedStepCountPerExecution='{depthProof.ExpectedStepCountPerExecution}', " +
+                                    $"ExpectedLogicalStepCount='{depthProof.ExpectedLogicalStepCount}', " +
+                                    $"DistinctLogicalStepCompletedCount='{depthProof.DistinctLogicalStepCompletedCount}', " +
+                                    $"RawStepCompletedEntryCount='{depthProof.RawStepCompletedEntryCount}', " +
+                                    $"RecoveryCoveredDuplicateEntryCount='{depthProof.DuplicateStepCompletedEntryCount}'.");
+                            }
+                        }
+
                         var dispatchLedgerProof =
                             RuntimePoolProductionCycleExecutor
                                 .AssertDurableDispatchEvidence(
@@ -3635,6 +3757,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 podFailureProof.ReplacementPodUid,
                                 replayProofs.Count,
                                 stepCompletedLedgerCount,
+                                recursiveChildStepLedgerProof?.ExpectedChildExecutionCount ?? 0,
+                                recursiveChildStepLedgerProof?.ExpectedLogicalStepCount ?? 0,
+                                recursiveChildStepLedgerProof?.RawStepCompletedEntryCount ?? 0,
+                                recursiveChildStepLedgerProof?.DistinctLogicalStepCompletedCount ?? 0,
+                                recursiveChildStepLedgerProof?.DuplicateStepCompletedEntryCount ?? 0,
+                                runtimeOwnershipTransitionProof.ObservedRecoveredSharedRunCount,
+                                runtimeOwnershipTransitionProof.TransitionViolationCount,
                                 Volatile.Read(ref phase5TooManyRequestsRetryCount),
                                 cycleStopwatch.Elapsed);
 
@@ -3775,6 +3904,47 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         .Distinct(StringComparer.Ordinal)
                         .Count());
 
+                var expectedRecursiveChildExecutionCount =
+                    checked(totalSubmittedRunCount * childDepth);
+                var expectedRecursiveChildLogicalStepCountPerParent =
+                    childDepth == 0
+                        ? 0
+                        : Enumerable.Range(1, childDepth)
+                            .Sum(depth =>
+                                ProductionChildDagStepLedgerAssertions
+                                    .GetExpectedLogicalStepCountAtDepth(
+                                        stepCount,
+                                        childDepth,
+                                        depth));
+                var expectedRecursiveChildLogicalStepCount =
+                    checked(
+                        totalSubmittedRunCount *
+                        expectedRecursiveChildLogicalStepCountPerParent);
+                var totalRecursiveChildExecutionCount =
+                    cycleProofs.Sum(cycle => cycle.RecursiveChildExecutionCount);
+                var totalRecursiveChildExpectedLogicalStepCount =
+                    cycleProofs.Sum(cycle => cycle.RecursiveChildExpectedLogicalStepCount);
+                var totalRecursiveChildRawStepCompletedLedgerEntryCount =
+                    cycleProofs.Sum(cycle => cycle.RecursiveChildRawStepCompletedLedgerEntryCount);
+                var totalRecursiveChildDistinctLogicalStepCompletedLedgerCount =
+                    cycleProofs.Sum(cycle => cycle.RecursiveChildDistinctLogicalStepCompletedLedgerCount);
+                var totalRecursiveChildRecoveryCoveredDuplicateStepCompletedLedgerEntryCount =
+                    cycleProofs.Sum(cycle => cycle.RecursiveChildRecoveryCoveredDuplicateStepCompletedLedgerEntryCount);
+                var totalRuntimeOwnershipTransitionCount =
+                    cycleProofs.Sum(cycle => cycle.RuntimeOwnershipTransitionCount);
+                var totalRuntimeOwnershipTransitionViolationCount =
+                    cycleProofs.Sum(cycle => cycle.RuntimeOwnershipTransitionViolationCount);
+
+                Assert.Equal(
+                    expectedRecursiveChildExecutionCount,
+                    totalRecursiveChildExecutionCount);
+                Assert.Equal(
+                    expectedRecursiveChildLogicalStepCount,
+                    totalRecursiveChildExpectedLogicalStepCount);
+                Assert.Equal(
+                    totalRecursiveChildExpectedLogicalStepCount,
+                    totalRecursiveChildDistinctLogicalStepCompletedLedgerCount);
+
                 var expectedRecoveredRunCountPerCycle =
                     runtimeCountPerPod +
                     (injectChildRuntimeFailure ? 1 : 0);
@@ -3784,6 +3954,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         expectedRecoveredRunCountPerCycle *
                         executionCycleCount),
                     allRecoveryForensicsIds.Length);
+                Assert.Equal(
+                    checked(
+                        expectedRecoveredRunCountPerCycle *
+                        executionCycleCount),
+                    totalRuntimeOwnershipTransitionCount);
+                Assert.Equal(
+                    0,
+                    totalRuntimeOwnershipTransitionViolationCount);
 
                 Assert.Equal(
                     allRecoveryForensicsIds.Length,
@@ -3821,6 +3999,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine($"TotalSubmittedRunCount='{totalSubmittedRunCount}'");
                 output.WriteLine($"TotalCompletedRunCount='{allExecutionIds.Length}'");
                 output.WriteLine($"TotalLogicalStepCount='{totalLogicalStepCount}'");
+                output.WriteLine($"TotalRootLogicalStepCount='{totalLogicalStepCount}'");
+                output.WriteLine($"ExpectedChildExecutionCount='{expectedRecursiveChildExecutionCount}'");
+                output.WriteLine($"ExpectedChildLogicalStepCount='{expectedRecursiveChildLogicalStepCount}'");
+                output.WriteLine($"DistinctChildLogicalStepCompletedLedgerCount='{totalRecursiveChildDistinctLogicalStepCompletedLedgerCount}'");
+                output.WriteLine($"RawChildStepCompletedLedgerEntryCount='{totalRecursiveChildRawStepCompletedLedgerEntryCount}'");
+                output.WriteLine($"RecoveryCoveredDuplicateChildStepCompletedLedgerEntryCount='{totalRecursiveChildRecoveryCoveredDuplicateStepCompletedLedgerEntryCount}'");
+                output.WriteLine($"TotalLogicalStepCountIncludingRecursiveChildren='{checked(totalLogicalStepCount + expectedRecursiveChildLogicalStepCount)}'");
                 output.WriteLine($"ChildRuntimeFailureInjected='{injectChildRuntimeFailure}'");
                 output.WriteLine($"KillAfterCompletedStepCount='{(injectChildRuntimeFailure ? FinalScenarioKillAfterCompletedStepCount : 0)}'");
                 output.WriteLine($"ForcedChildRuntimeKillCount='{(injectChildRuntimeFailure ? executionCycleCount : 0)}'");
@@ -3828,6 +4013,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine($"ForcedPodDeletionCount='{(waitForExternalPodDeletion ? 0 : executionCycleCount)}'");
                 output.WriteLine($"ExternalPodDeletionCount='{(waitForExternalPodDeletion ? executionCycleCount : 0)}'");
                 output.WriteLine($"RecoveredSharedRunCount='{expectedRecoveredRunCountPerCycle * executionCycleCount}'");
+                output.WriteLine($"RuntimeOwnershipTransitionCount='{totalRuntimeOwnershipTransitionCount}'");
+                output.WriteLine($"RuntimeOwnershipTransitionViolationCount='{totalRuntimeOwnershipTransitionViolationCount}'");
+                output.WriteLine("RuntimeOwnershipIntervalAuthority='RedisSharedQueueClaimToken+RedisSharedRunCAS'");
+                output.WriteLine("RuntimeOwnershipIntervalProof='RedisRuntimeOwnershipHandoffProofTests'");
+                output.WriteLine("RuntimeOwnershipTemporalSampling='not-used'");
                 output.WriteLine($"RecoveryForensicsProofCount='{allRecoveryForensicsIds.Length}'");
                 output.WriteLine($"FinalPhysicalPodCountBeforeCleanup='{finalPhysicalPodCount}'");
                 output.WriteLine($"ScenarioTotalDuration='{totalStopwatch.Elapsed}'");
@@ -5298,6 +5488,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string ReplacementPodUid,
             int ReplayProofCount,
             int StepCompletedLedgerCount,
+            int RecursiveChildExecutionCount,
+            int RecursiveChildExpectedLogicalStepCount,
+            int RecursiveChildRawStepCompletedLedgerEntryCount,
+            int RecursiveChildDistinctLogicalStepCompletedLedgerCount,
+            int RecursiveChildRecoveryCoveredDuplicateStepCompletedLedgerEntryCount,
+            int RuntimeOwnershipTransitionCount,
+            int RuntimeOwnershipTransitionViolationCount,
             int Phase5TooManyRequestsRetryCount,
             TimeSpan Duration);
 

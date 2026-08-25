@@ -19,6 +19,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
 using Multiplexed.AI.McpServer.Tests.Integration.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Ledger;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Models;
@@ -414,6 +415,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var totalRawStepCompletedLedgerEntryCount = 0;
             var totalDistinctLogicalStepCompletedLedgerCount = 0;
             var totalRecoveryCoveredDuplicateStepCompletedLedgerEntryCount = 0;
+            var totalRecursiveChildExecutionCount = 0;
+            var totalRecursiveChildExpectedLogicalStepCount = 0;
+            var totalRecursiveChildRawStepCompletedLedgerEntryCount = 0;
+            var totalRecursiveChildDistinctLogicalStepCompletedLedgerCount = 0;
+            var totalRecursiveChildRecoveryCoveredDuplicateStepCompletedLedgerEntryCount = 0;
+            var totalRuntimeOwnershipTransitionCount = 0;
+            var totalRuntimeOwnershipTransitionViolationCount = 0;
             var totalRecoveryForensicsCount = 0;
             var allRunPlacements =
                 new List<ProductionRuntimeRunPlacement>();
@@ -1567,6 +1575,50 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             new HashSet<string>(StringComparer.Ordinal))
                         .ToHashSet(StringComparer.Ordinal);
 
+                var failedRuntimeOwnershipIds =
+                    recoveryProof?.FailedRuntimeInstanceIds
+                        .ToHashSet(StringComparer.Ordinal) ??
+                    new HashSet<string>(StringComparer.Ordinal);
+
+                if (childRuntimeFailureTarget is not null)
+                {
+                    failedRuntimeOwnershipIds.Add(
+                        childRuntimeFailureTarget
+                            .Runtime
+                            .RuntimeInstanceId);
+                }
+
+                var runtimeOwnershipTransitionProof =
+                    ProductionRuntimeOwnershipTransitionAssertions
+                        .AssertExactRecoveredFinalOwnership(
+                            completedRuns,
+                            recoveredSharedRunIds,
+                            recoveredExecutionIds,
+                            failedRuntimeOwnershipIds,
+                            $"{this.profile.LogPrefix} cycle {cycleNumber} recovered runtime ownership transition proof");
+
+                totalRuntimeOwnershipTransitionCount =
+                    checked(
+                        totalRuntimeOwnershipTransitionCount +
+                        runtimeOwnershipTransitionProof
+                            .ObservedRecoveredSharedRunCount);
+                totalRuntimeOwnershipTransitionViolationCount =
+                    checked(
+                        totalRuntimeOwnershipTransitionViolationCount +
+                        runtimeOwnershipTransitionProof
+                            .TransitionViolationCount);
+
+                this.output.WriteLine(
+                    $"[{this.profile.LogPrefix} VALID RUNTIME OWNERSHIP TRANSITION PROOF] " +
+                    $"Cycle='{cycleNumber}', " +
+                    $"ExpectedRecoveredSharedRunCount='{runtimeOwnershipTransitionProof.ExpectedRecoveredSharedRunCount}', " +
+                    $"ObservedRecoveredSharedRunCount='{runtimeOwnershipTransitionProof.ObservedRecoveredSharedRunCount}', " +
+                    $"FinalReplacementBindingCount='{runtimeOwnershipTransitionProof.FinalReplacementBindingCount}', " +
+                    $"TransitionViolationCount='{runtimeOwnershipTransitionProof.TransitionViolationCount}', " +
+                    "ScenarioAuthority='exact-recovery-outcomes+durable-final-shared-run-ownership', " +
+                    "IntervalAuthority='RedisSharedQueueClaimToken+RedisSharedRunCAS', " +
+                    "TemporalSampling='not-used'.");
+
                 var stepLedgerProof =
                     RuntimePoolProductionCycleExecutor
                         .AssertLogicalStepCompletionEvidence(
@@ -1575,6 +1627,56 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             recoveredExecutionIds,
                             parentLogicalStepCount,
                             $"{this.profile.LogPrefix} cycle {cycleNumber} logical step ledger proof");
+
+                ProductionChildDagRecursiveStepLedgerProof? recursiveChildStepLedgerProof = null;
+
+                if (childDepth > 0)
+                {
+                    recursiveChildStepLedgerProof =
+                        await ProductionChildDagStepLedgerAssertions
+                            .AssertExactRecursiveLogicalStepCompletionAsync(
+                                ProductionChildDagScenarioHelpers.CreateRelationStore(controlPlaneHost.Services),
+                                completedRuns,
+                                childDepth,
+                                StepCount,
+                                childExecutionIds =>
+                                    QueryExecutionLedgerAsync(
+                                        mcp,
+                                        childExecutionIds,
+                                        cycleLedgerFromUtc,
+                                        cycleLedgerToUtc,
+                                        tenant.TenantId,
+                                        onBackpressureRetry: (_, _, _) =>
+                                            Interlocked.Increment(
+                                                ref replayTooManyRequestsRetryCount)),
+                                recoveredExecutionIds,
+                                $"{this.profile.LogPrefix} cycle {cycleNumber} recursive Child DAG logical step ledger proof",
+                                TimeSpan.FromMinutes(2))
+                            .ConfigureAwait(false);
+
+                    this.output.WriteLine(
+                        $"[{this.profile.LogPrefix} RECURSIVE CHILD STEP LEDGER PROOF] " +
+                        $"Cycle='{cycleNumber}', " +
+                        $"ChildDepth='{childDepth}', " +
+                        $"ExpectedChildExecutionCount='{recursiveChildStepLedgerProof.ExpectedChildExecutionCount}', " +
+                        $"ExpectedChildLogicalStepCount='{recursiveChildStepLedgerProof.ExpectedLogicalStepCount}', " +
+                        $"DistinctChildLogicalStepCompletedCount='{recursiveChildStepLedgerProof.DistinctLogicalStepCompletedCount}', " +
+                        $"RawChildStepCompletedEntryCount='{recursiveChildStepLedgerProof.RawStepCompletedEntryCount}', " +
+                        $"RecoveryCoveredDuplicateChildEntryCount='{recursiveChildStepLedgerProof.DuplicateStepCompletedEntryCount}'.");
+
+                    foreach (var depthProof in recursiveChildStepLedgerProof.DepthProofs)
+                    {
+                        this.output.WriteLine(
+                            $"[{this.profile.LogPrefix} RECURSIVE CHILD STEP LEDGER DEPTH] " +
+                            $"Cycle='{cycleNumber}', Depth='{depthProof.Depth}', " +
+                            $"ExpectedExecutionCount='{depthProof.ExpectedExecutionCount}', " +
+                            $"ExpectedStepCountPerExecution='{depthProof.ExpectedStepCountPerExecution}', " +
+                            $"ExpectedLogicalStepCount='{depthProof.ExpectedLogicalStepCount}', " +
+                            $"DistinctLogicalStepCompletedCount='{depthProof.DistinctLogicalStepCompletedCount}', " +
+                            $"RawStepCompletedEntryCount='{depthProof.RawStepCompletedEntryCount}', " +
+                            $"RecoveryCoveredDuplicateEntryCount='{depthProof.DuplicateStepCompletedEntryCount}'.");
+                    }
+                }
 
                 var dispatchLedgerProof =
                     RuntimePoolProductionCycleExecutor
@@ -1642,6 +1744,30 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     checked(
                         totalRecoveryForensicsCount +
                         (recoveryProof?.RecoveryForensicsIds.Count ?? 0));
+
+                if (recursiveChildStepLedgerProof is not null)
+                {
+                    totalRecursiveChildExecutionCount =
+                        checked(
+                            totalRecursiveChildExecutionCount +
+                            recursiveChildStepLedgerProof.ExpectedChildExecutionCount);
+                    totalRecursiveChildExpectedLogicalStepCount =
+                        checked(
+                            totalRecursiveChildExpectedLogicalStepCount +
+                            recursiveChildStepLedgerProof.ExpectedLogicalStepCount);
+                    totalRecursiveChildRawStepCompletedLedgerEntryCount =
+                        checked(
+                            totalRecursiveChildRawStepCompletedLedgerEntryCount +
+                            recursiveChildStepLedgerProof.RawStepCompletedEntryCount);
+                    totalRecursiveChildDistinctLogicalStepCompletedLedgerCount =
+                        checked(
+                            totalRecursiveChildDistinctLogicalStepCompletedLedgerCount +
+                            recursiveChildStepLedgerProof.DistinctLogicalStepCompletedCount);
+                    totalRecursiveChildRecoveryCoveredDuplicateStepCompletedLedgerEntryCount =
+                        checked(
+                            totalRecursiveChildRecoveryCoveredDuplicateStepCompletedLedgerEntryCount +
+                            recursiveChildStepLedgerProof.DuplicateStepCompletedEntryCount);
+                }
 
                 this.output.WriteLine(
                     $"[{this.profile.LogPrefix} MCP REPLAY PROOF] Cycle='{cycleNumber}', TenantId='{tenant.TenantId}', ReplayProofCount='{replayProofs.Count}', ExecutionIds='{string.Join(",", expectedExecutionIds.OrderBy(value => value, StringComparer.Ordinal))}'.");
@@ -1856,6 +1982,71 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             Assert.Equal(
                 totalRecoveredRunCount,
                 totalRecoveryForensicsCount);
+            Assert.Equal(
+                totalRecoveredRunCount,
+                totalRuntimeOwnershipTransitionCount);
+            Assert.Equal(
+                0,
+                totalRuntimeOwnershipTransitionViolationCount);
+
+            this.output.WriteLine(string.Empty);
+            this.output.WriteLine(
+                $"# {this.profile.LogPrefix} VALID RUNTIME OWNERSHIP SUMMARY");
+            this.output.WriteLine(
+                $"RuntimeOwnershipTransitionCount='{totalRuntimeOwnershipTransitionCount}'");
+            this.output.WriteLine(
+                $"RuntimeOwnershipTransitionViolationCount='{totalRuntimeOwnershipTransitionViolationCount}'");
+            this.output.WriteLine(
+                "RuntimeOwnershipIntervalAuthority='RedisSharedQueueClaimToken+RedisSharedRunCAS'");
+            this.output.WriteLine(
+                "RuntimeOwnershipIntervalProof='RedisRuntimeOwnershipHandoffProofTests'");
+            this.output.WriteLine(
+                "RuntimeOwnershipTemporalSampling='not-used'");
+
+            var expectedRecursiveChildExecutionCount =
+                checked(totalSubmittedRunCount * childDepth);
+            var expectedRecursiveChildLogicalStepCountPerParent =
+                childDepth == 0
+                    ? 0
+                    : Enumerable.Range(1, childDepth)
+                        .Sum(depth =>
+                            ProductionChildDagStepLedgerAssertions
+                                .GetExpectedLogicalStepCountAtDepth(
+                                    StepCount,
+                                    childDepth,
+                                    depth));
+            var expectedRecursiveChildLogicalStepCount =
+                checked(
+                    totalSubmittedRunCount *
+                    expectedRecursiveChildLogicalStepCountPerParent);
+
+            Assert.Equal(
+                expectedRecursiveChildExecutionCount,
+                totalRecursiveChildExecutionCount);
+            Assert.Equal(
+                expectedRecursiveChildLogicalStepCount,
+                totalRecursiveChildExpectedLogicalStepCount);
+            Assert.Equal(
+                totalRecursiveChildExpectedLogicalStepCount,
+                totalRecursiveChildDistinctLogicalStepCompletedLedgerCount);
+
+            this.output.WriteLine(string.Empty);
+            this.output.WriteLine(
+                $"# {this.profile.LogPrefix} RECURSIVE CHILD STEP LEDGER SUMMARY");
+            this.output.WriteLine(
+                $"ChildDepth='{childDepth}'");
+            this.output.WriteLine(
+                $"ExpectedChildExecutionCount='{expectedRecursiveChildExecutionCount}'");
+            this.output.WriteLine(
+                $"ExpectedChildLogicalStepCount='{expectedRecursiveChildLogicalStepCount}'");
+            this.output.WriteLine(
+                $"DistinctChildLogicalStepCompletedLedgerCount='{totalRecursiveChildDistinctLogicalStepCompletedLedgerCount}'");
+            this.output.WriteLine(
+                $"RawChildStepCompletedLedgerEntryCount='{totalRecursiveChildRawStepCompletedLedgerEntryCount}'");
+            this.output.WriteLine(
+                $"RecoveryCoveredDuplicateChildStepCompletedLedgerEntryCount='{totalRecursiveChildRecoveryCoveredDuplicateStepCompletedLedgerEntryCount}'");
+            this.output.WriteLine(
+                $"TotalLogicalStepCountIncludingRecursiveChildren='{checked(totalSubmittedRunCount * parentLogicalStepCount + expectedRecursiveChildLogicalStepCount)}'");
 
             this.WriteFinalProductionSummary(
                 maximumProcessHostCount,

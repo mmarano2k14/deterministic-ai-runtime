@@ -39,8 +39,6 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.RuntimeInstances.HostMan
     [Trait("Category", "KubernetesRuntimePoolPodFailureRecoveryEndToEnd")]
     public sealed class KubernetesRuntimePoolPodFailureRecoveryEndToEndProofTests
     {
-        private const string RuntimeImage =
-            "multiplexed-ai-runtime:k8s-debug-074";
         private const string KubernetesNamespace = "ai-runtime";
         private const string MinikubeRedisConnectionString =
             "host.minikube.internal:6379,abortConnect=false";
@@ -439,7 +437,7 @@ namespace Multiplexed.AI.Tests.Integration.ControlPlane.RuntimeInstances.HostMan
         {
             return new AiKubernetesRuntimePoolHostOptions
             {
-                RuntimeImage = RuntimeImage,
+                RuntimeImage = "multiplexed-ai-runtime:k8s-debug-135",
                 ContainerName = "runtime-pool",
                 ImagePullPolicy = AiKubernetesImagePullPolicy.Never,
                 ClientMode =

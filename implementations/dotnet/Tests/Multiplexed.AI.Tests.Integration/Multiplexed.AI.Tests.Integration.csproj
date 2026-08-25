@@ -49,6 +49,11 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<Compile Include="..\Multiplexed.AI.McpServer.Tests.Integration\Scenarios\Production\Providers\Base\KubernetesSdkScenarioConstants.cs"
+		         Link="Shared\KubernetesSdkScenarioConstants.cs" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<ProjectReference Include="..\..\Samples\Multiplexed.Sample.External.Plugins.Rag\Multiplexed.Sample.External.Plugins.Rag.csproj" />
 		<ProjectReference Include="..\..\Samples\Multiplexed.Sample.External.Plugins.Steps\Multiplexed.Sample.External.Plugins.Steps.csproj" />
 		<ProjectReference Include="..\..\src\Multiplexed.AI\Multiplexed.AI.csproj" />
