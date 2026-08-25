@@ -6,6 +6,106 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 1.0.8.5 - 2026-08-25 — Recursive Child DAG Production Proof Hardening
+
+## Added
+
+- Added exact recursive Child DAG logical-step proof through the durable execution ledger.
+- Added authoritative recursive Child DAG execution discovery from durable parent-to-child relations.
+- Added per-depth recursive Child DAG accounting so every recursive level is reconciled independently.
+- Added explicit recursive Child DAG composition proof.
+- Added explicit recursive Child DAG terminality proof.
+- Added exact comparison between expected recursive child logical steps and distinct durable `step.completed` ledger evidence.
+- Added raw-versus-distinct recursive child step accounting to detect duplicate ledger inflation.
+- Added explicit missing recursive child logical-step detection.
+- Added explicit unexpected duplicate recursive child logical-step detection.
+- Added recovery-covered duplicate accounting so legitimate recovery evidence can be separated from unexpected duplication.
+- Added recursive Child DAG proof coverage to the shared Kubernetes Runtime Pool production harness.
+- Added recursive Child DAG proof coverage to the shared Process Host Pool production harness.
+- Added final Child DAG proof output only when `ChildDepth > 0`, preserving shared non-child scenarios unchanged.
+- Added a stable Recursive Child DAG Production Proof output contract for audit, CI extraction, matrix aggregation, and publication evidence.
+- Added `ProofSchemaVersion` and frozen schema semantics for the production proof output.
+- Added stable proof execution identity through `ProofRunId`.
+- Added `MatrixScenarioId='baseline'` so the same contract can be reused by future deterministic adversarial schedules.
+- Added explicit provider and transport dimensions to the proof output.
+- Added explicit workload totals for parent executions, recursive child executions, all executions, and all logical steps.
+- Added explicit per-depth recursive Child DAG execution and logical-step totals.
+- Added explicit parent replay scope and parent replay proof counts.
+- Added explicit `RecursiveChildReplayProof='NOT_EVALUATED'` to prevent parent replay evidence from being interpreted as recursive-child replay coverage.
+- Added explicit process-kill execution identity continuity proof and proof count.
+- Added explicit runtime ownership transition proof and violation count.
+- Added explicit runtime ownership interval authority reference to the Redis shared-queue claim-token and exact-owner CAS protocol.
+- Added explicit reference to `RedisRuntimeOwnershipHandoffProofTests` as the separate interval-ownership proof surface.
+- Added explicit `RuntimeOwnershipIntervalProofIncluded='False'` so scenario-level handoff evidence is not confused with transient interval exclusivity proof.
+- Added machine-readable `[RECURSIVE_CHILD_DAG_PROOF_RESULT]` output for deterministic extraction into future audit and validation matrices.
+- Added explicit proof boundary `AdversarialScheduleMatrix='NOT_YET_VALIDATED'`.
+
+## Changed
+
+- Strengthened recursive Child DAG validation from terminal-state-only proof to exact durable logical-step accounting.
+- Reused the existing durable execution ledger as the authority for recursive child step proof instead of introducing a parallel proof store.
+- Reused the existing durable parent-to-child relation model to resolve recursive child executions deterministically.
+- Preserved the existing root exact-step proof while extending equivalent exactness checks to recursive children.
+- Scoped replay output explicitly to parent executions.
+- Replaced the broad `ExecutionIdentityProof` output with a narrower process-kill execution identity continuity proof matching the evidence emitted by the scenario.
+- Split runtime ownership reporting into scenario-proven transition correctness and separately referenced interval-exclusivity protocol proof.
+- Replaced ambiguous aggregate proof-field names with scope-qualified names for parent, recursive child, and all-execution totals.
+- Unified aggregate proof output terminology so future matrix parsers can compare rows without per-cycle versus aggregate ambiguity.
+- Marked the proof schema as frozen before introducing deterministic adversarial schedule variation.
+- Preserved the production proof wording as `PROOF` rather than `CERTIFICATION`.
+- Kept recursive-child replay explicitly outside the current proof claim rather than overstating coverage.
+
+## Validated
+
+- Validated recursive Child DAG execution at `ChildDepth=3`.
+- Validated exact recursive child logical-step composition across Depth 1, Depth 2, and Depth 3.
+- Validated zero missing recursive child logical steps in the production proof scenario.
+- Validated zero unexpected duplicate recursive child logical steps.
+- Validated recursive Child DAG terminal completion.
+- Validated recursive Child DAG composition.
+- Validated durable ledger evidence for recursive child execution.
+- Validated parent replay proof independently from recursive child exact-step proof.
+- Validated recovery for runtime-process failure while preserving logical execution identity.
+- Validated recovery after busy Kubernetes Pod failure.
+- Validated exact recovered SharedRun counts.
+- Validated durable recovery-forensics evidence.
+- Validated runtime ownership handoff transitions with zero transition violations.
+- Validated warm Runtime Pool reuse across execution cycles.
+- Validated zero lost runs.
+- Validated zero duplicate durable dispatch.
+- Validated the proof output on the shared production scenario harness while keeping `ChildDepth=0` scenarios isolated from the Child DAG proof block.
+
+## Proof Boundary
+
+The current production proof establishes deterministic recursive Child DAG correctness for the exercised baseline schedule through:
+
+- durable parent-to-child relation evidence,
+- recursive execution discovery,
+- per-depth composition,
+- terminality,
+- exact distinct `step.completed` ledger accounting,
+- zero missing recursive child logical steps,
+- zero unexpected duplicate recursive child logical steps,
+- parent replay proof,
+- recovery forensics,
+- runtime ownership transition proof,
+- warm reuse,
+- zero lost runs,
+- zero duplicate durable dispatch.
+
+The current proof does not claim:
+
+- recursive-child replay validation,
+- universal ownership interval exclusivity from the production scenario alone,
+- multi-seed deterministic adversarial validation,
+- universal correctness across all possible failure schedules,
+- exactly-once physical execution semantics,
+- certification.
+
+The next validation work will reuse the frozen proof contract while varying deterministic failure schedules and interleavings.
+
+---
+
 ## 1.0.8.4 - 2026-08-24 — Event-Driven Depth-3 (Child DAG) Runtime Pool Validation
 
 **Status:** Validation complete for the current runtime-pool and transport matrix. The implementation is considered stable for this release baseline.

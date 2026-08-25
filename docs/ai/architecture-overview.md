@@ -1716,7 +1716,7 @@ The Depth3 scenarios validate durable child execution, parent `WaitingForExterna
 
 The centralized Event Manager now exposes canonical child-completion, continuation, recovery, and infrastructure lifecycle facts to deterministic EventDriven waits. This closes the former engine-lifecycle observation promotion gate.
 
-The proof boundary remains explicit: high-scale logical-step exactness currently counts root parent steps; exact child-level step accounting at every recursive level remains separate hardening work.
+The proof boundary remains explicit: the high-scale `5×5×5×2×Depth3` logical-step exactness figure counts root parent steps. Separately, the bounded recursive Depth3 production proof now validates exact child-level logical-step accounting at every recursive level through durable `step.completed` Ledger evidence with zero missing and zero unexpected duplicate child logical steps. Broader deterministic multi-schedule validation remains separate hardening work.
 
 See [Durable Child DAG Composition](child-dag-composition.md) and [Engine Event Observation and Lifecycle Catalog](engine-event-observation.md).
 

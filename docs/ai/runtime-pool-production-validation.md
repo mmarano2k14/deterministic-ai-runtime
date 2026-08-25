@@ -458,7 +458,7 @@ no duplicate durable dispatch
 no configured capacity violation
 ```
 
-The `5×5×5×2×Depth3` profile completes 250 parent DAGs and 12,750 exact **root parent** logical steps. Recursive child terminality is verified through authoritative durable DAG execution records. Exact child-level step accounting is intentionally tracked as separate proof hardening.
+The `5×5×5×2×Depth3` profile completes 250 parent DAGs and 12,750 exact **root parent** logical steps. Recursive child terminality is verified through authoritative durable DAG execution records. Separately, the bounded recursive Depth3 production proof now validates exact child-level logical-step accounting per depth through durable `step.completed` Ledger evidence, with zero missing and zero unexpected duplicate child logical steps. The high-scale root-step count and the bounded recursive child-step proof remain distinct evidence scopes.
 
 See [Engine Event Observation and Lifecycle Catalog](engine-event-observation.md) and [Testing Strategy](testing-strategy.md).
 

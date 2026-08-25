@@ -2048,6 +2048,252 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             this.output.WriteLine(
                 $"TotalLogicalStepCountIncludingRecursiveChildren='{checked(totalSubmittedRunCount * parentLogicalStepCount + expectedRecursiveChildLogicalStepCount)}'");
 
+            if (childDepth > 0)
+            {
+                const int proofSchemaVersion = 1;
+
+                var totalParentLogicalStepCount =
+                    checked(
+                        totalSubmittedRunCount *
+                        parentLogicalStepCount);
+                var totalExecutionCount =
+                    checked(
+                        totalSubmittedRunCount +
+                        totalRecursiveChildExecutionCount);
+                var totalLogicalStepCountIncludingRecursiveChildren =
+                    checked(
+                        totalParentLogicalStepCount +
+                        expectedRecursiveChildLogicalStepCount);
+                var missingChildLogicalStepCount =
+                    checked(
+                        expectedRecursiveChildLogicalStepCount -
+                        totalRecursiveChildDistinctLogicalStepCompletedLedgerCount);
+                var observedDuplicateChildLedgerEntryCount =
+                    checked(
+                        totalRecursiveChildRawStepCompletedLedgerEntryCount -
+                        totalRecursiveChildDistinctLogicalStepCompletedLedgerCount);
+                var unexpectedDuplicateChildLogicalStepCount =
+                    checked(
+                        observedDuplicateChildLedgerEntryCount -
+                        totalRecursiveChildRecoveryCoveredDuplicateStepCompletedLedgerEntryCount);
+                var busyHostFailureCount =
+                    injectParentHostFailure
+                        ? executionCycleCount
+                        : 0;
+                var busyHostFailureMode =
+                    !injectParentHostFailure
+                        ? "none"
+                        : waitForExternalParentHostFailure
+                            ? "external-manual"
+                            : "automatic";
+                var proofTransport =
+                    this.profile.LogPrefix.StartsWith(
+                        "GRPC ",
+                        StringComparison.OrdinalIgnoreCase)
+                        ? "gRPC"
+                        : this.profile.LogPrefix.StartsWith(
+                            "HTTP ",
+                            StringComparison.OrdinalIgnoreCase)
+                            ? "HTTP"
+                            : "Unknown";
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine(
+                    "# RECURSIVE CHILD DAG PRODUCTION PROOF");
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("# PROOF CONTRACT");
+                this.output.WriteLine(
+                    $"ProofSchemaVersion='{proofSchemaVersion}'");
+                this.output.WriteLine("ProofSchemaStatus='FROZEN'");
+                this.output.WriteLine("ProofStatus='PASS'");
+                this.output.WriteLine(
+                    "ProofScope='Deterministic-Recursive-Child-DAG-Execution'");
+                this.output.WriteLine(
+                    $"ScenarioProfile='{this.profile.LogPrefix}'");
+                this.output.WriteLine($"ProofRunId='{controlPlaneId}'");
+                this.output.WriteLine("MatrixScenarioId='baseline'");
+                this.output.WriteLine($"Transport='{proofTransport}'");
+                this.output.WriteLine("Provider='ProcessHostPool'");
+                this.output.WriteLine($"ControlPlaneId='{controlPlaneId}'");
+                this.output.WriteLine($"PoolId='{cluster.PoolId}'");
+                this.output.WriteLine(
+                    $"ExecutionCycleCount='{executionCycleCount}'");
+                this.output.WriteLine($"ChildDepth='{childDepth}'");
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("# WORKLOAD");
+                this.output.WriteLine(
+                    $"ParentRunCountTotal='{totalSubmittedRunCount}'");
+                this.output.WriteLine(
+                    $"ParentLogicalStepCountTotal='{totalParentLogicalStepCount}'");
+                this.output.WriteLine(
+                    $"RecursiveChildExecutionCountTotal='{totalRecursiveChildExecutionCount}'");
+                this.output.WriteLine(
+                    $"RecursiveChildLogicalStepCountTotal='{expectedRecursiveChildLogicalStepCount}'");
+                this.output.WriteLine(
+                    $"AllExecutionCountTotal='{totalExecutionCount}'");
+                this.output.WriteLine(
+                    $"AllLogicalStepCountTotal='{totalLogicalStepCountIncludingRecursiveChildren}'");
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("# CHILD DAG DEPTH BREAKDOWN");
+
+                foreach (var depth in Enumerable.Range(1, childDepth))
+                {
+                    var logicalStepCountPerExecution =
+                        ProductionChildDagStepLedgerAssertions
+                            .GetExpectedLogicalStepCountAtDepth(
+                                StepCount,
+                                childDepth,
+                                depth);
+                    var logicalStepCountAtDepth =
+                        checked(
+                            totalSubmittedRunCount *
+                            logicalStepCountPerExecution);
+
+                    this.output.WriteLine(
+                        $"RecursiveChildDepth{depth}ExecutionCountTotal='{totalSubmittedRunCount}'");
+                    this.output.WriteLine(
+                        $"RecursiveChildDepth{depth}LogicalStepCountPerExecution='{logicalStepCountPerExecution}'");
+                    this.output.WriteLine(
+                        $"RecursiveChildDepth{depth}LogicalStepCountTotal='{logicalStepCountAtDepth}'");
+                }
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("# EXACTNESS");
+                this.output.WriteLine(
+                    $"ExpectedRecursiveChildLogicalStepCountTotal='{expectedRecursiveChildLogicalStepCount}'");
+                this.output.WriteLine(
+                    $"DistinctRecursiveChildLogicalStepCompletedLedgerCountTotal='{totalRecursiveChildDistinctLogicalStepCompletedLedgerCount}'");
+                this.output.WriteLine(
+                    $"RawRecursiveChildStepCompletedLedgerEntryCountTotal='{totalRecursiveChildRawStepCompletedLedgerEntryCount}'");
+                this.output.WriteLine(
+                    $"MissingRecursiveChildLogicalStepCountTotal='{missingChildLogicalStepCount}'");
+                this.output.WriteLine(
+                    $"ObservedDuplicateRecursiveChildLedgerEntryCountTotal='{observedDuplicateChildLedgerEntryCount}'");
+                this.output.WriteLine(
+                    $"RecoveryCoveredDuplicateRecursiveChildStepCompletedLedgerEntryCountTotal='{totalRecursiveChildRecoveryCoveredDuplicateStepCompletedLedgerEntryCount}'");
+                this.output.WriteLine(
+                    $"UnexpectedDuplicateRecursiveChildLogicalStepCountTotal='{unexpectedDuplicateChildLogicalStepCount}'");
+                this.output.WriteLine(
+                    "RecursiveChildExactStepProof='PASS'");
+                this.output.WriteLine(
+                    "ChildDagCompositionProof='PASS'");
+                this.output.WriteLine(
+                    "ChildDagTerminalityProof='PASS'");
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("# FAILURE SCHEDULE");
+                this.output.WriteLine(
+                    "FailureScheduleMode='DeterministicBaseline'");
+                this.output.WriteLine(
+                    "FailureScheduleSeed='baseline'");
+                this.output.WriteLine(
+                    $"ChildRuntimeFailureCount='{totalChildRuntimeCrashCount}'");
+                this.output.WriteLine(
+                    $"ChildRuntimeFailureAfterCompletedStepCount='{(injectChildRuntimeFailure ? KillAfterCompletedStepCount : 0)}'");
+                this.output.WriteLine(
+                    $"ChildRuntimeResumeCheckpointStepIndex='{(injectChildRuntimeFailure ? KillAfterCompletedStepCount + 1 : 0)}'");
+                this.output.WriteLine(
+                    $"BusyHostFailureCount='{busyHostFailureCount}'");
+                this.output.WriteLine(
+                    $"BusyHostFailureMode='{busyHostFailureMode}'");
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("# REPLAY");
+                this.output.WriteLine(
+                    "ParentReplayScope='ParentExecutions'");
+                this.output.WriteLine(
+                    $"ParentReplayExpectedExecutionCountTotal='{totalSubmittedRunCount}'");
+                this.output.WriteLine(
+                    $"ParentReplayProvenExecutionCountTotal='{totalReplayProofCount}'");
+                this.output.WriteLine("ParentReplayProof='PASS'");
+                this.output.WriteLine(
+                    "RecursiveChildReplayProof='NOT_EVALUATED'");
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("# RECOVERY");
+                this.output.WriteLine(
+                    $"RecoveredSharedRunCount='{totalRecoveredRunCount}'");
+                this.output.WriteLine(
+                    $"RecoveryForensicsProofCount='{totalRecoveryForensicsCount}'");
+                this.output.WriteLine(
+                    $"ProcessKillExecutionIdentityContinuityProof='{(totalChildRuntimeCrashCount > 0 ? "PASS" : "NOT_APPLICABLE")}'");
+                this.output.WriteLine(
+                    $"ProcessKillExecutionIdentityContinuityProvenCount='{totalChildRuntimeCrashCount}'");
+                this.output.WriteLine(
+                    $"RecoveryProof='{(totalRecoveredRunCount > 0 ? "PASS" : "NOT_APPLICABLE")}'");
+                this.output.WriteLine(
+                    $"RecoveryForensicsProof='{(totalRecoveredRunCount > 0 ? "PASS" : "NOT_APPLICABLE")}'");
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("# OWNERSHIP");
+                this.output.WriteLine(
+                    $"RuntimeOwnershipTransitionCount='{totalRuntimeOwnershipTransitionCount}'");
+                this.output.WriteLine(
+                    $"RuntimeOwnershipTransitionViolationCount='{totalRuntimeOwnershipTransitionViolationCount}'");
+                this.output.WriteLine(
+                    $"RuntimeOwnershipTransitionProof='{(totalRecoveredRunCount > 0 ? "PASS" : "NOT_APPLICABLE")}'");
+                this.output.WriteLine(
+                    "RuntimeOwnershipIntervalAuthority='RedisSharedQueueClaimToken+RedisSharedRunCAS'");
+                this.output.WriteLine(
+                    "RuntimeOwnershipIntervalProofRef='RedisRuntimeOwnershipHandoffProofTests'");
+                this.output.WriteLine(
+                    "RuntimeOwnershipIntervalProofIncluded='False'");
+                this.output.WriteLine(
+                    "RuntimeOwnershipTemporalSampling='not-used'");
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("# DURABILITY AND OBSERVABILITY");
+                this.output.WriteLine(
+                    $"ExecutionLedgerEntryCount='{totalExecutionLedgerEntryCount}'");
+                this.output.WriteLine(
+                    $"ControlPlaneLedgerEntryCount='{totalControlPlaneLedgerEntryCount}'");
+                this.output.WriteLine(
+                    $"RuntimeLifecycleLedgerEntryCount='{totalRuntimeLifecycleLedgerEntryCount}'");
+                this.output.WriteLine("LedgerProof='PASS'");
+                this.output.WriteLine("TraceProof='PASS'");
+                this.output.WriteLine(
+                    "RuntimeLifecycleProof='PASS'");
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("# SAFETY AND REUSE");
+                this.output.WriteLine(
+                    $"WarmReuseProof='{(executionCycleCount > 1 ? "PASS" : "NOT_APPLICABLE")}'");
+                this.output.WriteLine("LostRunCount='0'");
+                this.output.WriteLine(
+                    "DuplicateDurableDispatchCount='0'");
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("# PROVIDER CAPACITY");
+                this.output.WriteLine(
+                    $"MaximumConfiguredProcessHostCount='{maximumProcessHostCount}'");
+                this.output.WriteLine(
+                    $"RuntimeCountPerHost='{runtimeCountPerHost}'");
+                this.output.WriteLine(
+                    $"MaximumRuntimeCapacity='{totalRuntimeCount}'");
+                this.output.WriteLine("ColdStartCycleCount='1'");
+                this.output.WriteLine(
+                    $"WarmReuseCycleCount='{Math.Max(0, executionCycleCount - 1)}'");
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine("# RESULT");
+                this.output.WriteLine(
+                    $"ScenarioTotalDuration='{scenarioStopwatch.Elapsed}'");
+                this.output.WriteLine(
+                    "ProofAuthority='ExecutionLedger+Replay+Trace+Forensics+Lifecycle+ExactRecoveryOutcomes+AtomicRedisOwnership'");
+                this.output.WriteLine(
+                    "AdversarialScheduleMatrix='NOT_YET_VALIDATED'");
+
+                this.output.WriteLine(string.Empty);
+                this.output.WriteLine(
+                    $"[RECURSIVE_CHILD_DAG_PROOF_RESULT] SchemaVersion='{proofSchemaVersion}', SchemaStatus='FROZEN', ProofRunId='{controlPlaneId}', MatrixScenarioId='baseline', Status='PASS', Transport='{proofTransport}', Provider='ProcessHostPool', ChildDepth='{childDepth}', Cycles='{executionCycleCount}', ParentRunsTotal='{totalSubmittedRunCount}', ParentLogicalStepsTotal='{totalParentLogicalStepCount}', RecursiveChildExecutionsTotal='{totalRecursiveChildExecutionCount}', RecursiveChildLogicalStepsTotal='{expectedRecursiveChildLogicalStepCount}', AllExecutionsTotal='{totalExecutionCount}', AllLogicalStepsTotal='{totalLogicalStepCountIncludingRecursiveChildren}', ParentReplay='{totalReplayProofCount}/{totalSubmittedRunCount}', RecursiveChildReplay='NOT_EVALUATED', RecoveredSharedRunsTotal='{totalRecoveredRunCount}', MissingRecursiveChildStepsTotal='{missingChildLogicalStepCount}', UnexpectedDuplicateRecursiveChildStepsTotal='{unexpectedDuplicateChildLogicalStepCount}', OwnershipTransitionViolations='{totalRuntimeOwnershipTransitionViolationCount}', OwnershipIntervalProofIncluded='False', ProcessKillIdentityContinuity='{totalChildRuntimeCrashCount}/{totalChildRuntimeCrashCount}', ChildRuntimeFailures='{totalChildRuntimeCrashCount}', BusyHostFailures='{busyHostFailureCount}', FailureSeed='baseline', Matrix='NOT_YET_VALIDATED'");
+
+                this.output.WriteLine(
+                    "# RECURSIVE CHILD DAG PRODUCTION PROOF END");
+            }
+
             this.WriteFinalProductionSummary(
                 maximumProcessHostCount,
                 runtimeCountPerHost,

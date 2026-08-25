@@ -2,7 +2,7 @@
 
 **Status:** **Implemented / validated**  
 **Status date:** 2026-08-24  
-**Validation boundary:** native durable Child DAG composition is implemented and validated through recursive `ChildDepth = 3` production scenarios. The lifecycle-observation promotion gate is closed through the centralized Event Manager, canonical events, Runtime Lifecycle Journal, durable Ledger, Recovery Forensics, replay, and EventDriven production validation. The high-scale `5×5×5×2×Depth3` profiles validate the same recursive contract at larger bounded capacity. Exact nested child-step accounting remains a separate proof-hardening item and is not implied by the root-step ledger proof.
+**Validation boundary:** native durable Child DAG composition is implemented and validated through recursive `ChildDepth = 3` production scenarios. The lifecycle-observation promotion gate is closed through the centralized Event Manager, canonical events, Runtime Lifecycle Journal, durable Ledger, Recovery Forensics, replay, and EventDriven production validation. The high-scale `5×5×5×2×Depth3` profiles validate the same recursive contract at larger bounded capacity. A separate bounded Depth3 production proof now closes exact recursive child-step accounting per depth through durable `step.completed` Ledger evidence; broader deterministic multi-schedule validation remains separate hardening work.
 
 ---
 
@@ -367,7 +367,7 @@ The former promotion gates are now closed for the current recursive validation b
 
 The capability is therefore documented as **Implemented / validated** under the current proof boundary.
 
-This promotion does not overstate the proof boundary. Current high-scale exact logical-step accounting covers root parent steps. Exact recursive child-step accounting across every nested level, deterministic multi-seed failure schedules, and atomic runtime-ownership overlap proof remain future hardening work.
+This promotion does not overstate the proof boundary. The high-scale `5×5×5×2×Depth3` exact logical-step count remains a root-parent proof. Separately, the bounded recursive Depth3 production proof now validates exact child-step accounting at every nested level through expected-versus-distinct durable `step.completed` Ledger evidence with zero missing and zero unexpected duplicate child logical steps. Runtime-ownership handoff transitions are proven by exact recovery outcomes, while transient interval exclusivity is covered by the separate Redis shared-queue claim-token / exact-owner CAS proof. Deterministic multi-seed and multi-schedule failure validation remains future hardening work.
 
 ---
 

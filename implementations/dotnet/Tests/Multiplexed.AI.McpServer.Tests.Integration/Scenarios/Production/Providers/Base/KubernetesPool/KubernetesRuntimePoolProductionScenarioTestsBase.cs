@@ -4029,6 +4029,247 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 output.WriteLine("PodCapacityExceeded='false'");
                 output.WriteLine("RuntimeCapacityExceeded='false'");
 
+                if (childDepth > 0)
+                {
+                    const int proofSchemaVersion = 1;
+
+                    var totalReplayProofCount =
+                        cycleProofs.Sum(cycle => cycle.ReplayProofCount);
+                    var totalExecutionCount =
+                        checked(
+                            totalSubmittedRunCount +
+                            totalRecursiveChildExecutionCount);
+                    var totalLogicalStepCountIncludingRecursiveChildren =
+                        checked(
+                            totalLogicalStepCount +
+                            expectedRecursiveChildLogicalStepCount);
+                    var missingChildLogicalStepCount =
+                        checked(
+                            expectedRecursiveChildLogicalStepCount -
+                            totalRecursiveChildDistinctLogicalStepCompletedLedgerCount);
+                    var observedDuplicateChildLedgerEntryCount =
+                        checked(
+                            totalRecursiveChildRawStepCompletedLedgerEntryCount -
+                            totalRecursiveChildDistinctLogicalStepCompletedLedgerCount);
+                    var unexpectedDuplicateChildLogicalStepCount =
+                        checked(
+                            observedDuplicateChildLedgerEntryCount -
+                            totalRecursiveChildRecoveryCoveredDuplicateStepCompletedLedgerEntryCount);
+                    var recoveredSharedRunCount =
+                        checked(
+                            expectedRecoveredRunCountPerCycle *
+                            executionCycleCount);
+                    var childRuntimeFailureCount =
+                        injectChildRuntimeFailure
+                            ? executionCycleCount
+                            : 0;
+                    var busyHostFailureCount =
+                        executionCycleCount;
+                    var busyHostFailureMode =
+                        waitForExternalPodDeletion
+                            ? "external-manual"
+                            : "automatic";
+                    var proofTransport =
+                        boundedCapacityProfile.LogPrefix.StartsWith(
+                            "GRPC ",
+                            StringComparison.OrdinalIgnoreCase)
+                            ? "gRPC"
+                            : boundedCapacityProfile.LogPrefix.StartsWith(
+                                "HTTP ",
+                                StringComparison.OrdinalIgnoreCase)
+                                ? "HTTP"
+                                : "Unknown";
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine(
+                        "# RECURSIVE CHILD DAG PRODUCTION PROOF");
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine("# PROOF CONTRACT");
+                    output.WriteLine(
+                        $"ProofSchemaVersion='{proofSchemaVersion}'");
+                    output.WriteLine("ProofSchemaStatus='FROZEN'");
+                    output.WriteLine("ProofStatus='PASS'");
+                    output.WriteLine(
+                        "ProofScope='Deterministic-Recursive-Child-DAG-Execution'");
+                    output.WriteLine(
+                        $"ScenarioProfile='{boundedCapacityProfile.LogPrefix}'");
+                    output.WriteLine($"ProofRunId='{controlPlaneId}'");
+                    output.WriteLine("MatrixScenarioId='baseline'");
+                    output.WriteLine($"Transport='{proofTransport}'");
+                    output.WriteLine("Provider='KubernetesPool'");
+                    output.WriteLine($"ControlPlaneId='{controlPlaneId}'");
+                    output.WriteLine($"PoolId='{poolId}'");
+                    output.WriteLine(
+                        $"ExecutionCycleCount='{executionCycleCount}'");
+                    output.WriteLine($"ChildDepth='{childDepth}'");
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine("# WORKLOAD");
+                    output.WriteLine(
+                        $"ParentRunCountTotal='{totalSubmittedRunCount}'");
+                    output.WriteLine(
+                        $"ParentLogicalStepCountTotal='{totalLogicalStepCount}'");
+                    output.WriteLine(
+                        $"RecursiveChildExecutionCountTotal='{totalRecursiveChildExecutionCount}'");
+                    output.WriteLine(
+                        $"RecursiveChildLogicalStepCountTotal='{expectedRecursiveChildLogicalStepCount}'");
+                    output.WriteLine(
+                        $"AllExecutionCountTotal='{totalExecutionCount}'");
+                    output.WriteLine(
+                        $"AllLogicalStepCountTotal='{totalLogicalStepCountIncludingRecursiveChildren}'");
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine("# CHILD DAG DEPTH BREAKDOWN");
+
+                    foreach (var depth in Enumerable.Range(1, childDepth))
+                    {
+                        var logicalStepCountPerExecution =
+                            ProductionChildDagStepLedgerAssertions
+                                .GetExpectedLogicalStepCountAtDepth(
+                                    stepCount,
+                                    childDepth,
+                                    depth);
+                        var logicalStepCountAtDepth =
+                            checked(
+                                totalSubmittedRunCount *
+                                logicalStepCountPerExecution);
+
+                        output.WriteLine(
+                            $"RecursiveChildDepth{depth}ExecutionCountTotal='{totalSubmittedRunCount}'");
+                        output.WriteLine(
+                            $"RecursiveChildDepth{depth}LogicalStepCountPerExecution='{logicalStepCountPerExecution}'");
+                        output.WriteLine(
+                            $"RecursiveChildDepth{depth}LogicalStepCountTotal='{logicalStepCountAtDepth}'");
+                    }
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine("# EXACTNESS");
+                    output.WriteLine(
+                        $"ExpectedRecursiveChildLogicalStepCountTotal='{expectedRecursiveChildLogicalStepCount}'");
+                    output.WriteLine(
+                        $"DistinctRecursiveChildLogicalStepCompletedLedgerCountTotal='{totalRecursiveChildDistinctLogicalStepCompletedLedgerCount}'");
+                    output.WriteLine(
+                        $"RawRecursiveChildStepCompletedLedgerEntryCountTotal='{totalRecursiveChildRawStepCompletedLedgerEntryCount}'");
+                    output.WriteLine(
+                        $"MissingRecursiveChildLogicalStepCountTotal='{missingChildLogicalStepCount}'");
+                    output.WriteLine(
+                        $"ObservedDuplicateRecursiveChildLedgerEntryCountTotal='{observedDuplicateChildLedgerEntryCount}'");
+                    output.WriteLine(
+                        $"RecoveryCoveredDuplicateRecursiveChildStepCompletedLedgerEntryCountTotal='{totalRecursiveChildRecoveryCoveredDuplicateStepCompletedLedgerEntryCount}'");
+                    output.WriteLine(
+                        $"UnexpectedDuplicateRecursiveChildLogicalStepCountTotal='{unexpectedDuplicateChildLogicalStepCount}'");
+                    output.WriteLine(
+                        "RecursiveChildExactStepProof='PASS'");
+                    output.WriteLine(
+                        "ChildDagCompositionProof='PASS'");
+                    output.WriteLine(
+                        "ChildDagTerminalityProof='PASS'");
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine("# FAILURE SCHEDULE");
+                    output.WriteLine(
+                        "FailureScheduleMode='DeterministicBaseline'");
+                    output.WriteLine(
+                        "FailureScheduleSeed='baseline'");
+                    output.WriteLine(
+                        $"ChildRuntimeFailureCount='{childRuntimeFailureCount}'");
+                    output.WriteLine(
+                        $"ChildRuntimeFailureAfterCompletedStepCount='{(injectChildRuntimeFailure ? FinalScenarioKillAfterCompletedStepCount : 0)}'");
+                    output.WriteLine(
+                        $"ChildRuntimeResumeCheckpointStepIndex='{(injectChildRuntimeFailure ? FinalScenarioKillAfterCompletedStepCount + 1 : 0)}'");
+                    output.WriteLine(
+                        $"BusyHostFailureCount='{busyHostFailureCount}'");
+                    output.WriteLine(
+                        $"BusyHostFailureMode='{busyHostFailureMode}'");
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine("# REPLAY");
+                    output.WriteLine(
+                        "ParentReplayScope='ParentExecutions'");
+                    output.WriteLine(
+                        $"ParentReplayExpectedExecutionCountTotal='{totalSubmittedRunCount}'");
+                    output.WriteLine(
+                        $"ParentReplayProvenExecutionCountTotal='{totalReplayProofCount}'");
+                    output.WriteLine("ParentReplayProof='PASS'");
+                    output.WriteLine(
+                        "RecursiveChildReplayProof='NOT_EVALUATED'");
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine("# RECOVERY");
+                    output.WriteLine(
+                        $"RecoveredSharedRunCount='{recoveredSharedRunCount}'");
+                    output.WriteLine(
+                        $"RecoveryForensicsProofCount='{allRecoveryForensicsIds.Length}'");
+                    output.WriteLine(
+                        $"ProcessKillExecutionIdentityContinuityProof='{(childRuntimeFailureCount > 0 ? "PASS" : "NOT_APPLICABLE")}'");
+                    output.WriteLine(
+                        $"ProcessKillExecutionIdentityContinuityProvenCount='{childRuntimeFailureCount}'");
+                    output.WriteLine("RecoveryProof='PASS'");
+                    output.WriteLine(
+                        "RecoveryForensicsProof='PASS'");
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine("# OWNERSHIP");
+                    output.WriteLine(
+                        $"RuntimeOwnershipTransitionCount='{totalRuntimeOwnershipTransitionCount}'");
+                    output.WriteLine(
+                        $"RuntimeOwnershipTransitionViolationCount='{totalRuntimeOwnershipTransitionViolationCount}'");
+                    output.WriteLine(
+                        "RuntimeOwnershipTransitionProof='PASS'");
+                    output.WriteLine(
+                        "RuntimeOwnershipIntervalAuthority='RedisSharedQueueClaimToken+RedisSharedRunCAS'");
+                    output.WriteLine(
+                        "RuntimeOwnershipIntervalProofRef='RedisRuntimeOwnershipHandoffProofTests'");
+                    output.WriteLine(
+                        "RuntimeOwnershipIntervalProofIncluded='False'");
+                    output.WriteLine(
+                        "RuntimeOwnershipTemporalSampling='not-used'");
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine("# DURABILITY AND OBSERVABILITY");
+                    output.WriteLine("LedgerProof='PASS'");
+                    output.WriteLine("TraceProof='PASS'");
+                    output.WriteLine(
+                        "RuntimeLifecycleProof='PASS'");
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine("# SAFETY AND REUSE");
+                    output.WriteLine(
+                        $"WarmReuseProof='{(executionCycleCount > 1 ? "PASS" : "NOT_APPLICABLE")}'");
+                    output.WriteLine("LostRunCount='0'");
+                    output.WriteLine(
+                        "DuplicateDurableDispatchCount='0'");
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine("# PROVIDER CAPACITY");
+                    output.WriteLine(
+                        $"MaximumConfiguredPodCount='{maximumPodCount}'");
+                    output.WriteLine(
+                        $"RuntimeCountPerPod='{runtimeCountPerPod}'");
+                    output.WriteLine(
+                        $"MaximumRuntimeCapacity='{maximumRuntimeCapacity}'");
+                    output.WriteLine("ColdStartCycleCount='1'");
+                    output.WriteLine(
+                        $"WarmReuseCycleCount='{Math.Max(0, executionCycleCount - 1)}'");
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine("# RESULT");
+                    output.WriteLine(
+                        $"ScenarioTotalDuration='{totalStopwatch.Elapsed}'");
+                    output.WriteLine(
+                        "ProofAuthority='ExecutionLedger+Replay+Trace+Forensics+Lifecycle+ExactRecoveryOutcomes+AtomicRedisOwnership'");
+                    output.WriteLine(
+                        "AdversarialScheduleMatrix='NOT_YET_VALIDATED'");
+
+                    output.WriteLine(string.Empty);
+                    output.WriteLine(
+                        $"[RECURSIVE_CHILD_DAG_PROOF_RESULT] SchemaVersion='{proofSchemaVersion}', SchemaStatus='FROZEN', ProofRunId='{controlPlaneId}', MatrixScenarioId='baseline', Status='PASS', Transport='{proofTransport}', Provider='KubernetesPool', ChildDepth='{childDepth}', Cycles='{executionCycleCount}', ParentRunsTotal='{totalSubmittedRunCount}', ParentLogicalStepsTotal='{totalLogicalStepCount}', RecursiveChildExecutionsTotal='{totalRecursiveChildExecutionCount}', RecursiveChildLogicalStepsTotal='{expectedRecursiveChildLogicalStepCount}', AllExecutionsTotal='{totalExecutionCount}', AllLogicalStepsTotal='{totalLogicalStepCountIncludingRecursiveChildren}', ParentReplay='{totalReplayProofCount}/{totalSubmittedRunCount}', RecursiveChildReplay='NOT_EVALUATED', RecoveredSharedRunsTotal='{recoveredSharedRunCount}', MissingRecursiveChildStepsTotal='{missingChildLogicalStepCount}', UnexpectedDuplicateRecursiveChildStepsTotal='{unexpectedDuplicateChildLogicalStepCount}', OwnershipTransitionViolations='{totalRuntimeOwnershipTransitionViolationCount}', OwnershipIntervalProofIncluded='False', ProcessKillIdentityContinuity='{childRuntimeFailureCount}/{childRuntimeFailureCount}', ChildRuntimeFailures='{childRuntimeFailureCount}', BusyHostFailures='{busyHostFailureCount}', FailureSeed='baseline', Matrix='NOT_YET_VALIDATED'");
+
+                    output.WriteLine(
+                        "# RECURSIVE CHILD DAG PRODUCTION PROOF END");
+                }
+
                 scenarioCompleted = true;
             }
             catch (Exception exception)

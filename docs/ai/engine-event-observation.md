@@ -713,7 +713,7 @@ The important distinction is between capability validation and future proof hard
 
 Current validated guarantees include recursive durable execution, parent `WaitingForExternal`, deterministic continuation, real runtime/host failure recovery, same-`ExecutionId` resume, warm reuse, replay, lifecycle evidence, and authoritative durable terminal proof for nested DAG execution.
 
-The exact `12,750` logical-step proof in the high-scale scenarios currently applies to **root parent logical steps**. Separate exact child-level step accounting for every recursive level remains a future hardening activity and is not silently implied by the implemented/validated status.
+The exact `12,750` logical-step proof in the high-scale scenarios applies to **root parent logical steps**. Separately, the bounded recursive Depth3 production proof now validates exact child-level logical-step accounting for every recursive level through durable `step.completed` Ledger evidence with zero missing and zero unexpected duplicate child logical steps. These remain distinct proof scopes and are not silently conflated by the implemented/validated status.
 
 ---
 
