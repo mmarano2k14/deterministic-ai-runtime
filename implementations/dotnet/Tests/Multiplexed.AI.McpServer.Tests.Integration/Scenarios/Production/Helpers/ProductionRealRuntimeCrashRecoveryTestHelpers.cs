@@ -22,6 +22,58 @@ using Multiplexed.Abstractions.AI.Observability.Events;
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers
 {
     /// <summary>
+    /// Identifies the authoritative boundary used to terminate the selected runtime process.
+    /// </summary>
+    public enum ProductionRealRuntimeCrashKillBoundaryMode
+    {
+        /// <summary>
+        /// Uses the historical durable DAG-progress window as the kill authority.
+        /// </summary>
+        DurableDagProgress = 0,
+
+        /// <summary>
+        /// Uses an already-proven external durable boundary and performs no additional DAG-progress wait
+        /// between the final boundary assertion and process termination.
+        /// </summary>
+        PrevalidatedPhysicalBoundary = 1
+    }
+
+    /// <summary>
+    /// Captures an exact runtime kill that was already requested and completed from a caller-owned
+    /// durable physical boundary before the generic recovery workflow starts.
+    /// </summary>
+    public sealed record ProductionRealRuntimePrevalidatedKillProof
+    {
+        public required string SharedRunId { get; init; }
+
+        public required string LocalRunId { get; init; }
+
+        public required string RuntimeInstanceId { get; init; }
+
+        public required string ExecutionId { get; init; }
+
+        public required string IndexStatus { get; init; }
+
+        public DateTimeOffset? IndexCompletedAtUtc { get; init; }
+
+        public required string DagStatus { get; init; }
+
+        public required int DagCompletedStepCount { get; init; }
+
+        public required int DagTotalStepCount { get; init; }
+
+        public required string DagStepStatusBreakdown { get; init; }
+
+        public required DateTimeOffset CapturedAtUtc { get; init; }
+
+        public required bool Killed { get; init; }
+
+        public required DateTimeOffset KillRequestedAtUtc { get; init; }
+
+        public required DateTimeOffset KillCompletedAtUtc { get; init; }
+    }
+
+    /// <summary>
     /// Provides reusable helpers for real process-host runtime crash recovery inventory tests.
     /// </summary>
     public static class ProductionRealRuntimeCrashRecoveryTestHelpers
@@ -730,6 +782,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         /// <param name="controlPlaneId">The logical control-plane identifier used only in hybrid mode.</param>
         /// <param name="hybridFallbackPollInterval">The slow durable fallback interval used only in hybrid mode.</param>
         /// <param name="crashCheckpointGate">The optional durable crash checkpoint released immediately after process termination.</param>
+        /// <param name="preKillInvariantAssertion">The optional final durable invariant assertion executed immediately before process termination.</param>
+        /// <param name="killBoundaryMode">The authoritative boundary used to trigger process termination. The default preserves the historical durable DAG-progress path.</param>
+        /// <param name="prevalidatedKillProof">An optional exact physical kill proof already produced at the durable boundary. When supplied, this helper skips process termination and starts directly from post-kill recovery.</param>
         /// <param name="runtimeTenantOwnershipAssertion">The optional authoritative runtime tenant ownership assertion. When omitted, the historical runtime-id naming assertion is preserved.</param>
         /// <param name="unsafeRuntimeRecoveryTrigger">The optional explicit recovery trigger invoked once after the failed runtime becomes unsafe and before recovery-state observation begins.</param>
         /// <returns>The failed-runtime recovery proof.</returns>
@@ -756,6 +811,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 string? controlPlaneId = null,
                 TimeSpan? hybridFallbackPollInterval = null,
                 ProductionCrashCheckpointGate? crashCheckpointGate = null,
+                Func<Task>? preKillInvariantAssertion = null,
+                ProductionRealRuntimeCrashKillBoundaryMode killBoundaryMode =
+                    ProductionRealRuntimeCrashKillBoundaryMode.DurableDagProgress,
+                ProductionRealRuntimePrevalidatedKillProof? prevalidatedKillProof = null,
                 Func<IAiRuntimeInstanceRegistry, string, ProductionTenantScenarioDefinition, Task>?
                     runtimeTenantOwnershipAssertion = null,
                 Func<Task>? unsafeRuntimeRecoveryTrigger = null)
@@ -794,6 +853,40 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 ArgumentNullException.ThrowIfNull(lifecycleObserver);
             }
 
+            if (killBoundaryMode != ProductionRealRuntimeCrashKillBoundaryMode.DurableDagProgress &&
+                killBoundaryMode != ProductionRealRuntimeCrashKillBoundaryMode.PrevalidatedPhysicalBoundary)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(killBoundaryMode),
+                    killBoundaryMode,
+                    "The real-runtime crash kill boundary mode is not supported.");
+            }
+
+            if (prevalidatedKillProof is not null &&
+                killBoundaryMode != ProductionRealRuntimeCrashKillBoundaryMode.PrevalidatedPhysicalBoundary)
+            {
+                throw new ArgumentException(
+                    "An already-completed physical kill proof can only be used with the prevalidated physical boundary mode.",
+                    nameof(prevalidatedKillProof));
+            }
+
+            if (prevalidatedKillProof is not null &&
+                preKillInvariantAssertion is not null)
+            {
+                throw new ArgumentException(
+                    "An already-completed physical kill proof must not be combined with a second pre-kill invariant callback.",
+                    nameof(prevalidatedKillProof));
+            }
+
+            if (killBoundaryMode == ProductionRealRuntimeCrashKillBoundaryMode.PrevalidatedPhysicalBoundary &&
+                prevalidatedKillProof is null &&
+                preKillInvariantAssertion is null)
+            {
+                throw new ArgumentNullException(
+                    nameof(preKillInvariantAssertion),
+                    "A prevalidated physical kill boundary requires either one final durable invariant assertion or an already-completed exact physical kill proof.");
+            }
+
             var resolvedHybridFallbackPollInterval =
                 hybridFallbackPollInterval ?? TimeSpan.FromSeconds(2);
 
@@ -828,45 +921,96 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
                 Assert.False(string.IsNullOrWhiteSpace(inFlightWork.ExecutionId));
 
-                /*
-                 * Start local-queued diagnostic reads without awaiting them.
-                 * They must never delay observation and termination of the in-flight DAG.
-                 */
-                var localQueuedPreKillSnapshotTasks = inventory.LocalQueuedRuns
-                    .Select(CaptureLocalQueuedPreKillSnapshotAsync)
-                    .ToArray();
+                Task<KeyValuePair<string, RealRuntimeCrashWorkStateSnapshot>>[]
+                    localQueuedPreKillSnapshotTasks;
+
+                RealRuntimeCrashKillObservation killObservation;
+
+                if (prevalidatedKillProof is not null)
+                {
+                    Assert.Empty(inventory.LocalQueuedRuns);
+
+                    localQueuedPreKillSnapshotTasks =
+                        Array.Empty<Task<KeyValuePair<string, RealRuntimeCrashWorkStateSnapshot>>>();
+
+                    killObservation =
+                        CreateAlreadyKilledObservation(
+                            inventory,
+                            inFlightWork,
+                            prevalidatedKillProof);
+                }
+                else
+                {
+                    /*
+                     * Start local-queued diagnostic reads without awaiting them.
+                     * They must never delay observation and termination of the in-flight DAG.
+                     */
+                    localQueuedPreKillSnapshotTasks = inventory.LocalQueuedRuns
+                        .Select(CaptureLocalQueuedPreKillSnapshotAsync)
+                        .ToArray();
+
+                    killObservation =
+                        killBoundaryMode ==
+                        ProductionRealRuntimeCrashKillBoundaryMode.PrevalidatedPhysicalBoundary
+                            ? await ObservePrevalidatedPhysicalBoundaryAndKillAsync(
+                                    processControl,
+                                    runExecutionIndex,
+                                    dagStore,
+                                    inventory,
+                                    inFlightWork,
+                                    preKillInvariantAssertion!)
+                                .ConfigureAwait(false)
+                            : observationMode == ProductionRecoveryObservationMode.HybridSignals
+                                ? await ObserveCrashProgressAndKillHybridAsync(
+                                        processControl,
+                                        runExecutionIndex,
+                                        dagStore,
+                                        signalSubscriber!,
+                                        controlPlaneId!,
+                                        inventory,
+                                        inFlightWork,
+                                        minimumCompletedStepsBeforeKill,
+                                        progressTimeout,
+                                        resolvedHybridFallbackPollInterval,
+                                        preKillInvariantAssertion)
+                                    .ConfigureAwait(false)
+                                : await ObserveCrashProgressAndKillPollingAsync(
+                                        processControl,
+                                        runExecutionIndex,
+                                        dagStore,
+                                        inventory,
+                                        inFlightWork,
+                                        minimumCompletedStepsBeforeKill,
+                                        progressTimeout,
+                                        preKillInvariantAssertion)
+                                    .ConfigureAwait(false);
+                }
 
                 if (observationMode == ProductionRecoveryObservationMode.EventDriven)
                 {
                     output.WriteLine(
                         "[REAL RUNTIME INVENTORY EVENT-DRIVEN MODE] " +
                         "Canonical events drive post-kill recovery synchronization; " +
-                        "the historical durable progress read remains the crash-threshold authority.");
+                        (prevalidatedKillProof is null
+                            ? "the historical durable progress read remains the crash-threshold authority."
+                            : "the physical kill was already issued from the exact caller-owned durable boundary."));
                 }
 
-                var killObservation =
-                    observationMode == ProductionRecoveryObservationMode.HybridSignals
-                        ? await ObserveCrashProgressAndKillHybridAsync(
-                                processControl,
-                                runExecutionIndex,
-                                dagStore,
-                                signalSubscriber!,
-                                controlPlaneId!,
-                                inventory,
-                                inFlightWork,
-                                minimumCompletedStepsBeforeKill,
-                                progressTimeout,
-                                resolvedHybridFallbackPollInterval)
-                            .ConfigureAwait(false)
-                        : await ObserveCrashProgressAndKillPollingAsync(
-                                processControl,
-                                runExecutionIndex,
-                                dagStore,
-                                inventory,
-                                inFlightWork,
-                                minimumCompletedStepsBeforeKill,
-                                progressTimeout)
-                            .ConfigureAwait(false);
+                if (prevalidatedKillProof is not null)
+                {
+                    output.WriteLine(
+                        "[REAL RUNTIME INVENTORY PREVALIDATED KILL] " +
+                        $"RuntimeInstanceId='{prevalidatedKillProof.RuntimeInstanceId}', " +
+                        $"SharedRunId='{prevalidatedKillProof.SharedRunId}', " +
+                        $"LocalRunId='{prevalidatedKillProof.LocalRunId}', " +
+                        $"ExecutionId='{prevalidatedKillProof.ExecutionId}', " +
+                        $"DagStatus='{prevalidatedKillProof.DagStatus}', " +
+                        $"CompletedSteps='{prevalidatedKillProof.DagCompletedStepCount}', " +
+                        $"TotalSteps='{prevalidatedKillProof.DagTotalStepCount}', " +
+                        $"KillRequestedAtUtc='{prevalidatedKillProof.KillRequestedAtUtc:O}', " +
+                        $"KillCompletedAtUtc='{prevalidatedKillProof.KillCompletedAtUtc:O}', " +
+                        "PhysicalKillAlreadyCompleted='True'.");
+                }
 
                 if (killObservation.Killed &&
                     crashCheckpointGate is not null)
@@ -1344,6 +1488,181 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             }
         }
 
+        private static RealRuntimeCrashKillObservation CreateAlreadyKilledObservation(
+            RealRuntimeCrashAssignedWorkInventoryProof inventory,
+            RealRuntimeCrashWorkProof inFlightWork,
+            ProductionRealRuntimePrevalidatedKillProof proof)
+        {
+            ArgumentNullException.ThrowIfNull(inventory);
+            ArgumentNullException.ThrowIfNull(inFlightWork);
+            ArgumentNullException.ThrowIfNull(proof);
+
+            if (!StringComparer.Ordinal.Equals(
+                    proof.SharedRunId,
+                    inFlightWork.SharedRunId) ||
+                !StringComparer.Ordinal.Equals(
+                    proof.LocalRunId,
+                    inFlightWork.LocalRunId) ||
+                !StringComparer.Ordinal.Equals(
+                    proof.RuntimeInstanceId,
+                    inventory.RuntimeInstanceId) ||
+                !StringComparer.Ordinal.Equals(
+                    proof.ExecutionId,
+                    inFlightWork.ExecutionId))
+            {
+                throw new InvalidOperationException(
+                    "The caller-owned physical kill proof does not match the exact recovery inventory identity. " +
+                    $"ProofSharedRunId='{proof.SharedRunId}', InventorySharedRunId='{inFlightWork.SharedRunId}', " +
+                    $"ProofLocalRunId='{proof.LocalRunId}', InventoryLocalRunId='{inFlightWork.LocalRunId}', " +
+                    $"ProofRuntimeInstanceId='{proof.RuntimeInstanceId}', InventoryRuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                    $"ProofExecutionId='{proof.ExecutionId}', InventoryExecutionId='{inFlightWork.ExecutionId}'.");
+            }
+
+            if (!proof.Killed ||
+                proof.KillCompletedAtUtc < proof.KillRequestedAtUtc)
+            {
+                throw new InvalidOperationException(
+                    "The caller-owned physical kill proof is not a successful monotonic kill observation.");
+            }
+
+            var snapshot =
+                new RealRuntimeCrashWorkStateSnapshot(
+                    proof.IndexStatus,
+                    proof.RuntimeInstanceId,
+                    proof.ExecutionId,
+                    proof.IndexCompletedAtUtc,
+                    proof.DagStatus,
+                    proof.DagCompletedStepCount,
+                    proof.DagTotalStepCount,
+                    proof.DagStepStatusBreakdown,
+                    proof.CapturedAtUtc);
+
+            return new RealRuntimeCrashKillObservation(
+                snapshot,
+                snapshot,
+                proof.Killed,
+                proof.KillRequestedAtUtc,
+                proof.KillCompletedAtUtc,
+                "PrevalidatedPhysicalBoundary",
+                0,
+                null);
+        }
+
+        /// <summary>
+        /// Terminates the selected runtime from an already-proven durable physical boundary without re-entering
+        /// the historical DAG-progress targeting loop.
+        /// </summary>
+        /// <remarks>
+        /// The diagnostic snapshot is captured first. The supplied invariant assertion is then the final durable
+        /// authority before the kill timestamp. No additional store read, log write, delay, or snapshot capture
+        /// is permitted between that assertion and <see cref="IAiRuntimeHostProcessControl.KillAsync"/>.
+        /// </remarks>
+        private static async Task<RealRuntimeCrashKillObservation>
+            ObservePrevalidatedPhysicalBoundaryAndKillAsync(
+                IAiRuntimeHostProcessControl processControl,
+                IAiRuntimeRunExecutionIndex runExecutionIndex,
+                IAiDagExecutionStore dagStore,
+                RealRuntimeCrashAssignedWorkInventoryProof inventory,
+                RealRuntimeCrashWorkProof inFlightWork,
+                Func<Task> preKillInvariantAssertion)
+        {
+            ArgumentNullException.ThrowIfNull(processControl);
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentNullException.ThrowIfNull(inventory);
+            ArgumentNullException.ThrowIfNull(inFlightWork);
+            ArgumentNullException.ThrowIfNull(preKillInvariantAssertion);
+
+            var dagRecord =
+                await dagStore
+                    .GetRecordAsync(inFlightWork.ExecutionId!)
+                    .ConfigureAwait(false);
+
+            var completedStepCount =
+                dagRecord?.CompletedSteps?.Count ?? 0;
+
+            var totalStepCount =
+                dagRecord?.Steps?.Count ?? 0;
+
+            var statusBreakdown =
+                dagRecord is null
+                    ? string.Empty
+                    : $"Completed:{completedStepCount},Remaining:{Math.Max(0, totalStepCount - completedStepCount)}";
+
+            var indexEntry =
+                await runExecutionIndex
+                    .GetAsync(inFlightWork.LocalRunId)
+                    .ConfigureAwait(false);
+
+            var diagnosticSnapshot =
+                new RealRuntimeCrashWorkStateSnapshot(
+                    indexEntry?.Status,
+                    indexEntry?.RuntimeInstanceId,
+                    indexEntry?.ExecutionId,
+                    indexEntry?.CompletedAtUtc,
+                    dagRecord?.Status.ToString(),
+                    completedStepCount,
+                    totalStepCount,
+                    statusBreakdown,
+                    DateTimeOffset.UtcNow);
+
+            if (!string.Equals(
+                    diagnosticSnapshot.RuntimeInstanceId,
+                    inventory.RuntimeInstanceId,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    diagnosticSnapshot.ExecutionId,
+                    inFlightWork.ExecutionId,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    diagnosticSnapshot.IndexStatus,
+                    "running",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                Assert.Fail(
+                    "The selected physical runtime owner changed before the prevalidated crash boundary could be asserted. " +
+                    $"TenantId='{inventory.Tenant.TenantId}', " +
+                    $"RuntimeInstanceId='{inventory.RuntimeInstanceId}', " +
+                    $"SharedRunId='{inFlightWork.SharedRunId}', " +
+                    $"LocalRunId='{inFlightWork.LocalRunId}', " +
+                    $"ExecutionId='{inFlightWork.ExecutionId}', " +
+                    $"IndexStatus='{diagnosticSnapshot.IndexStatus}', " +
+                    $"IndexRuntimeInstanceId='{diagnosticSnapshot.RuntimeInstanceId}', " +
+                    $"IndexExecutionId='{diagnosticSnapshot.ExecutionId}', " +
+                    $"DagStatus='{diagnosticSnapshot.DagStatus}', " +
+                    $"CompletedSteps='{diagnosticSnapshot.DagCompletedStepCount}', " +
+                    $"TotalSteps='{diagnosticSnapshot.DagTotalStepCount}'.");
+            }
+
+            await preKillInvariantAssertion()
+                .ConfigureAwait(false);
+
+            /*
+             * The callback above is the final durable boundary proof.
+             * Do not insert any read, logging operation, delay, or snapshot capture here.
+             */
+            var killRequestedAtUtc =
+                DateTimeOffset.UtcNow;
+
+            var killed =
+                await processControl
+                    .KillAsync(inventory.RuntimeInstanceId)
+                    .ConfigureAwait(false);
+
+            var killCompletedAtUtc =
+                DateTimeOffset.UtcNow;
+
+            return new RealRuntimeCrashKillObservation(
+                diagnosticSnapshot,
+                diagnosticSnapshot,
+                killed,
+                killRequestedAtUtc,
+                killCompletedAtUtc,
+                "PrevalidatedPhysicalBoundary",
+                0,
+                null);
+        }
+
         /// <summary>
         /// Observes the crash window through the historical durable polling path.
         /// </summary>
@@ -1354,7 +1673,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             RealRuntimeCrashAssignedWorkInventoryProof inventory,
             RealRuntimeCrashWorkProof inFlightWork,
             int minimumCompletedStepsBeforeKill,
-            TimeSpan progressTimeout)
+            TimeSpan progressTimeout,
+            Func<Task>? preKillInvariantAssertion)
         {
             ArgumentNullException.ThrowIfNull(processControl);
             ArgumentNullException.ThrowIfNull(runExecutionIndex);
@@ -1466,12 +1786,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     requiredProgressReached &&
                     executionStillIncomplete)
                 {
+                    if (preKillInvariantAssertion is not null)
+                    {
+                        await preKillInvariantAssertion()
+                            .ConfigureAwait(false);
+                    }
+
                     observedCrashSnapshot =
                         currentInFlightSnapshot;
 
                     /*
-                     * No additional read, logging operation, delay, or snapshot capture
-                     * is permitted between this timestamp and KillAsync.
+                     * No logging operation, delay, or snapshot capture is permitted between this timestamp
+                     * and KillAsync. A matrix-only invariant callback, when supplied, completed immediately before it.
                      */
                     killRequestedAtUtc =
                         DateTimeOffset.UtcNow;
@@ -1556,7 +1882,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             RealRuntimeCrashWorkProof inFlightWork,
             int minimumCompletedStepsBeforeKill,
             TimeSpan progressTimeout,
-            TimeSpan fallbackPollInterval)
+            TimeSpan fallbackPollInterval,
+            Func<Task>? preKillInvariantAssertion)
         {
             ArgumentNullException.ThrowIfNull(processControl);
             ArgumentNullException.ThrowIfNull(runExecutionIndex);
@@ -1777,12 +2104,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         requiredProgressReached &&
                         executionStillIncomplete)
                     {
+                        if (preKillInvariantAssertion is not null)
+                        {
+                            await preKillInvariantAssertion()
+                                .ConfigureAwait(false);
+                        }
+
                         observedCrashSnapshot =
                             currentInFlightSnapshot;
 
                         /*
-                         * No additional read, logging operation, delay, or snapshot capture
-                         * is permitted between this timestamp and KillAsync.
+                         * No logging operation, delay, or snapshot capture is permitted between this timestamp
+                         * and KillAsync. A matrix-only invariant callback, when supplied, completed immediately before it.
                          */
                         killRequestedAtUtc =
                             DateTimeOffset.UtcNow;

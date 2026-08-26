@@ -59,6 +59,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Kills the runtime that owns the accepted parent continuation only while the durable child relation is
+        /// Completed/Scheduled, the child call-site has monotonic post-schedule progress, and that call-site is
+        /// still non-terminal. Recovery must consume the same durable child result without a new child generation.
+        /// </summary>
+        /// <returns>A task that completes after the continuation-consume matrix row converges.</returns>
+        [Fact]
+        [Trait("ObservationMode", "EventDriven")]
+        [Trait("ValidationProfile", "AdversarialMatrix")]
+        [Trait("MatrixScenarioId", "continuation-consume")]
+        public Task Grpc_KubernetesPool_Matrix_ContinuationConsume_Should_Preserve_Recursive_Child_Dag_Exactness()
+        {
+            return ExecuteMatrixRowAsync(
+                ProductionChildDagAdversarialScheduleDefinition.ContinuationConsume);
+        }
+
+        /// <summary>
         /// Executes one deterministic matrix row against the same reduced production topology used by the
         /// reference gRPC Kubernetes canary. Only the schedule coordinate varies between rows.
         /// </summary>

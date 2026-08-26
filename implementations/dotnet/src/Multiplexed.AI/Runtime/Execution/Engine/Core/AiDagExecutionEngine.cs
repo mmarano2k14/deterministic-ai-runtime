@@ -201,7 +201,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
                     .ConfigureAwait(false)
                     ?? throw new InvalidOperationException($"Execution '{executionId}' was not found.");
 
-                EnsureExternalWaitContinuationEligible(record, stepName);
+                EnsureExternalWaitContinuationMode(record, stepName);
 
                 var state = await _engineServices.DagStore
                     .GetStateAsync(executionId, cancellationToken)
@@ -212,6 +212,17 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
                 {
                     throw new InvalidOperationException(
                         $"Execution '{executionId}' does not contain step '{stepName}'.");
+                }
+
+                if (record.IsTerminal)
+                {
+                    EnsureTerminalExternalWaitRedeliveryCompatible(
+                        record,
+                        executionId,
+                        stepName,
+                        step.Status);
+
+                    return record;
                 }
 
                 if (step.Status == AiStepExecutionStatus.WaitingForExternal)
@@ -246,7 +257,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
                 .ConfigureAwait(false)
                 ?? throw new InvalidOperationException($"Execution '{executionId}' was not found.");
 
-            EnsureExternalWaitContinuationEligible(localRecord, stepName);
+            EnsureExternalWaitContinuationMode(localRecord, stepName);
 
             var localState = await _engineServices.Store
                 .GetStateAsync(executionId, cancellationToken)
@@ -257,6 +268,17 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
             {
                 throw new InvalidOperationException(
                     $"Execution '{executionId}' does not contain step '{stepName}'.");
+            }
+
+            if (localRecord.IsTerminal)
+            {
+                EnsureTerminalExternalWaitRedeliveryCompatible(
+                    localRecord,
+                    executionId,
+                    stepName,
+                    localStep.Status);
+
+                return localRecord;
             }
 
             if (localStep.Status == AiStepExecutionStatus.WaitingForExternal)
@@ -304,31 +326,67 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
                 }
             }
 
-            EnsureExternalWaitContinuationEligible(localRecord, stepName);
+            EnsureExternalWaitContinuationMode(localRecord, stepName);
+
+            if (localRecord.IsTerminal)
+            {
+                EnsureTerminalExternalWaitRedeliveryCompatible(
+                    localRecord,
+                    executionId,
+                    stepName,
+                    localStep.Status);
+
+                return localRecord;
+            }
+
             EnsureExternalWaitRedeliveryCompatible(executionId, stepName, localStep.Status);
             return localRecord;
         }
 
         /// <summary>
-        /// Validates that an execution may participate in normal external-wait continuation.
+        /// Validates that an execution uses the DAG mode required by external-wait continuation.
         /// </summary>
         /// <param name="record">The authoritative execution record.</param>
         /// <param name="stepName">The requested continuation step.</param>
-        private static void EnsureExternalWaitContinuationEligible(
+        private static void EnsureExternalWaitContinuationMode(
             AiExecutionRecord record,
             string stepName)
         {
-            if (record.IsTerminal)
-            {
-                throw new InvalidOperationException(
-                    $"Execution '{record.ExecutionId}' is terminal and cannot continue external wait step '{stepName}'.");
-            }
-
             if (record.ExecutionMode != AiExecutionMode.Dag)
             {
                 throw new InvalidOperationException(
                     $"Execution '{record.ExecutionId}' is not a DAG execution and cannot continue external wait step '{stepName}'.");
             }
+        }
+
+        /// <summary>
+        /// Accepts a late physical external-wait redelivery only when durable terminal state proves that the
+        /// continuation has already been consumed by the same parent call-site.
+        /// </summary>
+        /// <remarks>
+        /// A Completed/Failed parent with the target call-site already Completed/Failed is an idempotent no-op.
+        /// The execution is never reopened and no step is re-executed. Cancelled parents and non-terminal
+        /// call-sites remain invalid so unrelated terminal transitions cannot masquerade as continuation consumption.
+        /// </remarks>
+        /// <param name="record">The authoritative terminal execution record.</param>
+        /// <param name="executionId">The requested execution identifier.</param>
+        /// <param name="stepName">The exact external-wait call-site.</param>
+        /// <param name="stepStatus">The authoritative call-site status.</param>
+        private static void EnsureTerminalExternalWaitRedeliveryCompatible(
+            AiExecutionRecord record,
+            string executionId,
+            string stepName,
+            AiStepExecutionStatus stepStatus)
+        {
+            if (record.Status is AiExecutionStatus.Completed or AiExecutionStatus.Failed &&
+                stepStatus is AiStepExecutionStatus.Completed or AiStepExecutionStatus.Failed)
+            {
+                return;
+            }
+
+            throw new InvalidOperationException(
+                $"Execution '{executionId}' is terminal and cannot continue external wait step '{stepName}'. " +
+                $"ExecutionStatus='{record.Status}', StepStatus='{stepStatus}'.");
         }
 
         /// <summary>

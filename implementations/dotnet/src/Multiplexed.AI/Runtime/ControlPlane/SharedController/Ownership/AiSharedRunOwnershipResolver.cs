@@ -1,6 +1,8 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
+using Multiplexed.AI.Stores;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
 {
@@ -18,21 +20,27 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
     {
         private readonly IAiSharedQueue sharedQueue;
         private readonly IAiSharedRunStore sharedRunStore;
+        private readonly IServiceScopeFactory? serviceScopeFactory;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiSharedRunOwnershipResolver"/> class.
         /// </summary>
         /// <param name="sharedQueue">The shared queue.</param>
         /// <param name="sharedRunStore">The shared run store.</param>
+        /// <param name="serviceScopeFactory">
+        /// Optional scope factory used to read authoritative distributed DAG parent terminality.
+        /// </param>
         public AiSharedRunOwnershipResolver(
             IAiSharedQueue sharedQueue,
-            IAiSharedRunStore sharedRunStore)
+            IAiSharedRunStore sharedRunStore,
+            IServiceScopeFactory? serviceScopeFactory = null)
         {
             ArgumentNullException.ThrowIfNull(sharedQueue);
             ArgumentNullException.ThrowIfNull(sharedRunStore);
 
             this.sharedQueue = sharedQueue;
             this.sharedRunStore = sharedRunStore;
+            this.serviceScopeFactory = serviceScopeFactory;
         }
 
         /// <inheritdoc />
@@ -93,10 +101,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
                     continue;
                 }
 
-                return CreateResolved(
-                    request,
-                    queueItem,
-                    sharedRun);
+                return await this.CreateResolvedAsync(
+                        request,
+                        queueItem,
+                        sharedRun,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             return CreateUnresolved(
@@ -166,10 +176,12 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
                     "direct-shared-run-id-shared-run-ownership-mismatch");
             }
 
-            return CreateResolved(
-                request,
-                queueItem,
-                sharedRun);
+            return await this.CreateResolvedAsync(
+                    request,
+                    queueItem,
+                    sharedRun,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         /// <summary>
@@ -313,14 +325,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
         /// <summary>
         /// Creates a resolved ownership result from both queue and shared run state.
         /// </summary>
+        /// <remarks>
+        /// A normal external-wait continuation remains physically <c>Dispatched</c> after delivery.
+        /// Once its authoritative parent execution is terminal, that physical delivery is obsolete and
+        /// must not become recoverable again when its runtime or Pod later fails.
+        ///
+        /// While the parent remains non-terminal, the existing dispatched/dispatched recovery rule is
+        /// preserved so the same deterministic continuation can still be re-driven to converge parent
+        /// finalization.
+        /// </remarks>
         /// <param name="request">The ownership resolution request.</param>
         /// <param name="queueItem">The shared queue item.</param>
         /// <param name="sharedRun">The shared run record.</param>
+        /// <param name="cancellationToken">A token used to cancel the operation.</param>
         /// <returns>The ownership resolution result.</returns>
-        private static AiSharedRunOwnershipResolutionResult CreateResolved(
+        private async Task<AiSharedRunOwnershipResolutionResult> CreateResolvedAsync(
             AiSharedRunOwnershipResolutionRequest request,
             AiSharedQueueItem queueItem,
-            AiSharedRunRecord sharedRun)
+            AiSharedRunRecord sharedRun,
+            CancellationToken cancellationToken)
         {
             var executionId =
                 string.IsNullOrWhiteSpace(sharedRun.ExecutionId)
@@ -332,10 +355,48 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
                     ? request.LocalRunId
                     : sharedRun.LocalRunId;
 
+            var externalWaitContinuation =
+                sharedRun.RunRequest.ExternalWaitContinuation;
+
             var canRecover =
                 IsRecoverable(
                     queueItem.Status,
                     sharedRun.Status);
+
+            var reason =
+                canRecover
+                    ? "shared-run-ownership-resolved"
+                    : "shared-run-ownership-resolved-not-recoverable";
+
+            if (canRecover &&
+                externalWaitContinuation is not null &&
+                this.serviceScopeFactory is not null)
+            {
+                using var scope =
+                    this.serviceScopeFactory.CreateScope();
+
+                var dagExecutionStore =
+                    scope.ServiceProvider.GetService(
+                        typeof(IAiDagExecutionStore))
+                    as IAiDagExecutionStore;
+
+                if (dagExecutionStore is not null)
+                {
+                    var parentRecord =
+                        await dagExecutionStore
+                            .GetRecordAsync(
+                                externalWaitContinuation.ExecutionId,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                    if (parentRecord?.IsTerminal == true)
+                    {
+                        canRecover = false;
+                        reason =
+                            "external-wait-continuation-parent-terminal";
+                    }
+                }
+            }
 
             return new AiSharedRunOwnershipResolutionResult
             {
@@ -349,10 +410,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Ownership
                 QueueStatus = queueItem.Status,
                 SharedRunStatus = sharedRun.Status,
                 ClaimToken = queueItem.ClaimToken,
+                IsExternalWaitContinuation =
+                    externalWaitContinuation is not null,
                 CanRecover = canRecover,
-                Reason = canRecover
-                    ? "shared-run-ownership-resolved"
-                    : "shared-run-ownership-resolved-not-recoverable"
+                Reason = reason
             };
         }
 

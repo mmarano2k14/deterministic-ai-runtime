@@ -59,6 +59,15 @@ namespace Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership
         public string? ClaimToken { get; init; }
 
         /// <summary>
+        /// Gets a value indicating whether the authoritative shared run is a normal external-wait continuation.
+        /// </summary>
+        /// <remarks>
+        /// External-wait continuation re-drive preserves the parent execution identity but does not acquire
+        /// crash-recovery execution ownership.
+        /// </remarks>
+        public bool IsExternalWaitContinuation { get; init; }
+
+        /// <summary>
         /// Gets a value indicating whether the resolved ownership is recoverable by the recovery reconciler.
         /// </summary>
         public bool CanRecover { get; init; }

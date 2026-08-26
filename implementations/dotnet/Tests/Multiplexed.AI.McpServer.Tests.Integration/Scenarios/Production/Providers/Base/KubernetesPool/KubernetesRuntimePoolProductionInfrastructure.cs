@@ -547,6 +547,367 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             return pods;
         }
 
+        internal static string[] CreatePrearmedRuntimeProcessKillArguments(
+            string podName,
+            string @namespace,
+            int processId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(podName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(@namespace);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(processId);
+
+            var processIdText =
+                processId.ToString(CultureInfo.InvariantCulture);
+
+            var command =
+                string.Concat(
+                    "pid=", processIdText, "; ",
+                    "read_identity() { ",
+                    "[ -r \"/proc/$pid/stat\" ] || return 1; ",
+                    "stat_line=$(cat \"/proc/$pid/stat\" 2>/dev/null) || return 1; ",
+                    "rest=${stat_line##*) }; set -- $rest; state=$1; shift 19; starttime=$1; ",
+                    "printf '%s|%s\n' \"$state\" \"$starttime\"; ",
+                    "}; ",
+                    "armed_identity=$(read_identity) || { printf 'ARM_FAIL=TARGET_MISSING PID=%s\n' \"$pid\"; exit 66; }; ",
+                    "armed_state=${armed_identity%%|*}; armed_starttime=${armed_identity#*|}; ",
+                    "printf 'READY PID=%s STARTTIME=%s STATE=%s\n' \"$pid\" \"$armed_starttime\" \"$armed_state\"; ",
+                    "IFS= read -r command || exit 65; ",
+                    "if [ \"$command\" = \"KILL\" ]; then ",
+                    "current_identity=$(read_identity) || { printf 'KILL_FAIL=TARGET_MISSING_BEFORE_TRIGGER PID=%s STARTTIME=%s\n' \"$pid\" \"$armed_starttime\"; exit 67; }; ",
+                    "current_starttime=${current_identity#*|}; ",
+                    "if [ \"$current_starttime\" != \"$armed_starttime\" ]; then ",
+                    "printf 'KILL_FAIL=PID_REUSED_BEFORE_TRIGGER PID=%s ARMED_STARTTIME=%s OBSERVED_STARTTIME=%s\n' \"$pid\" \"$armed_starttime\" \"$current_starttime\"; exit 68; fi; ",
+                    "kill -9 \"$pid\"; status=$?; printf 'KILL_EXIT=%s\n' \"$status\"; [ \"$status\" -eq 0 ] || exit \"$status\"; ",
+                    "i=0; while [ \"$i\" -lt 100 ]; do ",
+                    "post_identity=$(read_identity) || { printf 'DEAD PID=%s STARTTIME=%s PROOF=PROC_ABSENT\n' \"$pid\" \"$armed_starttime\"; exit 0; }; ",
+                    "post_state=${post_identity%%|*}; post_starttime=${post_identity#*|}; ",
+                    "if [ \"$post_starttime\" != \"$armed_starttime\" ]; then ",
+                    "printf 'DEAD PID=%s STARTTIME=%s PROOF=PID_REUSED OBSERVED_STARTTIME=%s STATE=%s\n' \"$pid\" \"$armed_starttime\" \"$post_starttime\" \"$post_state\"; exit 0; fi; ",
+                    "if [ \"$post_state\" = \"Z\" ]; then ",
+                    "printf 'DEAD PID=%s STARTTIME=%s PROOF=ZOMBIE STATE=Z\n' \"$pid\" \"$armed_starttime\"; exit 0; fi; ",
+                    "i=$((i+1)); sleep 0.02; done; ",
+                    "printf 'KILL_FAIL=EXACT_PROCESS_STILL_ALIVE PID=%s STARTTIME=%s STATE=%s\n' \"$pid\" \"$armed_starttime\" \"$post_state\"; exit 69; ",
+                    "fi; printf 'CANCELLED\n'; exit 0");
+
+            return
+            [
+                "exec",
+                "-i",
+                podName,
+                "--namespace",
+                @namespace,
+                "--container",
+                "runtime-pool",
+                "--",
+                "sh",
+                "-c",
+                command
+            ];
+        }
+
+        internal static string CreatePrearmedRuntimeProcessControlFrame(
+            string command)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(command);
+
+            if (!StringComparer.Ordinal.Equals(command, "KILL") &&
+                !StringComparer.Ordinal.Equals(command, "CANCEL"))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(command),
+                    command,
+                    "Only KILL and CANCEL are valid pre-armed runtime process control commands.");
+            }
+
+            // The test host runs on Windows while kubectl exec feeds a Linux sh.
+            // Do not use StreamWriter.WriteLineAsync here: on Windows it emits CRLF,
+            // leaving a trailing \r in POSIX `read -r` and turning KILL into KILL\r.
+            return string.Concat(command, "\n");
+        }
+
+        public static async Task<KubernetesRuntimePoolPrearmedProcessKillSession>
+            PrearmRuntimeProcessKillAsync(
+                string runtimeInstanceId,
+                string podName,
+                string @namespace,
+                int processId,
+                TimeSpan readyTimeout,
+                CancellationToken cancellationToken)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(runtimeInstanceId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(podName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(@namespace);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(processId);
+
+            if (readyTimeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(readyTimeout),
+                    readyTimeout,
+                    "The pre-armed kubectl readiness timeout must be greater than zero.");
+            }
+
+            var startInfo =
+                new ProcessStartInfo
+                {
+                    FileName = "kubectl",
+                    UseShellExecute = false,
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+
+            foreach (var argument in
+                     CreatePrearmedRuntimeProcessKillArguments(
+                         podName,
+                         @namespace,
+                         processId))
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
+
+            var process =
+                new Process
+                {
+                    StartInfo = startInfo
+                };
+
+            if (!process.Start())
+            {
+                process.Dispose();
+                throw new InvalidOperationException(
+                    "The pre-armed kubectl exec process could not be started.");
+            }
+
+            var armedAtUtc = DateTimeOffset.UtcNow;
+            var standardErrorTask =
+                process.StandardError.ReadToEndAsync(CancellationToken.None);
+
+            try
+            {
+                using var readyCancellation =
+                    CancellationTokenSource.CreateLinkedTokenSource(
+                        cancellationToken);
+                readyCancellation.CancelAfter(readyTimeout);
+
+                var readyLine =
+                    await process.StandardOutput
+                        .ReadLineAsync(readyCancellation.Token)
+                        .ConfigureAwait(false);
+
+                var armedProcessIdentity =
+                    ParsePrearmedRuntimeProcessReadyMarker(
+                        readyLine,
+                        processId);
+
+                if (process.HasExited)
+                {
+                    throw new InvalidOperationException(
+                        string.Concat(
+                            "The pre-armed kubectl exec session exited immediately after READY. RuntimeInstanceId='",
+                            runtimeInstanceId,
+                            "', ExitCode='",
+                            process.ExitCode.ToString(CultureInfo.InvariantCulture),
+                            "'."));
+                }
+
+                return new KubernetesRuntimePoolPrearmedProcessKillSession(
+                    runtimeInstanceId,
+                    podName,
+                    @namespace,
+                    processId,
+                    armedProcessIdentity.StartTimeTicks,
+                    armedProcessIdentity.State,
+                    armedAtUtc,
+                    process,
+                    standardErrorTask);
+            }
+            catch
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                    await process.WaitForExitAsync(CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+
+                process.Dispose();
+                throw;
+            }
+        }
+
+        internal static KubernetesLinuxProcessIdentity
+            ParsePrearmedRuntimeProcessReadyMarker(
+                string? marker,
+                int expectedProcessId)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(expectedProcessId);
+
+            if (string.IsNullOrWhiteSpace(marker) ||
+                !marker.StartsWith("READY ", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    string.Concat(
+                        "The pre-armed kubectl exec session did not expose a valid Linux process READY marker. ExpectedProcessId='",
+                        expectedProcessId.ToString(CultureInfo.InvariantCulture),
+                        "', ObservedMarker='",
+                        marker ?? "<null>",
+                        "'."));
+            }
+
+            var fields = ParseMarkerFields(marker);
+
+            if (!fields.TryGetValue("PID", out var processIdText) ||
+                !int.TryParse(
+                    processIdText,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var observedProcessId) ||
+                observedProcessId != expectedProcessId ||
+                !fields.TryGetValue("STARTTIME", out var startTimeText) ||
+                !long.TryParse(
+                    startTimeText,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var startTimeTicks) ||
+                startTimeTicks <= 0 ||
+                !fields.TryGetValue("STATE", out var state) ||
+                string.IsNullOrWhiteSpace(state))
+            {
+                throw new InvalidOperationException(
+                    string.Concat(
+                        "The pre-armed kubectl exec Linux process READY marker was incomplete or inconsistent. ExpectedProcessId='",
+                        expectedProcessId.ToString(CultureInfo.InvariantCulture),
+                        "', ObservedMarker='",
+                        marker,
+                        "'."));
+            }
+
+            return new KubernetesLinuxProcessIdentity(
+                observedProcessId,
+                startTimeTicks,
+                state);
+        }
+
+        internal static KubernetesLinuxProcessDeathProof
+            ParsePrearmedRuntimeProcessDeathMarker(
+                string standardOutput,
+                int expectedProcessId,
+                long expectedStartTimeTicks)
+        {
+            ArgumentNullException.ThrowIfNull(standardOutput);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(expectedProcessId);
+
+            if (expectedStartTimeTicks <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(expectedStartTimeTicks));
+            }
+
+            var deathMarker =
+                standardOutput
+                    .Split(
+                        ['\r', '\n'],
+                        StringSplitOptions.RemoveEmptyEntries |
+                        StringSplitOptions.TrimEntries)
+                    .FirstOrDefault(line =>
+                        line.StartsWith("DEAD ", StringComparison.Ordinal));
+
+            if (deathMarker is null)
+            {
+                throw new InvalidOperationException(
+                    string.Concat(
+                        "The pre-armed kubectl exec kill completed without an exact Linux process death marker. ExpectedProcessId='",
+                        expectedProcessId.ToString(CultureInfo.InvariantCulture),
+                        "', ExpectedStartTimeTicks='",
+                        expectedStartTimeTicks.ToString(CultureInfo.InvariantCulture),
+                        "', StandardOutput='",
+                        standardOutput,
+                        "'."));
+            }
+
+            var fields = ParseMarkerFields(deathMarker);
+
+            if (!fields.TryGetValue("PID", out var processIdText) ||
+                !int.TryParse(
+                    processIdText,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var observedProcessId) ||
+                observedProcessId != expectedProcessId ||
+                !fields.TryGetValue("STARTTIME", out var startTimeText) ||
+                !long.TryParse(
+                    startTimeText,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var observedStartTimeTicks) ||
+                observedStartTimeTicks != expectedStartTimeTicks ||
+                !fields.TryGetValue("PROOF", out var proof) ||
+                (proof != "PROC_ABSENT" &&
+                 proof != "ZOMBIE" &&
+                 proof != "PID_REUSED"))
+            {
+                throw new InvalidOperationException(
+                    string.Concat(
+                        "The exact Linux process death marker was incomplete or inconsistent with the armed process incarnation. ExpectedProcessId='",
+                        expectedProcessId.ToString(CultureInfo.InvariantCulture),
+                        "', ExpectedStartTimeTicks='",
+                        expectedStartTimeTicks.ToString(CultureInfo.InvariantCulture),
+                        "', ObservedMarker='",
+                        deathMarker,
+                        "'."));
+            }
+
+            fields.TryGetValue("STATE", out var state);
+            fields.TryGetValue("OBSERVED_STARTTIME", out var reusedStartTimeText);
+
+            long? reusedStartTimeTicks = null;
+            if (!string.IsNullOrWhiteSpace(reusedStartTimeText) &&
+                long.TryParse(
+                    reusedStartTimeText,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var parsedReusedStartTimeTicks))
+            {
+                reusedStartTimeTicks = parsedReusedStartTimeTicks;
+            }
+
+            return new KubernetesLinuxProcessDeathProof(
+                observedProcessId,
+                observedStartTimeTicks,
+                proof,
+                state,
+                reusedStartTimeTicks);
+        }
+
+        private static IReadOnlyDictionary<string, string>
+            ParseMarkerFields(
+                string marker)
+        {
+            var fields =
+                new Dictionary<string, string>(
+                    StringComparer.Ordinal);
+
+            foreach (var token in marker.Split(
+                         ' ',
+                         StringSplitOptions.RemoveEmptyEntries |
+                         StringSplitOptions.TrimEntries))
+            {
+                var separatorIndex = token.IndexOf('=');
+                if (separatorIndex <= 0 ||
+                    separatorIndex == token.Length - 1)
+                {
+                    continue;
+                }
+
+                fields[token[..separatorIndex]] =
+                    token[(separatorIndex + 1)..];
+            }
+
+            return fields;
+        }
+
         public static async Task<KubectlResult> RunKubectlAsync(
             CancellationToken cancellationToken,
             params string[] arguments)
@@ -847,6 +1208,283 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             }
         }
     }
+
+    internal sealed class KubernetesRuntimePoolPrearmedProcessKillSession :
+        IAsyncDisposable
+    {
+        private readonly Process process;
+        private readonly Task<string> standardErrorTask;
+        private int terminalActionStarted;
+
+        public KubernetesRuntimePoolPrearmedProcessKillSession(
+            string runtimeInstanceId,
+            string podName,
+            string @namespace,
+            int processId,
+            long processStartTimeTicks,
+            string processStateAtArm,
+            DateTimeOffset armedAtUtc,
+            Process process,
+            Task<string> standardErrorTask)
+        {
+            RuntimeInstanceId = runtimeInstanceId;
+            PodName = podName;
+            Namespace = @namespace;
+            ProcessId = processId;
+            ProcessStartTimeTicks = processStartTimeTicks;
+            ProcessStateAtArm = processStateAtArm;
+            ArmedAtUtc = armedAtUtc;
+            this.process = process;
+            this.standardErrorTask = standardErrorTask;
+        }
+
+        public string RuntimeInstanceId { get; }
+
+        public string PodName { get; }
+
+        public string Namespace { get; }
+
+        public int ProcessId { get; }
+
+        public long ProcessStartTimeTicks { get; }
+
+        public string ProcessStateAtArm { get; }
+
+        public DateTimeOffset ArmedAtUtc { get; }
+
+        public bool HasExited => this.process.HasExited;
+
+        public void AssertTargets(
+            AiRuntimeInstanceSnapshot runtime)
+        {
+            ArgumentNullException.ThrowIfNull(runtime);
+
+            if (!StringComparer.Ordinal.Equals(
+                    runtime.RuntimeInstanceId,
+                    RuntimeInstanceId) ||
+                !StringComparer.Ordinal.Equals(
+                    runtime.KubernetesPodName,
+                    PodName) ||
+                !StringComparer.Ordinal.Equals(
+                    runtime.KubernetesNamespace,
+                    Namespace) ||
+                runtime.ProcessId.GetValueOrDefault() != ProcessId)
+            {
+                throw new InvalidOperationException(
+                    string.Concat(
+                        "The continuation-consume runtime changed after the physical kill session was pre-armed. RuntimeInstanceId='",
+                        runtime.RuntimeInstanceId,
+                        "', ArmedRuntimeInstanceId='",
+                        RuntimeInstanceId,
+                        "', CurrentProcessId='",
+                        runtime.ProcessId.GetValueOrDefault().ToString(CultureInfo.InvariantCulture),
+                        "', ArmedProcessId='",
+                        ProcessId.ToString(CultureInfo.InvariantCulture),
+                        "'."));
+            }
+
+            if (HasExited)
+            {
+                throw new InvalidOperationException(
+                    string.Concat(
+                        "The continuation-consume pre-armed kubectl exec session exited before the target boundary. RuntimeInstanceId='",
+                        RuntimeInstanceId,
+                        "'."));
+            }
+        }
+
+        public async Task<KubernetesRuntimePoolPrearmedProcessKillResult>
+            TriggerKillAsync(
+                TimeSpan timeout,
+                CancellationToken cancellationToken)
+        {
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeout),
+                    timeout,
+                    "The pre-armed runtime kill timeout must be greater than zero.");
+            }
+
+            if (Interlocked.CompareExchange(
+                    ref this.terminalActionStarted,
+                    1,
+                    0) != 0)
+            {
+                throw new InvalidOperationException(
+                    "The pre-armed runtime kill session was already triggered or cancelled.");
+            }
+
+            if (this.process.HasExited)
+            {
+                var stderr =
+                    await this.standardErrorTask.ConfigureAwait(false);
+
+                throw new InvalidOperationException(
+                    string.Concat(
+                        "The pre-armed kubectl exec session exited before the physical kill trigger. RuntimeInstanceId='",
+                        RuntimeInstanceId,
+                        "', ExitCode='",
+                        this.process.ExitCode.ToString(CultureInfo.InvariantCulture),
+                        "', StandardError='",
+                        stderr,
+                        "'."));
+            }
+
+            using var timeoutCancellation =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
+            timeoutCancellation.CancelAfter(timeout);
+
+            try
+            {
+                var killRequestedAtUtc = DateTimeOffset.UtcNow;
+
+                await this.process.StandardInput
+                    .WriteAsync(
+                        KubernetesRuntimePoolProductionInfrastructure
+                            .CreatePrearmedRuntimeProcessControlFrame("KILL")
+                            .AsMemory(),
+                        timeoutCancellation.Token)
+                    .ConfigureAwait(false);
+                await this.process.StandardInput
+                    .FlushAsync(timeoutCancellation.Token)
+                    .ConfigureAwait(false);
+                this.process.StandardInput.Close();
+
+                var standardOutputTask =
+                    this.process.StandardOutput
+                        .ReadToEndAsync(timeoutCancellation.Token);
+
+                await this.process
+                    .WaitForExitAsync(timeoutCancellation.Token)
+                    .ConfigureAwait(false);
+
+                var killCompletedAtUtc = DateTimeOffset.UtcNow;
+                var standardOutput =
+                    await standardOutputTask.ConfigureAwait(false);
+                var standardError =
+                    await this.standardErrorTask.ConfigureAwait(false);
+
+                if (this.process.ExitCode != 0)
+                {
+                    throw new InvalidOperationException(
+                        string.Concat(
+                            "The pre-armed kubectl exec session failed while proving exact Linux process death. RuntimeInstanceId='",
+                            RuntimeInstanceId,
+                            "', ProcessId='",
+                            ProcessId.ToString(CultureInfo.InvariantCulture),
+                            "', ProcessStartTimeTicks='",
+                            ProcessStartTimeTicks.ToString(CultureInfo.InvariantCulture),
+                            "', ExitCode='",
+                            this.process.ExitCode.ToString(CultureInfo.InvariantCulture),
+                            "', StandardOutput='",
+                            standardOutput,
+                            "', StandardError='",
+                            standardError,
+                            "'."));
+                }
+
+                var deathProof =
+                    KubernetesRuntimePoolProductionInfrastructure
+                        .ParsePrearmedRuntimeProcessDeathMarker(
+                            standardOutput,
+                            ProcessId,
+                            ProcessStartTimeTicks);
+
+                return new KubernetesRuntimePoolPrearmedProcessKillResult(
+                    killRequestedAtUtc,
+                    killCompletedAtUtc,
+                    this.process.ExitCode,
+                    standardOutput,
+                    standardError,
+                    deathProof);
+            }
+            catch
+            {
+                await KillLocalKubectlProcessAsync().ConfigureAwait(false);
+                throw;
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Interlocked.CompareExchange(
+                    ref this.terminalActionStarted,
+                    1,
+                    0) == 0)
+            {
+                try
+                {
+                    if (!this.process.HasExited)
+                    {
+                        using var cancellation =
+                            new CancellationTokenSource(
+                                TimeSpan.FromSeconds(5));
+
+                        await this.process.StandardInput
+                            .WriteAsync(
+                                KubernetesRuntimePoolProductionInfrastructure
+                                    .CreatePrearmedRuntimeProcessControlFrame("CANCEL")
+                                    .AsMemory(),
+                                cancellation.Token)
+                            .ConfigureAwait(false);
+                        await this.process.StandardInput
+                            .FlushAsync(cancellation.Token)
+                            .ConfigureAwait(false);
+                        this.process.StandardInput.Close();
+
+                        await this.process
+                            .WaitForExitAsync(cancellation.Token)
+                            .ConfigureAwait(false);
+                    }
+                }
+                catch
+                {
+                    await KillLocalKubectlProcessAsync().ConfigureAwait(false);
+                }
+            }
+            else if (!this.process.HasExited)
+            {
+                await KillLocalKubectlProcessAsync().ConfigureAwait(false);
+            }
+
+            this.process.Dispose();
+        }
+
+        private async Task KillLocalKubectlProcessAsync()
+        {
+            if (this.process.HasExited)
+            {
+                return;
+            }
+
+            this.process.Kill(entireProcessTree: true);
+            await this.process
+                .WaitForExitAsync(CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+    }
+
+    internal sealed record KubernetesRuntimePoolPrearmedProcessKillResult(
+        DateTimeOffset KillRequestedAtUtc,
+        DateTimeOffset KillCompletedAtUtc,
+        int ExitCode,
+        string StandardOutput,
+        string StandardError,
+        KubernetesLinuxProcessDeathProof ExactProcessDeathProof);
+
+    internal sealed record KubernetesLinuxProcessIdentity(
+        int ProcessId,
+        long StartTimeTicks,
+        string State);
+
+    internal sealed record KubernetesLinuxProcessDeathProof(
+        int ProcessId,
+        long StartTimeTicks,
+        string Proof,
+        string? State,
+        long? ObservedReplacementStartTimeTicks);
 
     /// <summary>
     /// Provides reusable Runtime Pool topology and readiness assertions independently of transport.

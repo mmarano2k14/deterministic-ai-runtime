@@ -37,6 +37,82 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
         }
 
         [Fact]
+        public void IncludeExactSupplementalRecoveredFinalTarget_Should_Add_Continuation_Without_Broadening_Parent_Set()
+        {
+            var parentTargets =
+                new[]
+                {
+                    CreateFinal(
+                        "parent-shared-1",
+                        "runtime-parent-final",
+                        "local-parent-final",
+                        "parent-execution-1")
+                };
+
+            var continuationTarget =
+                CreateFinal(
+                    "child-continuation-child-invocation-1",
+                    "runtime-continuation-final",
+                    "local-continuation-final",
+                    "parent-execution-2");
+
+            var merged =
+                ProductionRuntimeOwnershipTransitionAssertions
+                    .IncludeExactSupplementalRecoveredFinalTarget(
+                        parentTargets,
+                        continuationTarget,
+                        "continuation ownership target proof");
+
+            Assert.Equal(2, merged.Count);
+            Assert.Contains(
+                merged,
+                target =>
+                    target == continuationTarget);
+
+            var proof =
+                ProductionRuntimeOwnershipTransitionAssertions
+                    .AssertExactRecoveredFinalOwnership(
+                        merged,
+                        Set("child-continuation-child-invocation-1"),
+                        Set("parent-execution-2"),
+                        Set("runtime-continuation-failed"),
+                        "continuation recovered ownership proof");
+
+            Assert.Equal(1, proof.ExpectedRecoveredSharedRunCount);
+            Assert.Equal(1, proof.ObservedRecoveredSharedRunCount);
+            Assert.Equal(1, proof.FinalReplacementBindingCount);
+            Assert.Equal(0, proof.TransitionViolationCount);
+        }
+
+        [Fact]
+        public void IncludeExactSupplementalRecoveredFinalTarget_Should_Reject_Conflicting_Duplicate_Target()
+        {
+            var existing =
+                new[]
+                {
+                    CreateFinal(
+                        "child-continuation-child-invocation-1",
+                        "runtime-final-a",
+                        "local-final-a",
+                        "parent-execution-1")
+                };
+
+            var conflicting =
+                CreateFinal(
+                    "child-continuation-child-invocation-1",
+                    "runtime-final-b",
+                    "local-final-b",
+                    "parent-execution-1");
+
+            Assert.ThrowsAny<XunitException>(() =>
+                ProductionRuntimeOwnershipTransitionAssertions
+                    .IncludeExactSupplementalRecoveredFinalTarget(
+                        existing,
+                        conflicting,
+                        "conflicting continuation ownership target proof"));
+        }
+
+        [Fact]
         public void AssertExactRecoveredFinalOwnership_Should_Reject_Failed_Runtime_As_Final_Owner()
         {
             Assert.ThrowsAny<XunitException>(() =>

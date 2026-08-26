@@ -24,6 +24,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Equal("DeterministicBaseline", schedule.FailureScheduleMode);
             Assert.Equal("mid-parent", schedule.FailurePosition);
             Assert.Equal("NOT_YET_VALIDATED", schedule.MatrixStatus);
+            Assert.Equal(ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint, schedule.FailureTarget);
+            Assert.True(schedule.UsesParentCrashCheckpoint);
             Assert.Equal(25, schedule.KillAfterCompletedStepCount);
             Assert.Equal(26, schedule.ResolveCrashCheckpointStepIndex(50));
         }
@@ -43,6 +45,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Equal("DeterministicAdversarial", schedule.FailureScheduleMode);
             Assert.Equal("early-parent", schedule.FailurePosition);
             Assert.Equal("IN_PROGRESS", schedule.MatrixStatus);
+            Assert.Equal(ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint, schedule.FailureTarget);
+            Assert.True(schedule.UsesParentCrashCheckpoint);
             Assert.Equal(1, schedule.KillAfterCompletedStepCount);
             Assert.Equal(2, schedule.ResolveCrashCheckpointStepIndex(50));
         }
@@ -86,6 +90,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
             Assert.Equal("DeterministicAdversarial", schedule.FailureScheduleMode);
             Assert.Equal("pre-child-invocation", schedule.FailurePosition);
             Assert.Equal("IN_PROGRESS", schedule.MatrixStatus);
+            Assert.Equal(ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint, schedule.FailureTarget);
+            Assert.True(schedule.UsesParentCrashCheckpoint);
             Assert.Equal(productionParentStepCount - 1, schedule.KillAfterCompletedStepCount);
             Assert.Equal(
                 productionParentStepCount,
@@ -114,6 +120,36 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
 
             Assert.Equal(49, childInvocationBoundary.KillAfterCompletedStepCount);
             Assert.Equal(50, childInvocationBoundary.ResolveCrashCheckpointStepIndex(50));
+        }
+
+        /// <summary>
+        /// Verifies that continuation-consume uses durable continuation state instead of an ordinary parent crash checkpoint.
+        /// </summary>
+        [Fact]
+        public void ContinuationConsume_Should_Use_The_Durable_Continuation_Target()
+        {
+            var schedule = ProductionChildDagAdversarialScheduleDefinition.ContinuationConsume;
+
+            Assert.Equal("continuation-consume", schedule.MatrixScenarioId);
+            Assert.Equal("continuation-consume", schedule.FailureSeed);
+            Assert.Equal("DeterministicAdversarial", schedule.FailureScheduleMode);
+            Assert.Equal("continuation-consume", schedule.FailurePosition);
+            Assert.Equal("IN_PROGRESS", schedule.MatrixStatus);
+            Assert.Equal(ProductionChildDagAdversarialFailureTarget.ContinuationConsume, schedule.FailureTarget);
+            Assert.False(schedule.UsesParentCrashCheckpoint);
+            Assert.Equal(50, schedule.KillAfterCompletedStepCount);
+        }
+
+        /// <summary>
+        /// Verifies that continuation-consume cannot be projected through the ordinary parent checkpoint resolver.
+        /// </summary>
+        [Fact]
+        public void ContinuationConsume_Should_Reject_Ordinary_Parent_Crash_Checkpoint_Resolution()
+        {
+            var schedule = ProductionChildDagAdversarialScheduleDefinition.ContinuationConsume;
+
+            Assert.Throws<InvalidOperationException>(
+                () => schedule.ResolveCrashCheckpointStepIndex(50));
         }
 
         /// <summary>

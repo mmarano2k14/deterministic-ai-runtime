@@ -8,6 +8,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Execution.Control;
 using Multiplexed.Abstractions.AI.Execution.Scheduling;
 using Multiplexed.Abstractions.AI.Steps;
@@ -382,6 +383,96 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
         }
 
         /// <summary>
+        /// Verifies that a failed external-wait continuation is re-driven through normal continuation semantics
+        /// without acquiring crash-recovery execution ownership.
+        /// </summary>
+        [Fact]
+        public async Task ApplyAsync_Should_Redrive_External_Wait_Continuation_Without_Crash_Recovery_Ownership()
+        {
+            var operations = new List<string>();
+            var sharedQueue = new FakeSharedQueue(operations);
+            var runExecutionIndex = new FakeRuntimeRunExecutionIndex(operations);
+            var executionControl = new FakeExecutionControlService(operations);
+            var dagExecutionStore =
+                new FakeDagExecutionStore(operations)
+                {
+                    RecoveredRunningStepCount = 1
+                };
+
+            var service = CreateService(
+                sharedQueue,
+                runExecutionIndex,
+                executionControl,
+                dagExecutionStore,
+                enableDagExecutionResume: true);
+
+            var result =
+                await service.ApplyAsync(
+                    new AiRuntimeExecutionRecoveryTransitionRequest
+                    {
+                        Ownership =
+                            CreateOwnership(
+                                resolved: true,
+                                canRecover: true,
+                                isExternalWaitContinuation: true),
+                        Reason = "test-external-wait-runtime-loss",
+                        DryRun = false
+                    });
+
+            Assert.True(result.Accepted);
+            Assert.True(result.Changed);
+            Assert.Equal("requeue-shared-run", result.Action);
+
+            Assert.Equal(
+                [
+                    "queue.requeue-dispatched",
+                    "index.mark-requeued-for-recovery"
+                ],
+                operations);
+
+            Assert.Equal(0, executionControl.PauseForRecoveryCalls);
+            Assert.Equal(0, executionControl.MarkPausedCalls);
+            Assert.Equal(0, dagExecutionStore.RecoverRunningStepsForRecoveryCalls);
+
+            Assert.NotNull(sharedQueue.LastRequeueMetadata);
+            Assert.False(
+                sharedQueue.LastRequeueMetadata!.ContainsKey(
+                    AiRuntimeRecoveryMetadataKeys.Mode));
+            Assert.Equal(
+                "true",
+                sharedQueue.LastRequeueMetadata[
+                    AiRuntimeExternalWaitMetadataKeys.Continuation]);
+            Assert.Equal(
+                "execution-1",
+                sharedQueue.LastRequeueMetadata[
+                    AiRuntimeRecoveryMetadataKeys.FailedExecutionId]);
+            Assert.Equal(
+                "runtime-1",
+                sharedQueue.LastRequeueMetadata[
+                    AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId]);
+            Assert.Equal(
+                "run-1",
+                sharedQueue.LastRequeueMetadata[
+                    AiRuntimeRecoveryMetadataKeys.FailedLocalRunId]);
+            Assert.Equal(
+                "-100",
+                sharedQueue.LastRequeueMetadata[
+                    AiSharedQueueMetadataKeys.Priority]);
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    sharedQueue.LastRequeueMetadata[
+                        AiRuntimeRecoveryMetadataKeys.ForensicsId]));
+            Assert.False(
+                string.IsNullOrWhiteSpace(
+                    sharedQueue.LastRequeueMetadata[
+                        AiRuntimeRecoveryMetadataKeys.FailureIncidentId]));
+
+            Assert.Equal(
+                1,
+                runExecutionIndex.MarkRequeuedForRecoveryCalls);
+        }
+
+        /// <summary>
         /// Verifies that enabled DAG resume rejects mutation when execution control is unavailable.
         /// </summary>
         [Fact]
@@ -523,7 +614,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
             bool resolved,
             bool canRecover,
             string? claimToken = "claim-token-1",
-            string? executionId = "execution-1")
+            string? executionId = "execution-1",
+            bool isExternalWaitContinuation = false)
         {
             return new AiSharedRunOwnershipResolutionResult
             {
@@ -545,6 +637,8 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.Recovery.Trans
                 ClaimToken = resolved
                     ? claimToken
                     : null,
+                IsExternalWaitContinuation =
+                    isExternalWaitContinuation,
                 CanRecover = canRecover,
                 Reason = resolved
                     ? "shared-run-ownership-resolved"

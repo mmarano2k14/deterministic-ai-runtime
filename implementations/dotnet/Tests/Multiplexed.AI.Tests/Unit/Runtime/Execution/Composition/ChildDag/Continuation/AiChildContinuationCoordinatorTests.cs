@@ -153,7 +153,130 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Conti
         }
 
         [Fact]
-        public async Task ReconcileScheduledAsync_Should_Mark_Resumed_When_CallSite_Is_Terminal_After_Scheduling()
+        public async Task ReconcileScheduledAsync_Should_Redrive_The_Same_Continuation_After_Acceptance_Crash_Until_Durable_CallSite_Completion()
+        {
+            var executionStore = new MemoryAiExecutionStore();
+            var relation = ChildDagCompositionTestData.CreateRelation(
+                AiChildExecutionRelationStatus.Completed,
+                AiChildContinuationStatus.Scheduled);
+            var scheduledStepVersion =
+                relation.ParentContinuationScheduledStepVersion
+                ?? throw new InvalidOperationException(
+                    "The scheduled continuation test relation must contain a durable scheduling step version.");
+
+            await executionStore.CreateAsync(
+                ChildDagCompositionTestData.CreateParentRecord(AiExecutionStatus.Running),
+                ChildDagCompositionTestData.CreateParentState(
+                    AiStepExecutionStatus.Running,
+                    version: scheduledStepVersion + 1));
+
+            var relationStore = new InMemoryAiChildExecutionRelationStore(relation);
+            var controller = new CapturingSharedRuntimeController();
+            var observer = new CapturingAiControlPlaneObserver();
+            var coordinator = CreateCoordinator(
+                executionStore,
+                relationStore,
+                controller,
+                observer: observer);
+
+            var firstAcceptedAttempt =
+                await coordinator.ReconcileScheduledAsync(relation);
+
+            Assert.Equal(
+                AiChildContinuationStatus.Scheduled,
+                firstAcceptedAttempt.ContinuationStatus);
+            Assert.Null(firstAcceptedAttempt.ParentResumedAtUtc);
+
+            var secondAcceptedAttempt =
+                await coordinator.ReconcileScheduledAsync(firstAcceptedAttempt);
+
+            Assert.Equal(
+                AiChildContinuationStatus.Scheduled,
+                secondAcceptedAttempt.ContinuationStatus);
+            Assert.Null(secondAcceptedAttempt.ParentResumedAtUtc);
+            Assert.Equal(2, controller.Requests.Count);
+
+            var requestedSharedRunIds =
+                controller.Requests
+                    .Select(request => request.RequestedSharedRunId)
+                    .ToArray();
+            var continuationIds =
+                controller.Requests
+                    .Select(request =>
+                        request.RunRequest!
+                            .ExternalWaitContinuation!
+                            .ContinuationId)
+                    .ToArray();
+
+            Assert.All(
+                requestedSharedRunIds,
+                requestedSharedRunId => Assert.Equal(
+                    $"child-continuation-{relation.ChildInvocationKey}",
+                    requestedSharedRunId));
+            Assert.Single(
+                requestedSharedRunIds
+                    .Distinct(StringComparer.Ordinal));
+            Assert.Single(
+                continuationIds
+                    .Distinct(StringComparer.Ordinal));
+
+            await executionStore.SaveStateAsync(
+                relation.ParentExecutionId,
+                ChildDagCompositionTestData.CreateParentState(
+                    AiStepExecutionStatus.Completed,
+                    version: scheduledStepVersion + 2));
+
+            var finalizationPending =
+                await coordinator.ReconcileScheduledAsync(secondAcceptedAttempt);
+
+            Assert.Equal(
+                AiChildContinuationStatus.Scheduled,
+                finalizationPending.ContinuationStatus);
+            Assert.Null(finalizationPending.ParentResumedAtUtc);
+            Assert.Equal(3, controller.Requests.Count);
+            Assert.Empty(
+                observer.Events.Where(
+                    controlPlaneEvent =>
+                        controlPlaneEvent.SemanticEventType ==
+                        AiEngineEvents.ChildDag.ContinuationConsumed));
+            Assert.Empty(
+                observer.Events.Where(
+                    controlPlaneEvent =>
+                        controlPlaneEvent.SemanticEventType ==
+                        AiEngineEvents.ChildDag.ParentContinuationResumed));
+
+            var terminalParent =
+                ChildDagCompositionTestData.CreateParentRecord(
+                    AiExecutionStatus.Completed);
+
+            await executionStore.SaveRecordAsync(terminalParent);
+
+            var resumed =
+                await coordinator.ReconcileScheduledAsync(finalizationPending);
+
+            Assert.Equal(
+                AiChildContinuationStatus.Resumed,
+                resumed.ContinuationStatus);
+            Assert.NotNull(resumed.ParentResumedAtUtc);
+            Assert.Equal(3, controller.Requests.Count);
+
+            Assert.Single(
+                observer.Events.Where(
+                    controlPlaneEvent =>
+                        controlPlaneEvent.SemanticEventType ==
+                        AiEngineEvents.ChildDag.ContinuationConsumed));
+            Assert.Single(
+                observer.Events.Where(
+                    controlPlaneEvent =>
+                        controlPlaneEvent.SemanticEventType ==
+                        AiEngineEvents.ChildDag.ParentContinuationResumed));
+        }
+
+        [Theory]
+        [InlineData(AiStepExecutionStatus.Completed)]
+        [InlineData(AiStepExecutionStatus.Failed)]
+        public async Task ReconcileScheduledAsync_Should_Keep_Scheduled_And_Redrive_When_CallSite_Is_Terminal_Before_Parent_Finalization(
+            AiStepExecutionStatus stepStatus)
         {
             var executionStore = new MemoryAiExecutionStore();
             var relation = ChildDagCompositionTestData.CreateRelation(
@@ -162,26 +285,47 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Conti
             await executionStore.CreateAsync(
                 ChildDagCompositionTestData.CreateParentRecord(AiExecutionStatus.Running),
                 ChildDagCompositionTestData.CreateParentState(
-                    AiStepExecutionStatus.Completed,
+                    stepStatus,
                     version: relation.ParentContinuationScheduledStepVersion!.Value + 1));
             var relationStore = new InMemoryAiChildExecutionRelationStore(relation);
             var controller = new CapturingSharedRuntimeController();
             var observer = new CapturingAiControlPlaneObserver();
-            var coordinator = CreateCoordinator(executionStore, relationStore, controller, observer: observer);
+            var coordinator = CreateCoordinator(
+                executionStore,
+                relationStore,
+                controller,
+                observer: observer);
 
-            var resumed = await coordinator.ReconcileScheduledAsync(relation);
+            var finalizationPending =
+                await coordinator.ReconcileScheduledAsync(relation);
 
-            Assert.Equal(AiChildContinuationStatus.Resumed, resumed.ContinuationStatus);
-            Assert.NotNull(resumed.ParentResumedAtUtc);
-            Assert.Empty(controller.Requests);
-            Assert.Collection(
+            Assert.Equal(
+                AiChildContinuationStatus.Scheduled,
+                finalizationPending.ContinuationStatus);
+            Assert.Null(finalizationPending.ParentResumedAtUtc);
+
+            var request = Assert.Single(controller.Requests);
+            Assert.Equal(
+                $"child-continuation-{relation.ChildInvocationKey}",
+                request.RequestedSharedRunId);
+            Assert.NotNull(request.RunRequest?.ExternalWaitContinuation);
+            Assert.Equal(
+                relation.ParentExecutionId,
+                request.RunRequest!.ExternalWaitContinuation!.ExecutionId);
+            Assert.Equal(
+                relation.ParentCallSiteId,
+                request.RunRequest.ExternalWaitContinuation.StepName);
+
+            Assert.DoesNotContain(
                 observer.Events,
-                consumed => Assert.Equal(
-                    AiEngineEvents.ChildDag.ContinuationConsumed,
-                    consumed.SemanticEventType),
-                parentResumed => Assert.Equal(
-                    AiEngineEvents.ChildDag.ParentContinuationResumed,
-                    parentResumed.SemanticEventType));
+                controlPlaneEvent =>
+                    controlPlaneEvent.SemanticEventType ==
+                    AiEngineEvents.ChildDag.ContinuationConsumed);
+            Assert.DoesNotContain(
+                observer.Events,
+                controlPlaneEvent =>
+                    controlPlaneEvent.SemanticEventType ==
+                    AiEngineEvents.ChildDag.ParentContinuationResumed);
         }
 
         [Fact]

@@ -182,6 +182,105 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.Observability
         }
 
         /// <summary>
+        /// Verifies that a durable cross-process fact becoming visible only after both original race-closing
+        /// reads still resolves the deterministic wait without a realtime event in this process.
+        /// </summary>
+        [Fact]
+        public async Task WaitForAsync_Should_Reconcile_Durable_Evidence_That_Appears_After_Subscription_Recheck()
+        {
+            var expected =
+                CreateRuntimeLifecycleEvent(
+                    "durable-event-delayed",
+                    "execution-durable-delayed");
+
+            var evidenceReader =
+                new SequenceEvidenceReader(
+                    null,
+                    null,
+                    expected);
+
+            var sink =
+                new DeterministicLifecycleAiControlPlaneEventSink(
+                    new IAiDeterministicLifecycleEvidenceReader[]
+                    {
+                        evidenceReader
+                    });
+
+            using var watchdog =
+                new CancellationTokenSource(
+                    TimeSpan.FromSeconds(5));
+
+            var observed =
+                await sink
+                    .WaitForAsync(
+                        new AiDeterministicLifecycleEventCriteria
+                        {
+                            SemanticEventType =
+                                AiRuntimeLifecycleEvents.RuntimeRegistered,
+                            ExecutionId =
+                                "execution-durable-delayed"
+                        },
+                        watchdog.Token)
+                    .ConfigureAwait(false);
+
+            Assert.Same(expected, observed);
+            Assert.Equal(3, evidenceReader.ReadCount);
+            Assert.Contains(expected, sink.GetRecentEvents());
+        }
+
+        /// <summary>
+        /// Verifies that realtime delivery still wins while durable reconciliation is pending.
+        /// </summary>
+        [Fact]
+        public async Task WaitForAsync_Should_Keep_Realtime_As_Primary_Path_During_Durable_Reconciliation()
+        {
+            var evidenceReader =
+                new SequenceEvidenceReader(
+                    null,
+                    null,
+                    null,
+                    null);
+
+            var sink =
+                new DeterministicLifecycleAiControlPlaneEventSink(
+                    new IAiDeterministicLifecycleEvidenceReader[]
+                    {
+                        evidenceReader
+                    });
+
+            using var watchdog =
+                new CancellationTokenSource(
+                    TimeSpan.FromSeconds(5));
+
+            var waitTask =
+                sink.WaitForAsync(
+                    new AiDeterministicLifecycleEventCriteria
+                    {
+                        SemanticEventType =
+                            AiRuntimeLifecycleEvents.RuntimeRegistered,
+                        ExecutionId =
+                            "execution-realtime-wins"
+                    },
+                    watchdog.Token);
+
+            var expected =
+                CreateRuntimeLifecycleEvent(
+                    "realtime-wins",
+                    "execution-realtime-wins");
+
+            await sink
+                .RecordAsync(
+                    expected,
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+
+            var observed =
+                await waitTask.ConfigureAwait(false);
+
+            Assert.Same(expected, observed);
+        }
+
+        /// <summary>
         /// Verifies that DI exposes one shared deterministic observer/sink instance.
         /// </summary>
         [Fact]

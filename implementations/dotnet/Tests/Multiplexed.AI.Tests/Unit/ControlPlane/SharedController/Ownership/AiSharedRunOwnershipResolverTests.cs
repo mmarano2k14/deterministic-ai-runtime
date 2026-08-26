@@ -1,4 +1,8 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.AI.Stores;
+using System.Reflection;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Claiming;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
@@ -112,7 +116,233 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Ownership
             Assert.Equal(AiSharedQueueItemStatus.Dispatched, result.QueueStatus);
             Assert.Equal(AiSharedRunStatus.Dispatched, result.SharedRunStatus);
             Assert.Equal(claimed.ClaimToken, result.ClaimToken);
+            Assert.False(result.IsExternalWaitContinuation);
             Assert.Equal("shared-run-ownership-resolved", result.Reason);
+        }
+
+        /// <summary>
+        /// Verifies that ownership resolution preserves the authoritative external-wait continuation semantic.
+        /// </summary>
+        [Fact]
+        public async Task ResolveAsync_Should_Identify_External_Wait_Continuation_Ownership()
+        {
+            var sharedQueue = new InMemoryAiSharedQueue();
+            var sharedRunStore = new InMemoryAiSharedRunStore();
+            var resolver = new AiSharedRunOwnershipResolver(sharedQueue, sharedRunStore);
+
+            const string runtimeInstanceId = "runtime-tenant-a-1";
+            const string sharedRunId = "child-continuation-child-invocation-1";
+            const string localRunId = "local-run-continuation-1";
+            const string executionId = "parent-execution-1";
+
+            var contextSnapshot =
+                CreateExecutionContextSnapshot(
+                    "tenant-a",
+                    "tenant-group-a");
+
+            await sharedRunStore.CreateAsync(
+                new AiSharedRunRecord
+                {
+                    SharedRunId = sharedRunId,
+                    Status = AiSharedRunStatus.QueuedGlobally,
+                    RunRequest =
+                        new AiRuntimePipelineRunRequest
+                        {
+                            PipelineName = "ownership-test",
+                            ExecutionContextSnapshot = contextSnapshot,
+                            ExternalWaitContinuation =
+                                new AiRuntimeExternalWaitContinuation
+                                {
+                                    ExecutionId = executionId,
+                                    StepName = "execute-child-dag",
+                                    ContinuationId =
+                                        "child-continuation:child-invocation-1"
+                                }
+                        },
+                    ExecutionContextSnapshot = contextSnapshot,
+                    PipelineKey = "ownership-test",
+                    CorrelationId = "child-continuation:child-invocation-1",
+                    SubmittedAtUtc = DateTimeOffset.UtcNow,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                });
+
+            await sharedQueue.EnqueueAsync(
+                new AiSharedQueueItem
+                {
+                    SharedRunId = sharedRunId,
+                    Status = AiSharedQueueItemStatus.Pending,
+                    ExecutionContextSnapshot = contextSnapshot,
+                    PipelineKey = "ownership-test",
+                    Priority = 0,
+                    EnqueuedAtUtc = DateTimeOffset.UtcNow,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                });
+
+            var claimed =
+                await sharedQueue.ClaimNextAsync(
+                    new AiSharedQueueClaimRequest
+                    {
+                        RuntimeInstanceId = "mcp-control-plane",
+                        WorkerId = "worker-1",
+                        TenantId = "tenant-a",
+                        PipelineKey = "ownership-test",
+                        ClaimTtl = TimeSpan.FromMinutes(5),
+                        Reason = "test-claim"
+                    });
+
+            Assert.NotNull(claimed);
+
+            await sharedQueue.MarkDispatchedAsync(
+                sharedRunId,
+                claimed!.ClaimToken!,
+                reason: "test-dispatch");
+
+            await sharedRunStore.MarkDispatchedAsync(
+                sharedRunId,
+                runtimeInstanceId,
+                localRunId,
+                executionId,
+                reason: "test-dispatch");
+
+            var result =
+                await resolver.ResolveAsync(
+                    new AiSharedRunOwnershipResolutionRequest
+                    {
+                        RuntimeInstanceId = runtimeInstanceId,
+                        SharedRunId = sharedRunId,
+                        LocalRunId = localRunId,
+                        ExecutionId = executionId,
+                        TenantId = "tenant-a",
+                        TenantGroupId = "tenant-group-a"
+                    });
+
+            Assert.True(result.Resolved);
+            Assert.True(result.CanRecover);
+            Assert.True(result.IsExternalWaitContinuation);
+            Assert.Equal(sharedRunId, result.SharedRunId);
+            Assert.Equal(executionId, result.ExecutionId);
+            Assert.Equal(localRunId, result.LocalRunId);
+            Assert.Equal(runtimeInstanceId, result.RuntimeInstanceId);
+        }
+
+        /// <summary>
+        /// Verifies that an external-wait continuation remains recoverable while its parent is still non-terminal.
+        /// This preserves the finalization re-drive contract.
+        /// </summary>
+        [Fact]
+        public async Task ResolveAsync_Should_Keep_External_Wait_Continuation_Recoverable_While_Parent_Is_NonTerminal()
+        {
+            var fixture =
+                await CreateDispatchedExternalWaitContinuationFixtureAsync();
+
+            using var serviceProvider =
+                CreateDagStoreServiceProvider(
+                    new AiExecutionRecord
+                    {
+                        ExecutionId = fixture.ExecutionId,
+                        PipelineName = "ownership-test",
+                        ExecutionMode = AiExecutionMode.Dag,
+                        Status = AiExecutionStatus.Running,
+                        Steps = new List<string>
+                        {
+                            "execute-child-dag"
+                        }
+                    });
+
+            var resolver =
+                new AiSharedRunOwnershipResolver(
+                    fixture.SharedQueue,
+                    fixture.SharedRunStore,
+                    serviceProvider.GetRequiredService<IServiceScopeFactory>());
+
+            var result =
+                await resolver.ResolveAsync(fixture.Request);
+
+            Assert.True(result.Resolved);
+            Assert.True(result.IsExternalWaitContinuation);
+            Assert.True(result.CanRecover);
+            Assert.Equal(
+                "shared-run-ownership-resolved",
+                result.Reason);
+        }
+
+        /// <summary>
+        /// Verifies that a stale physical continuation delivery cannot be recovered after its authoritative
+        /// parent execution has already reached a terminal lifecycle state.
+        /// </summary>
+        [Theory]
+        [InlineData(AiExecutionStatus.Completed)]
+        [InlineData(AiExecutionStatus.Failed)]
+        [InlineData(AiExecutionStatus.Cancelled)]
+        public async Task ResolveAsync_Should_Reject_External_Wait_Continuation_Recovery_When_Parent_Is_Terminal(
+            AiExecutionStatus parentStatus)
+        {
+            var fixture =
+                await CreateDispatchedExternalWaitContinuationFixtureAsync();
+
+            using var serviceProvider =
+                CreateDagStoreServiceProvider(
+                    new AiExecutionRecord
+                    {
+                        ExecutionId = fixture.ExecutionId,
+                        PipelineName = "ownership-test",
+                        ExecutionMode = AiExecutionMode.Dag,
+                        Status = parentStatus,
+                        Steps = new List<string>
+                        {
+                            "execute-child-dag"
+                        }
+                    });
+
+            var resolver =
+                new AiSharedRunOwnershipResolver(
+                    fixture.SharedQueue,
+                    fixture.SharedRunStore,
+                    serviceProvider.GetRequiredService<IServiceScopeFactory>());
+
+            var result =
+                await resolver.ResolveAsync(fixture.Request);
+
+            Assert.True(result.Resolved);
+            Assert.True(result.IsExternalWaitContinuation);
+            Assert.False(result.CanRecover);
+            Assert.Equal(fixture.SharedRunId, result.SharedRunId);
+            Assert.Equal(fixture.ExecutionId, result.ExecutionId);
+            Assert.Equal(fixture.LocalRunId, result.LocalRunId);
+            Assert.Equal(fixture.RuntimeInstanceId, result.RuntimeInstanceId);
+            Assert.Equal(
+                "external-wait-continuation-parent-terminal",
+                result.Reason);
+        }
+
+        /// <summary>
+        /// Verifies that missing parent evidence does not suppress continuation recovery.
+        /// Recovery is denied only from positive authoritative terminal evidence.
+        /// </summary>
+        [Fact]
+        public async Task ResolveAsync_Should_Keep_External_Wait_Continuation_Recoverable_When_Parent_Record_Is_Missing()
+        {
+            var fixture =
+                await CreateDispatchedExternalWaitContinuationFixtureAsync();
+
+            using var serviceProvider =
+                CreateDagStoreServiceProvider(parentRecord: null);
+
+            var resolver =
+                new AiSharedRunOwnershipResolver(
+                    fixture.SharedQueue,
+                    fixture.SharedRunStore,
+                    serviceProvider.GetRequiredService<IServiceScopeFactory>());
+
+            var result =
+                await resolver.ResolveAsync(fixture.Request);
+
+            Assert.True(result.Resolved);
+            Assert.True(result.IsExternalWaitContinuation);
+            Assert.True(result.CanRecover);
+            Assert.Equal(
+                "shared-run-ownership-resolved",
+                result.Reason);
         }
 
         /// <summary>
@@ -343,6 +573,152 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.SharedController.Ownership
             Assert.Equal(AiSharedQueueItemStatus.Pending, result.QueueStatus);
             Assert.Equal(AiSharedRunStatus.Dispatched, result.SharedRunStatus);
             Assert.StartsWith("shared-run-ownership-resolved-not-recover", result.Reason, StringComparison.Ordinal);
+        }
+
+        private static async Task<ExternalWaitOwnershipFixture>
+            CreateDispatchedExternalWaitContinuationFixtureAsync()
+        {
+            var sharedQueue = new InMemoryAiSharedQueue();
+            var sharedRunStore = new InMemoryAiSharedRunStore();
+
+            const string runtimeInstanceId = "runtime-continuation-owner";
+            const string sharedRunId =
+                "child-continuation-child-invocation-terminal-parent";
+            const string localRunId = "local-run-continuation-terminal-parent";
+            const string executionId = "parent-execution-terminal-check";
+
+            var contextSnapshot =
+                CreateExecutionContextSnapshot(
+                    "tenant-a",
+                    "tenant-group-a");
+
+            await sharedRunStore.CreateAsync(
+                new AiSharedRunRecord
+                {
+                    SharedRunId = sharedRunId,
+                    Status = AiSharedRunStatus.QueuedGlobally,
+                    RunRequest =
+                        new AiRuntimePipelineRunRequest
+                        {
+                            PipelineName = "ownership-test",
+                            ExecutionContextSnapshot = contextSnapshot,
+                            ExternalWaitContinuation =
+                                new AiRuntimeExternalWaitContinuation
+                                {
+                                    ExecutionId = executionId,
+                                    StepName = "execute-child-dag",
+                                    ContinuationId =
+                                        "child-continuation:child-invocation-terminal-parent"
+                                }
+                        },
+                    ExecutionContextSnapshot = contextSnapshot,
+                    PipelineKey = "ownership-test",
+                    CorrelationId =
+                        "child-continuation:child-invocation-terminal-parent",
+                    SubmittedAtUtc = DateTimeOffset.UtcNow,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                });
+
+            await sharedQueue.EnqueueAsync(
+                new AiSharedQueueItem
+                {
+                    SharedRunId = sharedRunId,
+                    Status = AiSharedQueueItemStatus.Pending,
+                    ExecutionContextSnapshot = contextSnapshot,
+                    PipelineKey = "ownership-test",
+                    Priority = 0,
+                    EnqueuedAtUtc = DateTimeOffset.UtcNow,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                });
+
+            var claimed =
+                await sharedQueue.ClaimNextAsync(
+                    new AiSharedQueueClaimRequest
+                    {
+                        RuntimeInstanceId = "mcp-control-plane",
+                        WorkerId = "worker-1",
+                        TenantId = "tenant-a",
+                        PipelineKey = "ownership-test",
+                        ClaimTtl = TimeSpan.FromMinutes(5),
+                        Reason = "test-claim"
+                    });
+
+            Assert.NotNull(claimed);
+
+            await sharedQueue.MarkDispatchedAsync(
+                sharedRunId,
+                claimed!.ClaimToken!,
+                reason: "test-dispatch");
+
+            await sharedRunStore.MarkDispatchedAsync(
+                sharedRunId,
+                runtimeInstanceId,
+                localRunId,
+                executionId,
+                reason: "test-dispatch");
+
+            return new ExternalWaitOwnershipFixture(
+                sharedQueue,
+                sharedRunStore,
+                new AiSharedRunOwnershipResolutionRequest
+                {
+                    RuntimeInstanceId = runtimeInstanceId,
+                    SharedRunId = sharedRunId,
+                    LocalRunId = localRunId,
+                    ExecutionId = executionId,
+                    TenantId = "tenant-a",
+                    TenantGroupId = "tenant-group-a"
+                },
+                runtimeInstanceId,
+                sharedRunId,
+                localRunId,
+                executionId);
+        }
+
+        private static ServiceProvider CreateDagStoreServiceProvider(
+            AiExecutionRecord? parentRecord)
+        {
+            var dagStore =
+                DispatchProxy.Create<
+                    IAiDagExecutionStore,
+                    DagExecutionStoreProxy>();
+
+            ((DagExecutionStoreProxy)(object)dagStore).ParentRecord =
+                parentRecord;
+
+            return new ServiceCollection()
+                .AddSingleton<IAiDagExecutionStore>(dagStore)
+                .BuildServiceProvider();
+        }
+
+        private sealed record ExternalWaitOwnershipFixture(
+            InMemoryAiSharedQueue SharedQueue,
+            InMemoryAiSharedRunStore SharedRunStore,
+            AiSharedRunOwnershipResolutionRequest Request,
+            string RuntimeInstanceId,
+            string SharedRunId,
+            string LocalRunId,
+            string ExecutionId);
+
+        private class DagExecutionStoreProxy : DispatchProxy
+        {
+            public AiExecutionRecord? ParentRecord { get; set; }
+
+            protected override object? Invoke(
+                MethodInfo? targetMethod,
+                object?[]? args)
+            {
+                ArgumentNullException.ThrowIfNull(targetMethod);
+
+                if (targetMethod.Name ==
+                    nameof(IAiDagExecutionStore.GetRecordAsync))
+                {
+                    return Task.FromResult(ParentRecord);
+                }
+
+                throw new NotSupportedException(
+                    $"Focused ownership DAG-store proxy does not support '{targetMethod.Name}'.");
+            }
         }
 
         /// <summary>

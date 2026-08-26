@@ -17,9 +17,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
     /// A bounded in-memory history closes the subscribe-after-emission race inside the running process.
     /// </para>
     /// <para>
-    /// For durable canonical facts, registered evidence readers are checked before subscription and again
-    /// after the waiter is registered. This implements the durable-evidence → subscribe → durable-evidence
-    /// race-closing pattern without turning polling into the primary synchronization mechanism.
+    /// For durable canonical facts, registered evidence readers are checked before subscription, again
+    /// after the waiter is registered, and then reconciled at a bounded interval while the realtime waiter
+    /// remains pending. Realtime delivery remains the primary path; indexed durable reconciliation closes
+    /// cross-process projection lag without introducing an unbounded global-store scan.
     /// </para>
     /// </remarks>
     public sealed class DeterministicLifecycleAiControlPlaneEventSink :
@@ -27,6 +28,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
         IAiDeterministicLifecycleObserver
     {
         private const int HistoryCapacity = 2048;
+        private static readonly TimeSpan DurableEvidenceRecheckInterval =
+            TimeSpan.FromMilliseconds(100);
         private readonly object gate = new();
         private readonly LinkedList<AiControlPlaneEvent> history = new();
         private readonly List<PendingWait> pendingWaits = [];
@@ -163,9 +166,15 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                     }
                 }
 
-                return await pendingWait.Completion.Task
-                    .WaitAsync(cancellationToken)
-                    .ConfigureAwait(false);
+                return durable
+                    ? await this
+                        .WaitForRealtimeOrDurableEvidenceAsync(
+                            pendingWait,
+                            cancellationToken)
+                        .ConfigureAwait(false)
+                    : await pendingWait.Completion.Task
+                        .WaitAsync(cancellationToken)
+                        .ConfigureAwait(false);
             }
             finally
             {
@@ -173,6 +182,71 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Observability
                 {
                     this.pendingWaits.Remove(pendingWait);
                 }
+            }
+        }
+
+        private async Task<AiControlPlaneEvent> WaitForRealtimeOrDurableEvidenceAsync(
+            PendingWait pendingWait,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(pendingWait);
+
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (pendingWait.Completion.Task.IsCompleted)
+                {
+                    return await pendingWait.Completion.Task
+                        .ConfigureAwait(false);
+                }
+
+                var recheckDelay =
+                    Task.Delay(
+                        DurableEvidenceRecheckInterval,
+                        cancellationToken);
+
+                var completedTask =
+                    await Task.WhenAny(
+                            pendingWait.Completion.Task,
+                            recheckDelay)
+                        .ConfigureAwait(false);
+
+                if (completedTask == pendingWait.Completion.Task)
+                {
+                    return await pendingWait.Completion.Task
+                        .ConfigureAwait(false);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var durableEvidence =
+                    await this
+                        .TryFindDurableEvidenceAsync(
+                            pendingWait.Criteria,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                if (durableEvidence is null)
+                {
+                    continue;
+                }
+
+                lock (this.gate)
+                {
+                    this.pendingWaits.Remove(pendingWait);
+                    this.AddToHistory(durableEvidence);
+                }
+
+                /*
+                 * Realtime delivery may have won while the durable reader was executing.
+                 * In that case TrySetResult returns false and the already-completed realtime
+                 * event remains the authoritative waiter result.
+                 */
+                pendingWait.Completion.TrySetResult(durableEvidence);
+
+                return await pendingWait.Completion.Task
+                    .ConfigureAwait(false);
             }
         }
 

@@ -3,6 +3,23 @@ using System;
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions
 {
     /// <summary>
+    /// Identifies the durable authority used to target one adversarial physical failure.
+    /// </summary>
+    public enum ProductionChildDagAdversarialFailureTarget
+    {
+        /// <summary>
+        /// The selected parent is held at one deterministic ordinary-step checkpoint.
+        /// </summary>
+        ParentStepCheckpoint = 0,
+
+        /// <summary>
+        /// The selected parent continuation is killed only after durable continuation acceptance
+        /// and before the child call-site becomes terminal.
+        /// </summary>
+        ContinuationConsume = 1
+    }
+
+    /// <summary>
     /// Describes one deterministic failure schedule coordinate for the Recursive Child DAG
     /// adversarial validation matrix.
     /// </summary>
@@ -23,6 +40,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
                 FailureScheduleMode = "DeterministicBaseline",
                 FailurePosition = "mid-parent",
                 MatrixStatus = "NOT_YET_VALIDATED",
+                FailureTarget = ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint,
                 KillAfterCompletedStepCount = 25
             };
 
@@ -44,6 +62,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
                 FailureScheduleMode = "DeterministicAdversarial",
                 FailurePosition = "early-parent",
                 MatrixStatus = "IN_PROGRESS",
+                FailureTarget = ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint,
                 KillAfterCompletedStepCount = 1
             };
 
@@ -65,7 +84,29 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
                 FailureScheduleMode = "DeterministicAdversarial",
                 FailurePosition = "pre-child-invocation",
                 MatrixStatus = "IN_PROGRESS",
+                FailureTarget = ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint,
                 KillAfterCompletedStepCount = 49
+            };
+
+        /// <summary>
+        /// Gets the deterministic physical continuation-consume schedule.
+        /// </summary>
+        /// <remarks>
+        /// The physical runtime is not killed from an ordinary parent checkpoint. The targeting harness first
+        /// proves a Completed/Scheduled child relation, monotonic post-schedule parent call-site progress, a
+        /// non-terminal call-site, and exact physical continuation ownership. Fifty ordinary parent steps are
+        /// therefore already durable when the continuation runtime is terminated.
+        /// </remarks>
+        public static ProductionChildDagAdversarialScheduleDefinition ContinuationConsume { get; } =
+            new()
+            {
+                MatrixScenarioId = "continuation-consume",
+                FailureSeed = "continuation-consume",
+                FailureScheduleMode = "DeterministicAdversarial",
+                FailurePosition = "continuation-consume",
+                MatrixStatus = "IN_PROGRESS",
+                FailureTarget = ProductionChildDagAdversarialFailureTarget.ContinuationConsume,
+                KillAfterCompletedStepCount = 50
             };
 
         /// <summary>
@@ -94,7 +135,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         public required string MatrixStatus { get; init; }
 
         /// <summary>
-        /// Gets the number of durable parent steps that must complete before the exact runtime process is killed.
+        /// Gets the durable authority used to select the physical failure boundary.
+        /// </summary>
+        public required ProductionChildDagAdversarialFailureTarget FailureTarget { get; init; }
+
+        /// <summary>
+        /// Gets whether this schedule uses one ordinary parent crash checkpoint as the physical failure boundary.
+        /// </summary>
+        public bool UsesParentCrashCheckpoint =>
+            this.FailureTarget == ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint;
+
+        /// <summary>
+        /// Gets the number of durable ordinary parent steps that must complete before the exact runtime process is killed.
         /// </summary>
         public required int KillAfterCompletedStepCount { get; init; }
 
@@ -107,6 +159,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         public int ResolveCrashCheckpointStepIndex(
             int pipelineStepCount)
         {
+            if (!this.UsesParentCrashCheckpoint)
+            {
+                throw new InvalidOperationException(
+                    $"Adversarial failure target '{this.FailureTarget}' does not use an ordinary parent crash checkpoint.");
+            }
+
             ArgumentOutOfRangeException.ThrowIfLessThan(
                 pipelineStepCount,
                 2);

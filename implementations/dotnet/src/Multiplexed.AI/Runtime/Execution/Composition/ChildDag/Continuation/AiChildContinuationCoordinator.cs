@@ -244,7 +244,18 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Continuation
             {
                 if (HasDurableParentProgressAfterScheduling(relation, step))
                 {
-                    return await MarkResumedAsync(relation, parentRecord, cancellationToken).ConfigureAwait(false);
+                    // Persisting the terminal call-site state and finalizing the parent execution record are two
+                    // distinct durable writes. A runtime can die after TryCompleteStepAsync/TryFailStepAsync commits
+                    // the step but before TryFinalizeExecutionAsync makes the parent record terminal.
+                    //
+                    // Do not consume Scheduled from the call-site state alone. Re-drive the same deterministic
+                    // continuation identity so one worker can perform the zero-claim convergence/finalization pass.
+                    // Only the parentRecord.IsTerminal branch above is allowed to mark the continuation Resumed.
+                    await ExecuteWithParentExecutionContextAsync(
+                            parentRecord,
+                            token => this.scheduler.EnqueueContinuationAsync(relation, parentRecord, token),
+                            cancellationToken)
+                        .ConfigureAwait(false);
                 }
 
                 return relation;

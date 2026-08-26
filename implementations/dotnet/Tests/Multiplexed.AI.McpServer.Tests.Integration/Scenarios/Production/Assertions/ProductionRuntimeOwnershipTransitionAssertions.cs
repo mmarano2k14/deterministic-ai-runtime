@@ -40,6 +40,47 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assert
                 proofName);
         }
 
+        /// <summary>
+        /// Adds one exact recovered non-parent SharedRun final target to the ownership proof surface.
+        /// </summary>
+        /// <remarks>
+        /// Historical production scenarios prove recovered ownership against completed parent SharedRuns.
+        /// A recovered external-wait continuation has its own durable SharedRunId while preserving the
+        /// parent ExecutionId. This helper adds only the caller-selected exact continuation target.
+        /// It does not broaden the assertion to accept arbitrary recovered SharedRunIds.
+        /// </remarks>
+        internal static IReadOnlyCollection<ProductionRuntimeOwnershipFinalTarget>
+            IncludeExactSupplementalRecoveredFinalTarget(
+                IReadOnlyCollection<ProductionRuntimeOwnershipFinalTarget> existingTargets,
+                ProductionRuntimeOwnershipFinalTarget supplementalTarget,
+                string proofName)
+        {
+            ArgumentNullException.ThrowIfNull(existingTargets);
+            ArgumentNullException.ThrowIfNull(supplementalTarget);
+            ArgumentException.ThrowIfNullOrWhiteSpace(proofName);
+
+            var existing =
+                existingTargets
+                    .SingleOrDefault(
+                        target =>
+                            StringComparer.Ordinal.Equals(
+                                target.SharedRunId,
+                                supplementalTarget.SharedRunId));
+
+            if (existing is not null)
+            {
+                Assert.Equal(
+                    supplementalTarget,
+                    existing);
+
+                return existingTargets;
+            }
+
+            return existingTargets
+                .Append(supplementalTarget)
+                .ToArray();
+        }
+
         internal static ProductionRuntimeOwnershipTransitionProof
             AssertExactRecoveredFinalOwnership(
                 IReadOnlyCollection<ProductionRuntimeOwnershipFinalTarget>

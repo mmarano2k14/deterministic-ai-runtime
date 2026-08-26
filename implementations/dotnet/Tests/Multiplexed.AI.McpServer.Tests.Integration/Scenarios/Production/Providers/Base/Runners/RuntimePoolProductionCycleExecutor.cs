@@ -403,6 +403,49 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Selects only recovered SharedRuns that belong to the submitted workload while proving that every
+        /// recovered SharedRun outside that workload is an explicitly expected supplemental recovery identity.
+        /// </summary>
+        /// <remarks>
+        /// Durable dispatch proof is scoped to submitted workload SharedRuns. Adversarial schedules may recover
+        /// a durable control SharedRun such as an external-wait continuation. That supplemental recovery must be
+        /// proved separately and must never be allowed to broaden the submitted-workload dispatch proof.
+        /// </remarks>
+        internal static IReadOnlySet<string>
+            SelectRecoveredSubmittedSharedRunIdsForDispatchProof(
+                IReadOnlySet<string> submittedSharedRunIds,
+                IReadOnlySet<string> recoveredSharedRunIds,
+                IReadOnlySet<string> expectedSupplementalRecoveredSharedRunIds,
+                string proofName)
+        {
+            ArgumentNullException.ThrowIfNull(submittedSharedRunIds);
+            ArgumentNullException.ThrowIfNull(recoveredSharedRunIds);
+            ArgumentNullException.ThrowIfNull(expectedSupplementalRecoveredSharedRunIds);
+            ArgumentException.ThrowIfNullOrWhiteSpace(proofName);
+
+            var recoveredSubmittedSharedRunIds =
+                recoveredSharedRunIds
+                    .Intersect(
+                        submittedSharedRunIds,
+                        StringComparer.Ordinal)
+                    .ToHashSet(StringComparer.Ordinal);
+
+            var actualSupplementalRecoveredSharedRunIds =
+                recoveredSharedRunIds
+                    .Except(
+                        submittedSharedRunIds,
+                        StringComparer.Ordinal)
+                    .ToHashSet(StringComparer.Ordinal);
+
+            AssertSameIdentitySet(
+                expectedSupplementalRecoveredSharedRunIds,
+                actualSupplementalRecoveredSharedRunIds,
+                $"{proofName} supplemental recovered SharedRun scope");
+
+            return recoveredSubmittedSharedRunIds;
+        }
+
+        /// <summary>
         /// Proves that every submitted shared run exposes durable dispatch evidence.
         /// A run whose initial dispatch success ledger entry is absent is accepted only when
         /// that exact SharedRunId belongs to the already-proven recovery set.

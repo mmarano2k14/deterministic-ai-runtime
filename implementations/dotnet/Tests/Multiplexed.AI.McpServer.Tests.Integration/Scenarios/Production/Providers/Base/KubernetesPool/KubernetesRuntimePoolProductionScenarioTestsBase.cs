@@ -6,12 +6,17 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Store;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag;
+using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Identity;
+using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
+using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations.Persistence;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures;
 using Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic;
@@ -1752,11 +1757,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     ? resolvedAdversarialSchedule.KillAfterCompletedStepCount
                     : 0;
 
-            var childRuntimeResumeCheckpointStepIndex =
-                injectChildRuntimeFailure
+            int? childRuntimeResumeCheckpointStepIndex =
+                injectChildRuntimeFailure &&
+                resolvedAdversarialSchedule.UsesParentCrashCheckpoint
                     ? resolvedAdversarialSchedule.ResolveCrashCheckpointStepIndex(
                         stepCount)
-                    : 0;
+                    : null;
 
             var parentLogicalStepCount =
                 checked(stepCount + (childDepth > 0 ? 1 : 0));
@@ -1992,6 +1998,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     host.Services.GetRequiredService<
                         IAiDagExecutionStore>();
 
+                var childExecutionRelationStore =
+                    host.Services.GetRequiredService<
+                        IAiChildExecutionRelationStore>();
+
                 var forensicsQueryService =
                     host.Services.GetRequiredService<
                         IAiRuntimeRecoveryForensicsQueryService>();
@@ -2139,37 +2149,52 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                         ProductionCrashCheckpointGate?
                             childRuntimeFailureCrashGate = null;
+                        ProductionCrashCheckpointGate?
+                            continuationTargetPreparationGate = null;
 
                         if (injectChildRuntimeFailure && childDepth > 0)
                         {
-                            /*
-                             * Positive ChildDepth extends the parent DAG after its historical root steps.
-                             * Without a deterministic crash window the initial full-capacity wave may finish
-                             * while Kubernetes is still bringing the final Pod online, leaving no parent
-                             * execution in the runtime index when the physical child-process failure target
-                             * is selected. Hold exactly one root execution immediately after the required
-                             * progress threshold. The runtime process is still killed from outside; the gate
-                             * only makes the already-proven failure boundary deterministic for any nested
-                             * ChildDepth.
-                             */
-                            childRuntimeFailureCrashGate =
-                                await ProductionCrashCheckpointGate
-                                    .ArmAsync(
-                                        redisConnection,
-                                        output,
-                                        controlPlaneId,
-                                        tenant.TenantId,
-                                        $"{scenario.Name}-cycle-{cycleNumber:000}-runtime-child-process-kill",
-                                        checkpointStepIndex:
-                                            childRuntimeResumeCheckpointStepIndex,
-                                        stateTtl:
-                                            TimeSpan.FromMinutes(
-                                                BoundaryFailureCrashCheckpointStateTtlMinutes))
-                                    .ConfigureAwait(false);
+                            if (resolvedAdversarialSchedule.UsesParentCrashCheckpoint)
+                            {
+                                childRuntimeFailureCrashGate =
+                                    await ProductionCrashCheckpointGate
+                                        .ArmAsync(
+                                            redisConnection,
+                                            output,
+                                            controlPlaneId,
+                                            tenant.TenantId,
+                                            $"{scenario.Name}-cycle-{cycleNumber:000}-runtime-child-process-kill",
+                                            checkpointStepIndex:
+                                                childRuntimeResumeCheckpointStepIndex
+                                                ?? throw new InvalidOperationException(
+                                                    "Checkpoint-targeted runtime failure did not resolve a crash checkpoint."),
+                                            stateTtl:
+                                                TimeSpan.FromMinutes(
+                                                    BoundaryFailureCrashCheckpointStateTtlMinutes))
+                                        .ConfigureAwait(false);
+                            }
+                            else if (resolvedAdversarialSchedule.FailureTarget ==
+                                ProductionChildDagAdversarialFailureTarget.ContinuationConsume)
+                            {
+                                continuationTargetPreparationGate =
+                                    await ProductionCrashCheckpointGate
+                                        .ArmAsync(
+                                            redisConnection,
+                                            output,
+                                            controlPlaneId,
+                                            tenant.TenantId,
+                                            $"{scenario.Name}-cycle-{cycleNumber:000}-continuation-target-preparation",
+                                            checkpointStepIndex: stepCount,
+                                            stateTtl:
+                                                TimeSpan.FromMinutes(
+                                                    BoundaryFailureCrashCheckpointStateTtlMinutes))
+                                        .ConfigureAwait(false);
+                            }
                         }
 
-                        var childRuntimeFailureCrashCheckpoint =
-                            childRuntimeFailureCrashGate?.Definition;
+                        var initialTargetCheckpoint =
+                            childRuntimeFailureCrashGate?.Definition ??
+                            continuationTargetPreparationGate?.Definition;
 
                         var initialAdmissionTask =
                             RuntimePoolProductionCycleExecutor
@@ -2187,11 +2212,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     cycleNumber,
                                     startingIterationNumber: 1,
                                     crashCheckpointFactory:
-                                        childRuntimeFailureCrashCheckpoint is null
+                                        initialTargetCheckpoint is null
                                             ? null
                                             : (iteration, runNumber) =>
                                                 iteration == 1 && runNumber == 1
-                                                    ? childRuntimeFailureCrashCheckpoint
+                                                    ? initialTargetCheckpoint
                                                     : null);
 
                         var admissionProof =
@@ -2212,7 +2237,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         IReadOnlySet<string> childRuntimeFailureCandidateSharedRunIds =
                             submittedSharedRunIds;
 
-                        if (childRuntimeFailureCrashGate is not null)
+                        string? preferredFailureParentSharedRunId = null;
+
+                        if (initialTargetCheckpoint is not null)
                         {
                             var gatedAdmissionResult =
                                 admissionProof.Results[0];
@@ -2221,19 +2248,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 string.IsNullOrWhiteSpace(
                                     gatedAdmissionResult.SharedRunId));
 
+                            preferredFailureParentSharedRunId =
+                                gatedAdmissionResult.SharedRunId!;
+
                             childRuntimeFailureCandidateSharedRunIds =
                                 new HashSet<string>(StringComparer.Ordinal)
                                 {
-                                    gatedAdmissionResult.SharedRunId!
+                                    preferredFailureParentSharedRunId
                                 };
 
                             output.WriteLine(
-                                $"[{boundedCapacityProfile.LogPrefix} CHILD RUNTIME FAILURE GATE] " +
+                                $"[{boundedCapacityProfile.LogPrefix} CHILD RUNTIME TARGET PREPARATION] " +
                                 $"Cycle='{cycleNumber}', " +
                                 $"ChildDepth='{childDepth}', " +
-                                $"SharedRunId='{gatedAdmissionResult.SharedRunId}', " +
-                                $"CheckpointStepIndex='{childRuntimeFailureCrashGate.Definition.StepIndex}', " +
-                                "Purpose='preserve-one-active-root-execution-until-full-runtime-pool-membership'.");
+                                $"SharedRunId='{preferredFailureParentSharedRunId}', " +
+                                $"CheckpointStepIndex='{initialTargetCheckpoint.StepIndex}', " +
+                                $"FailureTarget='{resolvedAdversarialSchedule.FailureTarget}', " +
+                                $"GateRole='{(childRuntimeFailureCrashGate is not null ? "physical-failure-boundary" : "preparation-only")}'.");
                         }
 
                         output.WriteLine(
@@ -2305,29 +2336,50 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                             try
                             {
-                                childRuntimeFailureTarget =
-                                    await WaitForBoundedCapacityBusyChildRuntimeFailureTargetAsync(
-                                            registry,
-                                            sharedRunStore,
-                                            runExecutionIndex,
-                                            childRuntimeFailureCandidateSharedRunIds,
-                                            controlPlaneId,
-                                            poolId,
-                                            tenant.TenantId,
-                                            runtimeCountPerPod,
-                                            maximumRuntimeCapacity,
-                                            TimeSpan.FromMinutes(10))
+                                if (resolvedAdversarialSchedule.FailureTarget ==
+                                    ProductionChildDagAdversarialFailureTarget.ContinuationConsume)
+                                {
+                                    if (continuationTargetPreparationGate is null ||
+                                        string.IsNullOrWhiteSpace(preferredFailureParentSharedRunId))
+                                    {
+                                        throw new InvalidOperationException(
+                                            "Continuation-consume targeting requires one preparation-only parent gate and SharedRunId.");
+                                    }
+
+                                    await continuationTargetPreparationGate
+                                        .WaitUntilReachedAsync(TimeSpan.FromMinutes(3))
                                         .ConfigureAwait(false);
+
+                                    childRuntimeFailureTarget =
+                                        await WaitForAndKillBoundedCapacityContinuationConsumeFailureTargetAsync(
+                                                registry, sharedRunStore, runExecutionIndex, dagStore,
+                                                childExecutionRelationStore,
+                                                deterministicLifecycleObserver
+                                                ?? throw new InvalidOperationException(
+                                                    "Continuation-consume targeting requires deterministic lifecycle observation."),
+                                                observation,
+                                                continuationTargetPreparationGate,
+                                                preferredFailureParentSharedRunId, controlPlaneId, poolId, tenant.TenantId,
+                                                runtimeCountPerPod, maximumRuntimeCapacity, TimeSpan.FromMinutes(10))
+                                            .ConfigureAwait(false);
+                                }
+                                else
+                                {
+                                    childRuntimeFailureTarget =
+                                        await WaitForBoundedCapacityBusyChildRuntimeFailureTargetAsync(
+                                                registry, sharedRunStore, runExecutionIndex,
+                                                childRuntimeFailureCandidateSharedRunIds, controlPlaneId, poolId,
+                                                tenant.TenantId, runtimeCountPerPod, maximumRuntimeCapacity,
+                                                TimeSpan.FromMinutes(10))
+                                            .ConfigureAwait(false);
+                                }
                             }
                             catch
                             {
                                 if (childRuntimeFailureCrashGate is not null)
-                                {
-                                    await childRuntimeFailureCrashGate
-                                        .ReleaseAsync()
-                                        .ConfigureAwait(false);
-                                }
-
+                                    await childRuntimeFailureCrashGate.ReleaseAsync().ConfigureAwait(false);
+                                if (continuationTargetPreparationGate is not null)
+                                    await continuationTargetPreparationGate.ReleaseAsync().ConfigureAwait(false);
                                 throw;
                             }
 
@@ -2337,8 +2389,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     cycleSubmissionMcp,
                                     childRuntimeFailureTarget);
 
-                            observation.MarkIntentionalFailedRuntimeInstance(
-                                childRuntimeFailureTarget.Runtime.RuntimeInstanceId);
+                            if (childRuntimeFailureTarget.PrevalidatedKillProof is null)
+                            {
+                                observation.MarkIntentionalFailedRuntimeInstance(
+                                    childRuntimeFailureTarget.Runtime.RuntimeInstanceId);
+                            }
 
                             try
                             {
@@ -2370,6 +2425,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                                 deterministicLifecycleObserver,
                                             crashCheckpointGate:
                                                 childRuntimeFailureCrashGate,
+                                            preKillInvariantAssertion:
+                                                childRuntimeFailureTarget.ContinuationBoundary is null ||
+                                                childRuntimeFailureTarget.PrevalidatedKillProof is not null
+                                                    ? null
+                                                    : () => AssertContinuationConsumeBoundaryStillCurrentAsync(
+                                                        childExecutionRelationStore, sharedRunStore, runExecutionIndex,
+                                                        dagStore, childRuntimeFailureTarget.ContinuationBoundary),
+                                            killBoundaryMode:
+                                                childRuntimeFailureTarget.ContinuationBoundary is null
+                                                    ? ProductionRealRuntimeCrashKillBoundaryMode.DurableDagProgress
+                                                    : ProductionRealRuntimeCrashKillBoundaryMode.PrevalidatedPhysicalBoundary,
+                                            prevalidatedKillProof:
+                                                childRuntimeFailureTarget.PrevalidatedKillProof,
                                             runtimeTenantOwnershipAssertion:
                                                 AssertRuntimeBelongsToTenantAsync)
                                         .ConfigureAwait(false);
@@ -2380,6 +2448,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 {
                                     // Idempotent safety release also covers recovery failures after target selection.
                                     await childRuntimeFailureCrashGate
+                                        .ReleaseAsync()
+                                        .ConfigureAwait(false);
+                                }
+
+                                if (continuationTargetPreparationGate is not null)
+                                {
+                                    await continuationTargetPreparationGate
                                         .ReleaseAsync()
                                         .ConfigureAwait(false);
                                 }
@@ -3081,17 +3156,77 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     .RuntimeInstanceId);
                         }
 
+                        IReadOnlyCollection<ProductionRuntimeOwnershipFinalTarget>
+                            runtimeOwnershipFinalTargets =
+                                finalRuns
+                                    .Select(
+                                        run =>
+                                            ProductionRuntimeOwnershipFinalTarget
+                                                .FromSharedRun(
+                                                    run.SharedRun,
+                                                    run.ExecutionId))
+                                    .ToArray();
+
+                        if (childRuntimeFailureTarget?.ContinuationBoundary is not null)
+                        {
+                            Assert.NotNull(childRuntimeRecoveryProof);
+
+                            var continuationBoundary =
+                                childRuntimeFailureTarget.ContinuationBoundary;
+
+                            var recoveredContinuation =
+                                Assert.Single(
+                                    childRuntimeRecoveryProof!
+                                        .RecoveredWorks
+                                        .Where(
+                                            work =>
+                                                StringComparer.Ordinal.Equals(
+                                                    work.Original.SharedRunId,
+                                                    continuationBoundary.SharedRunId)));
+
+                            var recoveredContinuationExecutionId =
+                                recoveredContinuation.RecoveredExecutionId ??
+                                recoveredContinuation.Original.ExecutionId;
+
+                            Assert.False(
+                                string.IsNullOrWhiteSpace(
+                                    recoveredContinuationExecutionId),
+                                $"Cycle {cycleNumber} recovered continuation ownership proof has no durable ExecutionId. " +
+                                $"SharedRunId='{continuationBoundary.SharedRunId}'.");
+
+                            Assert.Equal(
+                                continuationBoundary.ParentExecutionId,
+                                recoveredContinuationExecutionId);
+
+                            var continuationFinalTarget =
+                                new ProductionRuntimeOwnershipFinalTarget(
+                                    continuationBoundary.SharedRunId,
+                                    recoveredContinuation.ReplacementRuntimeInstanceId,
+                                    recoveredContinuation.ReplacementLocalRunId,
+                                    recoveredContinuationExecutionId);
+
+                            runtimeOwnershipFinalTargets =
+                                ProductionRuntimeOwnershipTransitionAssertions
+                                    .IncludeExactSupplementalRecoveredFinalTarget(
+                                        runtimeOwnershipFinalTargets,
+                                        continuationFinalTarget,
+                                        $"{boundedCapacityProfile.LogPrefix} cycle {cycleNumber} continuation recovered ownership target");
+
+                            output.WriteLine(
+                                $"[{boundedCapacityProfile.LogPrefix} CONTINUATION RECOVERED OWNERSHIP TARGET] " +
+                                $"Cycle='{cycleNumber}', " +
+                                $"SharedRunId='{continuationFinalTarget.SharedRunId}', " +
+                                $"ExecutionId='{continuationFinalTarget.ExecutionId}', " +
+                                $"ReplacementRuntimeInstanceId='{continuationFinalTarget.AssignedRuntimeInstanceId}', " +
+                                $"ReplacementLocalRunId='{continuationFinalTarget.LocalRunId}', " +
+                                "Scope='exact-continuation-shared-run', " +
+                                "Result='PASS'.");
+                        }
+
                         var runtimeOwnershipTransitionProof =
                             ProductionRuntimeOwnershipTransitionAssertions
                                 .AssertExactRecoveredFinalOwnership(
-                                    finalRuns
-                                        .Select(
-                                            run =>
-                                                ProductionRuntimeOwnershipFinalTarget
-                                                    .FromSharedRun(
-                                                        run.SharedRun,
-                                                        run.ExecutionId))
-                                        .ToArray(),
+                                    runtimeOwnershipFinalTargets,
                                     recoveredSharedRunIds,
                                     recoveredExecutionIds,
                                     failedRuntimeOwnershipIds,
@@ -3703,11 +3838,38 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 .DistinctBy(entry => entry.EntryId)
                                 .ToArray();
 
+                        var expectedSupplementalDispatchRecoverySharedRunIds =
+                            childRuntimeFailureTarget?.ContinuationBoundary is null
+                                ? new HashSet<string>(StringComparer.Ordinal)
+                                : new HashSet<string>(StringComparer.Ordinal)
+                                {
+                                    childRuntimeFailureTarget
+                                        .ContinuationBoundary
+                                        .SharedRunId
+                                };
+
+                        var recoveredSubmittedDispatchSharedRunIds =
+                            RuntimePoolProductionCycleExecutor
+                                .SelectRecoveredSubmittedSharedRunIdsForDispatchProof(
+                                    submittedSharedRunIds,
+                                    recoveredSharedRunIds,
+                                    expectedSupplementalDispatchRecoverySharedRunIds,
+                                    $"Warm reuse cycle {auditCycleNumber} durable dispatch ledger proof");
+
+                        output.WriteLine(
+                            $"[{boundedCapacityProfile.LogPrefix} WARM REUSE DISPATCH RECOVERY SCOPE PROOF] " +
+                            $"Cycle='{auditCycleNumber}', " +
+                            $"RecoveredSubmittedSharedRunCount='{recoveredSubmittedDispatchSharedRunIds.Count}', " +
+                            $"SupplementalRecoveredSharedRunCount='{expectedSupplementalDispatchRecoverySharedRunIds.Count}', " +
+                            $"SupplementalRecoveredSharedRunIds='{string.Join(",", expectedSupplementalDispatchRecoverySharedRunIds.OrderBy(value => value, StringComparer.Ordinal))}', " +
+                            "Scope='submitted-workload-only', " +
+                            "Result='PASS'.");
+
                         var dispatchLedgerProof =
                             RuntimePoolProductionCycleExecutor
                                 .AssertDurableDispatchEvidence(
                                     submittedSharedRunIds,
-                                    recoveredSharedRunIds,
+                                    recoveredSubmittedDispatchSharedRunIds,
                                     submittedParentDispatchLedgerEntries,
                                     $"Warm reuse cycle {auditCycleNumber} durable dispatch ledger proof");
 
@@ -4224,9 +4386,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     output.WriteLine(
                         $"ChildRuntimeFailureCount='{childRuntimeFailureCount}'");
                     output.WriteLine(
+                        $"FailureTarget='{resolvedAdversarialSchedule.FailureTarget}'");
+                    output.WriteLine(
                         $"ChildRuntimeFailureAfterCompletedStepCount='{childRuntimeFailureAfterCompletedStepCount}'");
                     output.WriteLine(
-                        $"ChildRuntimeResumeCheckpointStepIndex='{childRuntimeResumeCheckpointStepIndex}'");
+                        $"ChildRuntimeResumeCheckpointStepIndex='{(childRuntimeResumeCheckpointStepIndex.HasValue ? childRuntimeResumeCheckpointStepIndex.Value.ToString(CultureInfo.InvariantCulture) : "NOT_APPLICABLE")}'");
+                    output.WriteLine(
+                        $"ContinuationConsumePhysicalBoundaryProof='{(resolvedAdversarialSchedule.FailureTarget == ProductionChildDagAdversarialFailureTarget.ContinuationConsume ? "PASS" : "NOT_APPLICABLE")}'");
                     output.WriteLine(
                         $"BusyHostFailureCount='{busyHostFailureCount}'");
                     output.WriteLine(
@@ -4361,6 +4527,600 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 poolId,
                 output,
                 logPrefix);
+        }
+
+        private async Task<BoundedCapacityChildRuntimeFailureTarget>
+            WaitForAndKillBoundedCapacityContinuationConsumeFailureTargetAsync(
+                IAiRuntimeInstanceRegistry registry, IAiSharedRunStore sharedRunStore,
+                IAiRuntimeRunExecutionIndex runExecutionIndex, IAiDagExecutionStore dagStore,
+                IAiChildExecutionRelationStore relationStore, IAiDeterministicLifecycleObserver lifecycleObserver,
+                BoundedCapacityMachineLimitObservation observation,
+                ProductionCrashCheckpointGate preparationGate,
+                string parentSharedRunId, string controlPlaneId, string poolId, string tenantId,
+                int runtimeCountPerPod, int maximumRuntimeCapacity, TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(registry);
+            ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentNullException.ThrowIfNull(relationStore);
+            ArgumentNullException.ThrowIfNull(lifecycleObserver);
+            ArgumentNullException.ThrowIfNull(observation);
+            ArgumentNullException.ThrowIfNull(preparationGate);
+            ArgumentException.ThrowIfNullOrWhiteSpace(parentSharedRunId);
+
+            var deadline = DateTimeOffset.UtcNow.Add(timeout);
+            string? parentExecutionId = null;
+
+            while (DateTimeOffset.UtcNow < deadline && string.IsNullOrWhiteSpace(parentExecutionId))
+            {
+                var parentSharedRun = await sharedRunStore.GetAsync(parentSharedRunId).ConfigureAwait(false);
+                parentExecutionId = parentSharedRun?.ExecutionId;
+                if (string.IsNullOrWhiteSpace(parentExecutionId) && !string.IsNullOrWhiteSpace(parentSharedRun?.LocalRunId))
+                    parentExecutionId = (await runExecutionIndex.GetAsync(parentSharedRun.LocalRunId).ConfigureAwait(false))?.ExecutionId;
+                if (string.IsNullOrWhiteSpace(parentExecutionId))
+                    await Task.Delay(TimeSpan.FromMilliseconds(25)).ConfigureAwait(false);
+            }
+
+            if (string.IsNullOrWhiteSpace(parentExecutionId))
+                throw new TimeoutException($"Continuation-consume parent did not expose a durable ExecutionId. SharedRunId='{parentSharedRunId}'.");
+
+            var prearmedKillSessions =
+                await PrearmBoundedCapacityContinuationConsumeKillSessionsAsync(
+                        registry,
+                        controlPlaneId,
+                        poolId,
+                        maximumRuntimeCapacity,
+                        TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
+
+            try
+            {
+                output.WriteLine(
+                    $"[{this.profile.LogPrefix} CONTINUATION CONSUME PHYSICAL KILL PREARMED] " +
+                    $"RuntimeSessionCount='{prearmedKillSessions.Count}', " +
+                    $"ParentExecutionId='{parentExecutionId}', " +
+                    "PreparationGate='HELD', Result='PASS'.");
+
+                await preparationGate.ReleaseAsync().ConfigureAwait(false);
+
+            var relationIdentity =
+                await WaitForBoundedCapacityContinuationRelationIdentityAsync(
+                        relationStore,
+                        parentExecutionId,
+                        controlPlaneId,
+                        tenantId,
+                        deadline)
+                    .ConfigureAwait(false);
+
+            var childInvocationKey = relationIdentity.ChildInvocationKey;
+            var childExecutionId =
+                relationIdentity.ChildExecutionId
+                ?? throw new InvalidOperationException(
+                    $"Continuation-consume relation '{childInvocationKey}' did not expose the durable child ExecutionId required for indexed lifecycle observation.");
+
+            var remaining = deadline - DateTimeOffset.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+                throw new TimeoutException($"Continuation-consume targeting expired before scheduling. ParentExecutionId='{parentExecutionId}'.");
+
+            using var scheduledTimeout = new CancellationTokenSource(remaining);
+            var scheduledEvent = await lifecycleObserver.WaitForAsync(
+                new AiDeterministicLifecycleEventCriteria
+                {
+                    SemanticEventType = AiEngineEvents.ChildDag.ContinuationScheduled,
+                    EventId =
+                        $"{AiEngineEvents.ChildDag.ContinuationScheduled}:{childInvocationKey}",
+                    ExecutionId = childExecutionId,
+                    CorrelationId = childInvocationKey,
+                    Properties = new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        [AiChildDagMetadataKeys.ParentExecutionId] = parentExecutionId,
+                        [AiChildDagMetadataKeys.ParentCallSiteId] = McpTestPipelineFactory.ChildDagStepName
+                    }
+                }, scheduledTimeout.Token).ConfigureAwait(false);
+
+            if (!StringComparer.Ordinal.Equals(
+                    scheduledEvent.Correlation.ExecutionId,
+                    childExecutionId) ||
+                !StringComparer.Ordinal.Equals(
+                    scheduledEvent.Correlation.CorrelationId,
+                    childInvocationKey))
+            {
+                throw new InvalidOperationException(
+                    $"ContinuationScheduled resolved through the deterministic observer but did not preserve the exact durable child identity. " +
+                    $"ExpectedExecutionId='{childExecutionId}', ObservedExecutionId='{scheduledEvent.Correlation.ExecutionId}', " +
+                    $"ExpectedCorrelationId='{childInvocationKey}', ObservedCorrelationId='{scheduledEvent.Correlation.CorrelationId}'.");
+            }
+
+            output.WriteLine(
+                $"[{this.profile.LogPrefix} CONTINUATION SCHEDULE OBSERVABILITY PROOF] " +
+                $"ParentExecutionId='{parentExecutionId}', " +
+                $"ChildExecutionId='{childExecutionId}', " +
+                $"ChildInvocationKey='{childInvocationKey}', " +
+                "DurableLookup='ExecutionId+CorrelationId', " +
+                "ParentPropertyFilter='ParentExecutionId+ParentCallSiteId', " +
+                "Result='PASS'.");
+
+            var continuationSharedRunId = $"child-continuation-{childInvocationKey}";
+            var continuationId = $"child-continuation:{childInvocationKey}";
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                var candidates = await relationStore.ListContinuationCandidatesAsync(1024, controlPlaneId: controlPlaneId).ConfigureAwait(false);
+                var relation = candidates.SingleOrDefault(candidate =>
+                    candidate.Status == AiChildExecutionRelationStatus.Completed &&
+                    candidate.ContinuationStatus == AiChildContinuationStatus.Scheduled &&
+                    StringComparer.Ordinal.Equals(candidate.TenantId, tenantId) &&
+                    StringComparer.Ordinal.Equals(candidate.ParentExecutionId, parentExecutionId) &&
+                    StringComparer.Ordinal.Equals(candidate.ParentCallSiteId, McpTestPipelineFactory.ChildDagStepName) &&
+                    StringComparer.Ordinal.Equals(candidate.ChildInvocationKey, childInvocationKey));
+
+                if (relation is not null && relation.ParentContinuationScheduledStepVersion.HasValue)
+                {
+                    var parentRecord = await dagStore.GetRecordAsync(parentExecutionId).ConfigureAwait(false);
+                    var parentState = await dagStore.GetStateAsync(parentExecutionId).ConfigureAwait(false);
+                    if (parentRecord is not null && !parentRecord.IsTerminal && parentState is not null &&
+                        parentState.Steps.TryGetValue(relation.ParentCallSiteId, out var callSite) &&
+                        callSite.Version > relation.ParentContinuationScheduledStepVersion.Value &&
+                        callSite.Status is AiStepExecutionStatus.Ready or AiStepExecutionStatus.Running or AiStepExecutionStatus.WaitingForRetry)
+                    {
+                        var sharedRun = await sharedRunStore.GetAsync(continuationSharedRunId).ConfigureAwait(false);
+                        if (sharedRun is not null &&
+                            StringComparer.Ordinal.Equals(sharedRun.ControlPlaneId, controlPlaneId) &&
+                            StringComparer.Ordinal.Equals(sharedRun.ExecutionContextSnapshot.TenantId, tenantId) &&
+                            StringComparer.Ordinal.Equals(sharedRun.RunRequest.ExternalWaitContinuation?.ContinuationId, continuationId) &&
+                            StringComparer.Ordinal.Equals(sharedRun.RunRequest.ExternalWaitContinuation?.ExecutionId, parentExecutionId) &&
+                            StringComparer.Ordinal.Equals(sharedRun.RunRequest.ExternalWaitContinuation?.StepName, relation.ParentCallSiteId) &&
+                            !string.IsNullOrWhiteSpace(sharedRun.AssignedRuntimeInstanceId) &&
+                            !string.IsNullOrWhiteSpace(sharedRun.LocalRunId))
+                        {
+                            var runtimes = (await registry.ListAsync(includeStopped: false).ConfigureAwait(false))
+                                .Where(runtime => StringComparer.Ordinal.Equals(runtime.PoolId, poolId) &&
+                                    StringComparer.Ordinal.Equals(runtime.ControlPlaneId, controlPlaneId) &&
+                                    !string.IsNullOrWhiteSpace(runtime.HostId)).ToArray();
+                            if (runtimes.Length == maximumRuntimeCapacity)
+                            {
+                                var runtime = runtimes.SingleOrDefault(candidate => StringComparer.Ordinal.Equals(candidate.RuntimeInstanceId, sharedRun.AssignedRuntimeInstanceId));
+                                if (runtime is not null && runtime.ProcessId.GetValueOrDefault() > 0)
+                                {
+                                    var index = await runExecutionIndex.GetAsync(sharedRun.LocalRunId).ConfigureAwait(false);
+                                    if (index is not null && string.Equals(index.Status, "running", StringComparison.OrdinalIgnoreCase) &&
+                                        StringComparer.Ordinal.Equals(index.RuntimeInstanceId, runtime.RuntimeInstanceId) &&
+                                        StringComparer.Ordinal.Equals(index.ExecutionId, parentExecutionId))
+                                    {
+                                        var hostMembers = runtimes.Where(member => StringComparer.Ordinal.Equals(member.HostId, runtime.HostId))
+                                            .OrderBy(member => member.RuntimeInstanceId, StringComparer.Ordinal).ToArray();
+                                        if (hostMembers.Length == runtimeCountPerPod)
+                                        {
+                                            var siblings = hostMembers.Where(member => !StringComparer.Ordinal.Equals(member.RuntimeInstanceId, runtime.RuntimeInstanceId))
+                                                .Select(member => member.RuntimeInstanceId).ToHashSet(StringComparer.Ordinal);
+                                            var boundary = new BoundedCapacityContinuationConsumeBoundaryProof(
+                                                relation.ToInvocationIdentity(), childInvocationKey, parentExecutionId, relation.ParentCallSiteId,
+                                                continuationId, continuationSharedRunId, sharedRun.LocalRunId, runtime.RuntimeInstanceId,
+                                                relation.ParentContinuationScheduledStepVersion.Value, callSite.Version, callSite.Status);
+
+                                            AssertRuntimePoolIdentity(runtime, poolId);
+                                            Assert.True(runtime.ProcessId.HasValue);
+                                            Assert.False(string.IsNullOrWhiteSpace(runtime.KubernetesPodName));
+                                            Assert.False(string.IsNullOrWhiteSpace(runtime.KubernetesNamespace));
+
+                                            if (!prearmedKillSessions.TryGetValue(
+                                                    runtime.RuntimeInstanceId,
+                                                    out var prearmedKillSession))
+                                            {
+                                                throw new InvalidOperationException(
+                                                    $"No pre-armed physical kill session exists for continuation-consume runtime '{runtime.RuntimeInstanceId}'.");
+                                            }
+
+                                            prearmedKillSession.AssertTargets(runtime);
+
+                                            observation.MarkIntentionalFailedRuntimeInstance(
+                                                runtime.RuntimeInstanceId);
+
+                                            var currentBoundary =
+                                                await AssertContinuationConsumeBoundaryStillCurrentAsync(
+                                                        relationStore,
+                                                        sharedRunStore,
+                                                        runExecutionIndex,
+                                                        dagStore,
+                                                        boundary)
+                                                    .ConfigureAwait(false);
+
+                                            /*
+                                             * The durable assertion above is the final boundary read.
+                                             * The kubectl exec session is already connected inside the Pod,
+                                             * so the only operation permitted before the physical kill is
+                                             * writing KILL to its already-open stdin stream.
+                                             */
+                                            var killResult =
+                                                await prearmedKillSession
+                                                    .TriggerKillAsync(
+                                                        TimeSpan.FromSeconds(10),
+                                                        CancellationToken.None)
+                                                    .ConfigureAwait(false);
+
+                                            if (killResult.ExitCode != 0)
+                                            {
+                                                throw new InvalidOperationException(
+                                                    string.Concat(
+                                                        "The pre-armed continuation-consume in-Pod runtime process kill failed. StandardOutput=",
+                                                        killResult.StandardOutput,
+                                                        ", StandardError=",
+                                                        killResult.StandardError));
+                                            }
+
+                                            var postKillBoundary =
+                                                await AssertContinuationConsumeSemanticBoundarySurvivedPhysicalKillAsync(
+                                                        relationStore,
+                                                        dagStore,
+                                                        boundary)
+                                                    .ConfigureAwait(false);
+
+                                            var killRequestedAtUtc =
+                                                killResult.KillRequestedAtUtc;
+                                            var killCompletedAtUtc =
+                                                killResult.KillCompletedAtUtc;
+
+                                            var prevalidatedKillProof =
+                                                new ProductionRealRuntimePrevalidatedKillProof
+                                                {
+                                                    SharedRunId = continuationSharedRunId,
+                                                    LocalRunId = sharedRun.LocalRunId,
+                                                    RuntimeInstanceId = runtime.RuntimeInstanceId,
+                                                    ExecutionId = parentExecutionId,
+                                                    IndexStatus = currentBoundary.IndexStatus,
+                                                    IndexCompletedAtUtc = currentBoundary.IndexCompletedAtUtc,
+                                                    DagStatus = currentBoundary.DagStatus.ToString(),
+                                                    DagCompletedStepCount = currentBoundary.DagCompletedStepCount,
+                                                    DagTotalStepCount = currentBoundary.DagTotalStepCount,
+                                                    DagStepStatusBreakdown = currentBoundary.DagStepStatusBreakdown,
+                                                    CapturedAtUtc = currentBoundary.CapturedAtUtc,
+                                                    Killed = true,
+                                                    KillRequestedAtUtc = killRequestedAtUtc,
+                                                    KillCompletedAtUtc = killCompletedAtUtc
+                                                };
+
+                                            output.WriteLine(
+                                                $"[{this.profile.LogPrefix} CONTINUATION CONSUME TARGET] " +
+                                                $"ParentExecutionId='{parentExecutionId}', " +
+                                                $"ChildInvocationKey='{childInvocationKey}', " +
+                                                $"ContinuationId='{continuationId}', " +
+                                                $"SharedRunId='{continuationSharedRunId}', " +
+                                                $"LocalRunId='{sharedRun.LocalRunId}', " +
+                                                $"RuntimeInstanceId='{runtime.RuntimeInstanceId}', " +
+                                                $"ScheduledStepVersion='{boundary.ScheduledStepVersion}', " +
+                                                $"ObservedStepVersion='{currentBoundary.CallSiteVersion}', " +
+                                                $"ObservedStepStatus='{currentBoundary.CallSiteStatus}', " +
+                                                $"PrearmedAtUtc='{prearmedKillSession.ArmedAtUtc:O}', " +
+                                                $"LinuxProcessStartTimeTicks='{prearmedKillSession.ProcessStartTimeTicks}', " +
+                                                $"LinuxProcessStateAtArm='{prearmedKillSession.ProcessStateAtArm}', " +
+                                                $"KillRequestedAtUtc='{killRequestedAtUtc:O}', " +
+                                                $"KillCompletedAtUtc='{killCompletedAtUtc:O}', " +
+                                                $"ExactProcessDeathProof='{killResult.ExactProcessDeathProof.Proof}', " +
+                                                $"ExactProcessDeathState='{killResult.ExactProcessDeathProof.State ?? "<none>"}', " +
+                                                $"PostKillCapturedAtUtc='{postKillBoundary.CapturedAtUtc:O}', " +
+                                                $"PostKillDagStatus='{postKillBoundary.DagStatus}', " +
+                                                $"PostKillCompletedSteps='{postKillBoundary.DagCompletedStepCount}', " +
+                                                $"PostKillTotalSteps='{postKillBoundary.DagTotalStepCount}', " +
+                                                "BoundaryProof='Completed/Scheduled+PostScheduleProgress+NonTerminalCallSite+ExactPhysicalOwner', " +
+                                                "PhysicalKillProof='PASS', ExactLinuxProcessDeathProof='PASS', PhysicalKillMode='PrearmedKubectlExec'.");
+
+                                            output.WriteLine(
+                                                $"[{this.profile.LogPrefix} KUBERNETES RUNTIME POOL CHILD PROCESS KILL] " +
+                                                $"RuntimeInstanceId='{runtime.RuntimeInstanceId}', " +
+                                                $"PodUid='{runtime.HostId}', " +
+                                                $"PodName='{runtime.KubernetesPodName}', " +
+                                                $"ProcessId='{runtime.ProcessId}', " +
+                                                "KillSource='ContinuationConsumeBoundary'.");
+
+                                            return new BoundedCapacityChildRuntimeFailureTarget(
+                                                runtime,
+                                                new BoundedCapacityRunObservation(
+                                                    sharedRun,
+                                                    true,
+                                                    currentBoundary.IndexStatus,
+                                                    currentBoundary.RuntimeInstanceId,
+                                                    currentBoundary.ExecutionId,
+                                                    currentBoundary.IndexCompletedAtUtc,
+                                                    currentBoundary.DagStatus,
+                                                    true),
+                                                siblings)
+                                            {
+                                                ContinuationBoundary = boundary,
+                                                PrevalidatedKillProof = prevalidatedKillProof
+                                            };
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                await Task.Delay(TimeSpan.FromMilliseconds(10)).ConfigureAwait(false);
+            }
+
+            throw new TimeoutException($"The exact continuation-consume boundary was not observed. ParentSharedRunId='{parentSharedRunId}', ParentExecutionId='{parentExecutionId}', ChildInvocationKey='{childInvocationKey}'.");
+            }
+            finally
+            {
+                foreach (var session in prearmedKillSessions.Values)
+                {
+                    await session.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+        }
+
+        private static async Task<IReadOnlyDictionary<string, KubernetesRuntimePoolPrearmedProcessKillSession>>
+            PrearmBoundedCapacityContinuationConsumeKillSessionsAsync(
+                IAiRuntimeInstanceRegistry registry,
+                string controlPlaneId,
+                string poolId,
+                int maximumRuntimeCapacity,
+                TimeSpan capacityTimeout)
+        {
+            if (capacityTimeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(capacityTimeout));
+            }
+
+            var capacityDeadline = DateTimeOffset.UtcNow.Add(capacityTimeout);
+            AiRuntimeInstanceSnapshot[] runtimes = [];
+
+            while (DateTimeOffset.UtcNow < capacityDeadline)
+            {
+                runtimes =
+                    (await registry.ListAsync(includeStopped: false).ConfigureAwait(false))
+                        .Where(runtime =>
+                            StringComparer.Ordinal.Equals(runtime.PoolId, poolId) &&
+                            StringComparer.Ordinal.Equals(runtime.ControlPlaneId, controlPlaneId) &&
+                            !string.IsNullOrWhiteSpace(runtime.HostId) &&
+                            !string.IsNullOrWhiteSpace(runtime.KubernetesPodName) &&
+                            !string.IsNullOrWhiteSpace(runtime.KubernetesNamespace) &&
+                            runtime.ProcessId.GetValueOrDefault() > 0)
+                        .OrderBy(runtime => runtime.RuntimeInstanceId, StringComparer.Ordinal)
+                        .ToArray();
+
+                if (runtimes.Length == maximumRuntimeCapacity)
+                {
+                    break;
+                }
+
+                if (runtimes.Length > maximumRuntimeCapacity)
+                {
+                    throw new InvalidOperationException(
+                        $"Continuation-consume physical kill pre-arm observed capacity above the configured maximum. " +
+                        $"MaximumRuntimeCapacity='{maximumRuntimeCapacity}', ActualRuntimeCount='{runtimes.Length}'.");
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);
+            }
+
+            if (runtimes.Length != maximumRuntimeCapacity)
+            {
+                throw new TimeoutException(
+                    $"Continuation-consume physical kill pre-arm did not observe exact bounded capacity while the preparation gate remained held. " +
+                    $"ExpectedRuntimeCount='{maximumRuntimeCapacity}', ActualRuntimeCount='{runtimes.Length}', Timeout='{capacityTimeout}'.");
+            }
+
+            var armTasks =
+                runtimes.ToDictionary(
+                    runtime => runtime.RuntimeInstanceId,
+                    runtime => KubernetesRuntimePoolProductionInfrastructure
+                        .PrearmRuntimeProcessKillAsync(
+                            runtime.RuntimeInstanceId,
+                            runtime.KubernetesPodName!,
+                            runtime.KubernetesNamespace!,
+                            runtime.ProcessId!.Value,
+                            TimeSpan.FromSeconds(15),
+                            CancellationToken.None),
+                    StringComparer.Ordinal);
+
+            try
+            {
+                await Task.WhenAll(armTasks.Values).ConfigureAwait(false);
+
+                return armTasks.ToDictionary(
+                    pair => pair.Key,
+                    pair => pair.Value.Result,
+                    StringComparer.Ordinal);
+            }
+            catch
+            {
+                foreach (var task in armTasks.Values.Where(task => task.Status == TaskStatus.RanToCompletion))
+                {
+                    await task.Result.DisposeAsync().ConfigureAwait(false);
+                }
+
+                throw;
+            }
+        }
+
+        private static async Task<BoundedCapacityContinuationConsumePostKillBoundaryState>
+            AssertContinuationConsumeSemanticBoundarySurvivedPhysicalKillAsync(
+                IAiChildExecutionRelationStore relationStore,
+                IAiDagExecutionStore dagStore,
+                BoundedCapacityContinuationConsumeBoundaryProof boundary)
+        {
+            var relation =
+                await relationStore.GetAsync(boundary.RelationIdentity).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Continuation-consume relation disappeared immediately after physical kill. ChildInvocationKey='{boundary.ChildInvocationKey}'.");
+
+            var record =
+                await dagStore.GetRecordAsync(boundary.ParentExecutionId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Continuation-consume parent record disappeared immediately after physical kill. ExecutionId='{boundary.ParentExecutionId}'.");
+            var state =
+                await dagStore.GetStateAsync(boundary.ParentExecutionId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Continuation-consume parent state disappeared immediately after physical kill. ExecutionId='{boundary.ParentExecutionId}'.");
+
+            state.Steps.TryGetValue(
+                boundary.ParentCallSiteId,
+                out var callSite);
+
+            var physicalKillBoundaryPreserved =
+                KubernetesRuntimePoolContinuationConsumePhysicalKillPolicy
+                    .IsBoundaryPreserved(
+                        relation.Status == AiChildExecutionRelationStatus.Completed,
+                        relation.ContinuationStatus == AiChildContinuationStatus.Scheduled,
+                        record.IsTerminal,
+                        boundary.ScheduledStepVersion,
+                        callSite);
+
+            if (!physicalKillBoundaryPreserved)
+            {
+                var completedStepCount = record.CompletedSteps?.Count ?? 0;
+                var totalStepCount = record.Steps?.Count ?? 0;
+
+                throw new InvalidOperationException(
+                    $"Continuation-consume boundary was lost before the physical runtime kill was proven. " +
+                    $"Reason='continuation-consume-boundary-lost-before-physical-kill', " +
+                    $"ExecutionId='{boundary.ParentExecutionId}', DagStatus='{record.Status}', " +
+                    $"CompletedSteps='{completedStepCount}', TotalSteps='{totalStepCount}', " +
+                    $"RelationStatus='{relation.Status}', ContinuationStatus='{relation.ContinuationStatus}', " +
+                    $"CallSiteVersion='{callSite?.Version.ToString(CultureInfo.InvariantCulture) ?? "<missing>"}', " +
+                    $"CallSiteStatus='{callSite?.Status.ToString() ?? "<missing>"}', PhysicalKillProof='FAIL'.");
+            }
+
+            return new BoundedCapacityContinuationConsumePostKillBoundaryState(
+                record.Status,
+                record.CompletedSteps?.Count ?? 0,
+                record.Steps?.Count ?? 0,
+                callSite!.Version,
+                callSite!.Status,
+                DateTimeOffset.UtcNow);
+        }
+
+        private static async Task<AiChildExecutionRelation>
+            WaitForBoundedCapacityContinuationRelationIdentityAsync(
+                IAiChildExecutionRelationStore relationStore,
+                string parentExecutionId,
+                string controlPlaneId,
+                string tenantId,
+                DateTimeOffset deadline)
+        {
+            ArgumentNullException.ThrowIfNull(relationStore);
+            ArgumentException.ThrowIfNullOrWhiteSpace(parentExecutionId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                var incompleteRelations =
+                    await relationStore
+                        .ListIncompleteAsync(
+                            maxCount: 1024,
+                            controlPlaneId: controlPlaneId)
+                        .ConfigureAwait(false);
+
+                var continuationCandidates =
+                    await relationStore
+                        .ListContinuationCandidatesAsync(
+                            maxCount: 1024,
+                            controlPlaneId: controlPlaneId)
+                        .ConfigureAwait(false);
+
+                var matchingRelations =
+                    incompleteRelations
+                        .Concat(continuationCandidates)
+                        .Where(
+                            candidate =>
+                                candidate.InvocationGeneration == 0 &&
+                                StringComparer.Ordinal.Equals(
+                                    candidate.TenantId,
+                                    tenantId) &&
+                                StringComparer.Ordinal.Equals(
+                                    candidate.ParentExecutionId,
+                                    parentExecutionId) &&
+                                StringComparer.Ordinal.Equals(
+                                    candidate.ParentCallSiteId,
+                                    McpTestPipelineFactory.ChildDagStepName))
+                        .GroupBy(
+                            candidate => candidate.ChildInvocationKey,
+                            StringComparer.Ordinal)
+                        .Select(group => group.First())
+                        .ToArray();
+
+                if (matchingRelations.Length > 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Continuation-consume targeting observed more than one generation-zero child relation for the selected parent call-site. " +
+                        $"ParentExecutionId='{parentExecutionId}', Count='{matchingRelations.Length}'.");
+                }
+
+                var relation = matchingRelations.SingleOrDefault();
+
+                if (relation is not null &&
+                    !string.IsNullOrWhiteSpace(relation.ChildInvocationKey) &&
+                    !string.IsNullOrWhiteSpace(relation.ChildExecutionId))
+                {
+                    return relation;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(10))
+                    .ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(
+                $"Continuation-consume targeting could not resolve the durable generation-zero child relation identity before timeout. " +
+                $"ParentExecutionId='{parentExecutionId}', ParentCallSiteId='{McpTestPipelineFactory.ChildDagStepName}'.");
+        }
+
+        private static async Task<BoundedCapacityContinuationConsumeBoundaryCurrentState>
+            AssertContinuationConsumeBoundaryStillCurrentAsync(
+                IAiChildExecutionRelationStore relationStore, IAiSharedRunStore sharedRunStore,
+                IAiRuntimeRunExecutionIndex runExecutionIndex, IAiDagExecutionStore dagStore,
+                BoundedCapacityContinuationConsumeBoundaryProof boundary)
+        {
+            var relation = await relationStore.GetAsync(boundary.RelationIdentity).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Continuation-consume relation disappeared. ChildInvocationKey='{boundary.ChildInvocationKey}'.");
+            if (relation.Status != AiChildExecutionRelationStatus.Completed ||
+                relation.ContinuationStatus != AiChildContinuationStatus.Scheduled ||
+                !relation.ParentContinuationScheduledStepVersion.HasValue)
+                throw new InvalidOperationException($"Continuation-consume relation left Completed/Scheduled. ChildInvocationKey='{boundary.ChildInvocationKey}'.");
+
+            var record = await dagStore.GetRecordAsync(boundary.ParentExecutionId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Continuation-consume parent record disappeared. ExecutionId='{boundary.ParentExecutionId}'.");
+            var state = await dagStore.GetStateAsync(boundary.ParentExecutionId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Continuation-consume parent state disappeared. ExecutionId='{boundary.ParentExecutionId}'.");
+            if (record.IsTerminal || !state.Steps.TryGetValue(boundary.ParentCallSiteId, out var callSite) ||
+                callSite.Version <= relation.ParentContinuationScheduledStepVersion.Value ||
+                callSite.Status is not (AiStepExecutionStatus.Ready or AiStepExecutionStatus.Running or AiStepExecutionStatus.WaitingForRetry))
+                throw new InvalidOperationException($"Continuation-consume call-site left the non-terminal post-schedule boundary. ExecutionId='{boundary.ParentExecutionId}'.");
+
+            var sharedRun = await sharedRunStore.GetAsync(boundary.SharedRunId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Continuation-consume SharedRun disappeared. SharedRunId='{boundary.SharedRunId}'.");
+            if (!StringComparer.Ordinal.Equals(sharedRun.LocalRunId, boundary.LocalRunId) ||
+                !StringComparer.Ordinal.Equals(sharedRun.AssignedRuntimeInstanceId, boundary.RuntimeInstanceId) ||
+                !StringComparer.Ordinal.Equals(sharedRun.RunRequest.ExternalWaitContinuation?.ContinuationId, boundary.ContinuationId) ||
+                !StringComparer.Ordinal.Equals(sharedRun.RunRequest.ExternalWaitContinuation?.ExecutionId, boundary.ParentExecutionId) ||
+                !StringComparer.Ordinal.Equals(sharedRun.RunRequest.ExternalWaitContinuation?.StepName, boundary.ParentCallSiteId))
+                throw new InvalidOperationException($"Continuation-consume physical ownership changed. SharedRunId='{boundary.SharedRunId}'.");
+
+            var index = await runExecutionIndex.GetAsync(boundary.LocalRunId).ConfigureAwait(false);
+            if (index is null || !string.Equals(index.Status, "running", StringComparison.OrdinalIgnoreCase) ||
+                !StringComparer.Ordinal.Equals(index.RuntimeInstanceId, boundary.RuntimeInstanceId) ||
+                !StringComparer.Ordinal.Equals(index.ExecutionId, boundary.ParentExecutionId))
+                throw new InvalidOperationException($"Continuation-consume local runtime ownership is no longer exact. SharedRunId='{boundary.SharedRunId}'.");
+
+            var completedStepCount =
+                record.CompletedSteps?.Count ?? 0;
+            var totalStepCount =
+                record.Steps?.Count ?? 0;
+
+            return new BoundedCapacityContinuationConsumeBoundaryCurrentState(
+                index.Status!,
+                index.RuntimeInstanceId!,
+                index.ExecutionId!,
+                index.CompletedAtUtc,
+                record.Status,
+                completedStepCount,
+                totalStepCount,
+                $"Completed:{completedStepCount},Remaining:{Math.Max(0, totalStepCount - completedStepCount)}",
+                callSite.Version,
+                callSite.Status,
+                DateTimeOffset.UtcNow);
         }
 
         private static async Task<BoundedCapacityChildRuntimeFailureTarget>
@@ -5791,7 +6551,46 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private sealed record BoundedCapacityChildRuntimeFailureTarget(
             AiRuntimeInstanceSnapshot Runtime,
             BoundedCapacityRunObservation ActiveRun,
-            IReadOnlySet<string> SiblingRuntimeInstanceIds);
+            IReadOnlySet<string> SiblingRuntimeInstanceIds)
+        {
+            public BoundedCapacityContinuationConsumeBoundaryProof? ContinuationBoundary { get; init; }
+
+            public ProductionRealRuntimePrevalidatedKillProof? PrevalidatedKillProof { get; init; }
+        }
+
+        private sealed record BoundedCapacityContinuationConsumeBoundaryProof(
+            AiChildInvocationIdentity RelationIdentity,
+            string ChildInvocationKey,
+            string ParentExecutionId,
+            string ParentCallSiteId,
+            string ContinuationId,
+            string SharedRunId,
+            string LocalRunId,
+            string RuntimeInstanceId,
+            long ScheduledStepVersion,
+            long ObservedStepVersion,
+            AiStepExecutionStatus ObservedStepStatus);
+
+        private sealed record BoundedCapacityContinuationConsumeBoundaryCurrentState(
+            string IndexStatus,
+            string RuntimeInstanceId,
+            string ExecutionId,
+            DateTimeOffset? IndexCompletedAtUtc,
+            AiExecutionStatus DagStatus,
+            int DagCompletedStepCount,
+            int DagTotalStepCount,
+            string DagStepStatusBreakdown,
+            long CallSiteVersion,
+            AiStepExecutionStatus CallSiteStatus,
+            DateTimeOffset CapturedAtUtc);
+
+        private sealed record BoundedCapacityContinuationConsumePostKillBoundaryState(
+            AiExecutionStatus DagStatus,
+            int DagCompletedStepCount,
+            int DagTotalStepCount,
+            long CallSiteVersion,
+            AiStepExecutionStatus CallSiteStatus,
+            DateTimeOffset CapturedAtUtc);
 
         private sealed record BoundedCapacityBusyPodFailureTarget(
             IReadOnlyList<AiRuntimeInstanceSnapshot> Members,

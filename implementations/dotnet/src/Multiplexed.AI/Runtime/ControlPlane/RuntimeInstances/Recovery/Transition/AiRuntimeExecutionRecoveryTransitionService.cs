@@ -9,6 +9,7 @@ using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Ownership;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedQueue.Queue;
 using Multiplexed.Abstractions.AI.Execution.Control;
+using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery;
 using Multiplexed.AI.Stores;
@@ -31,11 +32,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
     /// When dry-run is enabled, it validates the transition and reports the action
     /// without mutating shared queue state or runtime execution index state.
     ///
-    /// When mutation is enabled for an in-flight execution, it first acquires a
+    /// When mutation is enabled for a normal in-flight execution, it first acquires a
     /// durable runtime-recovery-owned pause, recovers any running DAG step claims,
     /// marks the execution durably paused, then requeues the dispatched shared queue
-    /// item and marks the local runtime execution index entry as requeued. Local
-    /// queued work has no durable execution and bypasses execution control recovery.
+    /// item and marks the local runtime execution index entry as requeued.
+    ///
+    /// A failed external-wait continuation is different: it already represents a normal
+    /// deterministic re-drive of an existing parent execution. It is requeued with the
+    /// same continuation identity and recovery causality metadata, but without
+    /// <c>recovery.mode</c> and without acquiring crash-recovery execution ownership.
+    /// Local queued work has no durable execution and also bypasses execution control recovery.
     /// </remarks>
     public sealed class AiRuntimeExecutionRecoveryTransitionService : IAiRuntimeExecutionRecoveryTransitionService
     {
@@ -296,6 +302,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
             var isLocalQueuedRecovery =
                 IsLocalQueuedRecovery(ownership);
 
+            var isExternalWaitContinuationRedrive =
+                !isLocalQueuedRecovery &&
+                ownership.IsExternalWaitContinuation;
+
             var reason =
                 request.Reason ?? (isLocalQueuedRecovery
                     ? AiRuntimeRecoveryOperationNames.LocalQueuedRecoveryRequeue
@@ -328,7 +338,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
 
             var requiresRecoveryPause =
                 this.options.EnableDagExecutionResume &&
-                !isLocalQueuedRecovery;
+                !isLocalQueuedRecovery &&
+                !isExternalWaitContinuationRedrive;
 
             if (requiresRecoveryPause)
             {
@@ -389,17 +400,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
             }
 
             var metadata =
-                this.options.EnableDagExecutionResume
-                    ? CreateRecoveryMetadata(
+                isExternalWaitContinuationRedrive
+                    ? CreateExternalWaitContinuationRedriveMetadata(
                         ownership,
                         reason,
                         forensicsId,
                         runtimeFailureIncidentId,
                         request.LedgerEntryId,
                         request.CorrelationId,
-                        request.CausationId,
-                        isLocalQueuedRecovery)
-                    : null;
+                        request.CausationId)
+                    : this.options.EnableDagExecutionResume
+                        ? CreateRecoveryMetadata(
+                            ownership,
+                            reason,
+                            forensicsId,
+                            runtimeFailureIncidentId,
+                            request.LedgerEntryId,
+                            request.CorrelationId,
+                            request.CausationId,
+                            isLocalQueuedRecovery)
+                        : null;
 
             var requeued = await this.sharedQueue
                 .RequeueDispatchedAsync(
@@ -466,6 +486,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                         request.CorrelationId,
                         request.CausationId,
                         isLocalQueuedRecovery,
+                        isExternalWaitContinuationRedrive,
                         cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -534,6 +555,44 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
         }
 
         /// <summary>
+        /// Creates queue metadata for re-driving one failed external-wait continuation.
+        /// </summary>
+        /// <remarks>
+        /// The metadata deliberately carries recovery causality and exact failed physical ownership so
+        /// the shared queue dispatcher can release stale ownership and emit reassignment/forensics evidence.
+        /// It deliberately does not carry <c>recovery.mode</c>: the target runtime must execute the request
+        /// through the normal external-wait continuation path instead of crash-recovery DAG resume.
+        /// </remarks>
+        private static IReadOnlyDictionary<string, string>
+            CreateExternalWaitContinuationRedriveMetadata(
+                AiSharedRunOwnershipResolutionResult ownership,
+                string reason,
+                string? forensicsId,
+                string runtimeFailureIncidentId,
+                string? ledgerEntryId,
+                string? correlationId,
+                string? causationId)
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [AiRuntimeRecoveryMetadataKeys.ForensicsId] = forensicsId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.FailureIncidentId] = runtimeFailureIncidentId,
+                [AiRuntimeRecoveryMetadataKeys.LedgerEntryId] = ledgerEntryId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.CorrelationId] = correlationId ?? forensicsId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.CausationId] = causationId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.FailedExecutionId] = ownership.ExecutionId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId] = ownership.RuntimeInstanceId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.FailedLocalRunId] = ownership.LocalRunId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.Reason] = reason,
+                [AiRuntimeRecoveryMetadataKeys.TransitionFailedRuntimeInstanceId] = ownership.RuntimeInstanceId ?? string.Empty,
+                [AiRuntimeRecoveryMetadataKeys.TransitionFailedLocalRunId] = ownership.LocalRunId ?? string.Empty,
+                [AiSharedQueueMetadataKeys.Priority] =
+                    InFlightRecoveryQueuePriority.ToString(CultureInfo.InvariantCulture),
+                [AiRuntimeExternalWaitMetadataKeys.Continuation] = "true"
+            };
+        }
+
+        /// <summary>
         /// Creates metadata instructing the next runtime dispatch how to recover the shared run.
         /// </summary>
         /// <param name="ownership">The resolved shared run ownership.</param>
@@ -596,6 +655,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
             string? correlationId,
             string? causationId,
             bool isLocalQueuedRecovery,
+            bool isExternalWaitContinuationRedrive,
             CancellationToken cancellationToken)
         {
             var timestampUtc = DateTimeOffset.UtcNow;
@@ -607,7 +667,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
                 ledgerEntryId,
                 correlationId,
                 causationId,
-                isLocalQueuedRecovery);
+                isLocalQueuedRecovery,
+                isExternalWaitContinuationRedrive);
             var sharedRunRequeuedEventType = isLocalQueuedRecovery
                 ? AiEngineEvents.Recovery.SharedRunRequeuedForLocalQueuedRecovery
                 : AiEngineEvents.Recovery.SharedRunRequeuedForResume;
@@ -723,25 +784,38 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Recovery.Transiti
             string? ledgerEntryId,
             string? correlationId,
             string? causationId,
-            bool isLocalQueuedRecovery)
+            bool isLocalQueuedRecovery,
+            bool isExternalWaitContinuationRedrive)
         {
-            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
+            var metadata =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
                 [AiRuntimeRecoveryMetadataKeys.ForensicsId] = forensicsId,
                 [AiRuntimeRecoveryMetadataKeys.FailureIncidentId] = runtimeFailureIncidentId,
                 [AiRuntimeRecoveryMetadataKeys.LedgerEntryId] = ledgerEntryId ?? string.Empty,
-                [AiRuntimeRecoveryMetadataKeys.CorrelationId] = correlationId ?? forensicsId,
-                [AiRuntimeRecoveryMetadataKeys.CausationId] = causationId ?? string.Empty,
-                [AiRuntimeRecoveryMetadataKeys.Mode] = isLocalQueuedRecovery
-                    ? AiRuntimeRecoveryModes.RequeueLocalQueuedRun
-                    : AiRuntimeRecoveryModes.ResumeExistingExecution,
-                [AiRuntimeRecoveryMetadataKeys.FailedExecutionId] = ownership.ExecutionId ?? string.Empty,
-                [AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId] = ownership.RuntimeInstanceId ?? string.Empty,
-                [AiRuntimeRecoveryMetadataKeys.FailedLocalRunId] = ownership.LocalRunId ?? string.Empty,
-                [AiRuntimeRecoveryMetadataKeys.Reason] = reason,
-                [AiRuntimeRecoveryMetadataKeys.TransitionFailedRuntimeInstanceId] = ownership.RuntimeInstanceId ?? string.Empty,
-                [AiRuntimeRecoveryMetadataKeys.TransitionFailedLocalRunId] = ownership.LocalRunId ?? string.Empty
-            };
+                    [AiRuntimeRecoveryMetadataKeys.CorrelationId] = correlationId ?? forensicsId,
+                    [AiRuntimeRecoveryMetadataKeys.CausationId] = causationId ?? string.Empty,
+                    [AiRuntimeRecoveryMetadataKeys.FailedExecutionId] = ownership.ExecutionId ?? string.Empty,
+                    [AiRuntimeRecoveryMetadataKeys.FailedRuntimeInstanceId] = ownership.RuntimeInstanceId ?? string.Empty,
+                    [AiRuntimeRecoveryMetadataKeys.FailedLocalRunId] = ownership.LocalRunId ?? string.Empty,
+                    [AiRuntimeRecoveryMetadataKeys.Reason] = reason,
+                    [AiRuntimeRecoveryMetadataKeys.TransitionFailedRuntimeInstanceId] = ownership.RuntimeInstanceId ?? string.Empty,
+                    [AiRuntimeRecoveryMetadataKeys.TransitionFailedLocalRunId] = ownership.LocalRunId ?? string.Empty
+                };
+
+            if (isExternalWaitContinuationRedrive)
+            {
+                metadata[AiRuntimeExternalWaitMetadataKeys.Continuation] = "true";
+            }
+            else
+            {
+                metadata[AiRuntimeRecoveryMetadataKeys.Mode] =
+                    isLocalQueuedRecovery
+                        ? AiRuntimeRecoveryModes.RequeueLocalQueuedRun
+                        : AiRuntimeRecoveryModes.ResumeExistingExecution;
+            }
+
+            return metadata;
         }
 
 
