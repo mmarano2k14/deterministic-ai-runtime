@@ -59,6 +59,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// Optional test-only child checkpoint factory invoked once per logical wave/run identity. When supplied,
         /// it is authoritative and may select exactly one parent whose nested child definition receives the gate.
         /// </param>
+        /// <param name="submissionOrdering">
+        /// Optional deterministic test-only ordering for starting logical submissions inside each wave.
+        /// Returned proof results are always normalized back to ascending logical identity order.
+        /// </param>
         /// <returns>The exact admission results, SharedRun identifiers, and 429 retry count.</returns>
         public static async Task<RuntimePoolProductionCycleAdmissionProof>
             SubmitQueueFirstWavesAsync(
@@ -81,7 +85,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 int startingRunNumber = 1,
                 McpTestCrashCheckpointDefinition? childCrashCheckpoint = null,
                 int childCrashCheckpointDepth = 0,
-                Func<int, int, McpTestCrashCheckpointDefinition?>? childCrashCheckpointFactory = null)
+                Func<int, int, McpTestCrashCheckpointDefinition?>? childCrashCheckpointFactory = null,
+                ProductionChildDagSubmissionOrdering submissionOrdering =
+                    ProductionChildDagSubmissionOrdering.Natural)
         {
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentNullException.ThrowIfNull(tenant);
@@ -295,6 +301,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     maximumConcurrentSubmissions,
                     maximumConcurrentSubmissions);
 
+            var runSubmissionOffsets =
+                ResolveRunSubmissionOffsets(
+                    runsPerIteration,
+                    submissionOrdering);
+
             var submissionTasks =
                 Enumerable
                     .Range(startingIterationNumber, submissionIterationCount)
@@ -307,8 +318,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     iteration,
                                     cycleNumber);
 
-                            return Enumerable
-                                .Range(0, runsPerIteration)
+                            return runSubmissionOffsets
                                 .Select(
                                     async runOffset =>
                                     {
@@ -356,10 +366,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                                         try
                                         {
-                                            return await
-                                                SubmitSingleRunWithBackpressureAsync(
-                                                    request)
-                                                .ConfigureAwait(false);
+                                            var result =
+                                                await SubmitSingleRunWithBackpressureAsync(
+                                                        request)
+                                                    .ConfigureAwait(false);
+
+                                            return (
+                                                Iteration: iteration,
+                                                RunNumber: runNumber,
+                                                Result: result);
                                         }
                                         finally
                                         {
@@ -369,17 +384,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         })
                     .ToArray();
 
-            var submissionResults =
+            var submittedRuns =
                 await Task
                     .WhenAll(submissionTasks)
                     .ConfigureAwait(false);
+
+            // Physical submission invocation follows the selected deterministic ordering, but every downstream
+            // proof keeps the historical logical result order so existing target-selection contracts remain stable.
+            var submissionResults =
+                NormalizeSubmissionResults(submittedRuns);
 
             var expectedSubmissionCount =
                 checked(runsPerIteration * submissionIterationCount);
 
             Assert.Equal(
                 expectedSubmissionCount,
-                submissionResults.Length);
+                submissionResults.Count);
 
             Assert.All(
                 submissionResults,
@@ -402,6 +422,46 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 submissionResults,
                 submittedSharedRunIds,
                 Volatile.Read(ref tooManyRequestsRetryCount));
+        }
+
+        /// <summary>
+        /// Resolves the exact run-offset invocation order for one deterministic submission segment.
+        /// </summary>
+        internal static IReadOnlyList<int> ResolveRunSubmissionOffsets(
+            int runsPerIteration,
+            ProductionChildDagSubmissionOrdering submissionOrdering)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(runsPerIteration);
+
+            var naturalOffsets =
+                Enumerable
+                    .Range(0, runsPerIteration)
+                    .ToArray();
+
+            return submissionOrdering switch
+            {
+                ProductionChildDagSubmissionOrdering.Natural => naturalOffsets,
+                ProductionChildDagSubmissionOrdering.Reverse => naturalOffsets.Reverse().ToArray(),
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(submissionOrdering),
+                    submissionOrdering,
+                    "The deterministic submission ordering is not supported.")
+            };
+        }
+
+        /// <summary>
+        /// Restores historical ascending logical identity order after physical invocation order has been varied.
+        /// </summary>
+        internal static IReadOnlyList<TResult> NormalizeSubmissionResults<TResult>(
+            IEnumerable<(int Iteration, int RunNumber, TResult Result)> submittedRuns)
+        {
+            ArgumentNullException.ThrowIfNull(submittedRuns);
+
+            return submittedRuns
+                .OrderBy(value => value.Iteration)
+                .ThenBy(value => value.RunNumber)
+                .Select(value => value.Result)
+                .ToArray();
         }
 
         /// <summary>

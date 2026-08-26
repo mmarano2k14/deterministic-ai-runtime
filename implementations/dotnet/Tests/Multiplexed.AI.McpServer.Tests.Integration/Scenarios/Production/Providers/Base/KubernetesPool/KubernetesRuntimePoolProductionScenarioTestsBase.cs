@@ -2230,6 +2230,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             initialTargetCheckpoint ??
                             recursiveChildTargetCheckpoint;
 
+                        if (resolvedAdversarialSchedule.UsesDeterministicSubmissionOrdering)
+                        {
+                            output.WriteLine(
+                                $"[{boundedCapacityProfile.LogPrefix} DETERMINISTIC INTERLEAVING] " +
+                                $"Cycle='{cycleNumber}', " +
+                                $"MatrixScenarioId='{resolvedAdversarialSchedule.MatrixScenarioId}', " +
+                                $"FailureSeed='{resolvedAdversarialSchedule.FailureSeed}', " +
+                                $"SubmissionOrdering='{resolvedAdversarialSchedule.SubmissionOrdering}', " +
+                                "Scope='test-orchestration-only'.");
+                        }
+
                         var initialAdmissionTask =
                             RuntimePoolProductionCycleExecutor
                                 .SubmitQueueFirstWavesAsync(
@@ -2264,7 +2275,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                             : (iteration, runNumber) =>
                                                 iteration == 1 && runNumber == 1
                                                     ? recursiveChildTargetCheckpoint
-                                                    : null);
+                                                    : null,
+                                    submissionOrdering:
+                                        resolvedAdversarialSchedule.SubmissionOrdering);
 
                         var admissionProof =
                             await AwaitScenarioOperationWithProgressAsync(
@@ -2698,7 +2711,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                                 admissionBackpressureTimeout:
                                                     TimeSpan.FromMinutes(
                                                         BoundaryFailureAdmissionBackpressureTimeoutMinutes),
-                                                startingRunNumber: 1)
+                                                startingRunNumber: 1,
+                                                submissionOrdering:
+                                                    resolvedAdversarialSchedule.SubmissionOrdering)
                                             .ConfigureAwait(false);
 
                                     admissionProof =
@@ -2891,7 +2906,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                                                 AiRunPlacementFallback.Reject
                                                         },
                                                 startingRunNumber:
-                                                    boundaryFailureTargetRunStartNumber)
+                                                    boundaryFailureTargetRunStartNumber,
+                                                submissionOrdering:
+                                                    resolvedAdversarialSchedule.SubmissionOrdering)
                                             .ConfigureAwait(false);
 
                                     await podFailureCrashGate
@@ -4556,6 +4573,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         $"FailureScheduleMode='{resolvedAdversarialSchedule.FailureScheduleMode}'");
                     output.WriteLine(
                         $"FailureScheduleSeed='{resolvedAdversarialSchedule.FailureSeed}'");
+                    output.WriteLine(
+                        $"SubmissionOrdering='{resolvedAdversarialSchedule.SubmissionOrdering}'");
                     output.WriteLine(
                         $"ChildRuntimeFailureCount='{childRuntimeFailureCount}'");
                     output.WriteLine(

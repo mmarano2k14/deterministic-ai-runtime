@@ -26,6 +26,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
     }
 
     /// <summary>
+    /// Defines deterministic test-only submission ordering for adversarial interleaving rows.
+    /// </summary>
+    public enum ProductionChildDagSubmissionOrdering
+    {
+        /// <summary>
+        /// Preserves the historical ascending logical run order.
+        /// </summary>
+        Natural = 0,
+
+        /// <summary>
+        /// Starts logical runs in descending run-number order while proof results remain normalized
+        /// to the historical ascending identity order.
+        /// </summary>
+        Reverse = 1
+    }
+
+    /// <summary>
     /// Describes one deterministic failure schedule coordinate for the Recursive Child DAG
     /// adversarial validation matrix.
     /// </summary>
@@ -159,6 +176,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
             };
 
         /// <summary>
+        /// Gets the first deterministic interleaving seed. The workload, runtime failure boundary, and
+        /// durable proof contract remain identical to the frozen baseline while every logical run in a
+        /// submission segment is started in reverse run-number order.
+        /// </summary>
+        /// <remarks>
+        /// This varies only test orchestration. Pipeline semantics, queue semantics, runtime selection,
+        /// recovery behavior, and durable identities are not modified.
+        /// </remarks>
+        public static ProductionChildDagAdversarialScheduleDefinition SeedA { get; } =
+            new()
+            {
+                MatrixScenarioId = "seed-a",
+                FailureSeed = "seed-a",
+                FailureScheduleMode = "DeterministicAdversarial",
+                FailurePosition = "submission-order-reverse",
+                MatrixStatus = "IN_PROGRESS",
+                FailureTarget = ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint,
+                KillAfterCompletedStepCount = 25,
+                SubmissionOrdering = ProductionChildDagSubmissionOrdering.Reverse
+            };
+
+        /// <summary>
         /// Gets the stable matrix row identifier written into proof output.
         /// </summary>
         public required string MatrixScenarioId { get; init; }
@@ -187,6 +226,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         /// Gets the durable authority used to select the physical failure boundary.
         /// </summary>
         public required ProductionChildDagAdversarialFailureTarget FailureTarget { get; init; }
+
+        /// <summary>
+        /// Gets the deterministic test-only ordering used when logical runs are submitted within one segment.
+        /// </summary>
+        public ProductionChildDagSubmissionOrdering SubmissionOrdering { get; init; } =
+            ProductionChildDagSubmissionOrdering.Natural;
+
+        /// <summary>
+        /// Gets whether this row deliberately varies submission ordering from the historical contract.
+        /// </summary>
+        public bool UsesDeterministicSubmissionOrdering =>
+            this.SubmissionOrdering != ProductionChildDagSubmissionOrdering.Natural;
 
         /// <summary>
         /// Gets the one-based recursive child depth targeted by a recursive child runtime failure schedule.

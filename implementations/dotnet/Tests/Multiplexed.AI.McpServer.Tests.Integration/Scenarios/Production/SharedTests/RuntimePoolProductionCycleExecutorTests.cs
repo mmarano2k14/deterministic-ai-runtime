@@ -1,4 +1,5 @@
-﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Runners;
+﻿using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
+using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Runners;
 using Xunit;
 using Xunit.Sdk;
 
@@ -6,6 +7,67 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
 {
     public sealed class RuntimePoolProductionCycleExecutorTests
     {
+        [Fact]
+        public void ResolveRunSubmissionOffsets_Should_Preserve_Natural_Ordering()
+        {
+            var offsets =
+                RuntimePoolProductionCycleExecutor.ResolveRunSubmissionOffsets(
+                    5,
+                    ProductionChildDagSubmissionOrdering.Natural);
+
+            Assert.Equal(new[] { 0, 1, 2, 3, 4 }, offsets);
+        }
+
+        [Fact]
+        public void ResolveRunSubmissionOffsets_Should_Reverse_Logical_Run_Order_For_Seeded_Interleaving()
+        {
+            var offsets =
+                RuntimePoolProductionCycleExecutor.ResolveRunSubmissionOffsets(
+                    5,
+                    ProductionChildDagSubmissionOrdering.Reverse);
+
+            Assert.Equal(new[] { 4, 3, 2, 1, 0 }, offsets);
+        }
+
+        [Fact]
+        public void NormalizeSubmissionResults_Should_Preserve_Historical_Logical_Result_Order()
+        {
+            var physicallyInvoked = new[]
+            {
+                (Iteration: 2, RunNumber: 3, Result: "wave2-run3"),
+                (Iteration: 1, RunNumber: 3, Result: "wave1-run3"),
+                (Iteration: 1, RunNumber: 2, Result: "wave1-run2"),
+                (Iteration: 1, RunNumber: 1, Result: "wave1-run1"),
+                (Iteration: 2, RunNumber: 2, Result: "wave2-run2"),
+                (Iteration: 2, RunNumber: 1, Result: "wave2-run1")
+            };
+
+            var normalized =
+                RuntimePoolProductionCycleExecutor.NormalizeSubmissionResults(
+                    physicallyInvoked);
+
+            Assert.Equal(
+                new[]
+                {
+                    "wave1-run1",
+                    "wave1-run2",
+                    "wave1-run3",
+                    "wave2-run1",
+                    "wave2-run2",
+                    "wave2-run3"
+                },
+                normalized);
+        }
+
+        [Fact]
+        public void ResolveRunSubmissionOffsets_Should_Reject_Unknown_Ordering()
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                RuntimePoolProductionCycleExecutor.ResolveRunSubmissionOffsets(
+                    5,
+                    (ProductionChildDagSubmissionOrdering)999));
+        }
+
         [Fact]
         public void SelectRecoveredSubmittedSharedRunIdsForDispatchProof_Should_Return_Only_Submitted_Recovery_And_Require_Exact_Supplemental_Set()
         {
