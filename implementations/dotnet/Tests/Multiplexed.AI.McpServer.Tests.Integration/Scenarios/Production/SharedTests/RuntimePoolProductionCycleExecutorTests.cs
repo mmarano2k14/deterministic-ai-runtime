@@ -30,6 +30,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
         }
 
         [Fact]
+        public void ResolveRunSubmissionOffsets_Should_Alternate_Low_And_High_Edges_For_SeedB()
+        {
+            var oddOffsets =
+                RuntimePoolProductionCycleExecutor.ResolveRunSubmissionOffsets(
+                    5,
+                    ProductionChildDagSubmissionOrdering.OutsideIn);
+
+            var evenOffsets =
+                RuntimePoolProductionCycleExecutor.ResolveRunSubmissionOffsets(
+                    6,
+                    ProductionChildDagSubmissionOrdering.OutsideIn);
+
+            Assert.Equal(new[] { 0, 4, 1, 3, 2 }, oddOffsets);
+            Assert.Equal(new[] { 0, 5, 1, 4, 2, 3 }, evenOffsets);
+        }
+
+        [Fact]
         public void NormalizeSubmissionResults_Should_Preserve_Historical_Logical_Result_Order()
         {
             var physicallyInvoked = new[]

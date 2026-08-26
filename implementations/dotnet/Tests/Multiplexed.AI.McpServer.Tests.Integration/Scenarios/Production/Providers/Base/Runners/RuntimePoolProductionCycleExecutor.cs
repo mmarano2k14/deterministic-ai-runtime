@@ -442,11 +442,40 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             {
                 ProductionChildDagSubmissionOrdering.Natural => naturalOffsets,
                 ProductionChildDagSubmissionOrdering.Reverse => naturalOffsets.Reverse().ToArray(),
+                ProductionChildDagSubmissionOrdering.OutsideIn => ResolveOutsideInSubmissionOffsets(naturalOffsets),
                 _ => throw new ArgumentOutOfRangeException(
                     nameof(submissionOrdering),
                     submissionOrdering,
                     "The deterministic submission ordering is not supported.")
             };
+        }
+
+        /// <summary>
+        /// Alternates run offsets from the low and high edges of one submission segment.
+        /// </summary>
+        private static IReadOnlyList<int> ResolveOutsideInSubmissionOffsets(
+            IReadOnlyList<int> naturalOffsets)
+        {
+            ArgumentNullException.ThrowIfNull(naturalOffsets);
+
+            var resolvedOffsets =
+                new List<int>(naturalOffsets.Count);
+            var low = 0;
+            var high = naturalOffsets.Count - 1;
+
+            while (low <= high)
+            {
+                resolvedOffsets.Add(naturalOffsets[low]);
+                low++;
+
+                if (low <= high)
+                {
+                    resolvedOffsets.Add(naturalOffsets[high]);
+                    high--;
+                }
+            }
+
+            return resolvedOffsets;
         }
 
         /// <summary>

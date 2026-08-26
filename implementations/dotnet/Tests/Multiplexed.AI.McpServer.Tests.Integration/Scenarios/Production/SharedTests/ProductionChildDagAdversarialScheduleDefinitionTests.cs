@@ -266,6 +266,42 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
         }
 
         /// <summary>
+        /// Verifies that C2 alternates submission from the segment edges without changing the baseline
+        /// physical failure coordinate or frozen workload semantics.
+        /// </summary>
+        [Fact]
+        public void SeedB_Should_Use_OutsideIn_Submission_Order_Without_Changing_The_Baseline_Failure_Boundary()
+        {
+            var schedule =
+                ProductionChildDagAdversarialScheduleDefinition.SeedB;
+
+            Assert.Equal("seed-b", schedule.MatrixScenarioId);
+            Assert.Equal("seed-b", schedule.FailureSeed);
+            Assert.Equal("DeterministicAdversarial", schedule.FailureScheduleMode);
+            Assert.Equal("submission-order-outside-in", schedule.FailurePosition);
+            Assert.Equal("IN_PROGRESS", schedule.MatrixStatus);
+            Assert.Equal(ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint, schedule.FailureTarget);
+            Assert.True(schedule.UsesParentCrashCheckpoint);
+            Assert.True(schedule.UsesDeterministicSubmissionOrdering);
+            Assert.Equal(ProductionChildDagSubmissionOrdering.OutsideIn, schedule.SubmissionOrdering);
+            Assert.Equal(25, schedule.KillAfterCompletedStepCount);
+            Assert.Equal(26, schedule.ResolveCrashCheckpointStepIndex(50));
+        }
+
+        /// <summary>
+        /// Verifies that C1 remains unchanged when C2 is introduced.
+        /// </summary>
+        [Fact]
+        public void SeedB_Should_Not_Mutate_SeedA_Submission_Ordering()
+        {
+            var seedA =
+                ProductionChildDagAdversarialScheduleDefinition.SeedA;
+
+            Assert.Equal(ProductionChildDagSubmissionOrdering.Reverse, seedA.SubmissionOrdering);
+            Assert.Equal("seed-a", seedA.FailureSeed);
+        }
+
+        /// <summary>
         /// Verifies that introducing C1 does not retroactively alter any already-proven A/B schedule ordering.
         /// </summary>
         [Fact]

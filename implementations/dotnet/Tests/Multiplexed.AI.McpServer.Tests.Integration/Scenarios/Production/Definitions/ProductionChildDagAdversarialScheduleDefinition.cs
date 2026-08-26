@@ -39,7 +39,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         /// Starts logical runs in descending run-number order while proof results remain normalized
         /// to the historical ascending identity order.
         /// </summary>
-        Reverse = 1
+        Reverse = 1,
+
+        /// <summary>
+        /// Alternates logical runs from the low and high edges of the submission segment while proof results
+        /// remain normalized to the historical ascending identity order.
+        /// </summary>
+        OutsideIn = 2
     }
 
     /// <summary>
@@ -195,6 +201,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
                 FailureTarget = ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint,
                 KillAfterCompletedStepCount = 25,
                 SubmissionOrdering = ProductionChildDagSubmissionOrdering.Reverse
+            };
+
+        /// <summary>
+        /// Gets the second deterministic interleaving seed. The workload, runtime failure boundary, and
+        /// durable proof contract remain identical to the frozen baseline while logical runs are started
+        /// by alternating from the low and high edges of each submission segment.
+        /// </summary>
+        /// <remarks>
+        /// This varies only test orchestration. Pipeline semantics, queue semantics, runtime selection,
+        /// recovery behavior, and durable identities are not modified.
+        /// </remarks>
+        public static ProductionChildDagAdversarialScheduleDefinition SeedB { get; } =
+            new()
+            {
+                MatrixScenarioId = "seed-b",
+                FailureSeed = "seed-b",
+                FailureScheduleMode = "DeterministicAdversarial",
+                FailurePosition = "submission-order-outside-in",
+                MatrixStatus = "IN_PROGRESS",
+                FailureTarget = ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint,
+                KillAfterCompletedStepCount = 25,
+                SubmissionOrdering = ProductionChildDagSubmissionOrdering.OutsideIn
             };
 
         /// <summary>
