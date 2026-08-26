@@ -443,6 +443,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 ProductionChildDagSubmissionOrdering.Natural => naturalOffsets,
                 ProductionChildDagSubmissionOrdering.Reverse => naturalOffsets.Reverse().ToArray(),
                 ProductionChildDagSubmissionOrdering.OutsideIn => ResolveOutsideInSubmissionOffsets(naturalOffsets),
+                ProductionChildDagSubmissionOrdering.CenterOut => ResolveCenterOutSubmissionOffsets(naturalOffsets),
                 _ => throw new ArgumentOutOfRangeException(
                     nameof(submissionOrdering),
                     submissionOrdering,
@@ -472,6 +473,47 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 {
                     resolvedOffsets.Add(naturalOffsets[high]);
                     high--;
+                }
+            }
+
+            return resolvedOffsets;
+        }
+
+        /// <summary>
+        /// Starts at the center of one submission segment and expands toward both edges.
+        /// </summary>
+        private static IReadOnlyList<int> ResolveCenterOutSubmissionOffsets(
+            IReadOnlyList<int> naturalOffsets)
+        {
+            ArgumentNullException.ThrowIfNull(naturalOffsets);
+
+            var resolvedOffsets =
+                new List<int>(naturalOffsets.Count);
+            var left = (naturalOffsets.Count - 1) / 2;
+            var right = left + 1;
+
+            resolvedOffsets.Add(naturalOffsets[left]);
+
+            if (naturalOffsets.Count % 2 == 0)
+            {
+                resolvedOffsets.Add(naturalOffsets[right]);
+                right++;
+            }
+
+            left--;
+
+            while (left >= 0 || right < naturalOffsets.Count)
+            {
+                if (left >= 0)
+                {
+                    resolvedOffsets.Add(naturalOffsets[left]);
+                    left--;
+                }
+
+                if (right < naturalOffsets.Count)
+                {
+                    resolvedOffsets.Add(naturalOffsets[right]);
+                    right++;
                 }
             }
 

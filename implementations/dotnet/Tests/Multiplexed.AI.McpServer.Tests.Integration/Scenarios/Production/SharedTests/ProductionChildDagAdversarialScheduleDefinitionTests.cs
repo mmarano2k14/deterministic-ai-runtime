@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions;
 using Xunit;
 
@@ -299,6 +299,46 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
 
             Assert.Equal(ProductionChildDagSubmissionOrdering.Reverse, seedA.SubmissionOrdering);
             Assert.Equal("seed-a", seedA.FailureSeed);
+        }
+
+        /// <summary>
+        /// Verifies that C3 expands submission from the segment center without changing the baseline physical
+        /// failure coordinate or frozen workload semantics.
+        /// </summary>
+        [Fact]
+        public void SeedC_Should_Use_CenterOut_Submission_Order_Without_Changing_The_Baseline_Failure_Boundary()
+        {
+            var schedule =
+                ProductionChildDagAdversarialScheduleDefinition.SeedC;
+
+            Assert.Equal("seed-c", schedule.MatrixScenarioId);
+            Assert.Equal("seed-c", schedule.FailureSeed);
+            Assert.Equal("DeterministicAdversarial", schedule.FailureScheduleMode);
+            Assert.Equal("submission-order-center-out", schedule.FailurePosition);
+            Assert.Equal("IN_PROGRESS", schedule.MatrixStatus);
+            Assert.Equal(ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint, schedule.FailureTarget);
+            Assert.True(schedule.UsesParentCrashCheckpoint);
+            Assert.True(schedule.UsesDeterministicSubmissionOrdering);
+            Assert.Equal(ProductionChildDagSubmissionOrdering.CenterOut, schedule.SubmissionOrdering);
+            Assert.Equal(25, schedule.KillAfterCompletedStepCount);
+            Assert.Equal(26, schedule.ResolveCrashCheckpointStepIndex(50));
+        }
+
+        /// <summary>
+        /// Verifies that introducing C3 leaves both earlier deterministic interleaving seeds unchanged.
+        /// </summary>
+        [Fact]
+        public void SeedC_Should_Not_Mutate_Previous_Seed_Submission_Orderings()
+        {
+            var seedA =
+                ProductionChildDagAdversarialScheduleDefinition.SeedA;
+            var seedB =
+                ProductionChildDagAdversarialScheduleDefinition.SeedB;
+
+            Assert.Equal(ProductionChildDagSubmissionOrdering.Reverse, seedA.SubmissionOrdering);
+            Assert.Equal("seed-a", seedA.FailureSeed);
+            Assert.Equal(ProductionChildDagSubmissionOrdering.OutsideIn, seedB.SubmissionOrdering);
+            Assert.Equal("seed-b", seedB.FailureSeed);
         }
 
         /// <summary>

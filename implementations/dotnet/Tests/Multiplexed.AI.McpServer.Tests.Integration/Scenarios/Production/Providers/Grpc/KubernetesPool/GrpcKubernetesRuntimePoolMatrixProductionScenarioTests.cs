@@ -139,6 +139,22 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Executes deterministic interleaving seed C by starting logical run submission at the center of every
+        /// admission segment and expanding toward both edges while preserving the historical workload, parent
+        /// runtime failure boundary, Pod failure, durable identities, and frozen proof contract.
+        /// </summary>
+        /// <returns>A task that completes after the seed-c matrix row converges.</returns>
+        [Fact]
+        [Trait("ObservationMode", "EventDriven")]
+        [Trait("ValidationProfile", "AdversarialMatrix")]
+        [Trait("MatrixScenarioId", "seed-c")]
+        public Task Grpc_KubernetesPool_Matrix_SeedC_Should_Preserve_Recursive_Child_Dag_Exactness()
+        {
+            return ExecuteMatrixRowAsync(
+                ProductionChildDagAdversarialScheduleDefinition.SeedC);
+        }
+
+        /// <summary>
         /// Executes one deterministic matrix row against the same reduced production topology used by the
         /// reference gRPC Kubernetes canary. Only the schedule coordinate varies between rows.
         /// </summary>

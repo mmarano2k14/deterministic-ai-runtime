@@ -47,6 +47,29 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
         }
 
         [Fact]
+        public void ResolveRunSubmissionOffsets_Should_Expand_From_Center_For_SeedC()
+        {
+            var oddOffsets =
+                RuntimePoolProductionCycleExecutor.ResolveRunSubmissionOffsets(
+                    5,
+                    ProductionChildDagSubmissionOrdering.CenterOut);
+
+            var evenOffsets =
+                RuntimePoolProductionCycleExecutor.ResolveRunSubmissionOffsets(
+                    6,
+                    ProductionChildDagSubmissionOrdering.CenterOut);
+
+            var nineOffsets =
+                RuntimePoolProductionCycleExecutor.ResolveRunSubmissionOffsets(
+                    9,
+                    ProductionChildDagSubmissionOrdering.CenterOut);
+
+            Assert.Equal(new[] { 2, 1, 3, 0, 4 }, oddOffsets);
+            Assert.Equal(new[] { 2, 3, 1, 4, 0, 5 }, evenOffsets);
+            Assert.Equal(new[] { 4, 3, 5, 2, 6, 1, 7, 0, 8 }, nineOffsets);
+        }
+
+        [Fact]
         public void NormalizeSubmissionResults_Should_Preserve_Historical_Logical_Result_Order()
         {
             var physicallyInvoked = new[]

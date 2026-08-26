@@ -206,6 +206,84 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
         }
 
         /// <summary>
+        /// Verifies that a stale child heartbeat cannot permanently overwrite one planned
+        /// runtime's exact Gateway route after the control plane has projected it.
+        /// </summary>
+        [Fact]
+        public async Task StartAsync_Should_Reproject_Exact_Gateway_Route_After_Stale_Heartbeat_Overwrite()
+        {
+            var poolOptions = CreatePoolOptions();
+            poolOptions.ProviderName = "grpc";
+            poolOptions.TransportName = "grpc";
+            var hostOptions = CreateHostOptions();
+            hostOptions.UseGatewayTransportEndpoint = true;
+
+            var client =
+                new FakeAiKubernetesRuntimePoolHostClient();
+            var capacityStore =
+                new RuntimePoolCapacityStore(
+                    client,
+                    staleGatewayHeartbeatRuntimeOrdinal: 2);
+            var gatewayManager =
+                new RecordingGatewayManager();
+            using var gatewayTransportEndpointManager =
+                new FakeGatewayTransportEndpointManager();
+
+            var strategy =
+                CreateStrategy(
+                    poolOptions,
+                    hostOptions,
+                    client,
+                    capacityStore,
+                    gatewayManager,
+                    gatewayTransportEndpointManager);
+
+            var result =
+                await strategy.StartAsync(
+                    CreateRequest() with
+                    {
+                        ProviderName = "grpc",
+                        TransportName = "grpc"
+                    });
+
+            Assert.True(result.Success);
+            Assert.True(capacityStore.StaleGatewayHeartbeatInjected);
+
+            var podSpec =
+                Assert.IsType<AiKubernetesRuntimePoolPodSpec>(
+                    client.LastCreatedPodSpec);
+
+            var driftedRuntimeInstanceId =
+                podSpec.Bootstrap.RuntimeInstances[1].RuntimeInstanceId;
+
+            Assert.True(
+                capacityStore.GetExternalProjectionPublishCount(
+                    driftedRuntimeInstanceId) >= 2);
+
+            var descriptors =
+                await capacityStore.ListAsync();
+
+            Assert.Equal(3, descriptors.Count);
+            Assert.All(
+                descriptors,
+                descriptor =>
+                {
+                    Assert.Equal(
+                        FakeGatewayTransportEndpointManager.ExternalEndpoint,
+                        descriptor.Metadata["transport.endpoint"]);
+                    Assert.Equal(
+                        "control-plane",
+                        descriptor.Metadata["transport.endpoint.scope"]);
+                    Assert.Equal(
+                        "x-ai-runtime-instance-id",
+                        descriptor.Metadata["gateway.routing.header"]);
+                    Assert.Equal(
+                        descriptor.RuntimeInstanceId,
+                        descriptor.Metadata["gateway.routing.value"]);
+                });
+        }
+
+        /// <summary>
         /// Verifies that a different first-class PoolId is rejected before Kubernetes calls.
         /// </summary>
         [Fact]
@@ -365,14 +443,32 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
             private readonly HashSet<string> pendingHeartbeats =
                 new(StringComparer.Ordinal);
             private readonly bool canAcceptRunAfterProjectedHeartbeat;
+            private readonly int? staleGatewayHeartbeatRuntimeOrdinal;
+            private readonly Dictionary<string, int>
+                externalProjectionPublishCounts = new(StringComparer.Ordinal);
 
             public RuntimePoolCapacityStore(
                 FakeAiKubernetesRuntimePoolHostClient client,
-                bool canAcceptRunAfterProjectedHeartbeat = true)
+                bool canAcceptRunAfterProjectedHeartbeat = true,
+                int? staleGatewayHeartbeatRuntimeOrdinal = null)
             {
                 this.client = client;
                 this.canAcceptRunAfterProjectedHeartbeat =
                     canAcceptRunAfterProjectedHeartbeat;
+                this.staleGatewayHeartbeatRuntimeOrdinal =
+                    staleGatewayHeartbeatRuntimeOrdinal;
+            }
+
+            public bool StaleGatewayHeartbeatInjected { get; private set; }
+
+            public int GetExternalProjectionPublishCount(
+                string runtimeInstanceId)
+            {
+                return this.externalProjectionPublishCounts.TryGetValue(
+                    runtimeInstanceId,
+                    out var publishCount)
+                    ? publishCount
+                    : 0;
             }
 
             public Task PublishAsync(
@@ -394,6 +490,11 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                          "kubernetes-pool-gateway",
                          StringComparison.OrdinalIgnoreCase)))
                 {
+                    this.externalProjectionPublishCounts[
+                        descriptor.RuntimeInstanceId] =
+                        this.GetExternalProjectionPublishCount(
+                            descriptor.RuntimeInstanceId) + 1;
+
                     this.pendingHeartbeats.Add(
                         descriptor.RuntimeInstanceId);
                 }
@@ -417,6 +518,9 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                             CreatePreservingHeartbeatDescriptor(
                                 existing,
                                 this.canAcceptRunAfterProjectedHeartbeat);
+                        existing =
+                            this.MaybeCreateStaleGatewayHeartbeatDescriptor(
+                                existing);
                         this.descriptors[runtimeInstanceId] = existing;
                     }
 
@@ -476,6 +580,134 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
 
                 return Task.FromResult<AiRuntimeInstanceCapacityDescriptor?>(
                     descriptor);
+            }
+
+            private AiRuntimeInstanceCapacityDescriptor
+                MaybeCreateStaleGatewayHeartbeatDescriptor(
+                    AiRuntimeInstanceCapacityDescriptor descriptor)
+            {
+                if (this.StaleGatewayHeartbeatInjected ||
+                    this.staleGatewayHeartbeatRuntimeOrdinal is not int ordinal)
+                {
+                    return descriptor;
+                }
+
+                var podSpec = this.client.LastCreatedPodSpec;
+                if (podSpec is null ||
+                    ordinal < 1 ||
+                    ordinal > podSpec.Bootstrap.RuntimeInstances.Count)
+                {
+                    return descriptor;
+                }
+
+                var targetRuntimeInstanceId =
+                    podSpec.Bootstrap.RuntimeInstances[ordinal - 1]
+                        .RuntimeInstanceId;
+
+                if (!string.Equals(
+                        targetRuntimeInstanceId,
+                        descriptor.RuntimeInstanceId,
+                        StringComparison.Ordinal))
+                {
+                    return descriptor;
+                }
+
+                var primaryRuntimeInstanceId =
+                    podSpec.Bootstrap.RuntimeInstances[0]
+                        .RuntimeInstanceId;
+
+                if (!this.descriptors.TryGetValue(
+                        primaryRuntimeInstanceId,
+                        out var primaryDescriptor))
+                {
+                    return descriptor;
+                }
+
+                var metadata =
+                    new Dictionary<string, string>(
+                        descriptor.Metadata,
+                        StringComparer.OrdinalIgnoreCase);
+
+                CopyMetadataValue(
+                    primaryDescriptor.Metadata,
+                    metadata,
+                    "gateway.routing.header");
+                CopyMetadataValue(
+                    primaryDescriptor.Metadata,
+                    metadata,
+                    "gateway.routing.value");
+                CopyMetadataValue(
+                    primaryDescriptor.Metadata,
+                    metadata,
+                    "kubernetes.gateway.route.name");
+                CopyMetadataValue(
+                    primaryDescriptor.Metadata,
+                    metadata,
+                    "kubernetes.gateway.route.kind");
+
+                metadata["transport.endpoint.source"] =
+                    "preserved-sibling-capacity-descriptor";
+
+                this.StaleGatewayHeartbeatInjected = true;
+
+                return CopyDescriptorWithMetadata(
+                    descriptor,
+                    metadata);
+            }
+
+            private static void CopyMetadataValue(
+                IReadOnlyDictionary<string, string> source,
+                IDictionary<string, string> destination,
+                string key)
+            {
+                if (source.TryGetValue(
+                        key,
+                        out var value))
+                {
+                    destination[key] = value;
+                }
+            }
+
+            private static AiRuntimeInstanceCapacityDescriptor
+                CopyDescriptorWithMetadata(
+                    AiRuntimeInstanceCapacityDescriptor descriptor,
+                    IReadOnlyDictionary<string, string> metadata)
+            {
+                return new AiRuntimeInstanceCapacityDescriptor
+                {
+                    RuntimeInstanceId = descriptor.RuntimeInstanceId,
+                    PoolId = descriptor.PoolId,
+                    HostId = descriptor.HostId,
+                    TenantId = descriptor.TenantId,
+                    TenantGroupId = descriptor.TenantGroupId,
+                    ProviderName = descriptor.ProviderName,
+                    IsolationMode = descriptor.IsolationMode,
+                    AllowSharedFallback = descriptor.AllowSharedFallback,
+                    PreferDedicatedCapacity = descriptor.PreferDedicatedCapacity,
+                    Role = descriptor.Role,
+                    Status = descriptor.Status,
+                    WorkerCount = descriptor.WorkerCount,
+                    ActiveWorkerCount = descriptor.ActiveWorkerCount,
+                    AvailableWorkerCount = descriptor.AvailableWorkerCount,
+                    MaxWorkersPerRun = descriptor.MaxWorkersPerRun,
+                    MinWorkersRequiredPerRun = descriptor.MinWorkersRequiredPerRun,
+                    QueuedRunCount = descriptor.QueuedRunCount,
+                    RunningRunCount = descriptor.RunningRunCount,
+                    ActiveRunCount = descriptor.ActiveRunCount,
+                    MaxConcurrentRuns = descriptor.MaxConcurrentRuns,
+                    MaxRunSlots = descriptor.MaxRunSlots,
+                    AvailableRunSlots = descriptor.AvailableRunSlots,
+                    ReservedRunSlots = descriptor.ReservedRunSlots,
+                    EffectiveAvailableRunSlots = descriptor.EffectiveAvailableRunSlots,
+                    IsQueuePaused = descriptor.IsQueuePaused,
+                    CanAcceptRun = descriptor.CanAcceptRun,
+                    LastHeartbeatAtUtc = descriptor.LastHeartbeatAtUtc,
+                    Metadata = new Dictionary<string, string>(
+                        metadata,
+                        StringComparer.OrdinalIgnoreCase),
+                    ControlPlaneHostId = descriptor.ControlPlaneHostId,
+                    ControlPlaneId = descriptor.ControlPlaneId
+                };
             }
 
             private static AiRuntimeInstanceCapacityDescriptor

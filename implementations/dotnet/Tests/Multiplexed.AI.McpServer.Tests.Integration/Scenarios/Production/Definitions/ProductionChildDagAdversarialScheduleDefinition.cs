@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Definitions
 {
@@ -45,7 +45,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         /// Alternates logical runs from the low and high edges of the submission segment while proof results
         /// remain normalized to the historical ascending identity order.
         /// </summary>
-        OutsideIn = 2
+        OutsideIn = 2,
+
+        /// <summary>
+        /// Starts logical runs from the center of the submission segment and expands toward both edges while
+        /// proof results remain normalized to the historical ascending identity order.
+        /// </summary>
+        CenterOut = 3
     }
 
     /// <summary>
@@ -223,6 +229,28 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
                 FailureTarget = ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint,
                 KillAfterCompletedStepCount = 25,
                 SubmissionOrdering = ProductionChildDagSubmissionOrdering.OutsideIn
+            };
+
+        /// <summary>
+        /// Gets the third deterministic interleaving seed. The workload, runtime failure boundary, and durable
+        /// proof contract remain identical to the frozen baseline while logical runs are started from the center
+        /// of each submission segment and then expand symmetrically toward its edges.
+        /// </summary>
+        /// <remarks>
+        /// This varies only test orchestration. Pipeline semantics, queue semantics, runtime selection,
+        /// recovery behavior, and durable identities are not modified.
+        /// </remarks>
+        public static ProductionChildDagAdversarialScheduleDefinition SeedC { get; } =
+            new()
+            {
+                MatrixScenarioId = "seed-c",
+                FailureSeed = "seed-c",
+                FailureScheduleMode = "DeterministicAdversarial",
+                FailurePosition = "submission-order-center-out",
+                MatrixStatus = "IN_PROGRESS",
+                FailureTarget = ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint,
+                KillAfterCompletedStepCount = 25,
+                SubmissionOrdering = ProductionChildDagSubmissionOrdering.CenterOut
             };
 
         /// <summary>

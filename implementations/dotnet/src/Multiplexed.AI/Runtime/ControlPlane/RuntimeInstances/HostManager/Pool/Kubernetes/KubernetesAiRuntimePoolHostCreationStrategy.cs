@@ -606,6 +606,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 ?? throw new InvalidOperationException(
                     "kubernetes-runtime-pool-capacity-store-unavailable");
 
+            var projectionHeartbeatBarriers =
+                new Dictionary<string, DateTimeOffset>(
+                    StringComparer.Ordinal);
+
             foreach (var runtime in podSpec.Bootstrap.RuntimeInstances)
             {
                 var descriptor =
@@ -619,118 +623,166 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                             "runtime-capacity-descriptor-missing:",
                             runtime.RuntimeInstanceId));
 
-                if (!string.Equals(
-                        descriptor.PoolId,
-                        podSpec.PoolId,
-                        StringComparison.Ordinal) ||
-                    !string.Equals(
-                        descriptor.HostId,
-                        hostId,
-                        StringComparison.Ordinal))
+                ValidateProjectedCapacityMembership(
+                    podSpec,
+                    hostId,
+                    runtime.RuntimeInstanceId,
+                    descriptor);
+
+                IReadOnlyDictionary<string, string>?
+                    exactRuntimeTransportMetadata = null;
+
+                if (runtimeTransportMetadata is not null)
                 {
-                    throw new InvalidOperationException(
-                        string.Concat(
-                            "runtime-capacity-membership-mismatch:",
-                            runtime.RuntimeInstanceId));
-                }
-
-                var metadata =
-                    new Dictionary<string, string>(
-                        descriptor.Metadata,
-                        StringComparer.OrdinalIgnoreCase);
-
-                if (TryGetTransportEndpoint(
-                        descriptor.Metadata,
-                        out var internalTransportEndpoint) &&
-                    !string.Equals(
-                        internalTransportEndpoint,
-                        transportEndpoint,
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    metadata[AiRuntimeInstanceCommandTransportMetadataKeys.InternalTransportEndpoint] =
-                        internalTransportEndpoint;
-                }
-
-                CopyHostMetadata(
-                    metadata,
-                    hostMetadata);
-
-                if (runtimeTransportMetadata is not null &&
                     runtimeTransportMetadata.TryGetValue(
                         runtime.RuntimeInstanceId,
-                        out var exactRuntimeTransportMetadata))
-                {
-                    CopyMetadata(
-                        metadata,
-                        exactRuntimeTransportMetadata);
+                        out exactRuntimeTransportMetadata);
                 }
 
-                AddTransportEndpointAliases(
-                    metadata,
-                    transportEndpoint);
-
-                metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpointSource] =
-                    transportEndpointSource;
-                metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpointScope] =
-                    "control-plane";
-                metadata[AiRuntimeHostMetadataKeys.HostProvider] =
-                    "kubernetes";
-                metadata[AiRuntimeHostMetadataKeys.HostCreationMode] =
-                    AiRuntimeHostCreationMode.KubernetesPool.ToString();
-                metadata[AiRuntimeHostMetadataKeys.HostCreationStrategy] =
-                    nameof(KubernetesAiRuntimePoolHostCreationStrategy);
-                metadata[AiRuntimeHostMetadataKeys.HostId] = hostId;
-                metadata[AiRuntimeHostMetadataKeys.HostName] = podSpec.PodName;
-                metadata[AiRuntimeHostMetadataKeys.CamelCaseHostType] =
-                    AiRuntimeHostTypeNames.KubernetesPool;
-                metadata[AiRuntimeHostMetadataKeys.Deployment] =
-                    AiRuntimeHostDeploymentNames.KubernetesPool;
-
-                await capacityStore
-                    .PublishAsync(
-                        CopyDescriptor(
+                projectionHeartbeatBarriers[runtime.RuntimeInstanceId] =
+                    await this.ProjectRuntimeTransportMetadataAsync(
+                            podSpec,
+                            runtime,
+                            hostId,
+                            transportEndpoint,
+                            hostMetadata,
+                            exactRuntimeTransportMetadata,
+                            transportEndpointSource,
+                            capacityStore,
                             descriptor,
-                            metadata),
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-                this.logger.LogInformation(
-                    "KUBERNETES RUNTIME POOL TRANSPORT PROJECTED RuntimeInstanceId={RuntimeInstanceId} PoolId={PoolId} HostId={HostId} TransportEndpoint={TransportEndpoint} InternalTransportEndpoint={InternalTransportEndpoint}",
-                    runtime.RuntimeInstanceId,
-                    podSpec.PoolId,
-                    hostId,
-                    transportEndpoint,
-                    metadata.TryGetValue(
-                        AiRuntimeInstanceCommandTransportMetadataKeys.InternalTransportEndpoint,
-                        out var projectedInternalEndpoint)
-                        ? projectedInternalEndpoint
-                        : "(none)");
+                            "initial-projection",
+                            cancellationToken)
+                        .ConfigureAwait(false);
             }
 
             await this.WaitUntilProjectedCapacityReadyAsync(
                     podSpec,
                     hostId,
                     transportEndpoint,
+                    hostMetadata,
                     capacityStore,
                     runtimeTransportMetadata,
+                    transportEndpointSource,
+                    projectionHeartbeatBarriers,
                     cancellationToken)
                 .ConfigureAwait(false);
         }
 
         /// <summary>
-        /// Waits until every child heartbeat has preserved the projected endpoint and confirmed
-        /// transport-ready membership before the scale-out request is fulfilled. A ready runtime
-        /// may already be busy, so transient dispatch availability is not a startup requirement.
+        /// Projects exact transport metadata for one planned Runtime Pool child and returns the
+        /// heartbeat barrier that the child must cross before the projection is considered durable.
+        /// </summary>
+        private async Task<DateTimeOffset> ProjectRuntimeTransportMetadataAsync(
+            AiKubernetesRuntimePoolPodSpec podSpec,
+            AiKubernetesRuntimePoolRuntimeInstancePlan runtime,
+            string hostId,
+            string transportEndpoint,
+            IReadOnlyDictionary<string, string> hostMetadata,
+            IReadOnlyDictionary<string, string>? exactRuntimeTransportMetadata,
+            string transportEndpointSource,
+            IAiRuntimeInstanceCapacityStore capacityStore,
+            AiRuntimeInstanceCapacityDescriptor descriptor,
+            string projectionReason,
+            CancellationToken cancellationToken)
+        {
+            var metadata =
+                new Dictionary<string, string>(
+                    descriptor.Metadata,
+                    StringComparer.OrdinalIgnoreCase);
+
+            if (TryGetTransportEndpoint(
+                    descriptor.Metadata,
+                    out var internalTransportEndpoint) &&
+                !string.Equals(
+                    internalTransportEndpoint,
+                    transportEndpoint,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                metadata[AiRuntimeInstanceCommandTransportMetadataKeys.InternalTransportEndpoint] =
+                    internalTransportEndpoint;
+            }
+
+            CopyHostMetadata(
+                metadata,
+                hostMetadata);
+
+            if (exactRuntimeTransportMetadata is not null)
+            {
+                CopyMetadata(
+                    metadata,
+                    exactRuntimeTransportMetadata);
+            }
+
+            AddTransportEndpointAliases(
+                metadata,
+                transportEndpoint);
+
+            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpointSource] =
+                transportEndpointSource;
+            metadata[AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpointScope] =
+                "control-plane";
+            metadata[AiRuntimeHostMetadataKeys.HostProvider] =
+                "kubernetes";
+            metadata[AiRuntimeHostMetadataKeys.HostCreationMode] =
+                AiRuntimeHostCreationMode.KubernetesPool.ToString();
+            metadata[AiRuntimeHostMetadataKeys.HostCreationStrategy] =
+                nameof(KubernetesAiRuntimePoolHostCreationStrategy);
+            metadata[AiRuntimeHostMetadataKeys.HostId] = hostId;
+            metadata[AiRuntimeHostMetadataKeys.HostName] = podSpec.PodName;
+            metadata[AiRuntimeHostMetadataKeys.CamelCaseHostType] =
+                AiRuntimeHostTypeNames.KubernetesPool;
+            metadata[AiRuntimeHostMetadataKeys.Deployment] =
+                AiRuntimeHostDeploymentNames.KubernetesPool;
+
+            await capacityStore
+                .PublishAsync(
+                    CopyDescriptor(
+                        descriptor,
+                        metadata),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            var heartbeatBarrierUtc =
+                DateTimeOffset.UtcNow;
+
+            this.logger.LogInformation(
+                "KUBERNETES RUNTIME POOL TRANSPORT PROJECTED RuntimeInstanceId={RuntimeInstanceId} PoolId={PoolId} HostId={HostId} TransportEndpoint={TransportEndpoint} InternalTransportEndpoint={InternalTransportEndpoint} ProjectionReason={ProjectionReason} HeartbeatBarrierUtc={HeartbeatBarrierUtc}",
+                runtime.RuntimeInstanceId,
+                podSpec.PoolId,
+                hostId,
+                transportEndpoint,
+                metadata.TryGetValue(
+                    AiRuntimeInstanceCommandTransportMetadataKeys.InternalTransportEndpoint,
+                    out var projectedInternalEndpoint)
+                    ? projectedInternalEndpoint
+                    : "(none)",
+                projectionReason,
+                heartbeatBarrierUtc);
+
+            return heartbeatBarrierUtc;
+        }
+
+        /// <summary>
+        /// Waits until every child heartbeat has preserved the projected endpoint and exact route
+        /// metadata after the latest control-plane projection. If a concurrent child heartbeat
+        /// overwrites exact transport metadata with a stale view, the control plane re-projects the
+        /// authoritative route and waits for a later heartbeat to preserve it before startup succeeds.
+        /// A ready runtime may already be busy, so transient dispatch availability is not a startup
+        /// requirement.
         /// </summary>
         private async Task WaitUntilProjectedCapacityReadyAsync(
             AiKubernetesRuntimePoolPodSpec podSpec,
             string hostId,
             string transportEndpoint,
+            IReadOnlyDictionary<string, string> hostMetadata,
             IAiRuntimeInstanceCapacityStore capacityStore,
             IReadOnlyDictionary<
                 string,
                 IReadOnlyDictionary<string, string>>?
                 runtimeTransportMetadata,
+            string transportEndpointSource,
+            IDictionary<string, DateTimeOffset>
+                projectionHeartbeatBarriers,
             CancellationToken cancellationToken)
         {
             var timeout =
@@ -772,45 +824,73 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                     }
 
                     if (descriptor is null ||
-                        !string.Equals(
-                            descriptor.PoolId,
-                            podSpec.PoolId,
-                            StringComparison.Ordinal) ||
-                        !string.Equals(
-                            descriptor.HostId,
+                        !IsProjectedCapacityMembershipReady(
+                            podSpec,
                             hostId,
-                            StringComparison.Ordinal) ||
-                        descriptor.Status != AiRuntimeInstanceStatus.Ready ||
-                        !TryGetTransportEndpoint(
+                            descriptor))
+                    {
+                        allRuntimeInstancesReady = false;
+                        continue;
+                    }
+
+                    var transportMetadataReady =
+                        TryGetTransportEndpoint(
                             descriptor.Metadata,
-                            out var projectedTransportEndpoint) ||
-                        !string.Equals(
+                            out var projectedTransportEndpoint) &&
+                        string.Equals(
                             projectedTransportEndpoint,
                             transportEndpoint,
-                            StringComparison.OrdinalIgnoreCase) ||
-                        !string.Equals(
+                            StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(
                             GetMetadataValue(
                                 descriptor.Metadata,
                                 AiRuntimeInstanceCommandTransportMetadataKeys.TransportEndpointScope),
                             "control-plane",
-                            StringComparison.OrdinalIgnoreCase) ||
-                        !ContainsExpectedMetadata(
+                            StringComparison.OrdinalIgnoreCase) &&
+                        ContainsExpectedMetadata(
                             descriptor.Metadata,
-                            expectedRuntimeTransportMetadata))
+                            expectedRuntimeTransportMetadata);
+
+                    if (!transportMetadataReady)
+                    {
+                        projectionHeartbeatBarriers[runtime.RuntimeInstanceId] =
+                            await this.ProjectRuntimeTransportMetadataAsync(
+                                    podSpec,
+                                    runtime,
+                                    hostId,
+                                    transportEndpoint,
+                                    hostMetadata,
+                                    expectedRuntimeTransportMetadata,
+                                    transportEndpointSource,
+                                    capacityStore,
+                                    descriptor,
+                                    "heartbeat-drift-repair",
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+
+                        allRuntimeInstancesReady = false;
+                        continue;
+                    }
+
+                    if (projectionHeartbeatBarriers.TryGetValue(
+                            runtime.RuntimeInstanceId,
+                            out var heartbeatBarrierUtc) &&
+                        descriptor.LastHeartbeatAtUtc <=
+                            heartbeatBarrierUtc)
                     {
                         allRuntimeInstancesReady = false;
-                        break;
                     }
                 }
 
                 if (allRuntimeInstancesReady)
                 {
                     this.logger.LogInformation(
-                        "KUBERNETES RUNTIME POOL TRANSPORT CAPACITY READY PoolId={PoolId} HostId={HostId} TransportEndpoint={TransportEndpoint} RuntimeInstanceCount={RuntimeInstanceCount}",
+                        "KUBERNETES RUNTIME POOL TRANSPORT CAPACITY READY PoolId={PoolId} HostId={HostId} TransportEndpoint={TransportEndpoint} RuntimeInstanceCount={RuntimeInstanceCount} Proof={Proof}",
                         podSpec.PoolId,
                         hostId,
                         transportEndpoint,
-                        podSpec.Bootstrap.RuntimeInstances.Count);
+                        podSpec.Bootstrap.RuntimeInstances.Count,
+                        "exact-projection-preserved-by-post-projection-heartbeat");
 
                     return;
                 }
@@ -824,6 +904,51 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
             throw new TimeoutException(
                 "kubernetes-runtime-pool-transport-capacity-readiness-timeout");
+        }
+
+        /// <summary>
+        /// Validates immutable Pool and Pod membership before projecting transport metadata.
+        /// </summary>
+        private static void ValidateProjectedCapacityMembership(
+            AiKubernetesRuntimePoolPodSpec podSpec,
+            string hostId,
+            string runtimeInstanceId,
+            AiRuntimeInstanceCapacityDescriptor descriptor)
+        {
+            if (!string.Equals(
+                    descriptor.PoolId,
+                    podSpec.PoolId,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    descriptor.HostId,
+                    hostId,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    string.Concat(
+                        "runtime-capacity-membership-mismatch:",
+                        runtimeInstanceId));
+            }
+        }
+
+        /// <summary>
+        /// Determines whether one descriptor still represents the exact ready Pool/Pod member.
+        /// </summary>
+        private static bool IsProjectedCapacityMembershipReady(
+            AiKubernetesRuntimePoolPodSpec podSpec,
+            string hostId,
+            AiRuntimeInstanceCapacityDescriptor descriptor)
+        {
+            return string.Equals(
+                       descriptor.PoolId,
+                       podSpec.PoolId,
+                       StringComparison.Ordinal) &&
+                   string.Equals(
+                       descriptor.HostId,
+                       hostId,
+                       StringComparison.Ordinal) &&
+                   descriptor.Status ==
+                       AiRuntimeInstanceStatus.Ready;
         }
 
         /// <summary>
