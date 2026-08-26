@@ -16,7 +16,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         /// The selected parent continuation is killed only after durable continuation acceptance
         /// and before the child call-site becomes terminal.
         /// </summary>
-        ContinuationConsume = 1
+        ContinuationConsume = 1,
+
+        /// <summary>
+        /// The selected nested child execution is held at a deterministic child checkpoint and its exact
+        /// physical runtime process is destroyed while the relation remains durably waiting.
+        /// </summary>
+        RecursiveChildRuntime = 2
     }
 
     /// <summary>
@@ -110,6 +116,49 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
             };
 
         /// <summary>
+        /// Gets the deterministic intermediate-recursion failure schedule that destroys the runtime owning the
+        /// Depth 2 child while that exact child is held at the earliest already-supported durable child checkpoint.
+        /// </summary>
+        /// <remarks>
+        /// The checkpoint is embedded only in the targeted recursive child definition. The root and every other
+        /// child execution keep the normal production pipeline shape. Holding child step two after one durable
+        /// child step creates a deterministic physical failure window without changing runtime semantics.
+        /// </remarks>
+        public static ProductionChildDagAdversarialScheduleDefinition Depth2RuntimeFailure { get; } =
+            new()
+            {
+                MatrixScenarioId = "depth2-runtime-failure",
+                FailureSeed = "depth2-runtime-failure",
+                FailureScheduleMode = "DeterministicAdversarial",
+                FailurePosition = "depth2-child-runtime",
+                MatrixStatus = "IN_PROGRESS",
+                FailureTarget = ProductionChildDagAdversarialFailureTarget.RecursiveChildRuntime,
+                TargetRecursiveDepth = 2,
+                KillAfterCompletedStepCount = 1
+            };
+
+        /// <summary>
+        /// Gets the deterministic deepest-recursion failure schedule that destroys the runtime owning the
+        /// Depth 3 child while that exact child is held at the earliest already-supported durable child checkpoint.
+        /// </summary>
+        /// <remarks>
+        /// The checkpoint is embedded only in the deepest recursive child definition. Depth 1 and Depth 2 keep
+        /// their normal production pipeline shape, so recovery must converge upward through both continuations.
+        /// </remarks>
+        public static ProductionChildDagAdversarialScheduleDefinition Depth3RuntimeFailure { get; } =
+            new()
+            {
+                MatrixScenarioId = "depth3-runtime-failure",
+                FailureSeed = "depth3-runtime-failure",
+                FailureScheduleMode = "DeterministicAdversarial",
+                FailurePosition = "depth3-child-runtime",
+                MatrixStatus = "IN_PROGRESS",
+                FailureTarget = ProductionChildDagAdversarialFailureTarget.RecursiveChildRuntime,
+                TargetRecursiveDepth = 3,
+                KillAfterCompletedStepCount = 1
+            };
+
+        /// <summary>
         /// Gets the stable matrix row identifier written into proof output.
         /// </summary>
         public required string MatrixScenarioId { get; init; }
@@ -140,13 +189,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
         public required ProductionChildDagAdversarialFailureTarget FailureTarget { get; init; }
 
         /// <summary>
+        /// Gets the one-based recursive child depth targeted by a recursive child runtime failure schedule.
+        /// </summary>
+        public int? TargetRecursiveDepth { get; init; }
+
+        /// <summary>
         /// Gets whether this schedule uses one ordinary parent crash checkpoint as the physical failure boundary.
         /// </summary>
         public bool UsesParentCrashCheckpoint =>
             this.FailureTarget == ProductionChildDagAdversarialFailureTarget.ParentStepCheckpoint;
 
         /// <summary>
-        /// Gets the number of durable ordinary parent steps that must complete before the exact runtime process is killed.
+        /// Gets whether this schedule embeds one durable crash checkpoint in an exact recursive child definition.
+        /// </summary>
+        public bool UsesRecursiveChildCrashCheckpoint =>
+            this.FailureTarget == ProductionChildDagAdversarialFailureTarget.RecursiveChildRuntime;
+
+        /// <summary>
+        /// Gets the number of durable ordinary steps that must complete in the targeted execution before the exact
+        /// runtime process is killed. Parent-targeted schedules count parent steps; recursive-child schedules count
+        /// steps in the targeted child execution.
         /// </summary>
         public required int KillAfterCompletedStepCount { get; init; }
 
@@ -176,6 +238,47 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Defini
                     nameof(KillAfterCompletedStepCount),
                     this.KillAfterCompletedStepCount,
                     $"The adversarial runtime failure must occur after at least one completed step and before the final parent pipeline step '{pipelineStepCount}'.");
+            }
+
+            return checked(this.KillAfterCompletedStepCount + 1);
+        }
+
+        /// <summary>
+        /// Resolves the one-based crash checkpoint step embedded only in the targeted recursive child definition.
+        /// </summary>
+        /// <param name="configuredChildDepth">The total configured recursive child depth.</param>
+        /// <param name="pipelineStepCount">The number of ordinary steps in each recursive child pipeline.</param>
+        /// <returns>The one-based child crash checkpoint step index.</returns>
+        public int ResolveRecursiveChildCrashCheckpointStepIndex(
+            int configuredChildDepth,
+            int pipelineStepCount)
+        {
+            if (!this.UsesRecursiveChildCrashCheckpoint)
+            {
+                throw new InvalidOperationException(
+                    $"Adversarial failure target '{this.FailureTarget}' does not use a recursive child crash checkpoint.");
+            }
+
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(configuredChildDepth);
+            ArgumentOutOfRangeException.ThrowIfLessThan(pipelineStepCount, 2);
+
+            if (!this.TargetRecursiveDepth.HasValue ||
+                this.TargetRecursiveDepth.Value <= 0 ||
+                this.TargetRecursiveDepth.Value > configuredChildDepth)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(TargetRecursiveDepth),
+                    this.TargetRecursiveDepth,
+                    $"The adversarial recursive target depth must be between 1 and '{configuredChildDepth}'.");
+            }
+
+            if (this.KillAfterCompletedStepCount < 1 ||
+                this.KillAfterCompletedStepCount >= pipelineStepCount)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(KillAfterCompletedStepCount),
+                    this.KillAfterCompletedStepCount,
+                    $"The adversarial recursive runtime failure must occur after at least one completed child step and before the final child pipeline step '{pipelineStepCount}'.");
             }
 
             return checked(this.KillAfterCompletedStepCount + 1);

@@ -1764,6 +1764,14 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         stepCount)
                     : null;
 
+            int? recursiveChildRuntimeCrashCheckpointStepIndex =
+                injectChildRuntimeFailure &&
+                resolvedAdversarialSchedule.UsesRecursiveChildCrashCheckpoint
+                    ? resolvedAdversarialSchedule.ResolveRecursiveChildCrashCheckpointStepIndex(
+                        childDepth,
+                        stepCount)
+                    : null;
+
             var parentLogicalStepCount =
                 checked(stepCount + (childDepth > 0 ? 1 : 0));
 
@@ -2150,6 +2158,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         ProductionCrashCheckpointGate?
                             childRuntimeFailureCrashGate = null;
                         ProductionCrashCheckpointGate?
+                            recursiveChildRuntimeFailureCrashGate = null;
+                        ProductionCrashCheckpointGate?
                             continuationTargetPreparationGate = null;
 
                         if (injectChildRuntimeFailure && childDepth > 0)
@@ -2168,6 +2178,25 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                                 childRuntimeResumeCheckpointStepIndex
                                                 ?? throw new InvalidOperationException(
                                                     "Checkpoint-targeted runtime failure did not resolve a crash checkpoint."),
+                                            stateTtl:
+                                                TimeSpan.FromMinutes(
+                                                    BoundaryFailureCrashCheckpointStateTtlMinutes))
+                                        .ConfigureAwait(false);
+                            }
+                            else if (resolvedAdversarialSchedule.UsesRecursiveChildCrashCheckpoint)
+                            {
+                                recursiveChildRuntimeFailureCrashGate =
+                                    await ProductionCrashCheckpointGate
+                                        .ArmAsync(
+                                            redisConnection,
+                                            output,
+                                            controlPlaneId,
+                                            tenant.TenantId,
+                                            $"{scenario.Name}-cycle-{cycleNumber:000}-recursive-child-runtime-kill",
+                                            checkpointStepIndex:
+                                                recursiveChildRuntimeCrashCheckpointStepIndex
+                                                ?? throw new InvalidOperationException(
+                                                    "Recursive child runtime failure did not resolve a child crash checkpoint."),
                                             stateTtl:
                                                 TimeSpan.FromMinutes(
                                                     BoundaryFailureCrashCheckpointStateTtlMinutes))
@@ -2195,6 +2224,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         var initialTargetCheckpoint =
                             childRuntimeFailureCrashGate?.Definition ??
                             continuationTargetPreparationGate?.Definition;
+                        var recursiveChildTargetCheckpoint =
+                            recursiveChildRuntimeFailureCrashGate?.Definition;
+                        var selectedTargetCheckpoint =
+                            initialTargetCheckpoint ??
+                            recursiveChildTargetCheckpoint;
 
                         var initialAdmissionTask =
                             RuntimePoolProductionCycleExecutor
@@ -2217,6 +2251,19 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                             : (iteration, runNumber) =>
                                                 iteration == 1 && runNumber == 1
                                                     ? initialTargetCheckpoint
+                                                    : null,
+                                    childCrashCheckpointDepth:
+                                        recursiveChildTargetCheckpoint is null
+                                            ? 0
+                                            : resolvedAdversarialSchedule.TargetRecursiveDepth
+                                                ?? throw new InvalidOperationException(
+                                                    "Recursive child runtime failure did not define a target depth."),
+                                    childCrashCheckpointFactory:
+                                        recursiveChildTargetCheckpoint is null
+                                            ? null
+                                            : (iteration, runNumber) =>
+                                                iteration == 1 && runNumber == 1
+                                                    ? recursiveChildTargetCheckpoint
                                                     : null);
 
                         var admissionProof =
@@ -2239,7 +2286,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
                         string? preferredFailureParentSharedRunId = null;
 
-                        if (initialTargetCheckpoint is not null)
+                        if (selectedTargetCheckpoint is not null)
                         {
                             var gatedAdmissionResult =
                                 admissionProof.Results[0];
@@ -2262,9 +2309,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 $"Cycle='{cycleNumber}', " +
                                 $"ChildDepth='{childDepth}', " +
                                 $"SharedRunId='{preferredFailureParentSharedRunId}', " +
-                                $"CheckpointStepIndex='{initialTargetCheckpoint.StepIndex}', " +
+                                $"CheckpointStepIndex='{selectedTargetCheckpoint.StepIndex}', " +
                                 $"FailureTarget='{resolvedAdversarialSchedule.FailureTarget}', " +
-                                $"GateRole='{(childRuntimeFailureCrashGate is not null ? "physical-failure-boundary" : "preparation-only")}'.");
+                                $"TargetRecursiveDepth='{(resolvedAdversarialSchedule.TargetRecursiveDepth?.ToString(CultureInfo.InvariantCulture) ?? "NOT_APPLICABLE")}', " +
+                                $"GateRole='{(childRuntimeFailureCrashGate is not null ? "physical-failure-boundary" : recursiveChildRuntimeFailureCrashGate is not null ? "recursive-child-physical-failure-boundary" : "preparation-only")}'.");
                         }
 
                         output.WriteLine(
@@ -2334,9 +2382,55 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     .ConfigureAwait(false);
                             }
 
+                            if (recursiveChildRuntimeFailureCrashGate is not null)
+                            {
+                                var recursiveChildCrashGateWaitTask =
+                                    recursiveChildRuntimeFailureCrashGate
+                                        .WaitUntilReachedAsync(
+                                            TimeSpan.FromMinutes(3));
+
+                                await AwaitScenarioOperationWithProgressAsync(
+                                        recursiveChildCrashGateWaitTask,
+                                        phase:
+                                            $"cycle-{cycleNumber:000}-recursive-child-runtime-crash-gate",
+                                        totalStopwatch)
+                                    .ConfigureAwait(false);
+                            }
+
                             try
                             {
                                 if (resolvedAdversarialSchedule.FailureTarget ==
+                                    ProductionChildDagAdversarialFailureTarget.RecursiveChildRuntime)
+                                {
+                                    if (recursiveChildRuntimeFailureCrashGate is null ||
+                                        string.IsNullOrWhiteSpace(preferredFailureParentSharedRunId) ||
+                                        !resolvedAdversarialSchedule.TargetRecursiveDepth.HasValue)
+                                    {
+                                        throw new InvalidOperationException(
+                                            "Recursive child runtime targeting requires one child checkpoint gate, parent SharedRunId, and target depth.");
+                                    }
+
+                                    childRuntimeFailureTarget =
+                                        await WaitForAndKillBoundedCapacityRecursiveChildRuntimeFailureTargetAsync(
+                                                registry,
+                                                sharedRunStore,
+                                                runExecutionIndex,
+                                                dagStore,
+                                                childExecutionRelationStore,
+                                                observation,
+                                                preferredFailureParentSharedRunId,
+                                                controlPlaneId,
+                                                poolId,
+                                                tenant.TenantId,
+                                                childDepth,
+                                                resolvedAdversarialSchedule.TargetRecursiveDepth.Value,
+                                                runtimeCountPerPod,
+                                                maximumRuntimeCapacity,
+                                                childRuntimeFailureAfterCompletedStepCount,
+                                                TimeSpan.FromMinutes(3))
+                                            .ConfigureAwait(false);
+                                }
+                                else if (resolvedAdversarialSchedule.FailureTarget ==
                                     ProductionChildDagAdversarialFailureTarget.ContinuationConsume)
                                 {
                                     if (continuationTargetPreparationGate is null ||
@@ -2378,6 +2472,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                             {
                                 if (childRuntimeFailureCrashGate is not null)
                                     await childRuntimeFailureCrashGate.ReleaseAsync().ConfigureAwait(false);
+                                if (recursiveChildRuntimeFailureCrashGate is not null)
+                                    await recursiveChildRuntimeFailureCrashGate.ReleaseAsync().ConfigureAwait(false);
                                 if (continuationTargetPreparationGate is not null)
                                     await continuationTargetPreparationGate.ReleaseAsync().ConfigureAwait(false);
                                 throw;
@@ -2424,7 +2520,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                             lifecycleObserver:
                                                 deterministicLifecycleObserver,
                                             crashCheckpointGate:
-                                                childRuntimeFailureCrashGate,
+                                                childRuntimeFailureCrashGate ??
+                                                recursiveChildRuntimeFailureCrashGate,
                                             preKillInvariantAssertion:
                                                 childRuntimeFailureTarget.ContinuationBoundary is null ||
                                                 childRuntimeFailureTarget.PrevalidatedKillProof is not null
@@ -2433,9 +2530,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                                         childExecutionRelationStore, sharedRunStore, runExecutionIndex,
                                                         dagStore, childRuntimeFailureTarget.ContinuationBoundary),
                                             killBoundaryMode:
-                                                childRuntimeFailureTarget.ContinuationBoundary is null
-                                                    ? ProductionRealRuntimeCrashKillBoundaryMode.DurableDagProgress
-                                                    : ProductionRealRuntimeCrashKillBoundaryMode.PrevalidatedPhysicalBoundary,
+                                                childRuntimeFailureTarget.PrevalidatedKillProof is not null
+                                                    ? ProductionRealRuntimeCrashKillBoundaryMode.PrevalidatedPhysicalBoundary
+                                                    : ProductionRealRuntimeCrashKillBoundaryMode.DurableDagProgress,
                                             prevalidatedKillProof:
                                                 childRuntimeFailureTarget.PrevalidatedKillProof,
                                             runtimeTenantOwnershipAssertion:
@@ -2448,6 +2545,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 {
                                     // Idempotent safety release also covers recovery failures after target selection.
                                     await childRuntimeFailureCrashGate
+                                        .ReleaseAsync()
+                                        .ConfigureAwait(false);
+                                }
+
+                                if (recursiveChildRuntimeFailureCrashGate is not null)
+                                {
+                                    await recursiveChildRuntimeFailureCrashGate
                                         .ReleaseAsync()
                                         .ConfigureAwait(false);
                                 }
@@ -3223,6 +3327,56 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 "Result='PASS'.");
                         }
 
+                        if (resolvedAdversarialSchedule.UsesRecursiveChildCrashCheckpoint)
+                        {
+                            Assert.NotNull(childRuntimeRecoveryProof);
+                            Assert.NotNull(childRuntimeFailureTarget?.PrevalidatedKillProof);
+
+                            var recoveredRecursiveChild =
+                                Assert.Single(
+                                    childRuntimeRecoveryProof!
+                                        .RecoveredWorks
+                                        .Where(work =>
+                                            !submittedSharedRunIds.Contains(
+                                                work.Original.SharedRunId)));
+
+                            var recoveredRecursiveChildExecutionId =
+                                recoveredRecursiveChild.RecoveredExecutionId ??
+                                recoveredRecursiveChild.Original.ExecutionId;
+
+                            Assert.False(
+                                string.IsNullOrWhiteSpace(recoveredRecursiveChildExecutionId),
+                                $"Cycle {cycleNumber} recovered recursive child ownership proof has no durable ExecutionId. " +
+                                $"SharedRunId='{recoveredRecursiveChild.Original.SharedRunId}'.");
+                            Assert.Equal(
+                                childRuntimeFailureTarget!.PrevalidatedKillProof!.ExecutionId,
+                                recoveredRecursiveChildExecutionId);
+
+                            var recursiveChildFinalTarget =
+                                new ProductionRuntimeOwnershipFinalTarget(
+                                    recoveredRecursiveChild.Original.SharedRunId,
+                                    recoveredRecursiveChild.ReplacementRuntimeInstanceId,
+                                    recoveredRecursiveChild.ReplacementLocalRunId,
+                                    recoveredRecursiveChildExecutionId);
+
+                            runtimeOwnershipFinalTargets =
+                                ProductionRuntimeOwnershipTransitionAssertions
+                                    .IncludeExactSupplementalRecoveredFinalTarget(
+                                        runtimeOwnershipFinalTargets,
+                                        recursiveChildFinalTarget,
+                                        $"{boundedCapacityProfile.LogPrefix} cycle {cycleNumber} recursive child recovered ownership target");
+
+                            output.WriteLine(
+                                $"[{boundedCapacityProfile.LogPrefix} RECURSIVE CHILD RECOVERED OWNERSHIP TARGET] " +
+                                $"Cycle='{cycleNumber}', " +
+                                $"TargetDepth='{resolvedAdversarialSchedule.TargetRecursiveDepth}', " +
+                                $"SharedRunId='{recursiveChildFinalTarget.SharedRunId}', " +
+                                $"ExecutionId='{recursiveChildFinalTarget.ExecutionId}', " +
+                                $"ReplacementRuntimeInstanceId='{recursiveChildFinalTarget.AssignedRuntimeInstanceId}', " +
+                                $"ReplacementLocalRunId='{recursiveChildFinalTarget.LocalRunId}', " +
+                                "Scope='exact-recursive-child-shared-run', Result='PASS'.");
+                        }
+
                         var runtimeOwnershipTransitionProof =
                             ProductionRuntimeOwnershipTransitionAssertions
                                 .AssertExactRecoveredFinalOwnership(
@@ -3730,14 +3884,38 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                     AiEngineEvents.Step.Completed,
                                     StringComparison.OrdinalIgnoreCase));
 
+                        var expectedParentExecutionIds =
+                            replayProofs
+                                .Select(proof => proof.ExecutionId)
+                                .ToHashSet(StringComparer.Ordinal);
+
+                        var expectedSupplementalRecoveredExecutionIds =
+                            childRecoveredExecutionIds
+                                .Where(executionId => !expectedParentExecutionIds.Contains(executionId))
+                                .ToHashSet(StringComparer.Ordinal);
+
+                        var recoveredParentExecutionIds =
+                            RuntimePoolProductionCycleExecutor
+                                .SelectRecoveredExecutionIdsForExpectedProofScope(
+                                    expectedParentExecutionIds,
+                                    recoveredExecutionIds,
+                                    expectedSupplementalRecoveredExecutionIds,
+                                    $"Warm reuse cycle {auditCycleNumber} parent logical step completion ledger proof");
+
+                        output.WriteLine(
+                            $"[{boundedCapacityProfile.LogPrefix} WARM REUSE PARENT RECOVERY SCOPE PROOF] " +
+                            $"Cycle='{auditCycleNumber}', " +
+                            $"RecoveredParentExecutionCount='{recoveredParentExecutionIds.Count}', " +
+                            $"SupplementalRecoveredExecutionCount='{expectedSupplementalRecoveredExecutionIds.Count}', " +
+                            $"SupplementalRecoveredExecutionIds='{string.Join(",", expectedSupplementalRecoveredExecutionIds.OrderBy(value => value, StringComparer.Ordinal))}', " +
+                            "Scope='parent-logical-step-proof-only', Result='PASS'.");
+
                         var stepCompletionLedgerProof =
                             RuntimePoolProductionCycleExecutor
                                 .AssertLogicalStepCompletionEvidence(
                                     executionLedgerEntries,
-                                    replayProofs
-                                        .Select(proof => proof.ExecutionId)
-                                        .ToHashSet(StringComparer.Ordinal),
-                                    recoveredExecutionIds,
+                                    expectedParentExecutionIds,
+                                    recoveredParentExecutionIds,
                                     parentLogicalStepCount,
                                     $"Warm reuse cycle {auditCycleNumber} logical step completion ledger proof");
 
@@ -3839,14 +4017,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                 .ToArray();
 
                         var expectedSupplementalDispatchRecoverySharedRunIds =
-                            childRuntimeFailureTarget?.ContinuationBoundary is null
-                                ? new HashSet<string>(StringComparer.Ordinal)
-                                : new HashSet<string>(StringComparer.Ordinal)
-                                {
-                                    childRuntimeFailureTarget
-                                        .ContinuationBoundary
-                                        .SharedRunId
-                                };
+                            childRecoveredSharedRunIds
+                                .Where(sharedRunId => !submittedSharedRunIds.Contains(sharedRunId))
+                                .ToHashSet(StringComparer.Ordinal);
 
                         var recoveredSubmittedDispatchSharedRunIds =
                             RuntimePoolProductionCycleExecutor
@@ -4392,6 +4565,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     output.WriteLine(
                         $"ChildRuntimeResumeCheckpointStepIndex='{(childRuntimeResumeCheckpointStepIndex.HasValue ? childRuntimeResumeCheckpointStepIndex.Value.ToString(CultureInfo.InvariantCulture) : "NOT_APPLICABLE")}'");
                     output.WriteLine(
+                        $"TargetRecursiveDepth='{(resolvedAdversarialSchedule.TargetRecursiveDepth?.ToString(CultureInfo.InvariantCulture) ?? "NOT_APPLICABLE")}'");
+                    output.WriteLine(
+                        $"RecursiveChildRuntimeCrashCheckpointStepIndex='{(recursiveChildRuntimeCrashCheckpointStepIndex.HasValue ? recursiveChildRuntimeCrashCheckpointStepIndex.Value.ToString(CultureInfo.InvariantCulture) : "NOT_APPLICABLE")}'");
+                    output.WriteLine(
+                        $"RecursiveChildRuntimePhysicalBoundaryProof='{(resolvedAdversarialSchedule.UsesRecursiveChildCrashCheckpoint ? "PASS" : "NOT_APPLICABLE")}'");
+                    output.WriteLine(
                         $"ContinuationConsumePhysicalBoundaryProof='{(resolvedAdversarialSchedule.FailureTarget == ProductionChildDagAdversarialFailureTarget.ContinuationConsume ? "PASS" : "NOT_APPLICABLE")}'");
                     output.WriteLine(
                         $"BusyHostFailureCount='{busyHostFailureCount}'");
@@ -4527,6 +4706,370 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 poolId,
                 output,
                 logPrefix);
+        }
+
+        private async Task<BoundedCapacityChildRuntimeFailureTarget>
+            WaitForAndKillBoundedCapacityRecursiveChildRuntimeFailureTargetAsync(
+                IAiRuntimeInstanceRegistry registry,
+                IAiSharedRunStore sharedRunStore,
+                IAiRuntimeRunExecutionIndex runExecutionIndex,
+                IAiDagExecutionStore dagStore,
+                IAiChildExecutionRelationStore relationStore,
+                BoundedCapacityMachineLimitObservation observation,
+                string parentSharedRunId, string controlPlaneId, string poolId, string tenantId,
+                int childDepth, int targetDepth, int runtimeCountPerPod, int maximumRuntimeCapacity,
+                int minimumCompletedStepsBeforeKill, TimeSpan timeout)
+        {
+            ArgumentNullException.ThrowIfNull(registry);
+            ArgumentNullException.ThrowIfNull(sharedRunStore);
+            ArgumentNullException.ThrowIfNull(runExecutionIndex);
+            ArgumentNullException.ThrowIfNull(dagStore);
+            ArgumentNullException.ThrowIfNull(relationStore);
+            ArgumentNullException.ThrowIfNull(observation);
+            ArgumentException.ThrowIfNullOrWhiteSpace(parentSharedRunId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(poolId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(childDepth);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(targetDepth);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(runtimeCountPerPod);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumRuntimeCapacity);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(minimumCompletedStepsBeforeKill);
+
+            if (targetDepth > childDepth)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(targetDepth),
+                    targetDepth,
+                    $"Target recursive depth must be between 1 and '{childDepth}'.");
+            }
+
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(timeout));
+            }
+
+            var deadline = DateTimeOffset.UtcNow.Add(timeout);
+            AiSharedRunRecord? parentSharedRun = null;
+            string? rootExecutionId = null;
+
+            while (DateTimeOffset.UtcNow < deadline && string.IsNullOrWhiteSpace(rootExecutionId))
+            {
+                parentSharedRun =
+                    await sharedRunStore.GetAsync(parentSharedRunId).ConfigureAwait(false);
+
+                if (parentSharedRun is not null)
+                {
+                    rootExecutionId = parentSharedRun.ExecutionId;
+
+                    if (string.IsNullOrWhiteSpace(rootExecutionId) &&
+                        !string.IsNullOrWhiteSpace(parentSharedRun.LocalRunId))
+                    {
+                        var rootIndex =
+                            await runExecutionIndex.GetAsync(parentSharedRun.LocalRunId).ConfigureAwait(false);
+                        rootExecutionId = rootIndex?.ExecutionId;
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(rootExecutionId))
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);
+                }
+            }
+
+            parentSharedRun ??=
+                await sharedRunStore.GetAsync(parentSharedRunId).ConfigureAwait(false);
+
+            if (parentSharedRun is null || string.IsNullOrWhiteSpace(rootExecutionId))
+            {
+                throw new TimeoutException(
+                    $"Recursive child runtime targeting could not resolve the root durable execution. ParentSharedRunId='{parentSharedRunId}'.");
+            }
+
+            var parentPipelineName = parentSharedRun.RunRequest.PipelineName;
+            var remainingForRelation = deadline - DateTimeOffset.UtcNow;
+            if (remainingForRelation <= TimeSpan.Zero)
+            {
+                throw new TimeoutException(
+                    $"Recursive child runtime targeting exhausted its timeout before resolving Depth '{targetDepth}'.");
+            }
+
+            var relation =
+                await ProductionChildDagScenarioHelpers
+                    .WaitForWaitingRelationAtDepthAsync(
+                        relationStore,
+                        tenantId,
+                        rootExecutionId,
+                        parentPipelineName,
+                        childDepth,
+                        targetDepth,
+                        remainingForRelation,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(relation.ChildExecutionId))
+            {
+                throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' waiting relation does not expose a ChildExecutionId. ChildInvocationKey='{relation.ChildInvocationKey}'.");
+            }
+
+            var childExecutionId = relation.ChildExecutionId!;
+            var allSharedRuns =
+                await sharedRunStore
+                    .ListAsync(
+                        includeCancelled: true,
+                        includeCompleted: true,
+                        includeFailed: true)
+                    .ConfigureAwait(false);
+
+            var childSharedRuns =
+                allSharedRuns
+                    .Where(run =>
+                        StringComparer.Ordinal.Equals(run.ControlPlaneId, controlPlaneId) &&
+                        StringComparer.Ordinal.Equals(run.ExecutionContextSnapshot.TenantId, tenantId) &&
+                        StringComparer.Ordinal.Equals(run.RunRequest.RequestedExecutionId, childExecutionId))
+                    .ToArray();
+
+            if (childSharedRuns.Length != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' targeting expected exactly one shared run for ChildExecutionId='{childExecutionId}', Observed='{childSharedRuns.Length}'.");
+            }
+
+            var childSharedRun = childSharedRuns[0];
+            if (string.IsNullOrWhiteSpace(childSharedRun.LocalRunId) ||
+                string.IsNullOrWhiteSpace(childSharedRun.AssignedRuntimeInstanceId))
+            {
+                throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' child shared run does not expose exact physical ownership. SharedRunId='{childSharedRun.SharedRunId}'.");
+            }
+
+            var childLocalRunId = childSharedRun.LocalRunId!;
+            var childRuntimeInstanceId = childSharedRun.AssignedRuntimeInstanceId!;
+
+            var childIndex =
+                await runExecutionIndex.GetAsync(childLocalRunId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' child LocalRunId='{childSharedRun.LocalRunId}' is missing from the runtime execution index.");
+
+            if (!StringComparer.Ordinal.Equals(childIndex.ExecutionId, childExecutionId) ||
+                !StringComparer.Ordinal.Equals(childIndex.RuntimeInstanceId, childRuntimeInstanceId) ||
+                !string.Equals(childIndex.Status, "running", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' child is not running under the exact durable/physical ownership expected at the checkpoint. " +
+                    $"ChildExecutionId='{childExecutionId}', IndexExecutionId='{childIndex.ExecutionId}', SharedRuntimeInstanceId='{childRuntimeInstanceId}', IndexRuntimeInstanceId='{childIndex.RuntimeInstanceId}', IndexStatus='{childIndex.Status}'.");
+            }
+
+            var childRecord =
+                await dagStore.GetRecordAsync(childExecutionId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' child DAG record is missing. ChildExecutionId='{childExecutionId}'.");
+            var childState =
+                await dagStore.GetStateAsync(childExecutionId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' child DAG state is missing. ChildExecutionId='{childExecutionId}'.");
+
+            var completedSteps = childState.Steps.Values.Count(step =>
+                step.Status == AiStepExecutionStatus.Completed);
+            var totalSteps = childState.Steps.Count;
+            var stepStatusBreakdown =
+                string.Join(
+                    ",",
+                    childState.Steps.Values
+                        .GroupBy(step => step.Status)
+                        .OrderBy(group => group.Key)
+                        .Select(group => $"{group.Key}:{group.Count()}"));
+
+            if (childRecord.IsTerminal ||
+                completedSteps < minimumCompletedStepsBeforeKill ||
+                completedSteps >= totalSteps)
+            {
+                throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' child did not remain at the required non-terminal durable checkpoint. " +
+                    $"ChildExecutionId='{childExecutionId}', DagStatus='{childRecord.Status}', CompletedSteps='{completedSteps}', TotalSteps='{totalSteps}', MinimumCompletedSteps='{minimumCompletedStepsBeforeKill}'.");
+            }
+
+            var runtimes =
+                (await registry.ListAsync(includeStopped: false).ConfigureAwait(false))
+                    .Where(runtime =>
+                        StringComparer.Ordinal.Equals(runtime.PoolId, poolId) &&
+                        StringComparer.Ordinal.Equals(runtime.ControlPlaneId, controlPlaneId) &&
+                        !string.IsNullOrWhiteSpace(runtime.HostId))
+                    .ToArray();
+
+            if (runtimes.Length != maximumRuntimeCapacity)
+            {
+                throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' physical target requires exact bounded capacity. ExpectedRuntimeCount='{maximumRuntimeCapacity}', ActualRuntimeCount='{runtimes.Length}'.");
+            }
+
+            var runtime =
+                runtimes.SingleOrDefault(candidate =>
+                    StringComparer.Ordinal.Equals(
+                        candidate.RuntimeInstanceId,
+                        childRuntimeInstanceId))
+                ?? throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' exact runtime owner '{childRuntimeInstanceId}' is missing from the pool registry.");
+
+            if (runtime.ProcessId.GetValueOrDefault() <= 0 ||
+                string.IsNullOrWhiteSpace(runtime.KubernetesPodName) ||
+                string.IsNullOrWhiteSpace(runtime.KubernetesNamespace))
+            {
+                throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' exact runtime owner does not expose an in-Pod process identity. RuntimeInstanceId='{runtime.RuntimeInstanceId}'.");
+            }
+
+            var hostMembers =
+                runtimes
+                    .Where(candidate => StringComparer.Ordinal.Equals(candidate.HostId, runtime.HostId))
+                    .ToArray();
+            if (hostMembers.Length != runtimeCountPerPod)
+            {
+                throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' exact target Pod does not expose the configured sibling membership. HostId='{runtime.HostId}', Expected='{runtimeCountPerPod}', Actual='{hostMembers.Length}'.");
+            }
+
+            var siblingRuntimeInstanceIds =
+                hostMembers
+                    .Where(candidate => !StringComparer.Ordinal.Equals(candidate.RuntimeInstanceId, runtime.RuntimeInstanceId))
+                    .Select(candidate => candidate.RuntimeInstanceId)
+                    .ToHashSet(StringComparer.Ordinal);
+
+            await using var prearmedKillSession =
+                await KubernetesRuntimePoolProductionInfrastructure
+                    .PrearmRuntimeProcessKillAsync(
+                        runtime.RuntimeInstanceId,
+                        runtime.KubernetesPodName!,
+                        runtime.KubernetesNamespace!,
+                        runtime.ProcessId!.Value,
+                        TimeSpan.FromSeconds(15),
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+            var currentRelation =
+                await relationStore.GetByChildExecutionIdAsync(childExecutionId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' relation disappeared before physical kill. ChildExecutionId='{childExecutionId}'.");
+            var currentSharedRun =
+                await sharedRunStore.GetAsync(childSharedRun.SharedRunId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' child shared run disappeared before physical kill. SharedRunId='{childSharedRun.SharedRunId}'.");
+            var currentIndex =
+                await runExecutionIndex.GetAsync(childLocalRunId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' child runtime index disappeared before physical kill. LocalRunId='{childSharedRun.LocalRunId}'.");
+            var currentRecord =
+                await dagStore.GetRecordAsync(childExecutionId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' child DAG record disappeared before physical kill. ChildExecutionId='{childExecutionId}'.");
+
+            if (currentRelation.Status != AiChildExecutionRelationStatus.Waiting ||
+                !StringComparer.Ordinal.Equals(currentRelation.ChildExecutionId, childExecutionId) ||
+                !StringComparer.Ordinal.Equals(currentSharedRun.AssignedRuntimeInstanceId, runtime.RuntimeInstanceId) ||
+                !StringComparer.Ordinal.Equals(currentSharedRun.LocalRunId, childLocalRunId) ||
+                !StringComparer.Ordinal.Equals(currentIndex.RuntimeInstanceId, runtime.RuntimeInstanceId) ||
+                !StringComparer.Ordinal.Equals(currentIndex.ExecutionId, childExecutionId) ||
+                !string.Equals(currentIndex.Status, "running", StringComparison.OrdinalIgnoreCase) ||
+                currentRecord.IsTerminal)
+            {
+                throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' durable/physical boundary changed before process termination. " +
+                    $"ChildExecutionId='{childExecutionId}', RelationStatus='{currentRelation.Status}', SharedRuntimeInstanceId='{currentSharedRun.AssignedRuntimeInstanceId}', SharedLocalRunId='{currentSharedRun.LocalRunId}', IndexRuntimeInstanceId='{currentIndex.RuntimeInstanceId}', IndexExecutionId='{currentIndex.ExecutionId}', IndexStatus='{currentIndex.Status}', DagStatus='{currentRecord.Status}'.");
+            }
+
+            observation.MarkIntentionalFailedRuntimeInstance(runtime.RuntimeInstanceId);
+
+            var killResult =
+                await prearmedKillSession
+                    .TriggerKillAsync(
+                        TimeSpan.FromSeconds(10),
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+
+            if (killResult.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    string.Concat(
+                        "The pre-armed recursive child in-Pod runtime process kill failed. StandardOutput=",
+                        killResult.StandardOutput,
+                        ", StandardError=",
+                        killResult.StandardError));
+            }
+
+            var postKillRelation =
+                await relationStore.GetByChildExecutionIdAsync(childExecutionId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' relation disappeared immediately after physical kill. ChildExecutionId='{childExecutionId}'.");
+            var postKillRecord =
+                await dagStore.GetRecordAsync(childExecutionId).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' child DAG record disappeared immediately after physical kill. ChildExecutionId='{childExecutionId}'.");
+
+            if (postKillRelation.Status != AiChildExecutionRelationStatus.Waiting || postKillRecord.IsTerminal)
+            {
+                throw new InvalidOperationException(
+                    $"Recursive Depth '{targetDepth}' checkpoint boundary was lost before exact physical death was proven. " +
+                    $"ChildExecutionId='{childExecutionId}', RelationStatus='{postKillRelation.Status}', DagStatus='{postKillRecord.Status}', PhysicalKillProof='FAIL'.");
+            }
+
+            var capturedAtUtc = DateTimeOffset.UtcNow;
+            var prevalidatedKillProof =
+                new ProductionRealRuntimePrevalidatedKillProof
+                {
+                    SharedRunId = childSharedRun.SharedRunId,
+                    LocalRunId = childLocalRunId,
+                    RuntimeInstanceId = runtime.RuntimeInstanceId,
+                    ExecutionId = childExecutionId,
+                    IndexStatus = currentIndex.Status!,
+                    IndexCompletedAtUtc = currentIndex.CompletedAtUtc,
+                    DagStatus = childRecord.Status.ToString(),
+                    DagCompletedStepCount = completedSteps,
+                    DagTotalStepCount = totalSteps,
+                    DagStepStatusBreakdown = stepStatusBreakdown,
+                    CapturedAtUtc = capturedAtUtc,
+                    Killed = true,
+                    KillRequestedAtUtc = killResult.KillRequestedAtUtc,
+                    KillCompletedAtUtc = killResult.KillCompletedAtUtc
+                };
+
+            output.WriteLine(
+                $"[{this.profile.LogPrefix} RECURSIVE CHILD RUNTIME TARGET] " +
+                $"TargetDepth='{targetDepth}', " +
+                $"RootExecutionId='{rootExecutionId}', " +
+                $"RelationParentExecutionId='{relation.ParentExecutionId}', " +
+                $"ChildExecutionId='{childExecutionId}', " +
+                $"ChildInvocationKey='{relation.ChildInvocationKey}', " +
+                $"SharedRunId='{childSharedRun.SharedRunId}', " +
+                $"LocalRunId='{childLocalRunId}', " +
+                $"RuntimeInstanceId='{runtime.RuntimeInstanceId}', " +
+                $"CheckpointCompletedSteps='{completedSteps}', " +
+                $"TotalSteps='{totalSteps}', " +
+                $"PrearmedAtUtc='{prearmedKillSession.ArmedAtUtc:O}', " +
+                $"LinuxProcessStartTimeTicks='{prearmedKillSession.ProcessStartTimeTicks}', " +
+                $"LinuxProcessStateAtArm='{prearmedKillSession.ProcessStateAtArm}', " +
+                $"KillRequestedAtUtc='{killResult.KillRequestedAtUtc:O}', " +
+                $"KillCompletedAtUtc='{killResult.KillCompletedAtUtc:O}', " +
+                $"ExactProcessDeathProof='{killResult.ExactProcessDeathProof.Proof}', " +
+                $"ExactProcessDeathState='{killResult.ExactProcessDeathProof.State ?? "<none>"}', " +
+                "BoundaryProof='WaitingRelation+TargetDepth+DurableCheckpoint+ExactPhysicalOwner', " +
+                "PhysicalKillProof='PASS', ExactLinuxProcessDeathProof='PASS'.");
+
+            return new BoundedCapacityChildRuntimeFailureTarget(
+                runtime,
+                new BoundedCapacityRunObservation(
+                    childSharedRun,
+                    RuntimeIndexExists: true,
+                    RuntimeIndexStatus: currentIndex.Status,
+                    RuntimeIndexRuntimeInstanceId: currentIndex.RuntimeInstanceId,
+                    RuntimeIndexExecutionId: childExecutionId,
+                    RuntimeIndexCompletedAtUtc: currentIndex.CompletedAtUtc,
+                    DagExecutionStatus: childRecord.Status,
+                    UseDagExecutionCompletion: true),
+                siblingRuntimeInstanceIds)
+            {
+                PrevalidatedKillProof = prevalidatedKillProof
+            };
         }
 
         private async Task<BoundedCapacityChildRuntimeFailureTarget>

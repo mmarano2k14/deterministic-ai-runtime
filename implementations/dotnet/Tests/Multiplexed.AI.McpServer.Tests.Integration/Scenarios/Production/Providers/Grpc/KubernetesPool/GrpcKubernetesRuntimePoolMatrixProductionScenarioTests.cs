@@ -75,6 +75,38 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         }
 
         /// <summary>
+        /// Holds the exact Depth 2 child at its deterministic child checkpoint, destroys the Linux process
+        /// incarnation that owns that intermediate recursive execution, and proves recovery preserves the same
+        /// child ExecutionId while Depth 3 and every upward continuation still converge exactly.
+        /// </summary>
+        /// <returns>A task that completes after the depth2-runtime-failure matrix row converges.</returns>
+        [Fact]
+        [Trait("ObservationMode", "EventDriven")]
+        [Trait("ValidationProfile", "AdversarialMatrix")]
+        [Trait("MatrixScenarioId", "depth2-runtime-failure")]
+        public Task Grpc_KubernetesPool_Matrix_Depth2RuntimeFailure_Should_Preserve_Recursive_Child_Dag_Exactness()
+        {
+            return ExecuteMatrixRowAsync(
+                ProductionChildDagAdversarialScheduleDefinition.Depth2RuntimeFailure);
+        }
+
+        /// <summary>
+        /// Holds the exact deepest Depth 3 child at its deterministic durable checkpoint, destroys the Linux
+        /// process incarnation that owns that execution, and proves the same child ExecutionId resumes while both
+        /// upward continuations and the root converge without duplicate logical child work.
+        /// </summary>
+        /// <returns>A task that completes after the depth3-runtime-failure matrix row converges.</returns>
+        [Fact]
+        [Trait("ObservationMode", "EventDriven")]
+        [Trait("ValidationProfile", "AdversarialMatrix")]
+        [Trait("MatrixScenarioId", "depth3-runtime-failure")]
+        public Task Grpc_KubernetesPool_Matrix_Depth3RuntimeFailure_Should_Preserve_Recursive_Child_Dag_Exactness()
+        {
+            return ExecuteMatrixRowAsync(
+                ProductionChildDagAdversarialScheduleDefinition.Depth3RuntimeFailure);
+        }
+
+        /// <summary>
         /// Executes one deterministic matrix row against the same reduced production topology used by the
         /// reference gRPC Kubernetes canary. Only the schedule coordinate varies between rows.
         /// </summary>

@@ -53,6 +53,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         /// preserves every historical caller. This allows one logical wave to be submitted in deterministic
         /// phases without reusing correlation identities.
         /// </param>
+        /// <param name="childCrashCheckpoint">Optional test-only durable checkpoint embedded at one recursive child depth.</param>
+        /// <param name="childCrashCheckpointDepth">The one-based recursive child depth receiving <paramref name="childCrashCheckpoint"/>.</param>
+        /// <param name="childCrashCheckpointFactory">
+        /// Optional test-only child checkpoint factory invoked once per logical wave/run identity. When supplied,
+        /// it is authoritative and may select exactly one parent whose nested child definition receives the gate.
+        /// </param>
         /// <returns>The exact admission results, SharedRun identifiers, and 429 retry count.</returns>
         public static async Task<RuntimePoolProductionCycleAdmissionProof>
             SubmitQueueFirstWavesAsync(
@@ -72,7 +78,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 TimeSpan? admissionBackpressureTimeout = null,
                 Func<int, int, AiRunPlacementDirective?>? placementFactory = null,
                 Func<int, int, McpTestCrashCheckpointDefinition?>? crashCheckpointFactory = null,
-                int startingRunNumber = 1)
+                int startingRunNumber = 1,
+                McpTestCrashCheckpointDefinition? childCrashCheckpoint = null,
+                int childCrashCheckpointDepth = 0,
+                Func<int, int, McpTestCrashCheckpointDefinition?>? childCrashCheckpointFactory = null)
         {
             ArgumentNullException.ThrowIfNull(mcp);
             ArgumentNullException.ThrowIfNull(tenant);
@@ -86,6 +95,29 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumAdmissionAttemptCount);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(startingIterationNumber);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(startingRunNumber);
+            ArgumentOutOfRangeException.ThrowIfNegative(childCrashCheckpointDepth);
+
+            var hasChildCrashCheckpoint =
+                childCrashCheckpoint is not null ||
+                childCrashCheckpointFactory is not null;
+
+            if (hasChildCrashCheckpoint &&
+                (childCrashCheckpointDepth <= 0 ||
+                 childCrashCheckpointDepth > tenant.Run.ChildDepth))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(childCrashCheckpointDepth),
+                    childCrashCheckpointDepth,
+                    $"Child crash checkpoint depth must be between 1 and configured ChildDepth '{tenant.Run.ChildDepth}'.");
+            }
+
+            if (!hasChildCrashCheckpoint && childCrashCheckpointDepth != 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(childCrashCheckpointDepth),
+                    childCrashCheckpointDepth,
+                    "Child crash checkpoint depth must be zero when no child crash checkpoint is configured.");
+            }
 
             if (admissionBackpressureTimeout.HasValue &&
                 admissionBackpressureTimeout.Value <= TimeSpan.Zero)
@@ -290,6 +322,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                                     iteration,
                                                     runNumber);
 
+                                        var runChildCrashCheckpoint =
+                                            childCrashCheckpointFactory is null
+                                                ? childCrashCheckpoint
+                                                : childCrashCheckpointFactory(
+                                                    iteration,
+                                                    runNumber);
+
                                         var request =
                                             CreateSubmitRequest(
                                                 tenant,
@@ -303,6 +342,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                                                     runNumber,
                                                     cycleNumber),
                                                 runCrashCheckpoint,
+                                                runChildCrashCheckpoint,
+                                                runChildCrashCheckpoint is null
+                                                    ? 0
+                                                    : childCrashCheckpointDepth,
                                                 placementFactory?.Invoke(
                                                     iteration,
                                                     runNumber));
@@ -443,6 +486,49 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 $"{proofName} supplemental recovered SharedRun scope");
 
             return recoveredSubmittedSharedRunIds;
+        }
+
+        /// <summary>
+        /// Selects the recovered execution identifiers that belong to one exact proof scope and
+        /// verifies that every recovered execution outside that scope is explicitly expected.
+        /// </summary>
+        /// <remarks>
+        /// Adversarial recursive-child schedules may recover a child execution while a parent-only
+        /// ledger proof is being evaluated. The child recovery remains part of the global recovery
+        /// authority, but it must not broaden the parent proof or be silently discarded.
+        /// </remarks>
+        internal static IReadOnlySet<string>
+            SelectRecoveredExecutionIdsForExpectedProofScope(
+                IReadOnlySet<string> expectedExecutionIds,
+                IReadOnlySet<string> recoveredExecutionIds,
+                IReadOnlySet<string> expectedSupplementalRecoveredExecutionIds,
+                string proofName)
+        {
+            ArgumentNullException.ThrowIfNull(expectedExecutionIds);
+            ArgumentNullException.ThrowIfNull(recoveredExecutionIds);
+            ArgumentNullException.ThrowIfNull(expectedSupplementalRecoveredExecutionIds);
+            ArgumentException.ThrowIfNullOrWhiteSpace(proofName);
+
+            var recoveredExpectedExecutionIds =
+                recoveredExecutionIds
+                    .Intersect(
+                        expectedExecutionIds,
+                        StringComparer.Ordinal)
+                    .ToHashSet(StringComparer.Ordinal);
+
+            var actualSupplementalRecoveredExecutionIds =
+                recoveredExecutionIds
+                    .Except(
+                        expectedExecutionIds,
+                        StringComparer.Ordinal)
+                    .ToHashSet(StringComparer.Ordinal);
+
+            AssertSameIdentitySet(
+                expectedSupplementalRecoveredExecutionIds,
+                actualSupplementalRecoveredExecutionIds,
+                $"{proofName} supplemental recovered execution scope");
+
+            return recoveredExpectedExecutionIds;
         }
 
         /// <summary>
@@ -857,6 +943,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             string source,
             string correlationId,
             McpTestCrashCheckpointDefinition? crashCheckpoint,
+            McpTestCrashCheckpointDefinition? childCrashCheckpoint,
+            int childCrashCheckpointDepth,
             AiRunPlacementDirective? placement)
         {
             var input =
@@ -919,7 +1007,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         flakyStepInterval:
                             tenant.Run.FlakyStepInterval,
                         crashCheckpoint: crashCheckpoint,
-                        childDepth: tenant.Run.ChildDepth)
+                        childDepth: tenant.Run.ChildDepth,
+                        childCrashCheckpoint: childCrashCheckpoint,
+                        childCrashCheckpointDepth: childCrashCheckpointDepth)
             };
         }
     }

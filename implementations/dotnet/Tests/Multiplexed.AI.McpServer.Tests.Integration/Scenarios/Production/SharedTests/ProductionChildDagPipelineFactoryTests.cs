@@ -154,6 +154,113 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
         }
 
         /// <summary>
+        /// Verifies the B1 topology shape: Depth 2 receives the exact crash checkpoint while the deeper Depth 3
+        /// descendant remains present and unmodified.
+        /// </summary>
+        [Fact]
+        public void CreatePipelineDefinition_Should_Target_Depth_Two_Without_Removing_Depth_Three()
+        {
+            const int stepCount = 3;
+            const string pipelineName = "production-depth-three-crash-depth-two";
+
+            var checkpoint = new McpTestCrashCheckpointDefinition
+            {
+                StepIndex = 2,
+                StateKey = "test:depth-two-crash:state",
+                ReachedChannel = "test:depth-two-crash:reached",
+                ReleasedChannel = "test:depth-two-crash:released",
+                TtlSeconds = 60
+            };
+
+            var root = McpTestPipelineFactory.CreatePipelineDefinition(
+                pipelineName,
+                stepCount,
+                childDepth: 3,
+                childCrashCheckpoint: checkpoint,
+                childCrashCheckpointDepth: 2);
+
+            var depthOne = GetOnlyChildDefinition(root);
+            var depthTwo = GetOnlyChildDefinition(depthOne);
+            var depthThree = GetOnlyChildDefinition(depthTwo);
+
+            Assert.DoesNotContain(
+                depthOne.Steps,
+                step => string.Equals(step.StepKey, McpTestCrashCheckpointDefinition.StepKey, StringComparison.Ordinal));
+
+            var depthTwoCrashStep = Assert.Single(
+                depthTwo.Steps.Where(step =>
+                    string.Equals(step.StepKey, McpTestCrashCheckpointDefinition.StepKey, StringComparison.Ordinal)));
+
+            Assert.Equal("step-002", depthTwoCrashStep.Name);
+            Assert.Equal(checkpoint.StateKey, depthTwoCrashStep.Config["test.crashCheckpoint.stateKey"]);
+            Assert.Contains(
+                depthTwo.Steps,
+                step => string.Equals(step.StepKey, ExecuteChildDagStep.StepKey, StringComparison.Ordinal));
+
+            Assert.DoesNotContain(
+                depthThree.Steps,
+                step => string.Equals(step.StepKey, McpTestCrashCheckpointDefinition.StepKey, StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                depthThree.Steps,
+                step => string.Equals(step.StepKey, ExecuteChildDagStep.StepKey, StringComparison.Ordinal));
+        }
+
+        /// <summary>
+        /// Verifies the B2 topology shape: only the deepest Depth 3 child receives the crash checkpoint while
+        /// Depth 1 and Depth 2 retain their normal recursive ExecuteChildDag call-sites.
+        /// </summary>
+        [Fact]
+        public void CreatePipelineDefinition_Should_Target_Only_Deepest_Depth_Three_Child()
+        {
+            const int stepCount = 3;
+            const string pipelineName = "production-depth-three-crash-depth-three";
+
+            var checkpoint = new McpTestCrashCheckpointDefinition
+            {
+                StepIndex = 2,
+                StateKey = "test:depth-three-crash:state",
+                ReachedChannel = "test:depth-three-crash:reached",
+                ReleasedChannel = "test:depth-three-crash:released",
+                TtlSeconds = 60
+            };
+
+            var root = McpTestPipelineFactory.CreatePipelineDefinition(
+                pipelineName,
+                stepCount,
+                childDepth: 3,
+                childCrashCheckpoint: checkpoint,
+                childCrashCheckpointDepth: 3);
+
+            var depthOne = GetOnlyChildDefinition(root);
+            var depthTwo = GetOnlyChildDefinition(depthOne);
+            var depthThree = GetOnlyChildDefinition(depthTwo);
+
+            Assert.DoesNotContain(
+                depthOne.Steps,
+                step => string.Equals(step.StepKey, McpTestCrashCheckpointDefinition.StepKey, StringComparison.Ordinal));
+            Assert.Contains(
+                depthOne.Steps,
+                step => string.Equals(step.StepKey, ExecuteChildDagStep.StepKey, StringComparison.Ordinal));
+
+            Assert.DoesNotContain(
+                depthTwo.Steps,
+                step => string.Equals(step.StepKey, McpTestCrashCheckpointDefinition.StepKey, StringComparison.Ordinal));
+            Assert.Contains(
+                depthTwo.Steps,
+                step => string.Equals(step.StepKey, ExecuteChildDagStep.StepKey, StringComparison.Ordinal));
+
+            var depthThreeCrashStep = Assert.Single(
+                depthThree.Steps.Where(step =>
+                    string.Equals(step.StepKey, McpTestCrashCheckpointDefinition.StepKey, StringComparison.Ordinal)));
+
+            Assert.Equal("step-002", depthThreeCrashStep.Name);
+            Assert.Equal(checkpoint.StateKey, depthThreeCrashStep.Config["test.crashCheckpoint.stateKey"]);
+            Assert.DoesNotContain(
+                depthThree.Steps,
+                step => string.Equals(step.StepKey, ExecuteChildDagStep.StepKey, StringComparison.Ordinal));
+        }
+
+        /// <summary>
         /// Verifies that the root pre-child checkpoint and the child failure checkpoint coexist without changing
         /// the single ExecuteChildDag call-site shape used by the parent-failure production proof.
         /// </summary>
@@ -206,6 +313,17 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
                     string.Equals(step.StepKey, McpTestCrashCheckpointDefinition.StepKey, StringComparison.Ordinal)));
             Assert.Equal("step-002", nestedCheckpoint.Name);
             Assert.Equal(childCheckpoint.StateKey, nestedCheckpoint.Config["test.crashCheckpoint.stateKey"]);
+        }
+
+        private static Multiplexed.Abstractions.AI.Pipeline.AiPipelineDefinition GetOnlyChildDefinition(
+            Multiplexed.Abstractions.AI.Pipeline.AiPipelineDefinition parent)
+        {
+            var childStep = Assert.Single(
+                parent.Steps.Where(step =>
+                    string.Equals(step.StepKey, ExecuteChildDagStep.StepKey, StringComparison.Ordinal)));
+
+            return Assert.IsType<Multiplexed.Abstractions.AI.Pipeline.AiPipelineDefinition>(
+                childStep.Config[ExecuteChildDagStep.ChildDagDefinitionConfigKey]);
         }
 
     }

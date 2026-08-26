@@ -153,6 +153,96 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Shared
         }
 
         /// <summary>
+        /// Verifies that B1 targets the exact Depth 2 child and uses child step two as the deterministic physical
+        /// runtime failure window without projecting through the ordinary parent checkpoint resolver.
+        /// </summary>
+        [Fact]
+        public void Depth2RuntimeFailure_Should_Target_Exact_Recursive_Depth_Two_Checkpoint()
+        {
+            const int configuredChildDepth = 3;
+            const int pipelineStepCount = 50;
+
+            var schedule =
+                ProductionChildDagAdversarialScheduleDefinition.Depth2RuntimeFailure;
+
+            Assert.Equal("depth2-runtime-failure", schedule.MatrixScenarioId);
+            Assert.Equal("depth2-runtime-failure", schedule.FailureSeed);
+            Assert.Equal("DeterministicAdversarial", schedule.FailureScheduleMode);
+            Assert.Equal("depth2-child-runtime", schedule.FailurePosition);
+            Assert.Equal("IN_PROGRESS", schedule.MatrixStatus);
+            Assert.Equal(ProductionChildDagAdversarialFailureTarget.RecursiveChildRuntime, schedule.FailureTarget);
+            Assert.False(schedule.UsesParentCrashCheckpoint);
+            Assert.True(schedule.UsesRecursiveChildCrashCheckpoint);
+            Assert.Equal(2, schedule.TargetRecursiveDepth);
+            Assert.Equal(1, schedule.KillAfterCompletedStepCount);
+            Assert.Equal(
+                2,
+                schedule.ResolveRecursiveChildCrashCheckpointStepIndex(
+                    configuredChildDepth,
+                    pipelineStepCount));
+            Assert.Throws<InvalidOperationException>(
+                () => schedule.ResolveCrashCheckpointStepIndex(pipelineStepCount));
+        }
+
+        /// <summary>
+        /// Verifies that B1 cannot silently target a recursive depth outside the configured Child DAG chain.
+        /// </summary>
+        [Fact]
+        public void Depth2RuntimeFailure_Should_Reject_Insufficient_Configured_Child_Depth()
+        {
+            var schedule =
+                ProductionChildDagAdversarialScheduleDefinition.Depth2RuntimeFailure;
+
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => schedule.ResolveRecursiveChildCrashCheckpointStepIndex(1, 50));
+        }
+
+        /// <summary>
+        /// Verifies that B2 targets the exact deepest Depth 3 child at the same durable child checkpoint used by
+        /// B1 while preserving the recursive-child physical-failure contract.
+        /// </summary>
+        [Fact]
+        public void Depth3RuntimeFailure_Should_Target_Exact_Recursive_Depth_Three_Checkpoint()
+        {
+            const int configuredChildDepth = 3;
+            const int pipelineStepCount = 50;
+
+            var schedule =
+                ProductionChildDagAdversarialScheduleDefinition.Depth3RuntimeFailure;
+
+            Assert.Equal("depth3-runtime-failure", schedule.MatrixScenarioId);
+            Assert.Equal("depth3-runtime-failure", schedule.FailureSeed);
+            Assert.Equal("DeterministicAdversarial", schedule.FailureScheduleMode);
+            Assert.Equal("depth3-child-runtime", schedule.FailurePosition);
+            Assert.Equal("IN_PROGRESS", schedule.MatrixStatus);
+            Assert.Equal(ProductionChildDagAdversarialFailureTarget.RecursiveChildRuntime, schedule.FailureTarget);
+            Assert.False(schedule.UsesParentCrashCheckpoint);
+            Assert.True(schedule.UsesRecursiveChildCrashCheckpoint);
+            Assert.Equal(3, schedule.TargetRecursiveDepth);
+            Assert.Equal(1, schedule.KillAfterCompletedStepCount);
+            Assert.Equal(
+                2,
+                schedule.ResolveRecursiveChildCrashCheckpointStepIndex(
+                    configuredChildDepth,
+                    pipelineStepCount));
+            Assert.Throws<InvalidOperationException>(
+                () => schedule.ResolveCrashCheckpointStepIndex(pipelineStepCount));
+        }
+
+        /// <summary>
+        /// Verifies that B2 cannot target Depth 3 when the configured recursive chain stops at Depth 2.
+        /// </summary>
+        [Fact]
+        public void Depth3RuntimeFailure_Should_Reject_Insufficient_Configured_Child_Depth()
+        {
+            var schedule =
+                ProductionChildDagAdversarialScheduleDefinition.Depth3RuntimeFailure;
+
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => schedule.ResolveRecursiveChildCrashCheckpointStepIndex(2, 50));
+        }
+
+        /// <summary>
         /// Verifies that a schedule cannot place the crash checkpoint outside the ordinary parent-step range.
         /// </summary>
         [Theory]
