@@ -172,6 +172,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Helpers
                             [ExecuteChildDagStep.ChildDagDefinitionConfigKey] = childDefinition
                         }
                     });
+
             }
 
             return new AiPipelineDefinition
