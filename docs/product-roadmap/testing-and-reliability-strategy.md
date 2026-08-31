@@ -574,6 +574,25 @@ Detailed reference:
 
 - [`../ai/concurrency-hardening-and-adversarial-validation.md`](../ai/concurrency-hardening-and-adversarial-validation.md)
 
+## Verified Semantic Adversarial Matrix
+
+The pressure-oriented P10–P35 campaign is now complemented by a deterministic semantic matrix that targets specific execution boundaries across both transports and both Runtime Pool hosting models.
+
+```text
+4 provider/transport combinations
+× 9 semantic adversarial rows
+= 36 / 36 verified rows
+```
+
+The rows are `Baseline`, `CrashEarly`, `ChildInvocationBoundary`, `ContinuationConsume`, `Depth2RuntimeFailure`, `Depth3RuntimeFailure`, `SeedA`, `SeedB`, and `SeedC`.
+
+The complete raw xUnit evidence archive contains 36 distinct artifacts with row-level SHA-256 hashes and zero ownership-transition violations. Dedicated recursive-child replay remains explicitly outside this matrix claim.
+
+References:
+
+- [`../ai/adversarial-runtime-validation-matrix.md`](../ai/adversarial-runtime-validation-matrix.md)
+- [`../ai/adversarial-runtime-validation-evidence-index.md`](../ai/adversarial-runtime-validation-evidence-index.md)
+
 ---
 
 # 18. Performance and Load Tests

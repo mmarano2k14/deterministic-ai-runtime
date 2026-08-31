@@ -333,7 +333,9 @@ same parent ExecutionId resumes
 
 The capability reuses the existing DAG engine, execution state, Policy Engine, shared queue, recovery, replay, Ledger, tracing, and Forensics foundations. It does not create a second orchestration engine.
 
-The recursive production proof is now green through `ChildDepth = 3`, including `3×3×3×2×Depth3` validation and larger `5×5×5×2×Depth3` high-scale scenarios. Canonical lifecycle observation is centralized through the existing Event Manager and correlated with the durable Ledger, Runtime Lifecycle Journal, replay, trace, and Recovery Forensics. The capability is therefore **Implemented / validated**.
+The recursive production proof is green through `ChildDepth = 3`, including `3×3×3×2×Depth3` validation and larger `5×5×5×2×Depth3` high-scale scenarios. Canonical lifecycle observation is centralized through the existing Event Manager and correlated with the durable Ledger, Runtime Lifecycle Journal, replay, trace, and Recovery Forensics. Exact per-depth child logical-step accounting is closed for the bounded recursive proof, and the canonical nine-row deterministic adversarial matrix is green across HTTP/gRPC × ProcessHostPool/KubernetesPool. The capability is therefore **Implemented / validated**.
+
+The 36/36 row-level proof archive is indexed in [`../ai/adversarial-runtime-validation-evidence-index.md`](../ai/adversarial-runtime-validation-evidence-index.md).
 
 See [Durable Child DAG Composition](../ai/child-dag-composition.md).
 
@@ -910,7 +912,7 @@ Delivered capabilities include:
 
 The historical one-runtime-per-Pod Kubernetes mode remains available independently.
 
-Both the automatic and operator-triggered external production matrices are green across HTTP/gRPC × ProcessHostPool/KubernetesPool. The current closure profiles include 7 × 5 gRPC ProcessHostPool capacity and 5 × 5 gRPC KubernetesPool capacity in addition to the 3 × 5 HTTP profiles. Remaining infrastructure hardening focuses on multi-control-plane recovery ownership, Redis Cluster compatibility, multi-node scale, and managed-hosting operations.
+Both the automatic and operator-triggered external production matrices are green across HTTP/gRPC × ProcessHostPool/KubernetesPool. The current closure profiles include 7 × 5 gRPC ProcessHostPool capacity and 5 × 5 gRPC KubernetesPool capacity in addition to the 3 × 5 HTTP profiles. A complementary nine-row semantic adversarial matrix is also green across all four provider/transport combinations, covering early crash, Child DAG invocation, continuation-consume, recursive Depth2/Depth3 runtime failure, and deterministic SeedA/SeedB/SeedC schedules. Remaining infrastructure hardening focuses on multi-control-plane recovery ownership, Redis Cluster compatibility, multi-node scale, recovery-of-recovery, dedicated recursive-child replay, and managed-hosting operations.
 
 See:
 

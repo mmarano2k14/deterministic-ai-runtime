@@ -28,6 +28,26 @@ HTTP + KubernetesPool    PASS
 
 The same hierarchical correctness contract is exercised independently across both transport providers, both failure-boundary models, and both failure-trigger modes.
 
+### Complementary semantic adversarial matrix
+
+The large closure profiles above are complemented by a separate nine-row semantic matrix that deliberately targets execution boundaries rather than throughput scale:
+
+```text
+Baseline
+CrashEarly
+ChildInvocationBoundary
+ContinuationConsume
+Depth2RuntimeFailure
+Depth3RuntimeFailure
+SeedA
+SeedB
+SeedC
+```
+
+All nine rows are validated across each of the four HTTP/gRPC × ProcessHostPool/KubernetesPool combinations, for 36 validated semantic rows. This matrix reuses the same production Runtime Pool architecture and durable recovery surfaces while adding deterministic failure placement around Child DAG invocation, continuation consumption, recursive depth, and deterministic schedule variation.
+
+See [Adversarial Runtime Validation Matrix](adversarial-runtime-validation-matrix.md) and the row-level [Adversarial Runtime Validation Evidence Index](adversarial-runtime-validation-evidence-index.md).
+
 The manual/external variants do not duplicate the recovery scenario. They reuse the same core workload, child-failure, convergence, recovery, replay, ledger, lifecycle, and forensics path. Only the full parent-boundary trigger changes: the test arms one exact fully busy boundary and waits until an operator destroys that exact ProcessHost or Pod from outside the test.
 
 ---

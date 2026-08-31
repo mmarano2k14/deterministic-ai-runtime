@@ -324,7 +324,9 @@ This runtime can complement existing tools in several ways.
 
 Agent frameworks can define behavior.
 
-Deterministic AI Runtime includes **validated durable Child DAG composition** as a runtime-level primitive for nested delegation and future multi-agent orchestration. Recursive validation now reaches Depth3, lifecycle/recovery synchronization is exercised through the centralized EventDriven observation architecture, and the bounded recursive Depth3 production proof includes exact per-depth child logical-step Ledger accounting. The documentation still distinguishes this bounded production proof from broader deterministic multi-interleaving validation and from recursive-child replay.
+Deterministic AI Runtime includes **validated durable Child DAG composition** as a runtime-level primitive for nested delegation and future multi-agent orchestration. Recursive validation reaches Depth3, lifecycle/recovery synchronization is exercised through the centralized EventDriven observation architecture, the bounded recursive Depth3 production proof includes exact per-depth child logical-step Ledger accounting, and the selected nine-row deterministic adversarial matrix is green across HTTP/gRPC × ProcessHostPool/KubernetesPool. The documentation still distinguishes this bounded deterministic schedule proof from exhaustive state-space exploration and from dedicated recursive-child replay.
+
+The complete matrix and row-level raw-evidence hashes are documented in [`ai/adversarial-runtime-validation-matrix.md`](ai/adversarial-runtime-validation-matrix.md) and [`ai/adversarial-runtime-validation-evidence-index.md`](ai/adversarial-runtime-validation-evidence-index.md).
 
 This runtime can provide execution guarantees.
 

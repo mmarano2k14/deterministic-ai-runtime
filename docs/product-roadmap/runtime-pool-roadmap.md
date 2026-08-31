@@ -2,7 +2,7 @@
 
 ## Deterministic AI Runtime Platform
 
-**Current status:** Runtime Pool identity, ProcessHostPool, KubernetesPool, HTTP/gRPC transport preservation, hierarchical child and full-boundary failure recovery, operator-triggered external parent-boundary failure, shared durable failure authority, warm reuse, bounded capacity, replay, ledger, lifecycle, and forensics proofs are implemented and validated.
+**Current status:** Runtime Pool identity, ProcessHostPool, KubernetesPool, HTTP/gRPC transport preservation, hierarchical child and full-boundary failure recovery, operator-triggered external parent-boundary failure, shared durable failure authority, warm reuse, bounded capacity, replay, ledger, lifecycle, and forensics proofs are implemented and validated. The complementary nine-row deterministic semantic adversarial matrix is also green across HTTP/gRPC × ProcessHostPool/KubernetesPool.
 
 This document keeps the historical filename for stable documentation links, but it now describes delivered capability and the remaining distributed-scale work rather than an implementation sequence.
 
@@ -117,6 +117,30 @@ Current closure profiles range from 3 × 5 to 7 × 5 parent/runtime capacity. Th
 The largest single closure profile is gRPC ProcessHostPool `7 × 5 × 20 × 2`: 35 reusable runtime slots, 700 DAGs per cycle, 1400 DAGs and 70000 logical steps per scenario. Because both the automatic-parent-failure and external-manual-parent-kill variants are green at that profile, gRPC ProcessHostPool alone contributes 2800 completed DAGs, 140000 logical steps, 4 child-runtime failures, 4 full ProcessHost failures, and 24 exact recoveries to the closure evidence.
 
 See [Runtime Pool Production Validation](../ai/runtime-pool-production-validation.md).
+
+### Semantic adversarial closure
+
+A complementary bounded matrix now targets nine semantic failure schedules across all four Runtime Pool provider/transport combinations:
+
+```text
+Baseline
+CrashEarly
+ChildInvocationBoundary
+ContinuationConsume
+Depth2RuntimeFailure
+Depth3RuntimeFailure
+SeedA
+SeedB
+SeedC
+```
+
+```text
+4 provider/transport combinations × 9 rows = 36 validated rows
+```
+
+This closes deterministic coverage for the selected schedules without claiming exhaustive state-space exploration. Recovery-of-recovery, dedicated recursive-child replay, multi-node fault domains, and multi-control-plane recovery ownership remain separate roadmap items.
+
+See [Adversarial Runtime Validation Matrix](../ai/adversarial-runtime-validation-matrix.md).
 
 ---
 

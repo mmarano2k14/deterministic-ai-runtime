@@ -2059,6 +2059,8 @@ A larger timeout cannot recover an inventory state that has already disappeared.
 The detailed proof model is documented in:
 
 - [Concurrency Hardening and Adversarial Validation](concurrency-hardening-and-adversarial-validation.md)
+- [Adversarial Runtime Validation Matrix](adversarial-runtime-validation-matrix.md)
+- [Adversarial Runtime Validation Evidence Index](adversarial-runtime-validation-evidence-index.md)
 
 
 ## Runtime Pool Validation
@@ -2232,11 +2234,53 @@ Depth2 recursive closure      GREEN
 5×5×5×2×Depth3               GREEN — high-scale validation
 ```
 
-The high-scale exact logical-step proof applies to root parent steps. Nested child execution is currently proven through authoritative durable DAG terminality; separate child-level exact-step accounting remains a proof-hardening item.
+The high-scale exact logical-step proof applies to root parent steps. Nested child execution is additionally proven through authoritative durable DAG terminality and a separate bounded recursive Depth3 Ledger proof with exact per-depth child logical-step accounting, zero missing child logical steps, and zero unexpected duplicate child logical steps.
 
 Deeper tests must never be made green by extending watchdogs or timeouts. A stalled nested execution must identify the missing durable transition or infrastructure condition first.
 
 See [Durable Child DAG Composition](child-dag-composition.md) and [Engine Event Observation and Lifecycle Catalog](engine-event-observation.md).
+
+---
+
+## Deterministic Adversarial Runtime Matrix
+
+The recursive Runtime Pool validation now includes a dedicated semantic failure-boundary matrix across all four provider/transport combinations:
+
+```text
+                    ProcessHostPool    KubernetesPool
+gRPC                     VERIFIED          VERIFIED
+HTTP                     VERIFIED          VERIFIED
+```
+
+Each combination executes the same nine rows:
+
+```text
+Baseline
+CrashEarly
+ChildInvocationBoundary
+ContinuationConsume
+Depth2RuntimeFailure
+Depth3RuntimeFailure
+SeedA
+SeedB
+SeedC
+```
+
+This is 36 validated matrix rows. The rows deliberately target semantic boundaries rather than simply repeating the same full-failure scenario at different sizes.
+
+`ContinuationConsume` is the most timing-sensitive ProcessHostPool boundary. Its final harness derives the exact deterministic continuation identity, pre-arms physical runtime process handles, watches the exact durable continuation `SharedRun`, freezes the first exact `Dispatched` owner before performing proof reads, and kills that same suspended physical process. No synthetic production lifecycle event or artificial post-child production gate is required.
+
+The proof remains state-driven:
+
+```text
+canonical event / diagnostic signal = synchronization aid
+durable SharedRun / DAG / relation / index = authority
+hard timeout = watchdog
+```
+
+The matrix proves the selected deterministic schedules. It does not claim exhaustive state-space exploration, recovery-of-recovery, or dedicated recursive-child replay.
+
+See [Adversarial Runtime Validation Matrix](adversarial-runtime-validation-matrix.md) and [Adversarial Runtime Validation Evidence Index](adversarial-runtime-validation-evidence-index.md).
 
 ---
 
@@ -2529,6 +2573,7 @@ It proves that:
 - scale-out-created runtime instances execute runs to completion
 - runtime worker capacity is visible and enforceable
 - adversarial process-host validation preserves identity, ownership, recovery evidence, and safe-tenant isolation through the P35 campaign
+- the deterministic semantic adversarial matrix is verified 36/36 across HTTP/gRPC × ProcessHostPool/KubernetesPool with archived row-level xUnit evidence
 
 The goal is not only to test features.
 

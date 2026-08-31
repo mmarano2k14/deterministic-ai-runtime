@@ -6,7 +6,2098 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
-## 1.0.8.5 - 2026-08-25 — Recursive Child DAG Production Proof Hardening
+## 0.0.8.5 - 2026-08-28 — Adversarial Runtime Validation
+
+> **Scope:** Adversarial production validation, deterministic failure injection, recovery, recursive Child DAG execution, ownership, lifecycle, ledger, forensics, replay, and provider/transport parity  
+> **Runtime combinations:** KubernetesPool + ProcessHostPool × gRPC + HTTP  
+> **Current state:** Validation implementation complete; executed matrices revalidated green; evidence archive being consolidated separately  
+> **Production contract policy:** no synthetic lifecycle event, no production delay, no weakened assertion, no persisted/wire contract change for test convenience
+
+This changelog records the incremental engineering work that turned the production validation suite into a deterministic adversarial proof system for the runtime. The work does not merely confirm that workloads eventually complete. It deliberately targets semantic failure boundaries, destroys real physical execution capacity, and then requires durable identity, ownership, recovery, lifecycle, ledger, forensic, and replay evidence to converge on the same result.
+
+The validation now spans both runtime providers and both transports:
+
+| Runtime provider | gRPC | HTTP |
+|---|---:|---:|
+| KubernetesPool | VERIFIED | VERIFIED |
+| ProcessHostPool | VERIFIED | VERIFIED |
+
+The adversarial matrix uses nine high-information scenarios per provider/transport combination:
+
+```text
+Baseline
+CrashEarly
+ChildInvocationBoundary
+ContinuationConsume
+Depth2RuntimeFailure
+Depth3RuntimeFailure
+SeedA
+SeedB
+SeedC
+```
+
+The principal outcomes are:
+
+- real child-runtime and parent-host failures are injected against physical infrastructure rather than simulated state;
+- recursive Child DAG execution is validated through depth 3;
+- continuation-consume recovery preserves the same logical `ExecutionId` across replacement physical attempts;
+- durable `SharedRun` ownership remains authoritative while lifecycle signals are used for synchronization and diagnostics;
+- exact ownership transition proofs remain strict;
+- bounded capacity and fresh replacement identity are preserved after failure;
+- ledger, lifecycle journal, forensics, replay, and tenant isolation remain part of the final proof;
+- Kubernetes and ProcessHost providers converge on the same logical recovery contract over both gRPC and HTTP.
+
+---
+
+## Overview
+
+This changelog consolidates the complete adversarial validation work performed across the deterministic AI runtime production scenarios.
+
+The objective of this validation phase was to prove that the runtime preserves deterministic execution semantics under real infrastructure and runtime failures across all supported combinations of:
+
+- gRPC transport
+- HTTP transport
+- Kubernetes-backed runtime pools
+- ProcessHost-backed runtime pools
+- recursive Child DAG execution
+- in-flight execution recovery
+- local-queued redispatch
+- physical runtime termination
+- physical parent-host termination
+- durable continuation recovery
+- bounded runtime capacity
+- exact execution ownership transitions
+- replay, ledger, lifecycle, journal, metrics, and forensic evidence
+
+The work progressively moved the validation harness away from timing inference and polling-only synchronization toward deterministic lifecycle observation while preserving proven durable fallback behavior where required.
+
+No change described here intentionally weakens the runtime correctness contracts.
+
+---
+
+## 1. Adversarial Matrix Expansion
+
+The production validation matrix was expanded to cover the four major runtime combinations:
+
+| Runtime provider | Transport | Validation status |
+|---|---|---|
+| KubernetesPool | gRPC | Validated |
+| KubernetesPool | HTTP | Validated |
+| ProcessHostPool | gRPC | Validated |
+| ProcessHostPool | HTTP | Validated |
+
+This provides parity validation across both infrastructure models and both transports.
+
+The architecture being validated remains the same logical execution system regardless of transport:
+
+```text
+Client / MCP submission
+        ↓
+Shared durable admission
+        ↓
+Runtime pool
+        ↓
+Physical runtime instance
+        ↓
+DAG execution
+        ↓
+Child DAG / continuation
+        ↓
+Failure
+        ↓
+Recovery
+        ↓
+Durable completion
+        ↓
+Replay / ledger / lifecycle / forensic proof
+```
+
+Transport differences are treated as transport concerns, not as separate execution semantics.
+
+---
+
+## 2. Matrix Scenario Families
+
+The adversarial production matrix was organized around scenario families designed to attack different execution boundaries.
+
+Representative rows include:
+
+```text
+Baseline
+CrashEarly
+ChildInvocationBoundary
+ContinuationConsume
+Depth2RuntimeFailure
+Depth3RuntimeFailure
+SeedA
+SeedB
+SeedC
+```
+
+The matrix validates:
+
+- early physical runtime loss
+- Child DAG invocation failure
+- continuation-consume failure
+- recursive failure at deeper Child DAG levels
+- schedule variation
+- different placement and timing seeds
+- recovery under full pool pressure
+- repeated execution cycles
+
+---
+
+## 3. Recursive Child DAG Validation
+
+Recursive Child DAG execution is a core part of the adversarial validation.
+
+The production scenarios validate recursive depth through:
+
+```text
+Depth 1
+Depth 2
+Depth 3
+```
+
+For each recursive level the proof verifies:
+
+- expected child execution count
+- expected logical step count
+- distinct completed logical steps
+- raw ledger completion entries
+- recovery-covered duplicate entries
+- absence of unexplained duplication
+- exact parent/child relation semantics
+
+A representative validated cycle proves:
+
+```text
+Child executions = 54
+Child logical steps = 2736
+
+Depth 1 = 918 / 918
+Depth 2 = 918 / 918
+Depth 3 = 900 / 900
+```
+
+The important contract is not merely aggregate completion. It is:
+
+```text
+expected logical child work
+=
+distinct durable logical child work
+```
+
+with no unexplained double execution.
+
+---
+
+## 4. Durable Child Invocation Identity
+
+Child DAG invocation is correlated using deterministic identity:
+
+```text
+ParentExecutionId
+        ↓
+ParentCallSiteId
+        ↓
+ChildInvocationKey
+        ↓
+ChildExecutionId
+        ↓
+ContinuationId
+        ↓
+Continuation SharedRunId
+```
+
+The `ChildInvocationKey` is stable and deterministic. It allows the harness to identify the exact continuation created for a specific child invocation without guessing from timing or runtime placement.
+
+---
+
+## 5. Continuation Semantics
+
+The runtime implements durable continuation semantics for parent executions waiting on Child DAG completion.
+
+Conceptually:
+
+```text
+Parent DAG
+    ↓
+ExecuteChildDag
+    ↓
+WaitingForExternal
+    ↓
+Child execution
+    ↓
+Child completion
+    ↓
+ContinuationScheduled
+    ↓
+parent call-site becomes runnable
+    ↓
+continuation SharedRun
+    ↓
+resume parent ExecutionId
+```
+
+The parent logical execution survives the physical attempt. The continuation must preserve the same parent `ExecutionId` even when the physical runtime processing the continuation dies.
+
+---
+
+## 6. Continuation Liveness Authority
+
+A major clarification was the distinction between semantic liveness and transient physical execution state.
+
+Once the Child DAG relation reaches:
+
+```text
+RelationStatus = Completed
+ContinuationStatus = Scheduled
+```
+
+`Scheduled` remains the semantic liveness authority until the parent execution becomes terminal.
+
+A call-site may already appear as:
+
+```text
+Ready
+Running
+WaitingForRetry
+Completed
+Failed
+```
+
+while the durable continuation is still the recovery unit.
+
+The decisive rule is:
+
+```text
+Scheduled continuation
++
+non-terminal parent
+=
+continuation still recoverable
+```
+
+---
+
+## 7. Removal of Artificial Post-Child Gates
+
+An experimental approach attempted to create a synthetic post-child crash checkpoint to make continuation failure injection easier.
+
+The experiment introduced concepts such as:
+
+```text
+post-child gate
+dual gate
+placeCrashCheckpointAfterChildDag
+postChildCrashCheckpoint
+continuationTargetBoundaryGate
+```
+
+This approach was removed completely.
+
+The reason was architectural: the harness must validate the real production continuation path, not create a test-only lifecycle state that does not exist in production.
+
+The shared pipeline factory and production cycle executor were restored to their previously validated behavior. The final solution relies only on existing durable runtime signals and stores.
+
+---
+
+## 8. Historical Preparation Gate
+
+The existing crash preparation checkpoint at logical step `50` remains useful, but its role is deliberately limited.
+
+It does not represent the continuation boundary.
+
+Instead it provides a deterministic point at which the harness can prepare observation before the parent enters the Child DAG continuation sequence:
+
+```text
+parent reaches step 50
+        ↓
+preparation gate holds execution
+        ↓
+derive continuation identity
+        ↓
+pre-arm physical runtime handles
+        ↓
+prepare observers
+        ↓
+release step 50
+        ↓
+normal production Child DAG path continues
+```
+
+The gate prepares observation. It does not manufacture the failure boundary.
+
+---
+
+## 9. Pre-Armed Physical Process Handles
+
+ProcessHost runtime instances execute as real child operating-system processes.
+
+To inject a physical failure reliably, the validation pre-arms process handles before releasing the preparation gate.
+
+For a topology such as:
+
+```text
+3 Process Hosts
+×
+3 runtime instances per host
+=
+9 physical runtime processes
+```
+
+all nine exact runtime sessions can be pre-armed. The eventual continuation ownership is then mapped to one of those already-known processes.
+
+This prevents PID discovery from happening only after the continuation has already progressed or completed.
+
+---
+
+## 10. SharedRun Ownership Authority
+
+The `SharedRun` durable record is the ownership authority for dispatched work.
+
+The critical binding is:
+
+```text
+SharedRunId
++
+LocalRunId
++
+ExecutionId
++
+RuntimeInstanceId
+```
+
+For continuation recovery, the validation requires the exact continuation `SharedRun` to become durably bound to:
+
+- the parent `ExecutionId`
+- an exact `LocalRunId`
+- an exact `RuntimeInstanceId`
+
+This produces a durable mapping from logical continuation work to the physical runtime attempting it.
+
+---
+
+## 11. SharedRunDispatched Signal Semantics
+
+`SharedRunDispatched` is useful but intentionally not authoritative.
+
+Its contract is best-effort. The signal may be delayed, duplicated, or lost.
+
+The validation therefore follows the runtime's existing philosophy:
+
+```text
+signal = fast wake-up / diagnostic
+durable SharedRun = authority
+store state = proof
+```
+
+The final ProcessHost continuation-consume validation can record:
+
+```text
+DispatchSignalObserved = False
+DispatchSignalRole = BestEffortDiagnosticOnly
+DurableOwnershipAuthority = SharedRun
+```
+
+and still prove the failure and recovery correctly.
+
+No new lifecycle event was added solely to make the test easier.
+
+---
+
+## 12. ProcessHost Timing Race Discovery
+
+The continuation-consume scenario exposed an important timing difference between Kubernetes and ProcessHost runtimes.
+
+Kubernetes-backed execution is naturally slower because of additional infrastructure boundaries. ProcessHost execution can be extremely fast.
+
+The original durable ownership fallback correctly identified the physical owner, but sometimes did so after the continuation had already finished.
+
+A failing observation looked like:
+
+```text
+RelationStatus       = Completed
+ContinuationStatus   = Scheduled
+ScheduledStepVersion = 2
+CallSiteVersion      = 5
+CallSiteStatus       = Completed
+DagStatus            = Completed
+```
+
+The PID was correct. The timing was not.
+
+This established a critical distinction:
+
+```text
+durable ownership
+=
+identity authority
+
+durable ownership
+≠
+proof that the attempt is still executing
+```
+
+---
+
+## 13. External-Wait Acceptance Timing
+
+Inspection of the production continuation flow revealed why ProcessHost is more sensitive.
+
+Conceptually:
+
+```text
+continuation enqueue
+        ↓
+LocalRun binding
+        ↓
+acceptance wait
+        ↓
+dispatch acknowledgment
+        ↓
+SharedRun ownership persisted
+```
+
+For a very fast ProcessHost execution, the continuation can make significant progress during the acceptance interval.
+
+This explains why an ownership record may become visible only moments before terminal completion.
+
+The finding was not used as justification to add an artificial production delay or a synthetic event. The harness was tightened around the existing durable commit instead.
+
+---
+
+## 14. Tight Durable Ownership Watch
+
+The final ProcessHost mechanism uses a tight ownership watcher.
+
+The sequence is:
+
+```text
+step 50 preparation HOLD
+        ↓
+derive ParentExecutionId
+        ↓
+derive ChildInvocationKey
+        ↓
+derive continuation SharedRunId
+        ↓
+pre-arm all physical runtime process handles
+        ↓
+release preparation gate
+        ↓
+observe Completed / Scheduled continuation state
+        ↓
+TIGHT WATCH on exact continuation SharedRun
+        ↓
+first exact durable ownership commit:
+    Status = Dispatched
+    ExecutionId = parent
+    LocalRunId present
+    RuntimeInstanceId present
+        ↓
+SUSPEND exact pre-armed PID immediately
+```
+
+No relation, DAG, index, or registry proof is performed between observing the ownership commit and suspending the physical process.
+
+This minimizes the race window.
+
+---
+
+## 15. Frozen Physical Boundary
+
+Once the exact ProcessHost PID is suspended, the harness can safely perform durable reads without the physical attempt progressing further.
+
+The frozen boundary is validated using:
+
+```text
+Child relation
+DAG state
+Lifecycle observation
+SharedRun ownership
+RuntimeRunExecutionIndex
+```
+
+A valid continuation-consume failure target proves:
+
+```text
+RelationStatus = Completed
+ContinuationStatus = Scheduled
+
+post-schedule call-site progress exists
+
+parent DAG = non-terminal
+
+SharedRunStatus = Dispatched
+SharedRun.ExecutionId = ParentExecutionId
+SharedRun.LocalRunId = exact local attempt
+SharedRun.RuntimeInstanceId = exact physical runtime
+
+RuntimeRunExecutionIndex = running
+
+exact physical process = suspended
+```
+
+Only after this proof is complete is the same suspended process killed.
+
+---
+
+## 16. Physical Kill Proof
+
+The ProcessHost scenario does not simulate a failure. It kills the actual runtime process.
+
+The proof records:
+
+- physical PID
+- process start time
+- suspend timestamp
+- kill request timestamp
+- kill completion timestamp
+- exact `RuntimeInstanceId`
+- exact `LocalRunId`
+- exact `SharedRunId`
+- exact `ExecutionId`
+
+A representative validated boundary is:
+
+```text
+CompletedStepsAtKill = 50
+TotalStepsAtKill     = 51
+
+DagStatus   = Waiting
+IndexStatus = running
+
+PhysicalKillProof = PASS
+PhysicalKillMode = PrearmedSuspendedProcessHandle
+```
+
+This proves the process died while real logical work was still in-flight.
+
+---
+
+## 17. In-Flight Recovery
+
+After the exact runtime is killed, recovery identifies the work as an in-flight execution.
+
+The recovery contract preserves logical execution identity:
+
+```text
+ExecutionIdBefore
+=
+ExecutionIdAfter
+```
+
+while replacing the physical attempt:
+
+```text
+Failed RuntimeInstanceId
+        ↓
+Replacement RuntimeInstanceId
+
+Failed LocalRunId
+        ↓
+Replacement LocalRunId
+```
+
+This is the expected durable model:
+
+```text
+logical execution survives
+physical execution attempt changes
+```
+
+---
+
+## 18. Shared Failure Journal Authority
+
+Runtime recovery relies on the shared durable failure journal.
+
+A physical runtime failure produces a durable failure authority containing information such as:
+
+```text
+FailureId
+PoolId
+HostId
+RuntimeInstanceId
+RouteId
+```
+
+Recovery evaluates candidate work from the failed runtime and reports:
+
+```text
+CandidateCount
+AcceptedCount
+RejectedCount
+RecoveredSharedRunId
+RecoveredExecutionId
+```
+
+The failure journal is treated as shared durable recovery authority rather than an in-memory observation.
+
+---
+
+## 19. Event-Driven Recovery Synchronization
+
+Recovery synchronization was progressively moved toward the deterministic lifecycle observer.
+
+Canonical lifecycle events are used to wake the production tests when recovery transitions occur.
+
+Examples include:
+
+```text
+shared.run.requeued.for.resume
+replacement.runtime.selected
+replacement.local.run.registered
+resume.context.seeded
+```
+
+The intended model is:
+
+```text
+event = synchronization
+store = authority
+hard timeout = watchdog
+```
+
+This reduces long polling loops while keeping correctness grounded in durable state.
+
+---
+
+## 20. Recovered Work Inventory
+
+Every recovered work item is explicitly inventoried.
+
+For in-flight recovery the proof includes:
+
+```text
+Kind = InFlightExecution
+
+SharedRunId
+FailedLocalRunId
+ReplacementRuntimeInstanceId
+ReplacementLocalRunId
+ExecutionIdBefore
+ExecutionIdAfter
+```
+
+The required contract is:
+
+```text
+ExecutionIdBefore == ExecutionIdAfter
+```
+
+This is one of the strongest validations that logical execution identity survives physical runtime failure.
+
+---
+
+## 21. Recovery Forensics
+
+Recovery creates deterministic forensic evidence.
+
+A representative forensic timeline includes:
+
+```text
+execution.recovery.candidate.detected
+        ↓
+shared.run.requeued.for.resume
+        ↓
+failed.local.run.marked.requeued.for.recovery
+        ↓
+replacement.runtime.selected
+        ↓
+replacement.local.run.registered
+        ↓
+resume.context.seeded
+```
+
+The adversarial scenarios validate that the exact recovered execution produces the expected forensic record.
+
+Recovery is therefore not only successful. It is explainable after the fact.
+
+---
+
+## 22. Runtime Membership Replacement
+
+A failed child runtime must not leave stale pool membership.
+
+After recovery, the owning ProcessHost refreshes its child runtime membership.
+
+The proof validates:
+
+```text
+PreviousRuntimeCount
+CurrentRuntimeCount
+RemovedRuntimeInstanceIds
+AddedRuntimeInstanceIds
+```
+
+The expected bounded-capacity behavior is:
+
+```text
+failed runtime removed
+replacement runtime added
+runtime count unchanged
+```
+
+There is no uncontrolled scale-out.
+
+---
+
+## 23. Bounded Capacity Proof
+
+The runtime pools are validated under strict capacity limits.
+
+For example:
+
+```text
+MaximumProcessHostCount = 3
+RuntimeCountPerHost = 3
+Maximum runtime capacity = 9
+```
+
+The validation ensures:
+
+- existing capacity is reused first
+- runtime count never exceeds the configured maximum
+- parent ProcessHost count never exceeds its configured maximum
+- replacement membership converges exactly
+- failed membership is suppressed
+- no phantom capacity appears during recovery
+
+Capacity correctness is treated as an identity and ownership problem, not merely a scaling problem.
+
+---
+
+## 24. Parent ProcessHost Failure
+
+The adversarial scenarios also kill an entire busy parent ProcessHost.
+
+This destroys:
+
+```text
+Parent ProcessHost
++
+all child runtime processes belonging to it
++
+all physical attempts executing on those runtimes
+```
+
+The validation then proves:
+
+- exact failed parent identity
+- exact lost runtime membership
+- surviving host count
+- replacement ProcessHost identity
+- replacement runtime membership
+- recovered shared runs
+- bounded capacity after replacement
+
+The failure boundary is therefore hierarchical.
+
+---
+
+## 25. Distinct Failure Targets
+
+The child runtime selected for the first physical kill and the later parent ProcessHost failure are intentionally distinct.
+
+This proves that:
+
+1. one child runtime can fail and recover while its parent and siblings survive;
+2. later, a different fully busy parent ProcessHost can fail;
+3. the complete failed parent membership can be replaced;
+4. all affected work can still recover.
+
+---
+
+## 26. Kubernetes Physical Failure Validation
+
+Kubernetes validation follows the same logical execution contract but uses Kubernetes-native physical boundaries.
+
+The scenarios include:
+
+- exact runtime Pod targeting
+- Pod deletion
+- in-Pod runtime process death
+- Pod replacement
+- exact failed membership suppression
+- replacement runtime identity
+- recursive Child DAG recovery
+- durable ownership validation
+
+A Kubernetes Pod is treated as an infrastructure failure boundary. It is not treated as the logical execution identity.
+
+---
+
+## 27. Exact In-Pod Runtime Process Death
+
+Kubernetes validation also includes scenarios where the runtime process inside a Pod is physically killed without treating the Pod itself as the execution identity.
+
+The proof validates:
+
+```text
+exact runtime process death
+        ↓
+failed RuntimeInstanceId
+        ↓
+fresh replacement RuntimeInstanceId
+        ↓
+logical execution recovery
+```
+
+This strengthens the distinction between:
+
+```text
+Pod identity
+runtime instance identity
+execution identity
+```
+
+---
+
+## 28. Pre-Armed Kill Commands
+
+Physical failure injection was hardened to avoid race conditions where a kill command could execute before the test was ready.
+
+A pre-armed kill command follows this explicit contract:
+
+```text
+pre-arm
+        ↓
+wait
+        ↓
+explicit trigger
+        ↓
+physical kill
+```
+
+The validation explicitly verifies that the kill does not happen before the trigger.
+
+---
+
+## 29. Ownership Resolver Hardening
+
+An adversarial recovery failure exposed a stale continuation ownership case.
+
+The ownership resolver could encounter an external-wait continuation candidate whose parent execution had already become terminal.
+
+The fix added a strict guard:
+
+```text
+if parent execution is terminal
+    stale external-wait continuation candidate is ignored
+```
+
+The ownership assertion itself remained strict.
+
+The system was not weakened to make the test pass. Instead, stale recovery work was prevented from being resurrected.
+
+---
+
+## 30. Disconnected Recovery Chain Validation
+
+Production ownership assertions validate that a recovered ownership chain must remain connected to the expected prior execution lineage.
+
+Disconnected or unrelated recovery chains are rejected, even when multiple valid-looking chain starts exist.
+
+This prevents accidental acceptance of an unrelated execution attempt.
+
+---
+
+## 31. Recovery Scope Separation
+
+The scenarios distinguish between:
+
+```text
+submitted workload recovery
+```
+
+and supplemental recovery work such as:
+
+```text
+continuation SharedRun recovery
+```
+
+The proof reports:
+
+```text
+RecoveredSubmittedSharedRunCount
+SupplementalRecoveredSharedRunCount
+SupplementalRecoveredSharedRunIds
+```
+
+This prevents internal continuation recovery from contaminating logical parent-run accounting.
+
+---
+
+## 32. Parent Recovery Scope
+
+Parent logical-step validation is kept separate from internal continuation recovery.
+
+The production proofs identify whether recovered executions belong to:
+
+- submitted parent workload
+- supplemental continuation work
+
+This avoids double-counting the continuation `SharedRun` as a separate user-submitted parent execution.
+
+---
+
+## 33. Valid Runtime Ownership Transition Proof
+
+The final recovery state is validated against durable SharedRun ownership.
+
+The proof checks:
+
+```text
+ExpectedRecoveredSharedRunCount
+ObservedRecoveredSharedRunCount
+FinalReplacementBindingCount
+TransitionViolationCount
+```
+
+The ownership transition authority is based on durable queue/run concurrency primitives such as:
+
+```text
+RedisSharedQueueClaimToken
+RedisSharedRunCAS
+```
+
+Temporal sampling is not treated as ownership authority.
+
+The expected result is:
+
+```text
+TransitionViolationCount = 0
+```
+
+---
+
+## 34. Queue-First Admission
+
+All production scenarios submit through QueueFirst durable admission:
+
+```text
+submission
+        ↓
+durable shared queue
+        ↓
+runtime dispatch
+```
+
+This allows the scenarios to validate transient backpressure, full-capacity waves, runtime loss, redispatch, and recovery without losing logical submissions.
+
+---
+
+## 35. Dynamic Backpressure
+
+The matrix exercises full runtime capacity and honors transient admission pressure.
+
+The producer dynamically retries when capacity produces transient rejection.
+
+The proof records:
+
+```text
+TooManyRequestsRetryCount
+FullCapacityWaveCount
+RunsPerWave
+SubmittedRunCount
+```
+
+The purpose is not to eliminate backpressure. It is to prove that backpressure does not violate durable admission or logical work accounting.
+
+---
+
+## 36. Warm Reuse
+
+Runtime pools are validated for warm reuse.
+
+After the initial cold topology is created, subsequent work reuses existing healthy capacity before replacement infrastructure is introduced.
+
+The scenarios explicitly record:
+
+```text
+ColdStart
+ProcessHostCount
+RuntimeCount
+PoolId
+```
+
+Replacement capacity is expected only in response to real failure.
+
+---
+
+## 37. Multi-Cycle Validation
+
+Critical scenarios run for more than one execution cycle.
+
+This prevents a one-time success from hiding:
+
+- stale state
+- leaked membership
+- dirty recovery journals
+- cross-cycle ownership contamination
+- replay contamination
+- stale continuation records
+- broken warm reuse
+
+Representative production scenarios validate two full cycles with real child-runtime and parent-host failure in each cycle.
+
+---
+
+## 38. gRPC ProcessHostPool Continuation-Consume Proof
+
+The gRPC ProcessHostPool continuation-consume scenario successfully proved the full physical failure boundary.
+
+Representative proof:
+
+```text
+SharedRunStatus = Dispatched
+CompletedStepsAtKill = 50
+TotalStepsAtKill = 51
+
+DagStatus = Waiting
+IndexStatus = running
+
+PhysicalKillProof = PASS
+Kind = InFlightExecution
+```
+
+Recovery preserved:
+
+```text
+ExecutionIdBefore == ExecutionIdAfter
+```
+
+while moving execution to a replacement runtime and replacement local run.
+
+The full two-cycle scenario completed successfully.
+
+---
+
+## 39. HTTP ProcessHostPool Matrix
+
+A dedicated HTTP ProcessHostPool adversarial matrix was added.
+
+It mirrors the gRPC ProcessHostPool matrix while using the HTTP transport profile:
+
+```text
+Provider = http
+HostCreationMode = Process
+PersistenceProfile = MongoRedis
+ObservabilityProfile = DurableMongo
+SubmitMode = QueueFirst
+```
+
+No HTTP-specific logical recovery architecture was introduced.
+
+The goal is transport parity.
+
+---
+
+## 40. HTTP ProcessHostPool Final Validation
+
+The HTTP ProcessHostPool matrix was completed using the same ProcessHost execution, ownership, continuation, and recovery contracts as the gRPC matrix.
+
+The final continuation-consume path uses the same deterministic targeting mechanism:
+
+```text
+historical preparation checkpoint
+        ↓
+deterministic ChildInvocationKey
+        ↓
+exact continuation SharedRunId
+        ↓
+pre-arm physical ProcessHost handles
+        ↓
+release normal production execution
+        ↓
+observe exact durable Dispatched ownership
+        ↓
+suspend exact pre-armed PID
+        ↓
+validate non-terminal semantic boundary
+        ↓
+kill the same physical process
+        ↓
+in-flight recovery
+        ↓
+same logical ExecutionId
+```
+
+No HTTP-specific recovery policy or production lifecycle behavior was introduced. The final state is transport parity: HTTP uses the same durable ownership and recovery model as gRPC.
+
+The completed matrix therefore treats HTTP ProcessHostPool as fully validated rather than as a special-case or degraded proof path.
+
+---
+
+## 41. Transport Parity
+
+The final target is parity across:
+
+```text
+                    KubernetesPool    ProcessHostPool
+
+gRPC                     ✓                 ✓
+HTTP                     ✓                 ✓
+```
+
+Transport affects request framing, connection behavior, latency, and physical scheduling.
+
+Transport must not affect:
+
+- logical execution identity
+- durable ownership
+- Child DAG identity
+- continuation semantics
+- recovery correctness
+- replay correctness
+- forensic evidence
+
+---
+
+## 42. Kubernetes Gateway Readiness
+
+Kubernetes validation exposed gateway readiness timing issues.
+
+The tests were corrected to distinguish gateway accepted/programmed state from service endpoint readiness when port-forwarding is disabled.
+
+The gateway manager must not require a ready service endpoint in configurations where that endpoint is not part of the access path.
+
+This removed false readiness failures without weakening the runtime readiness contract.
+
+---
+
+## 43. Gateway Programmed State
+
+Failures such as:
+
+```text
+Programmed = False
+AddressNotAssigned
+```
+
+were investigated separately from runtime execution failures.
+
+The validation clarified that gateway control-plane readiness and runtime execution readiness are distinct concerns.
+
+The test harness now waits on the correct readiness contract for the selected access mode.
+
+---
+
+## 44. Kubernetes Runtime Image Consistency
+
+Kubernetes tests were hardened to use the shared canonical runtime image constant:
+
+```text
+KubernetesSdkScenarioConstants.RuntimeImage
+```
+
+This prevents drift between:
+
+- locally loaded Minikube image
+- deployment specification
+- scenario expectation
+
+It also avoids false failures such as `ErrImageNeverPull` caused by a test referencing a different local image tag.
+
+---
+
+## 45. Local Minikube Image Loading
+
+For local validation with:
+
+```text
+ImagePullPolicy = Never
+```
+
+the expected runtime image must exist inside Minikube.
+
+The validation process therefore includes explicit image loading when required, keeping infrastructure setup failures separate from runtime correctness failures.
+
+---
+
+## 46. Event-Driven Lifecycle Observation
+
+The production test suite progressively adopted the deterministic lifecycle observer.
+
+The observer centralizes synchronization around canonical lifecycle events rather than inferring every transition from repeated snapshots.
+
+The model is:
+
+```text
+Event Manager
+        ↓
+canonical lifecycle event
+        ↓
+deterministic test observer
+        ↓
+wake test
+        ↓
+durable state proof
+```
+
+This reduces ambiguity during long-running failure tests.
+
+---
+
+## 47. Event-Driven Recovery with Durable Fallback
+
+Event observation does not replace durable authority.
+
+The intended pattern is:
+
+```text
+event observed
+        ↓
+read durable state
+        ↓
+validate exact transition
+```
+
+If an event is delayed or unavailable, selected scenarios retain a durable fallback strategy.
+
+This preserves correctness while improving synchronization.
+
+---
+
+## 48. Lifecycle Journal Proof
+
+Runtime lifecycle transitions are validated against the durable Runtime Lifecycle Journal.
+
+The production scenarios use this durable journal as the canonical lifecycle proof and report items such as:
+
+```text
+EventCount
+DurableSource = RuntimeLifecycleJournal
+```
+
+Legacy lifecycle queries are skipped where the canonical journal already provides the intended authority.
+
+---
+
+## 49. Ledger Proof
+
+Each completed execution must have durable ledger evidence.
+
+The production proof validates:
+
+- execution creation
+- run start
+- claim attempts
+- concurrency lease acquisition
+- claim acquisition
+- step start
+- step completion
+- concurrency lease release
+- retention evaluation
+- retention decision
+- recovery events
+- replay events
+- completion evidence
+
+The ledger is part of the deterministic execution proof, not merely diagnostic output.
+
+---
+
+## 50. Replay Proof
+
+Every completed submitted parent execution must be replayable.
+
+The matrix validates:
+
+```text
+ReplayProofCount
+ExecutionIds
+durable execution ledger
+exact step evidence
+completion evidence
+```
+
+Replay validation occurs after failure and recovery, proving that recovered executions remain reconstructible.
+
+---
+
+## 51. Recovery Forensic Proof
+
+Recovered executions must have an exact recovery forensic record.
+
+The validation correlates:
+
+```text
+ForensicsId
+ExecutionId
+SharedRunId
+TenantId
+Timeline
+```
+
+This allows the failure and recovery chain to be reconstructed independently of transient runtime logs.
+
+---
+
+## 52. Tenant Isolation
+
+The production scenarios remain tenant-scoped.
+
+Durable ledger and execution proofs are grouped by tenant.
+
+The validation verifies that runtime failures and recoveries do not cause:
+
+- cross-tenant execution leakage
+- shared-run ownership contamination
+- recovery assignment to another tenant
+
+Tenant isolation remains part of the adversarial correctness contract.
+
+---
+
+## 53. No Recovery Contamination
+
+Executions that did not require recovery must not acquire recovery artifacts accidentally.
+
+The matrix checks that recovery evidence belongs only to expected recovered work, especially during high-concurrency waves where many runs share the same runtime pool.
+
+---
+
+## 54. Exact Step Accounting
+
+Every submitted parent DAG is expected to complete exactly:
+
+```text
+51 logical steps
+```
+
+The matrix compares:
+
+```text
+expected logical steps
+distinct durable completed steps
+raw ledger completion entries
+recovery-covered duplicates
+```
+
+Recovery may produce additional physical attempts. It must not create unexplained additional logical work.
+
+---
+
+## 55. Logical vs Physical Attempts
+
+The validation consistently separates logical execution from physical execution attempts.
+
+A recovery can legitimately produce:
+
+```text
+StepStarted > StepCompleted
+```
+
+because a failed physical attempt may have started work that is later retried.
+
+Correctness is based on distinct logical completion, not simplistic equality between raw physical ledger counts.
+
+---
+
+## 56. Runtime Index Proof
+
+The runtime execution index is used to prove that a target continuation attempt is physically active before failure.
+
+At the continuation-consume boundary the expected state includes:
+
+```text
+IndexStatus = running
+```
+
+with exact matching:
+
+```text
+LocalRunId
+ExecutionId
+RuntimeInstanceId
+```
+
+This complements the durable SharedRun ownership proof.
+
+---
+
+## 57. Crash Window Inventory
+
+The failure harness captures state immediately around the physical kill.
+
+The inventory includes:
+
+```text
+PreKillIndexStatus
+PreKillRuntimeInstanceId
+PreKillExecutionId
+PreKillDagStatus
+PreKillCompletedSteps
+PreKillTotalSteps
+
+PostKillIndexStatus
+PostKillRuntimeInstanceId
+PostKillExecutionId
+PostKillDagStatus
+PostKillCompletedSteps
+PostKillTotalSteps
+```
+
+This distinguishes genuine in-flight failure from failure after logical completion, local-queued work, or stale ownership.
+
+---
+
+## 58. In-Flight vs Local-Queued Recovery
+
+Recovery distinguishes between:
+
+```text
+InFlightExecution
+```
+
+and:
+
+```text
+LocalQueued
+```
+
+These are not interchangeable.
+
+In-flight recovery preserves the same logical `ExecutionId`.
+
+Local-queued work is redispatched according to the shared queue recovery contract.
+
+---
+
+## 59. Exact Replacement Identity
+
+A failed physical runtime must be replaced with a distinct physical runtime identity.
+
+The proof verifies:
+
+```text
+FailedRuntimeInstanceId
+!=
+ReplacementRuntimeInstanceId
+```
+
+while logical execution identity remains stable where required.
+
+This ensures that a failed runtime is not accidentally interpreted as having recovered itself.
+
+---
+
+## 60. Parent Host Replacement Identity
+
+A failed ProcessHost is replaced with a distinct:
+
+```text
+ReplacementParentProcessId
+ReplacementHostId
+ReplacementStableTransportEndpoint
+```
+
+Its child runtime membership must be freshly established.
+
+---
+
+## 61. Membership Suppression
+
+When Kubernetes Pod or ProcessHost membership disappears, stale membership must not be resurrected.
+
+The runtime suppresses failed membership and creates fresh replacement capacity when necessary.
+
+Validation checks exact removed and added runtime identities rather than only total counts.
+
+---
+
+## 62. Recovery Candidate Filtering
+
+Recovery often sees multiple candidate shared runs.
+
+The scenario records:
+
+```text
+CandidateCount
+AcceptedCount
+RejectedCount
+```
+
+Only the exact eligible failed work should be accepted.
+
+This protects against broad recovery scans incorrectly taking unrelated work.
+
+---
+
+## 63. Seed-Based Adversarial Scheduling
+
+Multiple deterministic schedule seeds are part of the matrix.
+
+Representative seeds:
+
+```text
+SeedA
+SeedB
+SeedC
+```
+
+The goal is to exercise different timing and placement orderings without making the tests random.
+
+The same correctness contract must hold across all supported schedule definitions.
+
+---
+
+## 64. Depth-Specific Runtime Failure
+
+Separate matrix scenarios deliberately target recursive Child DAG execution at deeper levels:
+
+```text
+Depth2RuntimeFailure
+Depth3RuntimeFailure
+```
+
+These prove that recovery works not only for the root parent or first child but also at deeper levels of the DAG tree.
+
+---
+
+## 65. Child Invocation Boundary Failure
+
+A dedicated adversarial scenario targets the Child DAG invocation boundary itself.
+
+The purpose is to validate the transition between:
+
+```text
+parent execution
+        ↓
+child invocation
+        ↓
+durable child identity
+```
+
+under physical runtime failure.
+
+The child must not be duplicated or orphaned.
+
+---
+
+## 66. Early Runtime Crash
+
+The `CrashEarly` matrix row validates recovery before the DAG has accumulated substantial progress.
+
+Together with the continuation-consume scenario, this covers:
+
+```text
+early failure
+mid-execution failure
+child invocation failure
+recursive failure
+continuation failure
+```
+
+---
+
+## 67. Baseline Production Proof
+
+Every adversarial matrix retains a baseline scenario.
+
+The baseline validates the same topology and workload without intentional failure.
+
+This provides a control case for:
+
+- capacity
+- logical step counts
+- recursive Child DAG counts
+- ledger
+- replay
+- ownership
+- lifecycle
+
+---
+
+## 68. Warm-Reuse Production Cycles
+
+Multi-cycle scenarios keep the pool alive between cycles.
+
+This validates that the second cycle reuses healthy infrastructure instead of silently recreating the entire environment.
+
+It also exposes stale recovery state that would be invisible in a single cold-start run.
+
+---
+
+## 69. Parent Failure Workload Drain
+
+Before the hierarchical parent-host failure wave, the scenario controls workload placement carefully.
+
+The test creates:
+
+- filler work
+- explicit crash-checkpoint work
+- a fully busy target parent
+- surviving parent capacity
+
+The parent host is then physically killed while it has active work.
+
+This makes the parent-host recovery proof meaningful rather than decorative.
+
+---
+
+## 70. Hierarchical Recovery
+
+The combined production scenario validates both physical failure levels in one run:
+
+```text
+exact child runtime failure
+        ↓
+child replacement
+        ↓
+continued workload
+        ↓
+distinct parent ProcessHost failure
+        ↓
+entire runtime tree lost
+        ↓
+parent replacement
+        ↓
+membership replacement
+        ↓
+work recovery
+```
+
+This is stronger than isolated child-only or host-only testing.
+
+---
+
+## 71. Final Workload Drain
+
+After all injected failures, every submitted parent DAG must reach terminal completion.
+
+The scenario waits on authoritative DAG execution records.
+
+Expected result:
+
+```text
+CompletedExecutionCount = ExpectedRunCount
+```
+
+No submitted work is allowed to disappear because of recovery.
+
+---
+
+## 72. Final Runtime Status Proof
+
+After workload drain, runtime state is validated for all completed runs.
+
+This verifies consistency between:
+
+- completed DAGs
+- recovery outcomes
+- replacement membership
+- exact execution ownership
+
+---
+
+## 73. Final Ownership Convergence
+
+Recovered SharedRuns must converge on their final replacement ownership.
+
+The proof uses final durable ownership plus recovery outcome evidence rather than transient temporal sampling.
+
+---
+
+## 74. Canonical Runtime Constants
+
+Tests were progressively aligned to canonical scenario constants rather than duplicated literal infrastructure values.
+
+Examples include:
+
+```text
+Namespace
+RuntimeImage
+ImagePullPolicy
+ContainerName
+ContainerPort
+```
+
+This reduces drift between scenario code and runtime infrastructure setup.
+
+---
+
+## 75. Exact Semantic Strings
+
+Adversarial validation preserves canonical semantic event and status strings.
+
+No approximate replacement or unrelated enum conversion is accepted merely to remove literals.
+
+Persisted and wire values remain exactly stable.
+
+This protects forensic and replay compatibility.
+
+---
+
+## 76. No Synthetic Lifecycle Events
+
+A central rule throughout the validation work is:
+
+```text
+do not invent an event just to make a test easier
+```
+
+The scenarios rely on existing canonical lifecycle contracts.
+
+When a signal is insufficient, the preferred fallback is durable state, not a test-specific production event.
+
+---
+
+## 77. No Production Delay for Test Convenience
+
+The final continuation-consume solution does not add an artificial sleep or delay to production continuation execution merely to widen the failure window.
+
+The physical ProcessHost is frozen using already-existing durable ownership information.
+
+Production execution remains fast.
+
+---
+
+## 78. Strict Assertions Preserved
+
+Where validation uncovered stale recovery candidates or incorrect ownership, strict assertions were preserved.
+
+The fix was applied to selection or recovery behavior rather than weakening the assertion.
+
+This preserves the value of the adversarial suite as a correctness proof.
+
+---
+
+## 79. Regression Revalidation
+
+After continuation-consume changes, the blast radius was revalidated.
+
+Shared test infrastructure affected included:
+
+```text
+McpTestPipelineFactory
+RuntimePoolProductionCycleExecutor
+ProcessHostPoolProductionScenarioTestsBase
+ProductionChildDagPipelineFactoryTests
+```
+
+Because some helpers are shared across providers, revalidation was not limited to the original failing ProcessHost scenario.
+
+The regression pass included:
+
+- shared pipeline factory tests
+- production cycle executor tests
+- continuation boundary policy tests
+- recursive Child DAG assertions
+- gRPC ProcessHostPool matrix
+- Kubernetes matrices
+- full-failure production scenarios
+- provider/transport parity scenarios
+- HTTP ProcessHostPool matrix
+
+---
+
+## 80. Full ProcessHost Production Proof
+
+A representative successful gRPC ProcessHostPool production run validated:
+
+```text
+Execution cycles          = 2
+Process Hosts             = 3
+Runtimes per host         = 3
+Maximum runtime capacity  = 9
+
+Submitted parent runs     = 36
+Completed parent runs     = 36
+
+Parent logical steps      = 1836
+
+Child runtime failures    = 2
+Parent host failures      = 2
+
+Recovered work items      = 8
+
+Replay proofs             = 36
+```
+
+The scenario completed both physical failure types while preserving logical execution correctness.
+
+---
+
+## 81. Continuation Recovery Proof Summary
+
+The final ProcessHost continuation-consume proof is:
+
+```text
+Historical preparation checkpoint
+        ↓
+deterministic continuation identity
+        ↓
+pre-arm physical ProcessHost handles
+        ↓
+release normal production execution
+        ↓
+Child relation Completed
+Continuation Scheduled
+        ↓
+tight durable SharedRun watch
+        ↓
+exact SharedRun becomes Dispatched
+        ↓
+exact LocalRunId
+exact ExecutionId
+exact RuntimeInstanceId
+        ↓
+SUSPEND exact pre-armed PID
+        ↓
+prove:
+    parent non-terminal
+    continuation still Scheduled
+    exact ownership
+    exact running execution index
+        ↓
+KILL same suspended PID
+        ↓
+failure journal
+        ↓
+in-flight recovery
+        ↓
+replacement runtime
+replacement LocalRun
+same ExecutionId
+        ↓
+DAG completion
+        ↓
+ledger
+lifecycle
+forensics
+replay
+```
+
+---
+
+## 82. Final Cross-Platform Execution Contract
+
+The complete adversarial validation reinforces the core architecture:
+
+```text
+Model output may be probabilistic.
+
+Execution identity is not.
+Ownership is not.
+Recovery is not.
+Replay is not.
+Failure accounting is not.
+```
+
+Across Kubernetes and ProcessHost, HTTP and gRPC, the runtime preserves the distinction between:
+
+```text
+logical execution identity
+physical runtime identity
+physical attempt identity
+infrastructure failure boundary
+```
+
+A Pod can die.
+
+A process can die.
+
+A ProcessHost can die.
+
+A runtime instance can be replaced.
+
+A LocalRun can be replaced.
+
+But the logical execution must remain durably attributable, recoverable, replayable, and forensically explainable.
+
+---
+
+## 83. Incremental Change Summary
+
+The work can be summarized as the following engineering increments.
+
+### Increment 1 — Expand adversarial coverage
+
+- Established the nine-row adversarial matrix.
+- Extended validation across KubernetesPool and ProcessHostPool.
+- Extended transport parity across gRPC and HTTP.
+- Preserved the same logical execution contracts across all four combinations.
+
+### Increment 2 — Move synchronization toward canonical lifecycle observation
+
+- Reused the existing Event Manager and lifecycle contracts.
+- Added deterministic observer-based waiting where appropriate.
+- Kept durable stores as authority and hard timeouts as watchdogs.
+- Avoided replacing correctness with event arrival assumptions.
+
+### Increment 3 — Harden Kubernetes failure boundaries
+
+- Validated Pod deletion and fresh membership replacement.
+- Validated exact in-Pod runtime process death.
+- Corrected gateway readiness expectations for non-port-forward access.
+- Centralized runtime-image usage through canonical scenario constants.
+- Preserved exact Kubernetes runtime and ownership identities.
+
+### Increment 4 — Harden recursive Child DAG failure targeting
+
+- Validated recursive execution through depth 3.
+- Added dedicated depth-2 and depth-3 runtime-failure scenarios.
+- Preserved exact `ChildInvocationKey`, child execution identity, and continuation identity.
+- Kept logical child-step accounting exact across recovery.
+
+### Increment 5 — Harden ownership and stale recovery filtering
+
+- Prevented terminal parents from resurrecting stale external-wait continuation candidates.
+- Preserved strict disconnected-recovery-chain assertions.
+- Kept durable CAS/claim semantics as ownership authority.
+- Separated submitted workload recovery from supplemental continuation recovery.
+
+### Increment 6 — Replace synthetic continuation targeting experiments
+
+- Removed the experimental post-child crash checkpoint.
+- Removed dual-gate continuation targeting.
+- Removed related test-only pipeline parameters.
+- Restored shared pipeline and cycle-runner behavior.
+- Returned to existing production semantics rather than manufacturing a new boundary.
+
+### Increment 7 — Stabilize ProcessHost continuation-consume failure injection
+
+- Retained the historical step-50 preparation gate only as a preparation mechanism.
+- Derived deterministic continuation identity before release.
+- Pre-armed exact physical ProcessHost handles.
+- Used a tight durable `SharedRun` ownership watch.
+- Suspended the exact PID immediately on the first exact `Dispatched` ownership commit.
+- Performed semantic/DAG/index proof only after the physical process was frozen.
+- Killed the same suspended process and required normal in-flight recovery.
+
+### Increment 8 — Preserve logical identity across physical replacement
+
+- Required `ExecutionIdBefore == ExecutionIdAfter` for in-flight continuation recovery.
+- Required replacement `RuntimeInstanceId` and replacement `LocalRunId`.
+- Proved logical execution continuity independently of physical attempt identity.
+
+### Increment 9 — Revalidate blast radius
+
+- Re-ran shared factory and cycle-executor tests.
+- Re-ran ProcessHost matrices after harness changes.
+- Revalidated Kubernetes paths consuming shared infrastructure.
+- Revalidated HTTP and gRPC transport paths.
+- Kept the code frozen while validating instead of patching after every transient observation.
+
+### Increment 10 — Establish evidence-archive discipline
+
+- Standardized one xUnit output per matrix row.
+- Standardized nine evidence artifacts per provider/transport matrix.
+- Began archive-level SHA-256 tracking.
+- Kept raw evidence separate from the narrative changelog.
+
+---
+
+## 84. Evidence Provenance and Archive Discipline
+
+The engineering changelog and the raw evidence archive serve different purposes.
+
+This document records what changed, why it changed, which contracts were hardened, and the final validation state. Raw xUnit outputs are archived separately so that individual matrix rows remain independently inspectable.
+
+The evidence model is:
+
+```text
+one provider/transport combination
+        ↓
+nine independent xUnit outputs
+        ↓
+one artifact per matrix row
+        ↓
+scenario identity + final production proof + proof markers
+        ↓
+archive SHA-256
+```
+
+The gRPC ProcessHostPool evidence archive has already been structurally verified as nine distinct scenario outputs:
+
+```text
+01-baseline.txt                    → baseline
+02-crash-early.txt                 → crash-early
+03-child-invocation-boundary.txt   → child-invocation-boundary
+04-continuation-consume.txt        → continuation-consume
+05-depth2-runtime-failure.txt      → depth2-runtime-failure
+06-depth3-runtime-failure.txt      → depth3-runtime-failure
+07-seed-a.txt                      → seed-a
+08-seed-b.txt                      → seed-b
+09-seed-c.txt                      → seed-c
+```
+
+Each of those nine logs contains its own final production result block.
+
+Current archive checksum:
+
+```text
+processhost-grpc.zip
+SHA-256: 7d744af69889c9f6f27b49d65fce2662b543b0b17e8af7a2c5e0a230ef9b711f
+```
+
+The same archive discipline is intended for the remaining provider/transport matrices. Evidence provenance should remain explicit; a debugging run, a projected result, or a narrative summary must never be substituted for an archived executed proof.
+
+---
+
+## 85. Final Validation State
+
+The adversarial validation now covers:
+
+- Kubernetes runtime pools
+- ProcessHost runtime pools
+- HTTP transport
+- gRPC transport
+- bounded topology
+- warm reuse
+- QueueFirst admission
+- early runtime crashes
+- Child DAG invocation failures
+- recursive depth failures
+- continuation-consume failures
+- exact physical runtime kills
+- exact in-Pod process death
+- parent ProcessHost failures
+- runtime membership replacement
+- in-flight recovery
+- local-queued recovery
+- same-ExecutionId resume
+- deterministic Child DAG identity
+- exact ownership transitions
+- event-driven recovery synchronization
+- durable fallback authority
+- lifecycle journal
+- ledger
+- recovery forensics
+- replay
+- tenant isolation
+- exact logical step accounting
+- multi-cycle recovery
+- transport parity
+- provider parity
+
+---
+
+## 86. Closing Result
+
+The runtime is no longer validated only by successful execution.
+
+It is validated by deliberately destroying physical infrastructure at carefully selected semantic boundaries and proving that the durable execution model remains correct.
+
+The production proof demonstrates:
+
+```text
+physical failure
+        ≠
+logical execution loss
+```
+
+Recovery remains grounded in durable identity, ownership, lifecycle, forensic, and replay evidence across the supported runtime deployment modes.
+
+
+---
+
+## 0.0.8.5 - 2026-08-25 — Recursive Child DAG Production Proof Hardening
 
 ## Added
 
@@ -106,7 +2197,7 @@ The next validation work will reuse the frozen proof contract while varying dete
 
 ---
 
-## 1.0.8.4 - 2026-08-24 — Event-Driven Depth-3 (Child DAG) Runtime Pool Validation
+## 0.0.8.4 - 2026-08-24 — Event-Driven Depth-3 (Child DAG) Runtime Pool Validation
 
 **Status:** Validation complete for the current runtime-pool and transport matrix. The implementation is considered stable for this release baseline.
 
@@ -450,7 +2541,7 @@ No second event bus, ledger, forensics store, lifecycle store, or parallel obser
 
 ---
 
-## 1.0.8.3 - 2026-08-22 — Centralized Engine Event Observation
+## 0.0.8.3 - 2026-08-22 — Centralized Engine Event Observation
 
 
 **Status:** Implementation substantially complete; final deterministic-observer and regression validation in progress.  
@@ -1173,7 +3264,7 @@ No additional event bus, observability store, Ledger, Forensics system, or lifec
 
 ---
 
-## 1.0.8.3 - 2026-08-20  - Semantic Contract Consolidation — Changelog
+## 0.0.8.3 - 2026-08-20  - Semantic Contract Consolidation — Changelog
 
 ## Objective
 
@@ -1377,7 +3468,7 @@ Regression gates green
 
 ---
 
-## 1.0.8.3 - 2026-08-14  — Child DAG & Runtime Pool
+## 0.0.8.3 - 2026-08-14  — Child DAG & Runtime Pool
 
 ## 2026-08-14
 
@@ -1472,7 +3563,7 @@ Regression gates green
 
 ---
 
-## 1.0.8.3 - 2026-08-13 — Runtime Pool External Failure Proofs, Routing Hardening, and Final Scale Validation
+## 0.0.8.3 - 2026-08-13 — Runtime Pool External Failure Proofs, Routing Hardening, and Final Scale Validation
 
 ## Delivered objective
 
@@ -1925,7 +4016,7 @@ The next architectural increment can build on this closed Runtime Pool foundatio
 
 ---
 
-## 1.0.8.2 - 2026-08-09 — Runtime Pool Hierarchical Failure Recovery and Production Proofs
+## 0.0.8.2 - 2026-08-09 — Runtime Pool Hierarchical Failure Recovery and Production Proofs
 
 ## Delivered objective
 
@@ -2532,7 +4623,7 @@ bounded warm pool
 
 ---
 
-## 1.0.8.1 - 2026-07-30  Durable Runtime Lifecycle Journal
+## 0.0.8.1 - 2026-07-30  Durable Runtime Lifecycle Journal
 
 ## Delivered objective
 
@@ -2933,7 +5024,7 @@ The Durable Runtime Lifecycle Journal now represents the durable history of host
 
 ---
 
-## 1.0.8.2 - 2026-08-09 — Runtime Pool Hierarchical Failure Recovery and Production Proofs
+## 0.0.8.2 - 2026-08-09 — Runtime Pool Hierarchical Failure Recovery and Production Proofs
 
 ## Delivered objective
 
@@ -3540,7 +5631,7 @@ bounded warm pool
 
 ---
 
-## 1.0.8.1 - 2026-07-30  Durable Runtime Lifecycle Journal
+## 0.0.8.1 - 2026-07-30  Durable Runtime Lifecycle Journal
 
 ## Delivered objective
 
@@ -3942,7 +6033,7 @@ The Durable Runtime Lifecycle Journal now represents the durable history of host
 
 ---
 
-## 1.0.8.1 - 2026-07-30  — Kubernetes Runtime Pool P5 Pod-Failure Recovery
+## 0.0.8.1 - 2026-07-30  — Kubernetes Runtime Pool P5 Pod-Failure Recovery
 
 This incremental release extends the previously validated hierarchical runtime-capacity architecture with a parallel Kubernetes Runtime Pool failure campaign.
 
@@ -4310,7 +6401,7 @@ The Kubernetes Runtime Pool now preserves one canonical recovery acceptance acro
 
 ---
 
-## 1.0.8.0 - 2026-07-29 — Hierarchical Runtime Capacity Selection and Kubernetes Runtime Pool Recovery
+## 0.0.8.0 - 2026-07-29 — Hierarchical Runtime Capacity Selection and Kubernetes Runtime Pool Recovery
 
 ---
 
@@ -4897,7 +6988,7 @@ This release does not claim or implement:
 
 ---
 
-## 1.0.7.9 - 2026-07-28 — Kubernetes Runtime Pool Pod Failure Recovery
+## 0.0.7.9 - 2026-07-28 — Kubernetes Runtime Pool Pod Failure Recovery
 
 ### Added
 
@@ -5048,7 +7139,7 @@ This completes the Pod Failure Proof required before hierarchical capacity selec
 
 ---
 
-## 1.0.7.9 - 2026-07-28 — Kubernetes Runtime Pool 
+## 0.0.7.9 - 2026-07-28 — Kubernetes Runtime Pool 
 
 This changelog records the additive implementation of Kubernetes Runtime Pool hosting in chronological delivery order.
 
@@ -5420,7 +7511,7 @@ These invariants must be introduced and validated incrementally in future Pod-fa
 
 ---
 
-## 1.0.7.8 - 2026-07-27 — Exact Runtime Pool Failure Recovery
+## 0.0.7.8 - 2026-07-27 — Exact Runtime Pool Failure Recovery
 
 ### Added
 
@@ -5604,7 +7695,7 @@ These invariants must be introduced and validated incrementally in future Pod-fa
 
 ---
 
-## 1.0.7.7 - 2026-07-26 — Exact Runtime Pool Transport Routing
+## 0.0.7.7 - 2026-07-26 — Exact Runtime Pool Transport Routing
 
 ### Added
 
@@ -5725,7 +7816,7 @@ These invariants must be introduced and validated incrementally in future Pod-fa
 
 ---
 
-## 1.0.7.6 - 2026-07-26 — Process-Host Runtime Pool Manager
+## 0.0.7.6 - 2026-07-26 — Process-Host Runtime Pool Manager
 
 ### Added
 
@@ -5795,7 +7886,7 @@ These invariants must be introduced and validated incrementally in future Pod-fa
 
 ---
 
-## 1.0.7.5 - 2026-07-26 — Runtime Pool Identity Foundation
+## 0.0.7.5 - 2026-07-26 — Runtime Pool Identity Foundation
 
 ## First-class runtime pool identity model added
 
@@ -5951,7 +8042,7 @@ This completes the identity foundation required before introducing the process-h
 
 ---
 
-## 1.0.7.4 - 2026-07-25 — Concurrency Hardening and Crash Recovery
+## 0.0.7.4 - 2026-07-25 — Concurrency Hardening and Crash Recovery
 
 ## Recovery scale-out deduplication hardened
 
@@ -6709,7 +8800,7 @@ warm runtime pools
 
 ---
 
-## 1.0.7.3 - 2026-07-20 - Kubernetes Runtime Host Provider Completion, Recovery Hardening, and Documentation
+## 0.0.7.3 - 2026-07-20 - Kubernetes Runtime Host Provider Completion, Recovery Hardening, and Documentation
 
 ## Summary
 
@@ -7358,7 +9449,7 @@ These items do not change the implemented Kubernetes Runtime Host Provider archi
 
 ---
 
-## [1.0.7.1] - 2026-07-09 - gRPC Kubernetes SDK Pod Crash Recovery Investigation
+## [0.0.7.1] - 2026-07-09 - gRPC Kubernetes SDK Pod Crash Recovery Investigation
 
 ## Context
 
@@ -7526,7 +9617,7 @@ It now proves that the upstream crash detection / unsafe marking path is stable,
 
 ---
 
-## [1.0.7.1] - 2026-07-07 - Runtime Provider Recovery Restoration and Kubernetes gRPC Validation
+## [0.0.7.1] - 2026-07-07 - Runtime Provider Recovery Restoration and Kubernetes gRPC Validation
 
 ## Summary
 
@@ -7814,7 +9905,7 @@ The next milestone is to prove the same crash recovery contract under Kubernetes
 
 ---
 
-## [1.0.7.1] - 2026-07-09 - gRPC Kubernetes SDK Pod Crash Recovery Investigation
+## [0.0.7.1] - 2026-07-09 - gRPC Kubernetes SDK Pod Crash Recovery Investigation
 
 ## Context
 
@@ -7982,7 +10073,7 @@ It now proves that the upstream crash detection / unsafe marking path is stable,
 
 ---
 
-## [1.0.7.1] - 2026-07-07 - Runtime Provider Recovery Restoration and Kubernetes gRPC Validation
+## [0.0.7.1] - 2026-07-07 - Runtime Provider Recovery Restoration and Kubernetes gRPC Validation
 
 ## Summary
 
@@ -8270,7 +10361,7 @@ The next milestone is to prove the same crash recovery contract under Kubernetes
 
 ---
 
-## [1.0.7.1] - 2026-07-07 —  Kubernetes Runtime Host Provider
+## [0.0.7.1] - 2026-07-07 —  Kubernetes Runtime Host Provider
 
 ## Added
 
@@ -8538,7 +10629,7 @@ The control plane can now safely scale out through Kubernetes without global fal
 
 ---
 
-## [1.0.7.1] - 2026-07-06 — Kubernetes Runtime Host Provider
+## [0.0.7.1] - 2026-07-06 — Kubernetes Runtime Host Provider
 
 This changelog covers the incremental work completed after the previous Kubernetes runtime host provider changelog. It focuses on validating the real Kubernetes SDK lifecycle path with minikube, fixing production-grade runtime host boot issues, and preserving identical runtime behavior between Process-hosted and Kubernetes-hosted runtimes.
 
@@ -9089,7 +11180,7 @@ The important result is that Kubernetes did not require a different runtime beha
 
 ---
 
-## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider Integration
+## [0.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider Integration
 
 This changelog summarizes the work completed after the previous changelog, focused on integrating Kubernetes as a runtime host lifecycle provider for the deterministic AI runtime.
 
@@ -9687,7 +11778,7 @@ The watcher/provider/host-manager path fulfils scale-out without confusing those
 
 ---
 
-## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider 
+## [0.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider 
 
 ## Added
 
@@ -9847,7 +11938,7 @@ Validated locally with targeted unit tests for:
 
 ---
 
-## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider
+## [0.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider
 
 ## Changes
 
@@ -9956,7 +12047,7 @@ Add focused unit tests for `KubernetesSdkAiKubernetesRuntimeHostClient` using a 
 
 ---
 
-## [1.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider / SDK Foundation
+## [0.0.7.1] - 2026-07-05 — Kubernetes Runtime Host Provider / SDK Foundation
 
 Prepare Kubernetes as a runtime host / lifecycle provider, without replacing HTTP or gRPC as runtime transport providers.
 
@@ -10500,7 +12591,7 @@ This keeps the architecture testable and avoids YAML-first Kubernetes integratio
 
 ---
 
-## [1.0.7.1] - 2026-07-02 - gRPC provider integration, shared crash recovery refactor, and full gRPC process-host validation
+## [0.0.7.1] - 2026-07-02 - gRPC provider integration, shared crash recovery refactor, and full gRPC process-host validation
 
 ### Summary
 
@@ -11179,7 +13270,7 @@ should move to a provider-neutral helper.
 
 ---
 
-## [1.0.7.0] - 2026-07-02 — Runtime Crash Recovery Proof + Replay/Ledger/Trace Documentation Hardening
+## [0.0.7.0] - 2026-07-02 — Runtime Crash Recovery Proof + Replay/Ledger/Trace Documentation Hardening
 
 ### Added
 
@@ -11536,7 +13627,7 @@ should move to a provider-neutral helper.
 
 ### Notes
 
-- This changelog entry is incremental on top of `1.0.6.9`.
+- This changelog entry is incremental on top of `0.0.6.9`.
 
 - No previously validated documentation areas were intentionally removed. The update expands the docs around runtime crash recovery, recovery forensics, control-plane ledger proof, and recovery replay/ledger/trace proof.
 
@@ -11548,7 +13639,7 @@ should move to a provider-neutral helper.
 
 ---
 
-## [1.0.6.9] - 2026-06-28 — Concurrent Runtime Recovery Forensics + Safe Tenant Isolation
+## [0.0.6.9] - 2026-06-28 — Concurrent Runtime Recovery Forensics + Safe Tenant Isolation
 
 ### Added
 
@@ -11661,7 +13752,7 @@ should move to a provider-neutral helper.
 
 ---
 
-## [1.0.6.9] - 2026-06-28 - HTTP Process-Host DAG Resume Recovery — Test Suite Consolidation & Stability Loops
+## [0.0.6.9] - 2026-06-28 - HTTP Process-Host DAG Resume Recovery — Test Suite Consolidation & Stability Loops
 
 Consolidated and stabilized the HTTP process-host DAG resume recovery test suite.
 
@@ -11730,7 +13821,7 @@ The main scenario tests remain focused on behavior, while reusable helpers now o
 
 ---
 
-## [1.0.6.9] - 2026-06-28 Runtime Recovery Forensics — DAG Resume Redispatch Stability Hardening
+## [0.0.6.9] - 2026-06-28 Runtime Recovery Forensics — DAG Resume Redispatch Stability Hardening
 
 ### Summary
 
@@ -12008,7 +14099,7 @@ The runtime recovery story now covers both major failure states of a stateful ru
 
 ---
 
-## [1.0.6.9] - 2026-06-27  Runtime Recovery Forensics — Contracts, InMemory Recorder and Mongo Persistence
+## [0.0.6.9] - 2026-06-27  Runtime Recovery Forensics — Contracts, InMemory Recorder and Mongo Persistence
 
 Added the first professional foundation for **Runtime Recovery Forensics**.
 
@@ -12421,7 +14512,7 @@ Next implementation steps:
 
 ---
 
-## [1.0.6.9] - 2026-06-25 — Execution Recovery / HTTP Process Host DAG Resume
+## [0.0.6.9] - 2026-06-25 — Execution Recovery / HTTP Process Host DAG Resume
 
 ### Summary
 
@@ -12781,7 +14872,7 @@ The runtime can now support this production-grade behavior:
 
 ---
 
-## [1.0.6.9] - 2026-06-25 — HTTP process-host recovery and runtime identity hardening
+## [0.0.6.9] - 2026-06-25 — HTTP process-host recovery and runtime identity hardening
 
 ### Summary
 
@@ -12877,7 +14968,7 @@ Target next behavior:
 
 ---
 
-## [1.0.6.9] - 2026-06-24 - Runtime execution recovery — in-flight redispatch proof
+## [0.0.6.9] - 2026-06-24 - Runtime execution recovery — in-flight redispatch proof
 
 ### Added
 - Added production-style recovery redispatch integration coverage.
@@ -12897,7 +14988,7 @@ The system does not resume volatile in-memory worker state. Instead, it recovers
 
 ---
 
-## [1.0.6.9] - 2026-06-24 - Runtime execution recovery — transition service owns recovery mutation boundary
+## [0.0.6.9] - 2026-06-24 - Runtime execution recovery — transition service owns recovery mutation boundary
 
 ### Changed
 - Moved recovered runtime execution index closure from `AiRuntimeExecutionRecoveryReconciler` into `AiRuntimeExecutionRecoveryTransitionService`.
@@ -12937,7 +15028,7 @@ The successful recovery mutation path is now:
 
 ---
 
-## [1.0.6.9] - 2026-06-24 - Runtime execution recovery — recovered runtime index closure
+## [0.0.6.9] - 2026-06-24 - Runtime execution recovery — recovered runtime index closure
 
 ### Added
 - Added a durable `requeued-for-recovery` runtime execution index state.
@@ -12969,7 +15060,7 @@ This keeps the architecture boundary intact: health reconciliation prevents unsa
 
 ---
 
-## [1.0.6.9] - 2026-06-24 - Runtime execution recovery — dispatched shared queue requeue
+## [0.0.6.9] - 2026-06-24 - Runtime execution recovery — dispatched shared queue requeue
 
 ### Added
 
@@ -13021,7 +15112,7 @@ Runtime execution recovery is responsible for restoring work already assigned to
 
 ---
 
-## [1.0.6.9] - 2026-06-24 - Runtime Instance Health Reconciler — Routing Safety Hardening
+## [0.0.6.9] - 2026-06-24 - Runtime Instance Health Reconciler — Routing Safety Hardening
 
 Added a dedicated runtime instance health reconciliation layer to protect dispatch and admission routing from stale or unhealthy runtime instances.
 
@@ -13106,7 +15197,7 @@ This keeps runtime health reconciliation and runtime execution recovery cleanly 
 
 ---
 
-## [1.0.6.9] - 2026-06-24 — Runtime Store Hardening
+## [0.0.6.9] - 2026-06-24 — Runtime Store Hardening
 
 ### Scope
 
@@ -13503,7 +15594,7 @@ RuntimeExecutionRecoveryReconciler
 
 ---
 
-## [1.0.6.9] - 2026-06-23 — MCP Production Runtime Scenario Framework
+## [0.0.6.9] - 2026-06-23 — MCP Production Runtime Scenario Framework
 
 ## Latest increment — HTTP tenant runtime mode validation and provisioning hardening
 
@@ -13891,7 +15982,7 @@ This confirms that the production scenario framework now validates both durable 
 
 ---
 
-## [1.0.6.9] - 2026-06-23 — MCP Production Runtime Scenario Framework
+## [0.0.6.9] - 2026-06-23 — MCP Production Runtime Scenario Framework
 
 ## Scope
 
@@ -14617,7 +16708,7 @@ This fits naturally after the process-host production scenario because the syste
 
 ---
 
-## [1.0.6.8] - 2026-06-22 — MCP Runtime Host Manager / HTTP Remote Runtime Scale-Out
+## [0.0.6.8] - 2026-06-22 — MCP Runtime Host Manager / HTTP Remote Runtime Scale-Out
 
 ## Scope
 
@@ -14929,7 +17020,7 @@ Runtime-only process   -> AddAiRuntimeInstanceHttpCommandHandling()
 
 ---
 
-## [1.0.6.8] - 2026-06-20 — MCP Runtime Host Manager / Remote Runtime Scale-Out
+## [0.0.6.8] - 2026-06-20 — MCP Runtime Host Manager / Remote Runtime Scale-Out
 
 The goal of this phase was to evolve the control plane from simulated or fixture-only scale-out toward a real runtime host creation model.
 
@@ -15466,7 +17557,7 @@ The next objective is to harden the HTTP + Process path across tenant settings, 
 
 ---
 
-## [1.0.6.8] - 2026-06-20 - HTTP Runtime Provider Hardening and Tenant-Aware Scale-Out 
+## [0.0.6.8] - 2026-06-20 - HTTP Runtime Provider Hardening and Tenant-Aware Scale-Out 
 
 Scope: HTTP runtime provider hardening, HTTP scale-out provider integration, Redis scale-out request flow, tenant-aware isolation validation, and preparation for Remote MCP Runtime Host Manager.
 
@@ -16509,7 +18600,7 @@ then gRPC and Kubernetes providers using the same convergence model
 
 ---
 
-## [1.0.6.7] - 2026-06-18 — Multi-Tenant Control Plane Isolation
+## [0.0.6.7] - 2026-06-18 — Multi-Tenant Control Plane Isolation
 
 ## Scope
 
@@ -16980,7 +19071,7 @@ Recommended sequence:
 
 ---
 
-## [1.0.6.6] - 2026-06-18 — Runtime Run Index Tenant Isolation
+## [0.0.6.6] - 2026-06-18 — Runtime Run Index Tenant Isolation
 
 ## Scope
 
@@ -17224,7 +19315,7 @@ The default in-memory behavior remains available for lightweight/local hosts, wh
 
 ---
 
-## [1.0.6.5] - 2026-06-17 — Multi-tenant Control Plane Isolation
+## [0.0.6.5] - 2026-06-17 — Multi-tenant Control Plane Isolation
 
 ## Summary
 
@@ -17421,7 +19512,7 @@ The most critical shared run boundary is now protected. The next risk is whether
 
 ---
 
-## [1.0.6.4] - 2026-06-17 — Multi-tenant RBAC / ExecutionContextSnapshot / MCP Integration Tests
+## [0.0.6.4] - 2026-06-17 — Multi-tenant RBAC / ExecutionContextSnapshot / MCP Integration Tests
 
 ## Summary
 
@@ -17767,7 +19858,7 @@ No runtime worker creates executions without an active RBAC execution context.
 
 ---
 
-## [1.0.6.3] - 2026-06-17 - MCP RBAC Tool Authorization
+## [0.0.6.3] - 2026-06-17 - MCP RBAC Tool Authorization
 
 ### Added
 
@@ -17833,7 +19924,7 @@ No runtime worker creates executions without an active RBAC execution context.
 
 ---
 
-## [1.0.6.2] - 2026-06-12 — Redis-backed Local Runtime Scale-Out Flow
+## [0.0.6.2] - 2026-06-12 — Redis-backed Local Runtime Scale-Out Flow
 
 ## Summary
 
@@ -18386,7 +20477,7 @@ This is a major milestone for the deterministic AI runtime control plane and the
 
 ---
 
-## [1.0.6.1] - 2026-06-11 - HTTP Provider Scenario Alignment, Redis Runtime Visibility, and Shutdown Stability
+## [0.0.6.1] - 2026-06-11 - HTTP Provider Scenario Alignment, Redis Runtime Visibility, and Shutdown Stability
 
 ### Changed
 
@@ -18576,7 +20667,7 @@ The following scenario coverage was preserved and adapted:
 
 ---
 
-## [1.0.6.1] - 2026-06-09 HTTP Provider Scenario Alignment with Pooled Runtime Model
+## [0.0.6.1] - 2026-06-09 HTTP Provider Scenario Alignment with Pooled Runtime Model
 
 ### Changed
 
@@ -18661,7 +20752,7 @@ The following scenario coverage was preserved and adapted:
 
 ---
 
-## [1.0.6.0] - 2026-06-08 - Shared Queue Pump, QueueFirst Dispatch, Runtime Worker Capacity Visibility
+## [0.0.6.0] - 2026-06-08 - Shared Queue Pump, QueueFirst Dispatch, Runtime Worker Capacity Visibility
 
 ### Added
 
@@ -18950,7 +21041,7 @@ The following scenario coverage was preserved and adapted:
 
 ---
 
-## [1.0.5.9] - 2026-06-06 HTTP Runtime Provider Execution Integration Completed
+## [0.0.5.9] - 2026-06-06 HTTP Runtime Provider Execution Integration Completed
 
 ### Added
 
@@ -19175,7 +21266,7 @@ The next phase is to generalize the provider model further so local, HTTP, Redis
 
 ---
 
-## [1.0.5.8] - 2026-06-05 Provider-Based Runtime Hosting and HTTP Runtime Instance Foundation
+## [0.0.5.8] - 2026-06-05 Provider-Based Runtime Hosting and HTTP Runtime Instance Foundation
 
 ### Added
 
@@ -19340,7 +21431,7 @@ The next step is to validate the actual HTTP command transport between the MCP c
 
 ---
 
-## [1.0.5.7] - 2026-06-04 Runtime Capacity Descriptors, Worker Identity Propagation, and Shutdown Stabilization
+## [0.0.5.7] - 2026-06-04 Runtime Capacity Descriptors, Worker Identity Propagation, and Shutdown Stabilization
 
 ### Added
 
@@ -19725,7 +21816,7 @@ The runtime control plane is now ready for provider-based dispatch, runtime admi
 
 ---
 
-## [1.0.5.6] - 2026-06-03 MCP Control Plane Runtime Role Separation and Local Pool Execution Fixes
+## [0.0.5.6] - 2026-06-03 MCP Control Plane Runtime Role Separation and Local Pool Execution Fixes
 
 ### Added
 
@@ -19919,7 +22010,7 @@ The next release should focus on runtime capacity accuracy and worker-aware admi
 
 ---
 
-## [1.0.5.5] - 2026-06-02 Local Runtime Instance Pool Foundation
+## [0.0.5.5] - 2026-06-02 Local Runtime Instance Pool Foundation
 
 ### Added
 
@@ -20027,7 +22118,7 @@ This follow-up is required before enabling true pool-only execution without rely
 
 ---
 
-## [1.0.5.5] - 2026-05-31 - Shared Runtime Controller V1 / Distributed Shared Queue Foundation
+## [0.0.5.5] - 2026-05-31 - Shared Runtime Controller V1 / Distributed Shared Queue Foundation
 
 ## Overview
 
@@ -21577,7 +23668,7 @@ Future V2 should add:
 
 ---
 
-## [1.0.5.4] - 2026-05-30 Runtime Package Structure and Observability Reorganization
+## [0.0.5.4] - 2026-05-30 Runtime Package Structure and Observability Reorganization
 
 ### Replay Package Reorganization
 
@@ -21637,7 +23728,7 @@ Future V2 should add:
 
 ---
 
-## [1.0.5.4] - 2026-05-30 Replay API, Deterministic Validation, Ledger and Timeline Diagnostics
+## [0.0.5.4] - 2026-05-30 Replay API, Deterministic Validation, Ledger and Timeline Diagnostics
 
 - Added the first complete Replay API implementation for deterministic AI runtime executions.
 - Added replay-as-validation support for persisted executions using an `ExecutionId`.
@@ -21787,7 +23878,7 @@ Future V2 should add:
 
 ---
 
-## [1.0.5.3] - 2026-05-28 Correlated Metrics and Tracing Storage Modes
+## [0.0.5.3] - 2026-05-28 Correlated Metrics and Tracing Storage Modes
 
 - Added runtime execution correlation support for metrics and tracing.
 - Aligned metrics and tracing with the same correlation model used by the execution-correlated decision ledger.
@@ -21948,7 +24039,7 @@ Future V2 should add:
 
 ---
 
-## [1.0.5.2] - 2026-05-26 Execution-Correlated Decision Ledger Integration
+## [0.0.5.2] - 2026-05-26 Execution-Correlated Decision Ledger Integration
 
 - Added execution-correlated decision ledger integration across the enterprise runtime.
 - Added stable decision ledger event constants grouped by runtime domain:
@@ -22092,7 +24183,7 @@ Future V2 should add:
 
 ---
 
-## [1.0.5.1] - 2026-05-23 Enterprise Runtime Demo
+## [0.0.5.1] - 2026-05-23 Enterprise Runtime Demo
 
 - Added executable enterprise runtime console demo for production-style AI workflow execution.
 - Added local demo infrastructure support for:
@@ -22242,7 +24333,7 @@ throttling-100
 
 ---
 
-## [1.0.5.0] - 2026-05-20 - Execution Control State / Queue Control / Human-in-the-Loop
+## [0.0.5.0] - 2026-05-20 - Execution Control State / Queue Control / Human-in-the-Loop
 
 ### Added
 
@@ -22447,7 +24538,7 @@ throttling-100
 
 ---
 
-## [1.0.4.9] - 2026-05-18 - Redis DAG Store Refactor / Service Decomposition
+## [0.0.4.9] - 2026-05-18 - Redis DAG Store Refactor / Service Decomposition
 
 ### Added
 - Added `IRedisDagStoreServices` shared service contract.
@@ -22496,7 +24587,7 @@ throttling-100
 
 ---
 
-## [1.0.4.8] - 2026-05-18 - Distributed Runtime Instances / Aggressive Retention Stabilization
+## [0.0.4.8] - 2026-05-18 - Distributed Runtime Instances / Aggressive Retention Stabilization
 
 ### Added
 
@@ -22603,7 +24694,7 @@ throttling-100
 
 ---
 
-## [1.0.4.7] - 2026-05-15 - Background Controller / Batch DAG / Snapshot Replay Hardening
+## [0.0.4.7] - 2026-05-15 - Background Controller / Batch DAG / Snapshot Replay Hardening
 
 ### Added
 
@@ -22724,7 +24815,7 @@ throttling-100
 
 ---
 
-## [1.0.4.6] - 2026-14-04 - Policy-Driven Concurrency Admission and Generic Throttling
+## [0.0.4.6] - 2026-14-04 - Policy-Driven Concurrency Admission and Generic Throttling
 
 - Added policy-aware concurrency admission before Redis distributed lease acquisition.
 - Integrated concurrency policy evaluation into DAG step claiming.
@@ -22814,7 +24905,7 @@ throttling-100
 
 ---
 
-## [1.0.4.5] - 2026-12-04 - Distributed Concurrency / Throttling
+## [0.0.4.5] - 2026-12-04 - Distributed Concurrency / Throttling
 
 - Added Redis-backed distributed concurrency gate using ZSET-based leases.
 - Replaced counter-based concurrency tracking with crash-safe lease expiration.
@@ -22887,7 +24978,7 @@ throttling-100
 
 ---
 
-## [1.0.4.5] - 2026-012-04 - Policy Engine V2 - Structured Policy Definitions
+## [0.0.4.5] - 2026-012-04 - Policy Engine V2 - Structured Policy Definitions
 
 ### Added
 
@@ -22978,7 +25069,7 @@ The runtime now supports:
 - unified policy modeling across retry, retention, and concurrency engines
 - enterprise-ready policy extensibility
 
-## [1.0.4.4] - 2026-08-04 - Concurrency Engine V1 — Distributed Admission & Claim Refactor
+## [0.0.4.4] - 2026-08-04 - Concurrency Engine V1 — Distributed Admission & Claim Refactor
 
 ## Added
 
@@ -23140,7 +25231,7 @@ This will fully replace the old parallel execution configuration model with the 
 
 ---
 
-## [1.0.4.4] - 2026-08-04 - DAG Execution Engine Refactor
+## [0.0.4.4] - 2026-08-04 - DAG Execution Engine Refactor
 
 ## Overview
 
@@ -23420,7 +25511,7 @@ The runtime now provides:
 
 ---
 
-## [1.0.4.3] - 2026-07-04 - Distributed DAG Batch Execution
+## [0.0.4.3] - 2026-07-04 - Distributed DAG Batch Execution
 
 ## New Features
 
@@ -23554,7 +25645,7 @@ The runtime now supports:
 
 ---
 
-## [1.0.4.2] - 2026-07-04 - Config-Driven and Policy-Driven Retention Engine
+## [0.0.4.2] - 2026-07-04 - Config-Driven and Policy-Driven Retention Engine
 
 ## Major Refactor
 
@@ -23632,7 +25723,7 @@ The runtime now supports:
 
 ---
 
-## [1.0.4.1] - 2026-07-04 - Config-Driven and Policy-Driven Retention Engine
+## [0.0.4.1] - 2026-07-04 - Config-Driven and Policy-Driven Retention Engine
 
 ### Changed
 - Replaced the legacy execution state retention flow with the new policy-driven retention engine.
@@ -23654,7 +25745,7 @@ The runtime now supports:
 - Removed dependency on legacy options-driven retention flow from the DAG runtime path.
 
 ---
-## [1.0.4.0] - 2026-05-04 - Config-Driven and Policy-Driven Retry Engine
+## [0.0.4.0] - 2026-05-04 - Config-Driven and Policy-Driven Retry Engine
 
 ### Added
 - Added policy-level observability through `AiPolicyEngine`.
@@ -23676,7 +25767,7 @@ The runtime now supports:
 
 ---
 
-## [1.0.3.9] - Config-Driven and Policy-Driven Retry Engine
+## [0.0.3.9] - Config-Driven and Policy-Driven Retry Engine
 
 ### 🚀 Added
 - Introduced distributed retry system based on PolicyEngine + RetryEngine
@@ -23712,7 +25803,7 @@ The runtime now supports:
 
 ---
 
-## [1.0.3.8] - Config-Driven and Policy-Driven Retry Engine
+## [0.0.3.8] - Config-Driven and Policy-Driven Retry Engine
 
 ### 🚀 Refactor - Retry Engine
 
@@ -23751,7 +25842,7 @@ The runtime now supports:
 
 ---
 
-## [1.0.3.7] - 2026-05-01 - Tracing
+## [0.0.3.7] - 2026-05-01 - Tracing
 
 ### Added
 
@@ -23789,7 +25880,7 @@ The runtime now supports:
 
 ---
 
-## [1.0.3.6] - 2026-04-29 - Full runtime metrics coverage and integration validation
+## [0.0.3.6] - 2026-04-29 - Full runtime metrics coverage and integration validation
 
 ### ✨ Added
 
@@ -23858,7 +25949,7 @@ This update establishes a **production-grade observability foundation** for the 
 
 ---
 
-## [1.0.3.5] - 2026-04-27 - AI Runtime Retention Evolution
+## [0.0.3.5] - 2026-04-27 - AI Runtime Retention Evolution
 
 ### 🚀 Added
 - Introduced adaptive retention decision layer:
@@ -23926,7 +26017,7 @@ This update establishes a **production-grade observability foundation** for the 
 
 ---
 
-## [1.0.3.4] - 2026-04-27
+## [0.0.3.4] - 2026-04-27
 
 # 🚀 Test Stabilization — Hybrid Retention & Payload Metrics
 
@@ -24056,7 +26147,7 @@ ensuring long-term reliability of the runtime.
 
 ---
 
-## [1.0.3.3] - 2026-04-27
+## [0.0.3.3] - 2026-04-27
 
 # 🚀 Release — State Retention, Step Archiving & Lazy Resolution
 
@@ -24267,7 +26358,7 @@ This release transforms execution state management into a bounded, archived, cac
 The AI runtime is now safer, more scalable, and production-ready for large deterministic DAG executions.
 
 ---
-## [1.0.3.2] - 2026-04-26
+## [0.0.3.2] - 2026-04-26
 
 ## Major Runtime Refactor — State + Step Context Architecture
 
@@ -24317,7 +26408,7 @@ The AI runtime is now safer, more scalable, and production-ready for large deter
 
 ---
 
-## [1.0.3.1] - 2026-04-25
+## [0.0.3.1] - 2026-04-25
 
 ## Payload System Finalization
 
@@ -24368,7 +26459,7 @@ Payload system is now production-ready:
 
 ---
 
-## [1.0.3.0 ] - 2026-04-25
+## [0.0.3.0 ] - 2026-04-25
 
 ## 🚀 Payload Compaction & Payload-Aware Runtime
 
@@ -24445,7 +26536,7 @@ The runtime is now fully prepared for V4 (vector-based RAG) with:
 
 ---
 
-## [1.0.2.9] - 2026-04-22
+## [0.0.2.9] - 2026-04-22
 
 ### 🚀 Added
 
@@ -24591,7 +26682,7 @@ Added full integration coverage for:
   - context composition (`rag.compose`)
   - hybrid RAG pipelines
 
-## [1.0.2.8] - 2026-04-19
+## [0.0.2.8] - 2026-04-19
 
 ---
 
@@ -24695,7 +26786,7 @@ Added full integration coverage for:
 
 ---
 
-### 📦 Core Models (from 1.0.2.7)
+### 📦 Core Models (from 0.0.2.7)
 
 - `RagNormalizedItem`
 - `RagRetrievalBatch`
@@ -24780,7 +26871,7 @@ This release upgrades RAG from a foundation to a **fully integrated runtime subs
 
 ---
 
-## [1.0.2.6] - 2026-04-10
+## [0.0.2.6] - 2026-04-10
 
 feat(ai-runtime): integrate declarative prompt step with OpenAI provider and shared variable resolution
 
@@ -24818,7 +26909,7 @@ feat(ai-runtime): integrate declarative prompt step with OpenAI provider and sha
 - Global state persistence is now preserved in DAG mode, not only step state
 - This lays the foundation for upcoming RAG, rerank, tool-calling, and agent orchestration steps
 
-## [1.0.2.5] - 2026-04-09
+## [0.0.2.5] - 2026-04-09
 
 feat(ai-runtime): add optional MongoDB snapshot persistence and execution replay support
 
@@ -24861,7 +26952,7 @@ improvement(ai-runtime): strengthen distributed convergence guarantees
 
 ---
 
-## [1.0.2.4] - 2026-04-06
+## [0.0.2.4] - 2026-04-06
 
 ### Added
 - Production-grade deterministic DAG runtime for distributed AI execution
@@ -24915,7 +27006,7 @@ improvement(ai-runtime): strengthen distributed convergence guarantees
 
 ---
 
-## [1.0.2.3] - 2026-04-06
+## [0.0.2.3] - 2026-04-06
 
 ### Added
 
@@ -24957,7 +27048,7 @@ improvement(ai-runtime): strengthen distributed convergence guarantees
 
 ---
 
-## [1.0.2.2] - 2026-04-04
+## [0.0.2.2] - 2026-04-04
 
 ### Added
 - Introduced convergence hardening for distributed DAG execution engine
@@ -24979,7 +27070,7 @@ improvement(ai-runtime): strengthen distributed convergence guarantees
 
 ---
 
-## [1.0.2.1] - 2026-03-31
+## [0.0.2.1] - 2026-03-31
 
 ### ✨ Added
 
@@ -25050,7 +27141,7 @@ improvement(ai-runtime): strengthen distributed convergence guarantees
 
 ---
 
-## [1.0.2.0] - 2026-03-31
+## [0.0.2.0] - 2026-03-31
 
 ### ✨ Added
 
@@ -25094,7 +27185,7 @@ improvement(ai-runtime): strengthen distributed convergence guarantees
 
 ---
 
-## [1.0.1.9] - 2026-03-30
+## [0.0.1.9] - 2026-03-30
 
 ### Added
 
@@ -25163,7 +27254,7 @@ improvement(ai-runtime): strengthen distributed convergence guarantees
 
 ---
 
-## [1.0.1.8] - 2026-03-29
+## [0.0.1.8] - 2026-03-29
 
 ### Added
 
@@ -25238,7 +27329,7 @@ improvement(ai-runtime): strengthen distributed convergence guarantees
 
 ---
 
-## [1.0.1.7] - 2026-03-27
+## [0.0.1.7] - 2026-03-27
 
 ### Added
 
@@ -25482,7 +27573,7 @@ Total validated test coverage: **61+ tests**
   - retrieval-augmented execution
 ---
 
-## [1.0.1.6] - 2026-03-26
+## [0.0.1.6] - 2026-03-26
 
 ### Fixed
 
@@ -25555,7 +27646,7 @@ Total validated test coverage: **61+ tests**
 
 ---
 
-## [1.0.1.5] - 2026-03-25
+## [0.0.1.5] - 2026-03-25
 
 ### Added
 
@@ -25641,7 +27732,7 @@ Total validated test coverage: **61+ tests**
 
 ---
 
-## [1.0.1.4] - 2026-03-24
+## [0.0.1.4] - 2026-03-24
 
 ### Added
 
@@ -25686,7 +27777,7 @@ Total validated test coverage: **61+ tests**
 
 ---
 
-## [1.0.1.3] - 2026-03-24
+## [0.0.1.3] - 2026-03-24
 
 ### Added
 
@@ -25741,7 +27832,7 @@ Total validated test coverage: **61+ tests**
 
 ---
 
-## [1.0.1.2] - 2026-03-22
+## [0.0.1.2] - 2026-03-22
 
 ### Added
 
@@ -25819,7 +27910,7 @@ This release represents a major architectural milestone:
 
 ---
 
-## [1.0.1.1] - 2026-03-20
+## [0.0.1.1] - 2026-03-20
 
 ### Added
 
@@ -25943,7 +28034,7 @@ This release represents a major architectural milestone:
 
 ---
 
-## [1.0.1.0] - 2026-03-17
+## [0.0.1.0] - 2026-03-17
 
 ### Added
 
@@ -26140,7 +28231,7 @@ This version marks a key step toward a fully observable and controllable distrib
 
 ---
 
-## [1.0.0.0] - 2026-03-09
+## [0.0.0.0] - 2026-03-09
 
 ### Initial Release
 

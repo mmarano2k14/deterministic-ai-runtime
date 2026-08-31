@@ -381,7 +381,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Conti
         }
 
         [Fact]
-        public async Task EnqueueContinuationAsync_Should_Handle_Child_Completion_Before_Parent_Park_Without_Lost_Wakeup()
+        public async Task EnqueueContinuationAsync_Should_Keep_Scheduled_And_Redrive_When_Child_Completes_Before_Parent_Park()
         {
             var executionStore = new MemoryAiExecutionStore();
             await executionStore.CreateAsync(
@@ -413,11 +413,28 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Composition.ChildDag.Conti
                 version: scheduled.ParentContinuationScheduledStepVersion!.Value + 1);
             await executionStore.SaveStateAsync(ChildDagCompositionTestData.ParentExecutionId, progressedState);
 
-            var resumed = await coordinator.ReconcileScheduledAsync(scheduled);
+            var reconciled = await coordinator.ReconcileScheduledAsync(scheduled);
 
-            Assert.Equal(AiChildContinuationStatus.Resumed, resumed.ContinuationStatus);
-            Assert.NotNull(resumed.ParentResumedAtUtc);
-            Assert.Empty(controller.Requests);
+            Assert.Equal(
+                AiChildContinuationStatus.Scheduled,
+                reconciled.ContinuationStatus);
+            Assert.Null(reconciled.ParentResumedAtUtc);
+
+            var request = Assert.Single(controller.Requests);
+
+            Assert.Equal(
+                $"child-continuation-{relation.ChildInvocationKey}",
+                request.RequestedSharedRunId);
+
+            Assert.NotNull(request.RunRequest?.ExternalWaitContinuation);
+
+            Assert.Equal(
+                relation.ParentExecutionId,
+                request.RunRequest!.ExternalWaitContinuation!.ExecutionId);
+
+            Assert.Equal(
+                relation.ParentCallSiteId,
+                request.RunRequest.ExternalWaitContinuation.StepName);
         }
 
         [Fact]

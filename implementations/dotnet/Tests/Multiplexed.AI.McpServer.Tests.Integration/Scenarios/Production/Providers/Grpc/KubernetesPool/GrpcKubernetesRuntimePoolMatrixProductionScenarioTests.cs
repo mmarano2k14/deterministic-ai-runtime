@@ -27,6 +27,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         {
         }
 
+        [Fact]
+        [Trait("ObservationMode", "EventDriven")]
+        [Trait("ValidationProfile", "AdversarialMatrix")]
+        [Trait("MatrixScenarioId", "baseline")]
+        public Task Grpc_KubernetesPool_Matrix_Baseline_Should_Preserve_Recursive_Child_Dag_Exactness()
+        {
+            return ExecuteMatrixRowAsync(
+                ProductionChildDagAdversarialScheduleDefinition.Baseline);
+        }
+
         /// <summary>
         /// Kills the selected runtime after the first durable parent step and proves that recursive composition,
         /// recovery, ownership, replay, and durable dispatch remain exact.

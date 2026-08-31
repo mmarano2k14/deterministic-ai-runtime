@@ -120,7 +120,7 @@ The implementation provides:
 
 The recursive closure is now green through `ChildDepth = 3`, including an intermediate `3×3×3×2×Depth3` proof and larger `5×5×5×2×Depth3` high-scale validation. EventDriven lifecycle observation aligns canonical events with the existing Ledger, Runtime Lifecycle Journal, replay, trace, and Recovery Forensics surfaces.
 
-The capability is therefore documented as **Implemented / validated**. Exact nested child-step accounting is now closed for the bounded recursive Depth3 production proof through per-depth durable Ledger evidence with zero missing and zero unexpected duplicate child logical steps. Deterministic multi-seed and multi-schedule adversarial validation remains separate hardening work rather than a blocker on the current implemented/validated capability status.
+The capability is therefore documented as **Implemented / validated**. Exact nested child-step accounting is closed for the bounded recursive Depth3 production proof through per-depth durable Ledger evidence with zero missing and zero unexpected duplicate child logical steps. Deterministic multi-seed and multi-schedule adversarial validation is also green for the canonical nine-row matrix across HTTP/gRPC × ProcessHostPool/KubernetesPool. This closes the selected bounded adversarial schedules while leaving recovery-of-recovery, dedicated recursive-child replay, multi-node Kubernetes fault domains, and multi-control-plane recovery ownership as distinct future proof domains.
 
 See [Durable Child DAG Composition](../ai/child-dag-composition.md).
 

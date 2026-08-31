@@ -1,6 +1,6 @@
 # Concurrency Hardening and Adversarial Validation
 
-Status: Implemented / validated for the current HTTP and gRPC process-host crash-recovery campaign. P10 through P30 form the repeatable validation range. P35 completed successfully on both transports and is classified as the experimental edge of the local test environment.
+Status: Implemented / validated. The historical HTTP/gRPC process-host P10–P35 crash-recovery campaign remains valid, and the current semantic adversarial matrix is additionally green across HTTP/gRPC × ProcessHostPool/KubernetesPool. P35 remains classified as the experimental edge of the concentrated local test environment.
 
 This document describes how the Deterministic AI Runtime is validated under concentrated concurrency, real process loss, recovery races, Redis and MongoDB pressure, and multi-tenant isolation constraints.
 
@@ -633,6 +633,40 @@ This preserves two explicit failure domains:
 - pod-level recovery.
 
 The P35 process-kill campaign validates the process-level recovery semantics that the pooled architecture must preserve.
+
+---
+
+## Current Semantic Adversarial Matrix
+
+The original P10–P35 campaign primarily stresses concurrency, datastore pressure, process loss, ownership races, and convergence. A newer complementary matrix targets *semantic execution boundaries* directly.
+
+It is green across:
+
+```text
+                    ProcessHostPool    KubernetesPool
+gRPC                     VERIFIED          VERIFIED
+HTTP                     VERIFIED          VERIFIED
+```
+
+with nine canonical rows per combination:
+
+```text
+Baseline
+CrashEarly
+ChildInvocationBoundary
+ContinuationConsume
+Depth2RuntimeFailure
+Depth3RuntimeFailure
+SeedA
+SeedB
+SeedC
+```
+
+This adds 36 bounded deterministic schedule validations without invalidating the earlier P35 evidence.
+
+The continuation-consume row is deliberately strict: the exact continuation `SharedRun` is derived from deterministic child invocation identity, the exact physical runtime is pre-armed, durable `Dispatched` ownership is used as authority, the process is frozen before semantic proof reads, and the same process is physically killed. The production continuation path is not delayed or modified solely for the test.
+
+See [Adversarial Runtime Validation Matrix](adversarial-runtime-validation-matrix.md) and [Adversarial Runtime Validation Evidence Index](adversarial-runtime-validation-evidence-index.md).
 
 ---
 

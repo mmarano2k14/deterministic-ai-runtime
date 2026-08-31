@@ -341,9 +341,24 @@ The result is that ownership, execution identity, safe-tenant isolation, recover
 
 Production should distribute the same protocol across warm runtime pools, tenant-aware cells, bounded scale-out, multiple nodes, and managed or clustered datastores.
 
+A complementary semantic adversarial matrix now adds exact failure-boundary coverage across all four Runtime Pool provider/transport combinations:
+
+```text
+KubernetesPool / gRPC    9 / 9 VERIFIED
+KubernetesPool / HTTP    9 / 9 VERIFIED
+ProcessHostPool / gRPC   9 / 9 VERIFIED
+ProcessHostPool / HTTP   9 / 9 VERIFIED
+------------------------------------------
+Total                   36 / 36 VERIFIED
+```
+
+Each row runs two execution cycles and requires exact recursive child-step accounting, parent replay, recovery attribution, ownership convergence, and zero ownership-transition violations. The raw xUnit archive is indexed with per-file SHA-256 hashes. This semantic matrix complements rather than replaces the older P35 pressure campaign.
+
 See:
 
 - [Concurrency Hardening and Adversarial Validation](ai/concurrency-hardening-and-adversarial-validation.md)
+- [Adversarial Runtime Validation Matrix](ai/adversarial-runtime-validation-matrix.md)
+- [Adversarial Runtime Validation Evidence Index](ai/adversarial-runtime-validation-evidence-index.md)
 
 
 ## Runtime Pool Boundaries

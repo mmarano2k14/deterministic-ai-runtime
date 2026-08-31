@@ -7191,7 +7191,7 @@ Agent-based systems introduce:
 
 Most agent frameworks lack system-level guarantees.
 
-The runtime also has a **validated durable Child DAG composition** foundation for nested execution and future multi-agent orchestration. It reuses the same deterministic execution, queue, recovery, canonical event observation, Ledger, Runtime Lifecycle Journal, replay, trace, and Forensics boundaries. Recursive validation is green through Depth3, and the bounded recursive Depth3 production proof now includes exact per-depth child logical-step Ledger accounting; broader deterministic multi-interleaving validation and recursive-child replay remain distinct future hardening work.
+The runtime also has a **validated durable Child DAG composition** foundation for nested execution and future multi-agent orchestration. It reuses the same deterministic execution, queue, recovery, canonical event observation, Ledger, Runtime Lifecycle Journal, replay, trace, and Forensics boundaries. Recursive validation is green through Depth3, the bounded recursive Depth3 production proof includes exact per-depth child logical-step Ledger accounting, and the selected deterministic multi-interleaving adversarial matrix is green across HTTP/gRPC × ProcessHostPool/KubernetesPool. Dedicated recursive-child replay and exhaustive state-space exploration remain distinct future proof domains.
 
 Multiplex AI Runtime provides the execution layer required to run these systems safely:
 

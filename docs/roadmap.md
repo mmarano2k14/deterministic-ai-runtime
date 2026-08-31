@@ -805,7 +805,7 @@ The current priorities are:
 
 ```text
 EventDriven Engine Observation: maintain canonical events, centralized projections, and deterministic lifecycle waits
-Recursive Child DAG: maintain the green Depth3 baseline and harden exact nested step proof / deterministic multi-seed failure coverage
+Recursive Child DAG: maintain the green Depth3 + exact nested-step + deterministic nine-row multi-seed/multi-schedule adversarial baseline
 Multi-agent orchestration proof on top of durable Child DAG composition
 Enterprise demo polish
 Recovery / replay / ledger / lifecycle / trace documentation
@@ -830,6 +830,8 @@ Phase 0 documentation restructure is complete as V1.
 
 The runtime foundations are already implemented and validated through distributed integration scenarios, MCP control-plane scenarios, HTTP process-host scenarios, replay/ledger/trace scenarios, and runtime crash recovery scenarios.
 
-The Runtime Pool correctness phase is closed at the current proof boundary. Native durable Child DAG composition is implemented and validated through recursive `ChildDepth = 3` scenarios, including an intermediate Depth3 proof and larger high-scale profiles. Centralized EventDriven engine observation is in place through canonical events, the existing Event Manager, durable Ledger, Runtime Lifecycle Journal, and Recovery Forensics. Exact recursive child-step accounting is now closed for the bounded Depth3 production proof, and runtime-ownership handoff / interval semantics are covered by complementary scenario and Redis claim-token / exact-owner CAS proofs. The immediate hardening focus is deterministic multi-seed and multi-schedule failure coverage plus datastore efficiency while multi-agent orchestration, operational polish, recovery/replay tooling, broader Kubernetes operations, and public positioning continue.
+The Runtime Pool correctness phase is closed at the current proof boundary. Native durable Child DAG composition is implemented and validated through recursive `ChildDepth = 3` scenarios, including an intermediate Depth3 proof and larger high-scale profiles. Centralized EventDriven engine observation is in place through canonical events, the existing Event Manager, durable Ledger, Runtime Lifecycle Journal, and Recovery Forensics. Exact recursive child-step accounting is closed for the bounded Depth3 production proof, and runtime-ownership handoff / interval semantics are covered by complementary scenario and Redis claim-token / exact-owner CAS proofs. Deterministic multi-seed and multi-schedule failure coverage is now green through the canonical nine-row matrix across HTTP/gRPC × ProcessHostPool/KubernetesPool. The immediate hardening focus moves to datastore efficiency, recovery-of-recovery, dedicated recursive-child replay, multi-agent orchestration, operational polish, broader Kubernetes operations, multi-control-plane ownership, and public positioning.
+
+Canonical matrix definition: [`docs/ai/adversarial-runtime-validation-matrix.md`](ai/adversarial-runtime-validation-matrix.md). Raw row-level provenance: [`docs/ai/adversarial-runtime-validation-evidence-index.md`](ai/adversarial-runtime-validation-evidence-index.md).
 
 The dedicated long-term platform direction is documented in [`docs/road-to-mlops.md`](road-to-mlops.md).
