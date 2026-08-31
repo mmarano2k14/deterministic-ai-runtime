@@ -1100,7 +1100,13 @@ Under active development, not a finished commercial platform. Explicitly outside
 
 ## License
 
-**Business Source License 1.1** — free for development, testing, evaluation, and internal use; commercial production use requires a license; converts to **Apache 2.0 on 2029-01-01**. See the repository license file.
+This project is licensed under the **Business Source License 1.1 (BSL 1.1)**.
+
+It is free to use for development, testing, evaluation, and internal purposes. Production use to provide a competing AI orchestration, workflow engine, or distributed runtime platform requires an explicit commercial agreement.
+
+The licensed source automatically converts to the **Apache License 2.0 on January 1, 2029**.
+
+See the repository `LICENSE` file for the complete and authoritative terms.
 
 ---
 
