@@ -51,6 +51,17 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
         public const string TestHarnessRuntimePoolWorkloadSharedRunLoad = "TestHarness.RuntimePoolWorkload.SharedRun.Load";
         public const string RbacExecutionContextLoad = "Rbac.ExecutionContext.Load";
         public const string LuaDag = "Lua.Dag";
+        public const string LuaDagClaim = "Lua.Dag.Claim";
+        public const string LuaDagClaimBatch = "Lua.Dag.ClaimBatch";
+        public const string LuaDagClaimSpecific = "Lua.Dag.ClaimSpecific";
+        public const string LuaDagComplete = "Lua.Dag.Complete";
+        public const string LuaDagPark = "Lua.Dag.Park";
+        public const string LuaDagResumeExternalWait = "Lua.Dag.ResumeExternalWait";
+        public const string LuaDagFail = "Lua.Dag.Fail";
+        public const string LuaDagRecover = "Lua.Dag.Recover";
+        public const string LuaDagRecoverRunningForRecovery = "Lua.Dag.RecoverRunningForRecovery";
+        public const string LuaDagFinalize = "Lua.Dag.Finalize";
+        public const string LuaDagRetention = "Lua.Dag.Retention";
         public const string LuaExecution = "Lua.Execution";
         public const string LuaExecutionControl = "Lua.ExecutionControl";
         public const string LuaSharedQueue = "Lua.SharedQueue";
@@ -161,6 +172,17 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
                 AiRedisReadAttributionOperations.TestHarnessRuntimePoolWorkloadSharedRunLoad,
                 AiRedisReadAttributionOperations.RbacExecutionContextLoad,
                 AiRedisReadAttributionOperations.LuaDag,
+                AiRedisReadAttributionOperations.LuaDagClaim,
+                AiRedisReadAttributionOperations.LuaDagClaimBatch,
+                AiRedisReadAttributionOperations.LuaDagClaimSpecific,
+                AiRedisReadAttributionOperations.LuaDagComplete,
+                AiRedisReadAttributionOperations.LuaDagPark,
+                AiRedisReadAttributionOperations.LuaDagResumeExternalWait,
+                AiRedisReadAttributionOperations.LuaDagFail,
+                AiRedisReadAttributionOperations.LuaDagRecover,
+                AiRedisReadAttributionOperations.LuaDagRecoverRunningForRecovery,
+                AiRedisReadAttributionOperations.LuaDagFinalize,
+                AiRedisReadAttributionOperations.LuaDagRetention,
                 AiRedisReadAttributionOperations.LuaExecution,
                 AiRedisReadAttributionOperations.LuaExecutionControl,
                 AiRedisReadAttributionOperations.LuaSharedQueue,
