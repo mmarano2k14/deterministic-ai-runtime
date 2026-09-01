@@ -203,13 +203,15 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 }
             }
 
-            var recoveredCount = await RecoverTimedOutStepsAsync(
+            var recoveryResult = await RecoverTimedOutStepsAsync(
                     executionId,
                     pipelineKey,
                     workerId,
                     pipeline,
                     cancellationToken)
                 .ConfigureAwait(false);
+            var recoveredCount = recoveryResult.RecoveredCount;
+            var state = recoveryResult.State;
             if (recoveredCount > 0)
             {
                 _services.Logger.Engine.StepsRecovered(
@@ -218,11 +220,13 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 
                 _services.Logger.Engine.LogInformation(
                     $"[AI DAG] Timed-out steps recovered. ExecutionId='{executionId}', RecoveredCount='{recoveredCount}'.");
+
+                // Preserve the existing post-recovery refresh semantics on the rare mutation path.
+                state = await _services.DagStore.GetStateAsync(
+                        executionId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
-            var state = await _services.DagStore.GetStateAsync(
-                    executionId,
-                    cancellationToken)
-                .ConfigureAwait(false);
             if (state is null || state.Steps.Count == 0)
             {
                 await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -609,13 +613,15 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 }
             }
 
-            var recoveredCount = await RecoverTimedOutStepsAsync(
+            var recoveryResult = await RecoverTimedOutStepsAsync(
                     executionId,
                     pipelineKey,
                     workerId,
                     pipeline,
                     cancellationToken)
                 .ConfigureAwait(false);
+            var recoveredCount = recoveryResult.RecoveredCount;
+            var state = recoveryResult.State;
             if (recoveredCount > 0)
             {
                 _services.Logger.Engine.StepsRecovered(
@@ -624,11 +630,13 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 
                 _services.Logger.Engine.LogInformation(
                     $"[AI DAG] Timed-out steps recovered. ExecutionId='{executionId}', RecoveredCount='{recoveredCount}'.");
+
+                // Preserve the existing post-recovery refresh semantics on the rare mutation path.
+                state = await _services.DagStore.GetStateAsync(
+                        executionId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
-            var state = await _services.DagStore.GetStateAsync(
-                    executionId,
-                    cancellationToken)
-                .ConfigureAwait(false);
             if (state is null || state.Steps.Count == 0)
             {
                 await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -1344,9 +1352,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
         /// The cancellation token.
         /// </param>
         /// <returns>
-        /// The number of recovered steps.
+        /// The recovery count together with the already materialized pre-recovery state when
+        /// the atomic recovery scan reports no mutation. On a positive recovery the state is
+        /// returned as <see langword="null"/> so the caller preserves the existing refresh path.
         /// </returns>
-        private async Task<int> RecoverTimedOutStepsAsync(
+        private async Task<(int RecoveredCount, AiExecutionState? State)> RecoverTimedOutStepsAsync(
             string executionId,
             string pipelineKey,
             string workerId,
@@ -1385,7 +1395,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 
                         if (result <= 0)
                         {
-                            return result;
+                            // The recovery scan did not mutate the DAG, so the state materialized
+                            // immediately before the atomic scan is still valid for local ready-step
+                            // selection. Reusing it avoids one full GetStateAsync reconstruction on
+                            // the normal claim path while leaving atomic claim authority unchanged.
+                            return (result, beforeState);
                         }
                         var afterState = await _services.DagStore.GetStateAsync(
                                 executionId,
@@ -1493,7 +1507,10 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                     cancellationToken)
                                 .ConfigureAwait(false);
                         }
-                        return result;
+                        // A positive recovery mutates durable state. The caller deliberately performs
+                        // the same post-recovery refresh it performed before PERF1-2B, so recovery-event
+                        // and post-mutation visibility semantics remain unchanged.
+                        return (result, (AiExecutionState?)null);
                     })
                 .ConfigureAwait(false);
         }
