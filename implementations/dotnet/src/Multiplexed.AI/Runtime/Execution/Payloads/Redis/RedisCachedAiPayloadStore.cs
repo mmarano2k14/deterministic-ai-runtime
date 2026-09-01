@@ -112,6 +112,11 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
 
                 var cached = await db.StringGetAsync(redisKey)
                     .ConfigureAwait(false);
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                    db,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.PayloadCacheLoad,
+                    "GET",
+                    cached);
 
                 if (cached.HasValue)
                 {

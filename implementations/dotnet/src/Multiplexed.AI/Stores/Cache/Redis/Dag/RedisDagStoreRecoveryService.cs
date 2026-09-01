@@ -208,6 +208,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                                 (RedisValue)nowUnix
                         })
                     .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaDag);
 
             return (int)result!;
         }
@@ -236,6 +239,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                                 (RedisValue)nowUnix
                         })
                     .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaDag);
 
             return (int)result!;
         }

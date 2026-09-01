@@ -344,6 +344,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                     stepKeyPrefix = (RedisValue)stepKeyPrefix,
                     executionId = (RedisValue)executionId
                 });
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaDag);
 
             if (result.IsNull)
                 return null;
@@ -465,6 +468,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                     maxSteps = (RedisValue)maxSteps,
                     claimTokensJson = (RedisValue)claimTokensJson
                 });
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaDag);
 
             if (result.IsNull)
             {
@@ -517,6 +523,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                     nowUnix = (RedisValue)nowUnix,
                     claimToken = (RedisValue)claimToken
                 });
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaDag);
 
             return (int)result! == 1;
         }

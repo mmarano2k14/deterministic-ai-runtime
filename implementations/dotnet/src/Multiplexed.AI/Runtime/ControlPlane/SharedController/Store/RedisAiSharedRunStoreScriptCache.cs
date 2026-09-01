@@ -142,12 +142,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
 
             try
             {
-                return await database
+                var result = await database
                     .ScriptEvaluateAsync(
                         sha,
                         keys,
                         values)
                     .ConfigureAwait(false);
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                    database,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaSharedRun);
+                return result;
             }
             catch (RedisServerException exception) when (IsNoScript(exception))
             {
@@ -157,12 +161,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                         forceReload: true)
                     .ConfigureAwait(false);
 
-                return await database
+                var result = await database
                     .ScriptEvaluateAsync(
                         sha,
                         keys,
                         values)
                     .ConfigureAwait(false);
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                    database,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaSharedRun);
+                return result;
             }
         }
 

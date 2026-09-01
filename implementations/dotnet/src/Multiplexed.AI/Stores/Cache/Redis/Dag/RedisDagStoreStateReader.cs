@@ -56,6 +56,11 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             AiExecutionState? state = null;
 
             var stateBlob = await _services.Database.StringGetAsync(stateKey);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.DagStateBlobLoad,
+                "GET",
+                stateBlob);
             if (stateBlob.HasValue)
             {
                 state = JsonSerializer.Deserialize<AiExecutionState>(
@@ -64,6 +69,11 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             }
 
             var stepNames = await _services.Database.SetMembersAsync(stepIndexKey);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.DagStepIndexLoad,
+                "SMEMBERS",
+                stepNames);
 
             if (stepNames.Length == 0)
             {
@@ -191,9 +201,17 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
 
             if (!UsesRedisCluster())
             {
-                return await _services.Database
+                var nonClusterValues = await _services.Database
                     .StringGetAsync(stepKeys)
                     .ConfigureAwait(false);
+
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                    _services.Database,
+                    "Dag.Step.LoadMany",
+                    "MGET",
+                    nonClusterValues);
+
+                return nonClusterValues;
             }
 
             var values = new RedisValue[stepKeys.Length];
@@ -203,6 +221,12 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                 values[index] = await _services.Database
                     .StringGetAsync(stepKeys[index])
                     .ConfigureAwait(false);
+
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                    _services.Database,
+                    "Dag.Step.Load.Cluster",
+                    "GET",
+                    values[index]);
             }
 
             return values;
@@ -235,6 +259,11 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                 throw new ArgumentException("Execution id cannot be null or empty.", nameof(executionId));
 
             var value = await _services.Database.StringGetAsync(_services.KeyBuilder.GetExecutionRecordKey(executionId));
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.DagExecutionRecordLoad,
+                "GET",
+                value);
 
             if (!value.HasValue)
                 return null;

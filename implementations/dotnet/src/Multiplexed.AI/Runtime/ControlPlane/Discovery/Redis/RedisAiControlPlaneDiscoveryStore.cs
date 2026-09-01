@@ -108,6 +108,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.Discovery.Redis
                 await database
                     .StringGetAsync(key)
                     .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.ControlPlaneDiscoveryLoad,
+                "GET",
+                payload);
 
             if (!payload.HasValue)
             {

@@ -211,6 +211,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         await database
                             .StringGetAsync(this.Definition.StateKey)
                             .ConfigureAwait(false);
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                        database,
+                        Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.TestHarnessCrashCheckpointState,
+                        "GET",
+                        currentState);
 
                     if (IsReached(currentState))
                     {
@@ -273,6 +278,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                             await database
                                 .StringGetAsync(this.Definition.StateKey)
                                 .ConfigureAwait(false);
+                        Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                            database,
+                            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.TestHarnessCrashCheckpointState,
+                            "GET",
+                            signaledState);
 
                         if (IsReached(signaledState))
                         {
@@ -294,6 +304,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     await database
                         .StringGetAsync(this.Definition.StateKey)
                         .ConfigureAwait(false);
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                    database,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.TestHarnessCrashCheckpointState,
+                    "GET",
+                    lastState);
 
                 if (IsReached(lastState))
                 {
@@ -363,6 +378,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                         await database
                             .StringGetAsync(this.Definition.StateKey)
                             .ConfigureAwait(false);
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                        database,
+                        Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.TestHarnessCrashCheckpointState,
+                        "GET",
+                        invalidState);
 
                     throw new InvalidOperationException(
                         "The durable crash checkpoint could not transition to released state. " +

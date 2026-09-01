@@ -63,6 +63,11 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
 
             var value = await db.StringGetAsync(BuildKey(key))
                 .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                db,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.PayloadRedisLoad,
+                "GET",
+                value);
 
             return value.HasValue ? value.ToString() : null;
         }

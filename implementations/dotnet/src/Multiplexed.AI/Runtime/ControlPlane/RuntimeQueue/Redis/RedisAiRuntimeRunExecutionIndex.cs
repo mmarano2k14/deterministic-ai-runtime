@@ -1059,6 +1059,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeQueue.Redis
                 .HashGetAllAsync(
                     BuildItemKey(controlPlaneId, runId))
                 .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                _database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.RuntimeRunIndexEntryLoad,
+                "HGETALL",
+                entries);
 
             cancellationToken.ThrowIfCancellationRequested();
 

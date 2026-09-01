@@ -312,6 +312,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 await this.database
                     .SetMembersAsync(instanceSetKey)
                     .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                this.database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.RuntimeRegistryIndexLoad,
+                "SMEMBERS",
+                members);
 
             var snapshots =
                 new List<AiRuntimeInstanceSnapshot>();
@@ -744,6 +749,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                             controlPlaneId,
                             runtimeInstanceId))
                     .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                this.database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.RuntimeRegistryEntryLoad,
+                "GET",
+                value);
 
             if (!value.HasValue)
             {

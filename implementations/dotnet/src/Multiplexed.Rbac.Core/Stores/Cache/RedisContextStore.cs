@@ -231,6 +231,7 @@ namespace Multiplexed.Rbac.Core.Stores.Cache
         public async Task<ExecutionContext.ExecutionContext?> GetAsync(string key)
         {
             var value = await _db.StringGetAsync(ContextKey(key));
+            RedisContextStoreDiagnostics.NotifyContextReadCompleted(_db, value);
             if (value.IsNullOrEmpty)
                 return null;
 
@@ -344,6 +345,8 @@ namespace Multiplexed.Rbac.Core.Stores.Cache
                 },
                 () => _rotateScriptSha,
                 sha => _rotateScriptSha = sha);
+
+            RedisContextStoreDiagnostics.NotifyContextRotateLuaCompleted(_db);
 
             if (result.IsNull)
                 throw new KeyNotFoundException("Cannot rotate: context not found or expired.");

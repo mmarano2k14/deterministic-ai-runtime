@@ -41,6 +41,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         private readonly MongoTrafficSnapshot? mongoStartSnapshot;
         private readonly string? redisStartError;
         private readonly string? mongoStartError;
+        private readonly string? redisAttributionScope;
         private readonly Stopwatch stopwatch;
         private int completionState;
 
@@ -52,6 +53,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             MongoTrafficSnapshot? mongoStartSnapshot,
             string? redisStartError,
             string? mongoStartError,
+            string? redisAttributionScope,
             Stopwatch stopwatch)
         {
             this.output = output;
@@ -61,6 +63,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             this.mongoStartSnapshot = mongoStartSnapshot;
             this.redisStartError = redisStartError;
             this.mongoStartError = mongoStartError;
+            this.redisAttributionScope = redisAttributionScope;
             this.stopwatch = stopwatch;
         }
 
@@ -85,6 +88,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 MongoConnectionStringEnvironmentVariable,
                 StandardMongoConnectionStringEnvironmentVariable,
                 DefaultMongoConnectionString);
+
+            var redisAttributionScope =
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.BeginScope();
 
             ConnectionMultiplexer? redisConnection = null;
             RedisTrafficSnapshot? redisStartSnapshot = null;
@@ -150,8 +156,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             output.WriteLine($"Redis.Error='{Escape(redisStartError)}'");
             output.WriteLine($"Mongo.Available='{(mongoStartSnapshot is not null).ToString().ToLowerInvariant()}'");
             output.WriteLine($"Mongo.Error='{Escape(mongoStartError)}'");
+            output.WriteLine($"RedisAttribution.Enabled='{(!string.IsNullOrWhiteSpace(redisAttributionScope)).ToString().ToLowerInvariant()}'");
+            output.WriteLine($"RedisAttribution.Scope='{Escape(redisAttributionScope)}'");
             output.WriteLine("Scope='Server-wide counters for every process sharing the observed Redis and MongoDB instances.'");
-            output.WriteLine("ObserverOverhead='The final delta includes approximately two Redis INFO commands and one MongoDB serverStatus command.'");
+            output.WriteLine("ObserverOverhead='The final delta includes approximately two Redis INFO commands and one MongoDB serverStatus command. When PERF1 Redis attribution is enabled, periodic/final attribution HSET publications plus the final attribution HGETALL collection are also included in the raw Redis deltas.'");
             output.WriteLine("[DATA STORE TRAFFIC OBSERVER START END]");
 
             return new ProductionDataStoreTrafficObserver(
@@ -162,6 +170,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 mongoStartSnapshot,
                 redisStartError,
                 mongoStartError,
+                redisAttributionScope,
                 stopwatch);
         }
 
@@ -180,6 +189,33 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
 
             stopwatch.Stop();
             var duration = stopwatch.Elapsed;
+
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionAggregate? redisAttribution = null;
+            string? redisAttributionError = null;
+
+            if (redisConnection is not null &&
+                !string.IsNullOrWhiteSpace(redisAttributionScope))
+            {
+                try
+                {
+                    await Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics
+                        .FlushCurrentProcessAsync(
+                            redisConnection.GetDatabase(),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    redisAttribution = await Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics
+                        .CollectAsync(
+                            redisConnection,
+                            redisAttributionScope,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    redisAttributionError = FormatException(exception);
+                }
+            }
 
             RedisTrafficSnapshot? redisEndSnapshot = null;
             string? redisEndError = null;
@@ -227,6 +263,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     mongoStartSnapshot,
                     mongoEndSnapshot,
                     mongoEndError ?? mongoStartError);
+
+                WriteRedisAttributionSummary(
+                    redisStartSnapshot,
+                    redisEndSnapshot,
+                    redisAttribution,
+                    redisAttributionError);
             }
             catch (Exception exception)
             {
@@ -235,6 +277,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 output.WriteLine($"ExceptionType='{exception.GetType().FullName}'");
                 output.WriteLine($"Message='{Escape(exception.Message)}'");
                 output.WriteLine("[DATA STORE TRAFFIC OBSERVER SUMMARY FAILURE END]");
+            }
+            finally
+            {
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.EndScope(redisAttributionScope);
             }
         }
 
@@ -273,7 +319,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             output.WriteLine($"CompletedAtUtc='{DateTimeOffset.UtcNow:O}'");
             output.WriteLine($"Duration='{duration}'");
             output.WriteLine("Scope='Server-wide deltas; concurrent external users of the same stores are included.'");
-            output.WriteLine("ObserverOverhead='Approximately two Redis INFO commands and one MongoDB serverStatus command are included in the raw deltas.'");
+            output.WriteLine("ObserverOverhead='Approximately two Redis INFO commands and one MongoDB serverStatus command are included in the raw deltas. When PERF1 attribution is enabled, periodic/final HSET publications and the final attribution HGETALL collection are also included before the Redis end snapshot.'");
 
             WriteRedisSummary(duration, redisStart, redisEnd, redisError);
             WriteMongoSummary(duration, mongoStart, mongoEnd, mongoError);
@@ -339,6 +385,234 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             {
                 output.WriteLine($"Redis.Command.{NormalizeMetricName(command.Key)}='{command.Value}'");
             }
+        }
+
+        private void WriteRedisAttributionSummary(
+            RedisTrafficSnapshot? start,
+            RedisTrafficSnapshot? end,
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionAggregate? aggregate,
+            string? error)
+        {
+            output.WriteLine(string.Empty);
+            output.WriteLine("[PERF1 REDIS ATTRIBUTION]");
+            output.WriteLine($"Enabled='{(!string.IsNullOrWhiteSpace(redisAttributionScope)).ToString().ToLowerInvariant()}'");
+            output.WriteLine($"Scope='{Escape(redisAttributionScope)}'");
+            output.WriteLine("PayloadDefinition='UTF-8 bytes represented by RedisValue at the instrumented application call site; RESP framing and transport overhead are excluded.'");
+            output.WriteLine($"FlushInterval='{Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.FlushInterval}'");
+            output.WriteLine("InstrumentationOverhead='Each active process publishes one absolute HSET snapshot approximately once per flush interval; the first successful publication also applies a TTL. Final parent flush and HGETALL collection occur before the raw Redis end snapshot so attributed read counts cannot extend beyond the server measurement window.'");
+            output.WriteLine("CoverageNote='Cross-process publication is periodic and best-effort. A hard-killed process may lose its final partial flush interval; reads after a process latest published snapshot remain residual. Collection precedes the Redis end snapshot, so residuals are conservative rather than allowing attribution beyond the server window.'");
+            output.WriteLine("LuaAttributionNote='Command=LUA rows count successful atomic Lua script invocations by bounded semantic family. PERF1-1B does not decompose Lua scripts or subtract their Redis-side GET/HGET calls from server residuals.'");
+
+            if (string.IsNullOrWhiteSpace(redisAttributionScope))
+            {
+                output.WriteLine("Available='false'");
+                output.WriteLine("Reason='MULTIPLEXED_PERF1_REDIS_ATTRIBUTION is not enabled.'");
+                output.WriteLine("[PERF1 REDIS ATTRIBUTION END]");
+                return;
+            }
+
+            if (start is null || end is null || aggregate is null)
+            {
+                output.WriteLine("Available='false'");
+                output.WriteLine($"Error='{Escape(error)}'");
+                output.WriteLine("[PERF1 REDIS ATTRIBUTION END]");
+                return;
+            }
+
+            output.WriteLine("Available='true'");
+            output.WriteLine($"ProcessSnapshotCount='{aggregate.ProcessSnapshotCount}'");
+            output.WriteLine($"PublicationSequenceTotal='{aggregate.PublicationSequenceTotal}'");
+
+            var serverCommandDeltas = CreateDictionaryDelta(
+                start.CommandCalls,
+                end.CommandCalls);
+
+            var attributedByCommand = aggregate.Operations
+                .GroupBy(item => item.Command, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Sum(item => item.Calls),
+                    StringComparer.OrdinalIgnoreCase);
+
+            var trackedCommands = new[]
+            {
+                "GET",
+                "MGET",
+                "HGET",
+                "HMGET",
+                "HGETALL",
+                "SMEMBERS"
+            };
+
+            foreach (var command in trackedCommands)
+            {
+                var serverCalls = serverCommandDeltas.GetValueOrDefault(command);
+                var attributedCalls = attributedByCommand.GetValueOrDefault(command);
+                var residualCalls = serverCalls - attributedCalls;
+                var coveragePercent = serverCalls <= 0
+                    ? 0d
+                    : (attributedCalls * 100d) / serverCalls;
+
+                output.WriteLine($"Command.{command}.ServerCalls='{serverCalls}'");
+                output.WriteLine($"Command.{command}.AttributedCalls='{attributedCalls}'");
+                output.WriteLine($"Command.{command}.ResidualCalls='{residualCalls}'");
+                output.WriteLine($"Command.{command}.CoveragePercent='{coveragePercent.ToString("F2", CultureInfo.InvariantCulture)}'");
+            }
+
+            foreach (var operation in aggregate.Operations)
+            {
+                output.WriteLine(
+                    $"Operation='{Escape(operation.Operation)}', " +
+                    $"Command='{Escape(operation.Command)}', " +
+                    $"Calls='{operation.Calls}', " +
+                    $"ResponsePayloadBytes='{operation.ResponsePayloadBytes}'.");
+            }
+
+            WriteSharedRunProcessAttribution(aggregate);
+            output.WriteLine("[PERF1 REDIS ATTRIBUTION END]");
+        }
+
+        private void WriteSharedRunProcessAttribution(
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionAggregate aggregate)
+        {
+            var sharedRunOperations = new HashSet<string>(StringComparer.Ordinal)
+            {
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.SharedRunRecordLoad,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.SharedRunPublicGetRecordLoad,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.TestHarnessSharedRunPublicGetRecordLoad,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.SharedRunListRecordLoad,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.TestHarnessRuntimePoolWorkloadSharedRunLoad
+            };
+
+            var observerParentProcessIdentity =
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.CurrentProcessIdentity;
+
+            var rows = aggregate.ProcessSnapshots
+                .SelectMany(
+                    snapshot => snapshot.Operations
+                        .Where(operation => sharedRunOperations.Contains(operation.Operation))
+                        .Select(operation => new
+                        {
+                            snapshot.ProcessIdentity,
+                            snapshot.PublicationSequence,
+                            snapshot.CapturedAtUtc,
+                            Operation = operation
+                        }))
+                .OrderByDescending(row => row.Operation.Calls)
+                .ThenBy(row => row.ProcessIdentity, StringComparer.Ordinal)
+                .ThenBy(row => row.Operation.Operation, StringComparer.Ordinal)
+                .ToArray();
+
+            var observerParentCalls = rows
+                .Where(
+                    row =>
+                        string.Equals(
+                            row.Operation.Operation,
+                            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.SharedRunRecordLoad,
+                            StringComparison.Ordinal) &&
+                        string.Equals(
+                            row.ProcessIdentity,
+                            observerParentProcessIdentity,
+                            StringComparison.Ordinal))
+                .Sum(row => row.Operation.Calls);
+
+            var remoteOrChildCalls = rows
+                .Where(
+                    row =>
+                        string.Equals(
+                            row.Operation.Operation,
+                            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.SharedRunRecordLoad,
+                            StringComparison.Ordinal) &&
+                        !string.Equals(
+                            row.ProcessIdentity,
+                            observerParentProcessIdentity,
+                            StringComparison.Ordinal))
+                .Sum(row => row.Operation.Calls);
+
+            var publicGetObserverParentCalls = rows
+                .Where(
+                    row =>
+                        string.Equals(
+                            row.Operation.Operation,
+                            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.SharedRunPublicGetRecordLoad,
+                            StringComparison.Ordinal) &&
+                        string.Equals(
+                            row.ProcessIdentity,
+                            observerParentProcessIdentity,
+                            StringComparison.Ordinal))
+                .Sum(row => row.Operation.Calls);
+
+            var publicGetRemoteOrChildCalls = rows
+                .Where(
+                    row =>
+                        string.Equals(
+                            row.Operation.Operation,
+                            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.SharedRunPublicGetRecordLoad,
+                            StringComparison.Ordinal) &&
+                        !string.Equals(
+                            row.ProcessIdentity,
+                            observerParentProcessIdentity,
+                            StringComparison.Ordinal))
+                .Sum(row => row.Operation.Calls);
+
+            var testHarnessPublicGetObserverParentCalls = rows
+                .Where(
+                    row =>
+                        string.Equals(
+                            row.Operation.Operation,
+                            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.TestHarnessSharedRunPublicGetRecordLoad,
+                            StringComparison.Ordinal) &&
+                        string.Equals(
+                            row.ProcessIdentity,
+                            observerParentProcessIdentity,
+                            StringComparison.Ordinal))
+                .Sum(row => row.Operation.Calls);
+
+            var testHarnessPublicGetRemoteOrChildCalls = rows
+                .Where(
+                    row =>
+                        string.Equals(
+                            row.Operation.Operation,
+                            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.TestHarnessSharedRunPublicGetRecordLoad,
+                            StringComparison.Ordinal) &&
+                        !string.Equals(
+                            row.ProcessIdentity,
+                            observerParentProcessIdentity,
+                            StringComparison.Ordinal))
+                .Sum(row => row.Operation.Calls);
+
+            output.WriteLine(string.Empty);
+            output.WriteLine("[PERF1 SHARED RUN PROCESS SPLIT]");
+            output.WriteLine($"ObserverParentProcessIdentity='{Escape(observerParentProcessIdentity)}'");
+            output.WriteLine($"ProcessRowCount='{rows.Length}'");
+            output.WriteLine($"SharedRun.Record.Load.ObserverParentCalls='{observerParentCalls}'");
+            output.WriteLine($"SharedRun.Record.Load.RemoteOrChildCalls='{remoteOrChildCalls}'");
+            output.WriteLine($"SharedRun.PublicGet.Record.Load.ObserverParentCalls='{publicGetObserverParentCalls}'");
+            output.WriteLine($"SharedRun.PublicGet.Record.Load.RemoteOrChildCalls='{publicGetRemoteOrChildCalls}'");
+            output.WriteLine($"TestHarness.SharedRun.PublicGet.Record.Load.ObserverParentCalls='{testHarnessPublicGetObserverParentCalls}'");
+            output.WriteLine($"TestHarness.SharedRun.PublicGet.Record.Load.RemoteOrChildCalls='{testHarnessPublicGetRemoteOrChildCalls}'");
+
+            foreach (var row in rows)
+            {
+                var role = string.Equals(
+                    row.ProcessIdentity,
+                    observerParentProcessIdentity,
+                    StringComparison.Ordinal)
+                    ? "ObserverParent"
+                    : "RemoteOrChild";
+
+                output.WriteLine(
+                    $"Process='{Escape(row.ProcessIdentity)}', " +
+                    $"Role='{role}', " +
+                    $"PublicationSequence='{row.PublicationSequence}', " +
+                    $"CapturedAtUtc='{row.CapturedAtUtc:O}', " +
+                    $"Operation='{Escape(row.Operation.Operation)}', " +
+                    $"Command='{Escape(row.Operation.Command)}', " +
+                    $"Calls='{row.Operation.Calls}', " +
+                    $"ResponsePayloadBytes='{row.Operation.ResponsePayloadBytes}'.");
+            }
+
+            output.WriteLine("[PERF1 SHARED RUN PROCESS SPLIT END]");
         }
 
         private void WriteMongoSummary(

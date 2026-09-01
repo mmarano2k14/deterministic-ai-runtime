@@ -2,6 +2,8 @@ using System;
 using System.Linq;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.Client;
+using Multiplexed.AI.Runtime.Observability.Performance;
+using Multiplexed.AI.Tests.Runtime.Observability.Performance;
 using Xunit;
 
 namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes
@@ -9,6 +11,7 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
     /// <summary>
     /// Validates Kubernetes SDK resource construction for Runtime Pool Pods.
     /// </summary>
+    [Collection(AiRedisReadAttributionDiagnosticsCollection.CollectionName)]
     public sealed class AiKubernetesRuntimePoolSdkResourceFactoryTests
     {
         /// <summary>
@@ -63,6 +66,55 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
                     .ValueFrom
                     .FieldRef
                     .FieldPath);
+        }
+
+        /// <summary>
+        /// Verifies that an active PERF1 attribution scope is projected into Runtime Pool Pods.
+        /// </summary>
+        [Fact]
+        public void CreatePod_Should_Project_Perf1_Attribution_Environment_When_Active()
+        {
+            var previousEnabled =
+                Environment.GetEnvironmentVariable(
+                    AiRedisReadAttributionDiagnostics.EnabledEnvironmentVariable);
+            var previousScope =
+                Environment.GetEnvironmentVariable(
+                    AiRedisReadAttributionDiagnostics.ScopeEnvironmentVariable);
+
+            try
+            {
+                Environment.SetEnvironmentVariable(
+                    AiRedisReadAttributionDiagnostics.EnabledEnvironmentVariable,
+                    "1");
+                Environment.SetEnvironmentVariable(
+                    AiRedisReadAttributionDiagnostics.ScopeEnvironmentVariable,
+                    "perf1-kubernetes-test-scope");
+
+                var factory =
+                    new AiKubernetesRuntimePoolSdkResourceFactory(
+                        CreateHostOptions());
+
+                var pod = factory.CreatePod(CreateSpec("grpc"));
+                var environment = Assert.Single(pod.Spec.Containers)
+                    .Env
+                    .ToDictionary(item => item.Name, StringComparer.Ordinal);
+
+                Assert.Equal(
+                    "1",
+                    environment[AiRedisReadAttributionDiagnostics.EnabledEnvironmentVariable].Value);
+                Assert.Equal(
+                    "perf1-kubernetes-test-scope",
+                    environment[AiRedisReadAttributionDiagnostics.ScopeEnvironmentVariable].Value);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(
+                    AiRedisReadAttributionDiagnostics.EnabledEnvironmentVariable,
+                    previousEnabled);
+                Environment.SetEnvironmentVariable(
+                    AiRedisReadAttributionDiagnostics.ScopeEnvironmentVariable,
+                    previousScope);
+            }
         }
 
         /// <summary>
