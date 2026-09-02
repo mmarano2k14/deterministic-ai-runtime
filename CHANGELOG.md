@@ -6,6 +6,957 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 0.0.8.6 - 2026-09-02  —  PERF1 Redis Performance
+
+**Canonical scenario:** gRPC + ProcessHostPool + ContinuationConsume  
+**Purpose:** chronological engineering record of every retained PERF1 increment, correction, validation, and measured result
+
+## Status legend
+
+| Status | Meaning |
+|---|---|
+| `ACCEPTED` | Implemented, validated, and retained |
+| `MEASUREMENT ONLY` | Diagnostic change with no intended runtime behavior change |
+| `HARNESS ONLY` | Test reliability change; not a production performance optimization |
+| `NO CHANGE` | Candidate investigated and intentionally not implemented |
+| `OBSERVED` | Server or timing delta seen in a run, but not fully attributable |
+
+## Executive timeline
+
+| Increment | Change | Type | Final status | Primary result |
+|---:|---|---|---|---|
+| `00` | Raw Redis/Mongo traffic baseline | Measurement | `ACCEPTED` | `24.4M` Redis commands; `GET + HGETALL ≈ 80.6%` |
+| `01` | Production datastore traffic observer | Measurement | `ACCEPTED` | Reproducible Redis/Mongo start/end deltas |
+| `02` | Bounded Redis semantic attribution | Measurement | `ACCEPTED` | Cross-process operation/call/byte attribution |
+| `03` | Production read taxonomy | Measurement | `ACCEPTED` | DAG, SharedRun, queue, registry, capacity, payload, RBAC families |
+| `04` | Lua subtype attribution (`PERF1-1B`) | Measurement | `ACCEPTED` | Claim/complete/park/recover/finalize/retention separated |
+| `05` | Harness/production reclassification | Measurement | `ACCEPTED` | Harness polling excluded from production claims |
+| `06` | No-op recovery state reuse (`PERF1-2B`) | Runtime | `ACCEPTED` | Avoids one full state rebuild when recovery mutates nothing |
+| `07` | No-mutation final convergence reuse (`PERF1-2C`) | Runtime | `ACCEPTED` | `24,094` targeted reads avoided; about `-18.07%` |
+| `08` | Recovery reassignment waiter correction | Harness | `ACCEPTED` | Event-first plus durable ownership fallback |
+| `09` | Existing-ledger finalization boundary | Harness | `ACCEPTED` | Deterministic physical-kill target, no new pipeline operation |
+| `10` | Boundary matrix scoping | Harness | `ACCEPTED` | Enabled only for ProcessHostPool ContinuationConsume |
+| `11` | Runtime-child environment propagation | Harness | `ACCEPTED` | Checkpoint setting reaches exact child process |
+| `12` | Parent Process Host Mongo ledger selection | Harness | `ACCEPTED` | Process Host readiness restored |
+| `13` | HTTP dispatch ownership ordering | Harness | `ACCEPTED` | Suspend only after authoritative `Dispatched` ownership |
+| `14` | Cross-matrix validation | Validation | `ACCEPTED` | gRPC/HTTP and ProcessHost/Kubernetes safety preserved |
+| `15` | Record/state `MGET` (`PERF1-2D`) | Runtime | `ACCEPTED` | Exactly `37,276` Redis commands avoided |
+| `16` | Runtime-registry `MGET` (`PERF1-2E`) | Runtime | `ACCEPTED` | Registry family `-32,249` commands (`-61.14%`) |
+| `17` | Ownership-path `HGETALL` investigation (`PERF1-2F`) | Decision | `NO CHANGE` | Risk exceeded the directly provable benefit |
+| `18` | PERF1 closure | Validation | `ACCEPTED` | Final run: `36/36`, `7,308`, `8`, zero violations |
+
+### Numbering note
+
+The preserved source and run evidence identifies `PERF1-1B`, `PERF1-2B`, `PERF1-2C`, `PERF1-2D`, `PERF1-2E`, and the investigated `PERF1-2F`. It does not preserve a separately attributable accepted `PERF1-2A` artifact or result. This changelog therefore uses its own evidence sequence (`Increment 00–18`) and does not invent a missing PERF1-2A claim.
+
+---
+
+## Increment 00 — Raw datastore baseline
+
+**Type:** measurement  
+**Status:** `ACCEPTED`
+
+### Motivation
+
+The initial production dump was too large to optimize safely from intuition. Server command names showed the shape of the problem but did not identify the responsible runtime call sites.
+
+### Baseline evidence
+
+```text
+Raw diagnostic dump size ≈ 91 MB
+Redis total commands      = 24,402,038
+Redis HGETALL             = 10,139,343
+Redis GET                 = 9,536,704
+GET + HGETALL share       ≈ 80.6%
+Mongo new connections     = 2,818
+```
+
+### Decision
+
+Do not begin with blind `GET` or `HGETALL` elimination. Add semantic attribution first so every proposed optimization can be linked to a bounded production responsibility.
+
+### Claim boundary
+
+This increment discovered amplification. It did not prove which code path caused it and did not claim a performance improvement.
+
+---
+
+## Increment 01 — Production datastore traffic observer
+
+**Type:** measurement only  
+**Status:** `ACCEPTED`
+
+### Change
+
+The canonical production matrix gained start/end server snapshots for Redis and MongoDB through `ProductionDataStoreTrafficObserver`.
+
+Captured Redis evidence includes:
+
+- total commands;
+- command-specific counters;
+- network input/output;
+- new connections;
+- keyspace hits/misses;
+- error replies;
+- expired/evicted keys;
+- counter reset detection.
+
+Captured MongoDB evidence includes:
+
+- operation counters;
+- command counters;
+- document counts;
+- network requests and bytes;
+- connections;
+- read/write/command latency;
+- counter reset detection.
+
+### Observer overhead declared
+
+The output explicitly reports that the measurement window includes approximately:
+
+- two Redis `INFO` commands;
+- one MongoDB `serverStatus` command;
+- later attribution publications and final collection when attribution is enabled.
+
+### Runtime impact
+
+No storage, ownership, execution, recovery, or wire behavior changed.
+
+---
+
+## Increment 02 — Bounded Redis semantic attribution
+
+**Type:** measurement only  
+**Status:** `ACCEPTED`
+
+### Change
+
+Added `AiRedisReadAttributionDiagnostics` with opt-in activation:
+
+```text
+MULTIPLEXED_PERF1_REDIS_ATTRIBUTION=1
+MULTIPLEXED_PERF1_REDIS_ATTRIBUTION_SCOPE=<unique-scope>
+```
+
+### Design
+
+- in-memory counters on the hot path;
+- bounded semantic operation names;
+- Redis command type;
+- call count;
+- returned application payload bytes;
+- process role and stable process identity;
+- absolute snapshots published approximately every two seconds;
+- two-hour TTL;
+- cross-process aggregation;
+- best-effort behavior that cannot fail runtime execution.
+
+`ResponsePayloadBytes` measures UTF-8 bytes returned at the application site. It excludes RESP framing and is not presented as exact wire traffic.
+
+### Cross-process behavior
+
+The active scope is propagated to spawned Process Host/runtime children and Kubernetes Runtime Pool Pods. This allows one scenario to aggregate observer, host, and child-process activity.
+
+A hard-killed process can lose its last partial publication interval. The output therefore remains diagnostic evidence rather than a transactional audit.
+
+### Tests
+
+- enable/disable behavior;
+- bounded taxonomy enforcement;
+- cross-process snapshot aggregation;
+- publication/collection behavior;
+- diagnostic failures do not affect application behavior;
+- Kubernetes environment projection.
+
+---
+
+## Increment 03 — Production Redis operation taxonomy
+
+**Type:** measurement only  
+**Status:** `ACCEPTED`
+
+### Change
+
+Redis read sites were instrumented by semantic responsibility rather than physical key name.
+
+Major families include:
+
+```text
+Dag.ExecutionRecord.Load
+Dag.StateBlob.Load
+Dag.StepIndex.Load
+Dag.Step.LoadMany
+Dag.Step.RepairLoad
+SharedRun.Record.Load
+SharedRun.PublicGet.Record.Load
+SharedRun.List.Record.Load
+SharedQueue.Item.Load
+RuntimeRunIndex.Entry.Load
+RuntimeRegistry.Index.Load
+RuntimeRegistry.Entry.Load
+RuntimeCapacity.Index.Load
+RuntimeCapacity.Descriptor.Load
+ExecutionControl.State.Load
+Payload.Cache.Load
+Rbac.ExecutionContext.Load
+ControlPlaneDiscovery.Load
+```
+
+### Purpose
+
+The taxonomy made it possible to distinguish:
+
+- state reconstruction from point reads;
+- runtime registry list amplification from direct registry reads;
+- queue/ownership records from observational polling;
+- application payload volume from command count;
+- production work from harness work.
+
+### Runtime impact
+
+No Redis command sequence was intentionally changed in this increment.
+
+---
+
+## Increment 04 — Lua subtype attribution (`PERF1-1B`)
+
+**Type:** measurement only  
+**Status:** `ACCEPTED`
+
+### Change
+
+Successful atomic Lua invocations were separated into bounded semantic families:
+
+```text
+Lua.Dag.Claim
+Lua.Dag.ClaimBatch
+Lua.Dag.ClaimSpecific
+Lua.Dag.Complete
+Lua.Dag.Park
+Lua.Dag.ResumeExternalWait
+Lua.Dag.Fail
+Lua.Dag.Recover
+Lua.Dag.RecoverRunningForRecovery
+Lua.Dag.Finalize
+Lua.Dag.Retention
+```
+
+Additional bounded Lua families cover SharedQueue, SharedRun, RuntimeRunIndex, scale-out requests, RBAC, and execution control.
+
+### Important limitation
+
+The attribution counts successful Lua invocations by purpose. It does not decompose Redis-side reads executed inside each script and does not subtract them from the server residual.
+
+### Tests
+
+`AiRedisReadAttributionLuaDagSubtypeTests` verifies every canonical DAG subtype without introducing unbounded labels.
+
+---
+
+## Increment 05 — Harness and production attribution split
+
+**Type:** measurement only  
+**Status:** `ACCEPTED`
+
+### Problem
+
+The production matrix observer polls SharedRun and related state aggressively to validate completion and ownership. Without reclassification, these reads appeared to be production runtime traffic.
+
+### Change
+
+Added explicit harness families and scoped overrides:
+
+```text
+TestHarness.RuntimePoolWorkload.SharedRun.Load
+TestHarness.SharedRun.PublicGet.Record.Load
+TestHarness.CrashCheckpoint.State
+```
+
+The observer also reports a process split for SharedRun traffic.
+
+### Result
+
+Performance candidates could be ranked after excluding test-only polling. This prevented a harness optimization from being misreported as a runtime optimization.
+
+---
+
+## Increment 06 — No-op recovery state reuse (`PERF1-2B`)
+
+**Type:** production runtime optimization  
+**Status:** `ACCEPTED`
+
+### Files/domain
+
+```text
+AiDagStepClaimService.cs
+```
+
+### Before
+
+The claim path materialized DAG state before the atomic timed-out-step recovery scan, then reconstructed state again even when the scan recovered nothing.
+
+### After
+
+`RecoverTimedOutStepsAsync` returns both recovery count and an optional state:
+
+- when `RecoveredCount <= 0`, the pre-scan state remains valid and is reused for local ready-step selection;
+- when recovery is positive, durable state mutated and the original post-recovery reload remains mandatory.
+
+### Invariants preserved
+
+- the atomic recovery scan remains authoritative;
+- Redis claim authority remains unchanged;
+- positive recovery still reloads durable state;
+- recovery event visibility remains unchanged;
+- no cache or cross-request state reuse was introduced.
+
+### PERF1-2B comparison baseline retained for PERF1-2C
+
+```text
+Dag.StateBlob.Load = 44,435
+Dag.StepIndex.Load = 44,435
+Dag.Step.LoadMany  = 44,435
+```
+
+### Claim boundary
+
+The isolated PERF1-2B global before/after server table is not preserved in the current evidence set. The changelog therefore records the accepted code rule and the explicit 2B baseline used for 2C, without inventing a separate 2B percentage.
+
+---
+
+## Increment 07 — No-mutation final convergence reuse (`PERF1-2C`)
+
+**Type:** production runtime optimization  
+**Status:** `ACCEPTED`
+
+### Files/domain
+
+```text
+AiDagDistributedExecutionRunner.cs
+AiDagRetentionCoordinator.cs
+```
+
+### Before
+
+After successful step completion, the runner loaded completed state, invoked retention, and reconstructed the state again for final convergence even when retention was disabled or produced no mutation.
+
+### After
+
+`ApplyRetentionPersistAndWarmAsync` reports whether retention mutated durable state:
+
+- no mutation: final convergence reuses the completed state already in memory;
+- mutation: the runner performs the original durable reload.
+
+### Measured comparison
+
+| Operation | PERF1-2B baseline | PERF1-2C | Delta |
+|---|---:|---:|---:|
+| `Dag.StateBlob.Load` | `44,435` | `36,404` | `-8,031` (`-18.07%`) |
+| `Dag.StepIndex.Load` | `44,435` | `36,404` | `-8,031` (`-18.07%`) |
+| `Dag.Step.LoadMany` | `44,435` | `36,403` | `-8,032` (`-18.08%`) |
+| Total targeted reads | `133,305` | `109,211` | `-24,094` |
+
+Redis server `MGET` corroborated an approximately `-18.07%` change in the targeted command shape.
+
+### Timing observation
+
+```text
+Previous run ≈ 13:30.7
+PERF1-2C    = 13:51.4
+```
+
+No wall-clock improvement was claimed. PERF1-2C proves lower targeted Redis reconstruction, not a stable latency gain.
+
+---
+
+## Increment 08 — Recovery reassignment waiter correction
+
+**Type:** harness only  
+**Status:** `ACCEPTED`
+
+### Problem
+
+The recovery waiter required the canonical `WorkReassigned` lifecycle event even though the corresponding lifecycle append is explicitly best-effort after durable placement has committed.
+
+This created false failures where recovery had already selected a replacement runtime and LocalRun, but the observational event was missing.
+
+### Change
+
+The waiter remains event-first, with a slow durable fallback against authoritative SharedRun ownership:
+
+```text
+preferred:
+    WorkReassigned lifecycle event
+
+durable fallback:
+    AssignedRuntimeInstanceId != failed runtime
+    LocalRunId != failed LocalRun
+```
+
+The original hard watchdog remains. Diagnostics now report event observation, fallback reads, last status/runtime/local run/execution, observer errors, Redis timeout, and recent events.
+
+### Files
+
+```text
+ProductionRecoveryWaitHelpers.cs
+ProcessHostPoolProductionScenarioTestsBase.cs
+```
+
+---
+
+## Increment 09 — Deterministic existing-ledger finalization boundary
+
+**Type:** harness only  
+**Status:** `ACCEPTED`
+
+### Root race
+
+The original harness observed continuation ownership and then suspended the process. A fast runtime could finalize the parent between the durable observation and `NtSuspendProcess`.
+
+### Accepted design
+
+The final fix uses the existing `Finalization.Started` ledger append:
+
+```text
+terminal child call-site persisted
+→ Finalization.Started append completed
+→ execution-scoped test hold before TryFinalizeExecutionAsync
+→ exact RuntimeInstanceId known
+→ exact process suspended
+→ durable identities revalidated
+→ physical kill
+→ hold released
+→ replacement runtime performs normal recovery/finalization
+```
+
+### Why this boundary is deterministic
+
+At `reached`:
+
+- the child relation is `Completed/Scheduled`;
+- the child call-site is durably terminal;
+- the parent is still non-terminal;
+- `TryFinalizeExecutionAsync` has not executed;
+- the exact runtime identity is known from ledger correlation;
+- the exact ProcessHost handle was pre-armed.
+
+### Constraints preserved
+
+- no new pipeline step;
+- no Sample change;
+- no decorated `ExecuteChildDagStep`;
+- no dynamic pipeline name;
+- no resolver or pipeline-definition change;
+- no finalization-engine semantic change;
+- disabled by default;
+- checkpoint released after kill and again in cleanup;
+- replacement runtime cannot remain blocked.
+
+### Main files
+
+```text
+src/Multiplexed.AI.McpServer.Host/Bootstrap/AiRuntimeServiceRegistration.cs
+src/Multiplexed.AI.McpServer.Host/Bootstrap/FinalizationCheckpointAiDecisionLedger.cs
+Tests/.../Helpers/ProductionFinalizationCheckpointGate.cs
+Tests/.../ProcessHostPool/ProcessHostPoolProductionScenarioSettingsComposer.cs
+Tests/.../ProcessHostPool/ProcessHostPoolProductionScenarioTestsBase.cs
+```
+
+Host-side code is opt-in test infrastructure. The production execution/finalization engine remains unchanged.
+
+---
+
+## Increment 10 — Finalization boundary matrix scoping
+
+**Type:** harness only  
+**Status:** `ACCEPTED`
+
+### Problem
+
+The checkpoint configuration had to be prevented from leaking into unrelated matrix modes.
+
+### Change
+
+The setting is enabled only when all conditions match:
+
+```text
+Provider family          = ProcessHostPool
+InjectChildRuntimeFailure = true
+FailureTarget            = ContinuationConsume
+```
+
+### Matrix effect
+
+| Matrix path | Checkpoint behavior |
+|---|---|
+| HTTP ProcessHostPool ContinuationConsume | enabled |
+| gRPC ProcessHostPool ContinuationConsume | enabled |
+| Other ProcessHostPool failure modes | unchanged/disabled |
+| HTTP/gRPC KubernetesPool | unchanged/disabled |
+
+### Result
+
+Non-target modes do not receive checkpoint settings and do not execute checkpoint Redis Lua calls.
+
+---
+
+## Increment 11 — Runtime-child environment propagation fix
+
+**Type:** harness only  
+**Status:** `ACCEPTED`
+
+### Failure
+
+The checkpoint was armed, but the runtime child never attempted the checkpoint Lua script.
+
+### Root cause
+
+The nested Process Pool environment dictionary used a key already containing `__`. Parent conversion from `:` to `__`, followed by .NET environment configuration binding, interpreted the intended literal child variable as additional hierarchy segments.
+
+### Change
+
+The parent Process Host receives top-level settings:
+
+```text
+Tests:EnableFinalizationCheckpointGate=true
+Tests:FinalizationCheckpointGate:MaximumHoldSeconds=180
+```
+
+It exports exact child variables:
+
+```text
+Tests__EnableFinalizationCheckpointGate=true
+Tests__FinalizationCheckpointGate__MaximumHoldSeconds=180
+```
+
+### Result
+
+The exact runtime child now reaches the existing ledger boundary. No timeout was increased.
+
+---
+
+## Increment 12 — Parent Process Host Mongo ledger selection
+
+**Type:** harness only  
+**Status:** `ACCEPTED`
+
+### Failure
+
+After environment propagation was fixed, the parent Process Host failed readiness:
+
+```text
+The test-only finalization checkpoint requires the Mongo decision ledger provider.
+```
+
+### Root cause
+
+Mongo connection/database settings were present, but the parent host had not selected the Mongo decision-ledger provider.
+
+### Change
+
+The target Process Host configuration now includes:
+
+```text
+AiDecisionLedger:Provider=mongo
+```
+
+### Result
+
+Process Host readiness and the checkpoint boundary both succeed. The setting remains scoped to the target harness mode.
+
+---
+
+## Increment 13 — HTTP dispatch ownership ordering
+
+**Type:** harness only  
+**Status:** `ACCEPTED`
+
+### HTTP-specific observation
+
+HTTP reached and held the finalization checkpoint before the acceptance response allowed the control plane to persist continuation SharedRun ownership:
+
+```text
+Finalization checkpoint = reached
+Runtime execution index = running on exact runtime
+SharedRun                = QueuedGlobally
+AssignedRuntimeInstanceId/LocalRunId = not yet persisted
+```
+
+This was a harness ordering race, not a runtime recovery failure.
+
+### Change
+
+The target order became:
+
+1. reach `Finalization.Started` and hold;
+2. wait for authoritative SharedRun `Dispatched` ownership;
+3. validate RuntimeInstanceId, LocalRunId, ExecutionId, continuation, tenant, control plane, and call-site;
+4. suspend the pre-armed exact process;
+5. revalidate the durable boundary;
+6. kill, release, and run normal recovery proof.
+
+### Matrix behavior
+
+gRPC uses the same stricter ordering and normally observes `Dispatched` immediately. Other matrix modes do not execute this targeting method.
+
+---
+
+## Increment 14 — Harness and matrix validation closure
+
+**Type:** validation  
+**Status:** `ACCEPTED`
+
+### Validated paths
+
+- gRPC ProcessHostPool ContinuationConsume;
+- HTTP ProcessHostPool ContinuationConsume;
+- gRPC KubernetesPool safety validation;
+- other matrix modes remained isolated from the ProcessHost finalization checkpoint.
+
+### Canonical proof contract
+
+```text
+Parent runs                 = 36 / 36
+All executions              = 144
+Parent logical steps        = 1,836
+Recursive child steps       = 5,472
+All logical steps           = 7,308
+Recovered SharedRuns        = 8
+Missing child steps         = 0
+Unexpected duplicate steps  = 0
+Ownership violations        = 0
+Parent replay               = 36 / 36
+Recursive child replay      = NOT_EVALUATED
+```
+
+### Changelog distinction
+
+These changes make measurements reliable. They are not credited as Redis runtime performance gains.
+
+---
+
+## Increment 15 — Combined DAG record/state `MGET` (`PERF1-2D`)
+
+**Type:** production runtime optimization  
+**Status:** `ACCEPTED`
+
+### File
+
+```text
+src/Multiplexed.AI/Stores/Cache/Redis/Dag/RedisDagStoreStateReader.cs
+```
+
+### Before
+
+Non-cluster `GetStateAsync` issued:
+
+```text
+execution record GET
+state blob GET
+```
+
+### After
+
+Non-cluster Redis issues one two-key operation:
+
+```text
+Dag.RecordState.LoadMany / MGET
+```
+
+Redis Cluster retains the original two `GET` calls because the keys do not share a hash tag and can occupy different slots.
+
+### Tests
+
+`RedisDagStoreStateReaderBatchReadTests` proves:
+
+- standalone: one `MGET`, no individual record/state pair;
+- cluster: two individual `GET` calls, no unsafe cross-slot `MGET`.
+
+### Comparison baseline
+
+
+```text
+Duration                    = 14:19.302
+Redis total                 = 1,135,957
+Redis GET                   = 668,466
+Redis MGET                  = 39,062
+Dag.ExecutionRecord.Load    = 78,879
+Dag.StateBlob.Load          = 38,737
+Dag.StepIndex.Load          = 38,737
+Dag.Step.LoadMany           = 38,734
+```
+
+### Green result
+
+```text
+Duration                    = 14:04.454
+Redis total                 = 1,059,523
+Redis GET                   = 582,023
+Redis MGET                  = 75,262
+Dag.RecordState.LoadMany    = 37,276
+Dag.ExecutionRecord.Load    = 35,864
+Dag.StateBlob.Load          = 0
+MGET attribution coverage   = 99.06%
+```
+
+### Direct claim
+
+Each combined load replaces two commands with one command:
+
+```text
+Directly avoided commands = 37,276
+```
+
+### Secondary observations
+
+```text
+Redis total  -76,434 (-6.73%)
+Redis GET    -86,443 (-12.93%)
+Redis MGET   +36,200 (+92.67%)
+Duration     -14.848 s (-1.73%)
+```
+
+Only `37,276` is credited directly to PERF1-2D. The larger server delta includes other run-to-run workload variation.
+
+## Increment 16 — Runtime-registry entry `MGET` (`PERF1-2E`)
+
+**Type:** production runtime optimization  
+**Status:** `ACCEPTED`
+
+### File
+
+```text
+src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/RedisAiRuntimeInstanceRegistry.cs
+```
+
+### Before
+
+`ListAsync` issued one `SMEMBERS` for the scoped runtime index followed by one `GET` per indexed runtime entry.
+
+### After
+
+Non-cluster Redis loads all valid entry keys with one `MGET`:
+
+```text
+RuntimeRegistry.Entry.LoadMany / MGET
+```
+
+Direct point reads used by register, heartbeat, get, drain, unhealthy, and unregister remain individual `GET` calls.
+
+Redis Cluster retains individual entry reads to avoid cross-slot commands.
+
+### Semantics preserved
+
+- scoped control-plane validation;
+- stopped-runtime filtering;
+- tenant visibility;
+- missing/foreign index-member cleanup;
+- result ordering;
+- registry writes and TTL behavior.
+
+### Tests
+
+`RedisAiRuntimeInstanceRegistryBatchReadTests` proves:
+
+- standalone entry batching;
+- missing-ID self-healing;
+- Redis Cluster individual-read fallback.
+
+### PERF1-2D comparison baseline
+
+```text
+Redis total                       = 1,059,523
+Redis GET                         = 582,023
+Redis MGET                        = 75,262
+RuntimeRegistry.Index.Load        = 3,539
+RuntimeRegistry.Entry.Load        = 52,746
+```
+
+### Final green ProcessHostPool result
+
+```text
+Duration                          = 13:39.632
+Redis total                       = 1,048,945
+Redis GET                         = 548,789
+Redis MGET                        = 79,441
+RuntimeRegistry.Index.Load        = 3,684
+RuntimeRegistry.Entry.Load        = 16,833
+RuntimeRegistry.Entry.LoadMany    = 3,664
+MGET attribution coverage         = 99.28%
+Redis error replies               = 46
+```
+
+### Direct command-family calculation
+
+```text
+Before = 52,746 Entry.Load GET commands
+After  = 16,833 Entry.Load GET + 3,664 Entry.LoadMany MGET
+       = 20,497 commands
+
+Direct family reduction = 32,249 commands (-61.14%)
+```
+
+There were `3,684` index loads and `3,664` non-empty batch loads. The difference of `20` represents empty/no-valid-ID list results.
+
+### Secondary observations
+
+```text
+Redis total  -10,578 (-1.00%)
+Redis GET    -33,234 (-5.71%)
+Redis MGET   +4,179 (+5.55%)
+Duration     -24.822 s (-2.94%)
+Error replies unchanged at 46
+```
+
+`HGETALL` increased from `54,700` to `63,429`, so the global total understates the targeted registry gain. Direct semantic attribution remains the stronger claim.
+
+### Kubernetes safety validation
+
+```text
+Provider                          = KubernetesPool
+Parent runs                       = 36 / 36
+Logical steps                     = 7,308
+Recoveries                        = 8
+RuntimeRegistry.Index.Load        = 8,026
+RuntimeRegistry.Entry.LoadMany    = 8,025
+RuntimeRegistry.Entry.Load        = 9,701
+```
+
+This validates use and correctness of the batch path in Kubernetes. It is not an apples-to-apples performance comparison with ProcessHostPool.
+
+
+## Increment 17 — Ownership-path `HGETALL` investigation (`PERF1-2F`)
+
+**Type:** investigation and stop-rule decision  
+**Status:** `NO CHANGE`
+
+### Remaining largest production `HGETALL` families
+
+After excluding harness polling:
+
+```text
+SharedQueue.Item.Load            = 13,220
+RuntimeRunIndex.Entry.Load       = 11,386
+SharedRun.PublicGet.Record.Load  = 8,977
+```
+
+### Candidate examined
+
+`ClaimNext` Lua returns a SharedRun identifier, after which C# reloads the full queue item hash.
+
+Moving `HGETALL` inside Lua could remove a client/server round trip, but would not necessarily remove Redis internal hash-read work. It would also change a critical Lua response and ownership contract.
+
+The other point reads guard mutable ownership and recovery state. Caching them could return stale ownership.
+
+### Decision
+
+Do not implement PERF1-2F within the current performance phase.
+
+Any future change requires a separate protocol/storage-layout design with dedicated crash, fencing, ownership, and recovery proofs.
+
+### Engineering result
+
+The absence of a patch is intentional. PERF1 stopped where the next counter reduction carried disproportionate correctness risk.
+
+---
+
+## Increment 18 — PERF1 final closure
+
+**Type:** validation and reporting  
+**Status:** `ACCEPTED`
+
+### Final canonical correctness
+
+```text
+Parent runs completed             = 36 / 36
+All executions                    = 144
+All logical steps                 = 7,308
+Infrastructure recoveries         = 8
+Missing recursive child steps     = 0
+Unexpected duplicate child steps  = 0
+Ownership violations              = 0
+Parent replay                     = 36 / 36
+Redis error replies               = 46
+```
+
+### Post-harness baseline to final PERF1-2E
+
+| Metric | Baseline | Final | Observed change |
+|---|---:|---:|---:|
+| Duration | `14:19.302` | `13:39.632` | `-39.670 s` (`-4.62%`) |
+| Redis total commands | `1,135,957` | `1,048,945` | `-87,012` (`-7.66%`) |
+| Redis `GET` | `668,466` | `548,789` | `-119,677` (`-17.90%`) |
+| Redis `MGET` | `39,062` | `79,441` | `+40,379` (`+103.37%`) |
+| Redis `HGETALL` | `62,571` | `63,429` | `+858` (`+1.37%`) |
+| Redis `SMEMBERS` | `51,032` | `49,549` | `-1,483` (`-2.91%`) |
+
+### Final directly attributable claims
+
+```text
+PERF1-2C targeted DAG reads avoided              = 24,094
+PERF1-2D combined record/state commands avoided  = 37,276
+PERF1-2E registry entry commands avoided         = 32,249 (-61.14%)
+```
+
+These three values come from different incremental comparison windows. They must not be added and presented as one exact final-run command delta.
+
+### Latency claim boundary
+
+The final run was faster than the post-harness baseline, but the current evidence uses individual runs. PERF1 claims Redis command-amplification reduction. A stable production latency percentage requires repeated warm samples and distribution reporting.
+
+---
+
+## Accepted production changes
+
+| Change | Production behavior changed? | Safety rule |
+|---|---|---|
+| PERF1-2B no-op recovery state reuse | yes, local reuse only | reload after every positive recovery mutation |
+| PERF1-2C final convergence state reuse | yes, local reuse only | reload after every retention mutation |
+| PERF1-2D record/state `MGET` | yes, command batching | Redis Cluster keeps individual `GET` calls |
+| PERF1-2E registry entry `MGET` | yes, list batching | direct reads unchanged; Cluster fallback preserved |
+
+No cache of mutable ownership data was introduced. No production Lua ownership transition was changed.
+
+## Accepted measurement changes
+
+- start/end Redis and Mongo server observer;
+- bounded cross-process Redis semantic attribution;
+- response payload byte attribution;
+- Lua subtype classification;
+- harness/production reclassification;
+- process-level SharedRun traffic split;
+- explicit attribution and observer-overhead reporting.
+
+## Accepted harness changes
+
+- WorkReassigned event-first waiter with authoritative durable fallback;
+- execution-scoped `Finalization.Started` checkpoint;
+- ProcessHostPool ContinuationConsume-only scoping;
+- exact child environment propagation;
+- target Process Host Mongo ledger selection;
+- HTTP authoritative dispatch-before-suspend ordering;
+- mandatory release after physical kill and cleanup.
+
+These are measurement reliability changes and are not credited as production Redis performance gains.
+
+## Final PERF1 status
+
+```text
+Measurement attribution              COMPLETE
+PERF1-2B no-op recovery reuse        COMPLETE
+PERF1-2C convergence reuse           COMPLETE
+Harness deterministic boundary       COMPLETE
+Matrix safety                         GREEN
+PERF1-2D record/state MGET            COMPLETE
+PERF1-2E runtime-registry MGET        COMPLETE
+PERF1-2F ownership-path change        INTENTIONALLY NOT IMPLEMENTED
+Redis performance phase               CLOSED
+Next phase                            PERF2 MongoDB attribution
+```
+
+---
+
 ## 0.0.8.5 - 2026-08-28 — Adversarial Runtime Validation
 
 > **Scope:** Adversarial production validation, deterministic failure injection, recovery, recursive Child DAG execution, ownership, lifecycle, ledger, forensics, replay, and provider/transport parity  
@@ -15536,37 +16487,6 @@ Validated areas:
 - mixed tenant production assertions
 - cross-store routing safety integration
 
----
-
-## Recommended commits
-
-### Store tenant visibility / ownership
-
-```bash
-git add -A
-git commit -m "Harden runtime instance registry tenant visibility"
-```
-
-### Health status semantics
-
-```bash
-git add -A
-git commit -m "Harden runtime registry health status semantics"
-```
-
-### Cross-store routing safety
-
-```bash
-git add -A
-git commit -m "Add runtime routing safety integration coverage"
-```
-
-Or as one combined commit:
-
-```bash
-git add -A
-git commit -m "Harden runtime store routing safety"
-```
 
 ---
 
@@ -19034,18 +19954,12 @@ MCP Tool
 
 ---
 
-## 15. Recommended Commit Message
+## 15. Commit Message
 
 ```text
 Stabilize tenant-aware runtime isolation tests
 
 Fixes shared queue tenant context restoration, scopes local scale-out by runtime prefix, aligns runtime visibility tests with shared/dedicated/hybrid isolation rules, persists tenant runtime settings through Redis scale-out requests, and updates legacy execution tests for required execution context snapshots.
-```
-
-PowerShell:
-
-```powershell
-git add .; git commit -m "Stabilize tenant-aware runtime isolation tests - Fixes shared queue tenant context restoration, scopes local scale-out by runtime prefix, aligns runtime visibility tests with shared/dedicated/hybrid isolation rules, persists tenant runtime settings through Redis scale-out requests, and updates legacy execution tests for required execution context snapshots."
 ```
 
 ---
