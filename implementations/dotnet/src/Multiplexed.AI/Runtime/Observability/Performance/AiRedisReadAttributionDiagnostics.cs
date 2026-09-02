@@ -36,6 +36,7 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
         public const string ExecutionControlStateLoad = "ExecutionControl.State.Load";
         public const string DagExecutionRecordLoad = "Dag.ExecutionRecord.Load";
         public const string DagStateBlobLoad = "Dag.StateBlob.Load";
+        public const string DagRecordStateLoadMany = "Dag.RecordState.LoadMany";
         public const string DagStepIndexLoad = "Dag.StepIndex.Load";
         public const string DagStepLoadMany = "Dag.Step.LoadMany";
         public const string DagStepLoadCluster = "Dag.Step.Load.Cluster";
@@ -157,6 +158,7 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
                 AiRedisReadAttributionOperations.ExecutionControlStateLoad,
                 AiRedisReadAttributionOperations.DagExecutionRecordLoad,
                 AiRedisReadAttributionOperations.DagStateBlobLoad,
+                AiRedisReadAttributionOperations.DagRecordStateLoadMany,
                 AiRedisReadAttributionOperations.DagStepIndexLoad,
                 AiRedisReadAttributionOperations.DagStepLoadMany,
                 AiRedisReadAttributionOperations.DagStepLoadCluster,

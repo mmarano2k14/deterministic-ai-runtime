@@ -300,6 +300,27 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Performance
         }
 
         [Fact]
+        public void RecordStateLoadMany_Should_Record_One_Combined_MGet()
+        {
+            using var scope = EnableScope();
+
+            AiRedisReadAttributionDiagnostics.Record(
+                AiRedisReadAttributionOperations.DagRecordStateLoadMany,
+                "MGET",
+                new RedisValue[] { "record", "state" });
+
+            var item = Assert.Single(
+                AiRedisReadAttributionDiagnostics.SnapshotCurrentProcess());
+
+            Assert.Equal(
+                AiRedisReadAttributionOperations.DagRecordStateLoadMany,
+                item.Operation);
+            Assert.Equal("MGET", item.Command);
+            Assert.Equal(1L, item.Calls);
+            Assert.Equal(11L, item.ResponsePayloadBytes);
+        }
+
+        [Fact]
         public void CurrentProcessIdentity_Should_Match_Published_Process_Identity_Format()
         {
             Assert.Equal(

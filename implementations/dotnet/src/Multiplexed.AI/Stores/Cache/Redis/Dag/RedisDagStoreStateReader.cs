@@ -45,9 +45,11 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             var stateKey = _services.Helper.GetStateBlobKey(executionId);
             var stepIndexKey = _services.KeyBuilder.GetDagStepIdsKey(executionId);
 
-            var record = await GetRecordAsync(
-                executionId,
-                cancellationToken);
+            var (record, stateBlob) = await LoadRecordAndStateBlobAsync(
+                    executionId,
+                    stateKey,
+                    cancellationToken)
+                .ConfigureAwait(false);
 
             var completedStepNames = record?.CompletedSteps is not null
                 ? record.CompletedSteps.ToHashSet(StringComparer.Ordinal)
@@ -55,12 +57,6 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
 
             AiExecutionState? state = null;
 
-            var stateBlob = await _services.Database.StringGetAsync(stateKey);
-            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
-                _services.Database,
-                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.DagStateBlobLoad,
-                "GET",
-                stateBlob);
             if (stateBlob.HasValue)
             {
                 state = JsonSerializer.Deserialize<AiExecutionState>(
@@ -185,6 +181,60 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
         }
 
         /// <summary>
+        /// Loads the execution record and state blob with one multi-key read on non-clustered Redis.
+        /// Redis Cluster preserves the existing one-key-per-command path because the current keys
+        /// do not share a hash tag and may belong to different slots.
+        /// </summary>
+        private async Task<(AiExecutionRecord? Record, RedisValue StateBlob)> LoadRecordAndStateBlobAsync(
+            string executionId,
+            RedisKey stateKey,
+            CancellationToken cancellationToken)
+        {
+            if (!UsesRedisCluster())
+            {
+                var values = await _services.Database
+                    .StringGetAsync(
+                        new RedisKey[]
+                        {
+                            _services.KeyBuilder.GetExecutionRecordKey(executionId),
+                            stateKey
+                        })
+                    .ConfigureAwait(false);
+
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                    _services.Database,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.DagRecordStateLoadMany,
+                    "MGET",
+                    values);
+
+                var recordValue = values.Length > 0
+                    ? values[0]
+                    : RedisValue.Null;
+                var stateBlob = values.Length > 1
+                    ? values[1]
+                    : RedisValue.Null;
+
+                return (DeserializeRecord(recordValue), stateBlob);
+            }
+
+            var record = await GetRecordAsync(
+                    executionId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            var clusterStateBlob = await _services.Database
+                .StringGetAsync(stateKey)
+                .ConfigureAwait(false);
+
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.DagStateBlobLoad,
+                "GET",
+                clusterStateBlob);
+
+            return (record, clusterStateBlob);
+        }
+
+        /// <summary>
         /// Loads indexed step payloads with one multi-key read when Redis is not clustered.
         /// Redis Cluster keeps the existing one-key-per-command behavior because the current
         /// DAG keys do not yet share an execution hash tag and may belong to different slots.
@@ -265,6 +315,15 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                 "GET",
                 value);
 
+            if (!value.HasValue)
+                return null;
+
+            return DeserializeRecord(value);
+        }
+
+        private AiExecutionRecord? DeserializeRecord(
+            RedisValue value)
+        {
             if (!value.HasValue)
                 return null;
 
