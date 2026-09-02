@@ -21,6 +21,7 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
         public const string RuntimeCapacityDescriptorLoad = "RuntimeCapacity.Descriptor.Load";
         public const string RuntimeRegistryIndexLoad = "RuntimeRegistry.Index.Load";
         public const string RuntimeRegistryEntryLoad = "RuntimeRegistry.Entry.Load";
+        public const string RuntimeRegistryEntryLoadMany = "RuntimeRegistry.Entry.LoadMany";
         public const string RuntimeRunIndexEntryLoad = "RuntimeRunIndex.Entry.Load";
         public const string SharedQueueItemLoad = "SharedQueue.Item.Load";
         public const string SharedRunRecordLoad = "SharedRun.Record.Load";
@@ -143,6 +144,7 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
                 AiRedisReadAttributionOperations.RuntimeCapacityDescriptorLoad,
                 AiRedisReadAttributionOperations.RuntimeRegistryIndexLoad,
                 AiRedisReadAttributionOperations.RuntimeRegistryEntryLoad,
+                AiRedisReadAttributionOperations.RuntimeRegistryEntryLoadMany,
                 AiRedisReadAttributionOperations.RuntimeRunIndexEntryLoad,
                 AiRedisReadAttributionOperations.SharedQueueItemLoad,
                 AiRedisReadAttributionOperations.SharedRunRecordLoad,

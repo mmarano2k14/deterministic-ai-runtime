@@ -205,6 +205,30 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Performance
         }
 
         [Fact]
+        public void RuntimeRegistry_EntryLoadMany_Operation_Should_Remain_Bounded()
+        {
+            using var scope = EnableScope();
+
+            AiRedisReadAttributionDiagnostics.Record(
+                AiRedisReadAttributionOperations.RuntimeRegistryEntryLoadMany,
+                "MGET",
+                new RedisValue[]
+                {
+                    "runtime-1",
+                    "runtime-2"
+                });
+
+            var item = Assert.Single(
+                AiRedisReadAttributionDiagnostics.SnapshotCurrentProcess());
+
+            Assert.Equal(
+                AiRedisReadAttributionOperations.RuntimeRegistryEntryLoadMany,
+                item.Operation);
+            Assert.Equal("MGET", item.Command);
+            Assert.Equal(1L, item.Calls);
+        }
+
+        [Fact]
         public void OverrideOperationIfUnchanged_Should_Classify_Unlabeled_Reads()
         {
             using var scope = EnableScope();
