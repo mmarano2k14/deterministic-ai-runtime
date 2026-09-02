@@ -57,7 +57,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
         /// <param name="cancellationToken">
         /// The cancellation token.
         /// </param>
-        public async Task ApplyRetentionPersistAndWarmAsync(
+        public async Task<bool> ApplyRetentionPersistAndWarmAsync(
             string executionId,
             AiExecutionState state,
             AiStepExecutionContext stepContext,
@@ -67,7 +67,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
             ArgumentNullException.ThrowIfNull(state);
             ArgumentNullException.ThrowIfNull(stepContext);
 
-            await _engineServices.ObservabilityService.Tracer.TraceRetentionAsync(
+            return await _engineServices.ObservabilityService.Tracer.TraceRetentionAsync(
                 new AiRetentionTraceContext
                 {
                     ExecutionId = executionId,
@@ -121,6 +121,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                         .ConfigureAwait(false);
 
                     var evictedSteps = result.EvictedSteps ?? Array.Empty<string>();
+                    var retentionMutatedState = !result.IsEmpty;
 
                     if (result.IsEmpty)
                     {
@@ -348,7 +349,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                     trace.SetTag("removedSteps", stepsBefore - stepsAfter);
                     trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, runtimeInstanceId);
 
-                    return true;
+                    return retentionMutatedState;
                 }).ConfigureAwait(false);
         }
 
@@ -364,7 +365,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
         /// transitioned batch steps and any required completed steps captured before retention.
         /// </param>
         /// <param name="cancellationToken">The cancellation token.</param>
-        public async Task ApplyBatchRetentionPersistAndWarmAsync(
+        public async Task<bool> ApplyBatchRetentionPersistAndWarmAsync(
             string executionId,
             AiExecutionState state,
             AiStepExecutionContext stepContext,
@@ -376,7 +377,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
             ArgumentNullException.ThrowIfNull(stepContext);
             ArgumentNullException.ThrowIfNull(candidateStepIds);
 
-            await _engineServices.ObservabilityService.Tracer.TraceRetentionAsync(
+            return await _engineServices.ObservabilityService.Tracer.TraceRetentionAsync(
                 new AiRetentionTraceContext
                 {
                     ExecutionId = executionId,
@@ -432,6 +433,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
 
                     var evictedSteps = result.EvictedSteps ?? Array.Empty<string>();
                     var compactedSteps = result.CompactedSteps ?? Array.Empty<string>();
+                    var durableStateMutated = !result.IsEmpty;
 
                     if (result.IsEmpty)
                     {
@@ -698,7 +700,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Retention
                     trace.SetTag("removedSteps", stepsBefore - stepsAfter);
                     trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, runtimeInstanceId);
 
-                    return true;
+                    return durableStateMutated;
                 }).ConfigureAwait(false);
         }
     }

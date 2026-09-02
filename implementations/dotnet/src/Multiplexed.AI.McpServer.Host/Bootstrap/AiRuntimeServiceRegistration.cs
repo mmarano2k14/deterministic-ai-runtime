@@ -23,6 +23,7 @@ using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.DI;
 using Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata;
 using Multiplexed.AI.Runtime.Execution.Retention.Policies;
 using Multiplexed.AI.Runtime.Observability.Ledger.DI;
+using Multiplexed.AI.Runtime.Observability.Ledger.Mongo;
 using Multiplexed.AI.Runtime.Pipeline.Steps.Test;
 using Multiplexed.Rbac.Core.ExecutionContext;
 using Multiplexed.Rbac.Core.Runtime.DI;
@@ -244,12 +245,21 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 configuration["AiDecisionLedger:Provider"]
                 ?? configuration["AiObservability:Ledger:Provider"]
                 ?? "inmemory";
+            var enableFinalizationCheckpoint =
+                configuration.GetValue<bool>(
+                    FinalizationCheckpointAiDecisionLedger.EnabledConfigurationKey);
 
             services.RemoveAll<IAiDecisionLedger>();
 
             if (!string.Equals(provider, "mongo", StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(provider, "mongodb", StringComparison.OrdinalIgnoreCase))
             {
+                if (enableFinalizationCheckpoint)
+                {
+                    throw new InvalidOperationException(
+                        "The test-only finalization checkpoint requires the Mongo decision ledger provider.");
+                }
+
                 services.AddInMemoryAiDecisionLedger();
                 return;
             }
@@ -273,6 +283,20 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 options.SequenceCollectionName = "ai_decision_ledger_sequences";
                 options.CreateIndexes = true;
             });
+
+            if (enableFinalizationCheckpoint)
+            {
+                services.RemoveAll<IAiDecisionLedger>();
+                services.AddSingleton<MongoAiDecisionLedger>();
+                services.AddSingleton<IAiDecisionLedger>(
+                    serviceProvider =>
+                        new FinalizationCheckpointAiDecisionLedger(
+                            serviceProvider.GetRequiredService<MongoAiDecisionLedger>(),
+                            serviceProvider.GetRequiredService<IConnectionMultiplexer>(),
+                            configuration,
+                            serviceProvider.GetRequiredService<
+                                ILogger<FinalizationCheckpointAiDecisionLedger>>()));
+            }
         }
 
         /// <summary>

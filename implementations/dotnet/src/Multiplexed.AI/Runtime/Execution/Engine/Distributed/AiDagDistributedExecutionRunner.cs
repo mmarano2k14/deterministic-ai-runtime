@@ -438,6 +438,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                         throw;
                     }
 
+                    var reuseStateForFinalConvergence = false;
+
                     if (stepResult.EffectiveOutcome == AiStepExecutionOutcome.Park)
                     {
                         var parked = await _engineServices.ObservabilityService.Tracer.TraceStorageAsync(
@@ -625,18 +627,21 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                             executionContext,
                             claimedStep);
 
-                        await _retentionCoordinator.ApplyRetentionPersistAndWarmAsync(
+                        var retentionMutatedState = await _retentionCoordinator.ApplyRetentionPersistAndWarmAsync(
                             executionId,
                             completedState,
                             stepContext,
                             cancellationToken).ConfigureAwait(false);
 
                         state = completedState;
+                        reuseStateForFinalConvergence = !retentionMutatedState;
                     }
 
-                    var finalState = await _engineServices.DagStore.GetStateAsync(
-                        executionId,
-                        cancellationToken).ConfigureAwait(false) ?? state;
+                    var finalState = reuseStateForFinalConvergence
+                        ? state
+                        : await _engineServices.DagStore.GetStateAsync(
+                            executionId,
+                            cancellationToken).ConfigureAwait(false) ?? state;
 
                     record.Steps = resolvedPipeline.Steps
                         .Select(x => x.Name)
