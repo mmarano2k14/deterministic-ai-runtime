@@ -52,6 +52,7 @@ Focused AI runtime documentation is organized under:
 | [`ai/observability.md`](ai/observability.md) | High-level observability index summarizing ledger, tracing, metrics, logs, correlation, replay diagnostics, and roadmap direction. |
 | [`ai/observability-tracing.md`](ai/observability-tracing.md) | Runtime tracing, trace timelines, correlation, trace storage modes, Mongo trace persistence, MemoryAndMongo mode, and tracing improvements. |
 | [`ai/runtime-metrics.md`](ai/runtime-metrics.md) | Runtime metric domains, metric storage modes, worker/retention/storage/resolver/hot-state/policy metrics, and metrics improvements. |
+| [`ai/redis-performance-diagnostics.md`](ai/redis-performance-diagnostics.md) | Activation, cross-process collection, result interpretation, safety boundaries, and measured gains for Redis performance diagnostics. |
 | [`ai/replay-and-audit.md`](ai/replay-and-audit.md) | Deterministic Replay Engine V1, snapshot restore, fingerprint validation, replay metadata, ledger/timeline diagnostics, and replay improvements. |
 | [`comparison-existing-tools.md`](comparison-existing-tools.md) | Ecosystem positioning against agent frameworks, workflow engines, orchestration tools, observability platforms, and distributed infrastructure. |
 | [`roadmap.md`](roadmap.md) | Project roadmap organized by phases. |
@@ -340,6 +341,20 @@ This document explains:
 - metric storage modes: `Disabled`, `Memory`, `Mongo`, and `MemoryAndMongo`
 - distributed chaos metrics diagnostics
 - metrics TODO and improvement roadmap
+
+### [`ai/redis-performance-diagnostics.md`](ai/redis-performance-diagnostics.md)
+
+Redis performance diagnostics and optimization reference.
+
+This document explains:
+
+- how to enable and disable the opt-in diagnostic mode
+- how one measurement scope is propagated across processes and Kubernetes Pods
+- how to interpret attributed calls, server counters, residual traffic, and coverage
+- safe state reuse when authoritative operations report no durable mutation
+- topology-aware `MGET` batching for DAG state and runtime-registry reads
+- measured command reductions and the limits of wall-clock comparisons
+- correctness and Redis Cluster safety boundaries
 
 ### [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md)
 
