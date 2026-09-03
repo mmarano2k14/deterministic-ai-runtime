@@ -383,7 +383,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
                     Arg.Any<AiStepExecutionContext>())
                 .Returns(retentionEngine);
 
-            retentionEngine.ApplyAsync(
+            retentionEngine.ApplyAtomicAsync(
                     Arg.Any<AiRetentionContext>(),
                     Arg.Any<CancellationToken>())
                 .Returns(Task.FromResult(retentionResult));

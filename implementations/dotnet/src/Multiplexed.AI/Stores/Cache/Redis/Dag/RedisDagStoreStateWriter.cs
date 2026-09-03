@@ -168,6 +168,11 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             var stateKey = _services.Helper.GetStateBlobKey(executionId);
             var stepIndexKey = _services.KeyBuilder.GetDagStepIdsKey(executionId);
             var existingStepNames = await _services.Database.SetMembersAsync(stepIndexKey);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.DagStepIndexSaveStateLoad,
+                "SMEMBERS",
+                existingStepNames);
 
             var record = await _services.StateReader.GetRecordAsync(
                 executionId,
@@ -189,6 +194,11 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
 
                 var stepKey = _services.KeyBuilder.GetDagStepKey(executionId, stepName);
                 var rawStep = await _services.Database.StringGetAsync(stepKey);
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                    _services.Database,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.DagStepRepairLoad,
+                    "GET",
+                    rawStep);
 
                 if (!rawStep.HasValue)
                     continue;
@@ -304,6 +314,11 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
 
             var stepIndexKey = _services.KeyBuilder.GetDagStepIdsKey(executionId);
             var stepNames = await _services.Database.SetMembersAsync(stepIndexKey);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.DagStepIndexCompletedCleanupLoad,
+                "SMEMBERS",
+                stepNames);
 
             foreach (var stepNameValue in stepNames)
             {

@@ -9,6 +9,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
     /// </summary>
     internal static class ProcessHostPoolProductionScenarioSettingsComposer
     {
+        internal const string EnableFinalizationCheckpointGateSetting =
+            "Tests:ProcessHostPool:EnableFinalizationCheckpointGate";
+
         /// <summary>
         /// Builds control-plane settings for capacity that already exists in external Process Hosts.
         /// </summary>
@@ -214,6 +217,18 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     ["AiRuntimeProcessPoolRuntimeInstance:ExecutionContextSnapshot:CurrentNamespace"] =
                         "tests"
                 };
+
+            if (bool.TryParse(
+                    Read(EnableFinalizationCheckpointGateSetting),
+                    out var enableFinalizationCheckpointGate) &&
+                enableFinalizationCheckpointGate)
+            {
+                // Only the continuation-consume adversarial scenario enables this boundary.
+                // Runtime Pool children inherit these exact Process Host variables.
+                settings["AiDecisionLedger:Provider"] = "mongo";
+                settings["Tests:EnableFinalizationCheckpointGate"] = "true";
+                settings["Tests:FinalizationCheckpointGate:MaximumHoldSeconds"] = "180";
+            }
 
             if (tenant.Run.ChildDepth > 0)
             {

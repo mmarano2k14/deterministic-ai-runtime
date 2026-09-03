@@ -205,12 +205,27 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Finalization
                         executionContext,
                         retentionStep);
 
-                    await _retentionCoordinator.ApplyRetentionPersistAndWarmAsync(
+                    var retentionMutatedState = await _retentionCoordinator.ApplyBatchRetentionPersistAndWarmAsync(
                             record.ExecutionId,
                             state,
                             retentionStepContext,
+                            state.Steps.Keys.ToArray(),
                             cancellationToken)
                         .ConfigureAwait(false);
+
+                    if (retentionMutatedState)
+                    {
+                        var retainedState = await _engineServices.DagStore.GetStateAsync(
+                                record.ExecutionId,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        if (retainedState is not null)
+                        {
+                            state.Steps = retainedState.Steps;
+                            state.UpdatedAtUtc = retainedState.UpdatedAtUtc;
+                        }
+                    }
 
                     _engineServices.Logger.Engine.FinalizationSucceeded(
                         record.ExecutionId,

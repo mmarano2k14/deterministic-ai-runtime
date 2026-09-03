@@ -103,19 +103,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                                     podSpec.ImagePullPolicy.ToString(),
                                 Args =
                                     podSpec.ContainerArguments.ToList(),
-                                Env =
-                                    new List<V1EnvVar>
-                                    {
-                                        CreateDownwardApiEnvironmentVariable(
-                                            KubernetesNamespaceEnvironmentVariable,
-                                            "metadata.namespace"),
-                                        CreateDownwardApiEnvironmentVariable(
-                                            KubernetesPodNameEnvironmentVariable,
-                                            "metadata.name"),
-                                        CreateDownwardApiEnvironmentVariable(
-                                            KubernetesNodeNameEnvironmentVariable,
-                                            "spec.nodeName")
-                                    },
+                                Env = CreatePodEnvironmentVariables(),
                                 Ports =
                                     podSpec.Ports
                                         .Select(port =>
@@ -159,6 +147,52 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         }
                 }
             };
+        }
+
+        /// <summary>
+        /// Creates the Runtime Pool Pod environment, including an active PERF1 attribution scope.
+        /// </summary>
+        private static List<V1EnvVar> CreatePodEnvironmentVariables()
+        {
+            var environment =
+                new List<V1EnvVar>
+                {
+                    CreateDownwardApiEnvironmentVariable(
+                        KubernetesNamespaceEnvironmentVariable,
+                        "metadata.namespace"),
+                    CreateDownwardApiEnvironmentVariable(
+                        KubernetesPodNameEnvironmentVariable,
+                        "metadata.name"),
+                    CreateDownwardApiEnvironmentVariable(
+                        KubernetesNodeNameEnvironmentVariable,
+                        "spec.nodeName")
+                };
+
+            var attributionEnabled =
+                System.Environment.GetEnvironmentVariable(
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.EnabledEnvironmentVariable);
+            var attributionScope =
+                System.Environment.GetEnvironmentVariable(
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.ScopeEnvironmentVariable);
+
+            if (Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.IsEnabled &&
+                !string.IsNullOrWhiteSpace(attributionScope))
+            {
+                environment.Add(
+                    new V1EnvVar
+                    {
+                        Name = Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.EnabledEnvironmentVariable,
+                        Value = attributionEnabled ?? "1"
+                    });
+                environment.Add(
+                    new V1EnvVar
+                    {
+                        Name = Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.ScopeEnvironmentVariable,
+                        Value = attributionScope
+                    });
+            }
+
+            return environment;
         }
 
         /// <summary>

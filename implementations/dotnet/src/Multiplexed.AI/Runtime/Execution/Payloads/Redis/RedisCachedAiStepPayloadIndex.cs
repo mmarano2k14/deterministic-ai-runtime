@@ -120,6 +120,11 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
 
             var value = await db.StringGetAsync(key)
                 .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                db,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.StepPayloadIndexLoad,
+                "GET",
+                value);
 
             if (!value.HasValue)
             {
@@ -172,6 +177,11 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Redis
             var values = await db.StringGetAsync(
                     keyPairs.Select(x => x.Key).ToArray())
                 .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                db,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.StepPayloadIndexLoadMany,
+                "MGET",
+                values);
 
             var result = new Dictionary<string, AiArchivedStepPayloadIndex>(StringComparer.Ordinal);
 

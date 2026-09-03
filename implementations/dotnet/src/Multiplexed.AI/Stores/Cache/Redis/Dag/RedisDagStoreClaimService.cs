@@ -1,5 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Scheduling;
+using Multiplexed.AI.Runtime.Execution.Engine.Helpers;
 using Multiplexed.AI.Stores.Cache.Redis.Helpers;
 using Multiplexed.AI.Stores.Cache.Redis.Lua;
 using StackExchange.Redis;
@@ -344,6 +345,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                     stepKeyPrefix = (RedisValue)stepKeyPrefix,
                     executionId = (RedisValue)executionId
                 });
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaDagClaim);
 
             if (result.IsNull)
                 return null;
@@ -374,63 +378,11 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                 return Array.Empty<AiClaimedStep>();
             }
 
-            var nowUtc = DateTime.UtcNow;
-
-            var completedSteps = state.Steps
-                .Where(step => step.Value.Status == AiStepExecutionStatus.Completed)
-                .Select(step => step.Key)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            return state.Steps
-                .Where(step => IsClaimCandidate(step.Value, nowUtc))
-                .Where(step =>
-                    step.Value.DependsOn is null ||
-                    step.Value.DependsOn.Count == 0 ||
-                    step.Value.DependsOn.All(completedSteps.Contains))
-                .OrderBy(step => step.Key, StringComparer.OrdinalIgnoreCase)
-                .Take(maxSteps)
-                .Select(step => new AiClaimedStep
-                {
-                    ExecutionId = executionId,
-                    StepName = step.Key,
-                    ClaimToken = string.Empty
-                })
-                .ToList();
-        }
-
-        /// <summary>
-        /// Determines whether a DAG step is eligible for pre-claim concurrency evaluation.
-        /// </summary>
-        /// <param name="step">The step state.</param>
-        /// <param name="nowUtc">The current UTC timestamp.</param>
-        /// <returns><c>true</c> when the step may be considered for claim; otherwise <c>false</c>.</returns>
-        private static bool IsClaimCandidate(
-            AiStepState step,
-            DateTime nowUtc)
-        {
-            if (step.Status is AiStepExecutionStatus.Ready or AiStepExecutionStatus.None)
-            {
-                return true;
-            }
-
-            if (step.Status != AiStepExecutionStatus.WaitingForRetry)
-            {
-                return false;
-            }
-
-            var retryState = step.RetryState;
-
-            if (retryState is null)
-            {
-                return false;
-            }
-
-            if (!retryState.NextRetryAtUtc.HasValue)
-            {
-                return true;
-            }
-
-            return retryState.NextRetryAtUtc.Value <= nowUtc;
+            return AiDagReadyStepSelector.Select(
+                executionId,
+                state,
+                maxSteps,
+                DateTime.UtcNow);
         }
 
         /// <summary>
@@ -465,6 +417,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                     maxSteps = (RedisValue)maxSteps,
                     claimTokensJson = (RedisValue)claimTokensJson
                 });
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaDagClaimBatch);
 
             if (result.IsNull)
             {
@@ -517,6 +472,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                     nowUnix = (RedisValue)nowUnix,
                     claimToken = (RedisValue)claimToken
                 });
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaDagClaimSpecific);
 
             return (int)result! == 1;
         }

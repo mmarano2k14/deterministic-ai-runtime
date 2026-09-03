@@ -168,6 +168,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 await database
                     .HashGetAllAsync(requestKey)
                     .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.ScaleOutRequestRecordLoad,
+                "HGETALL",
+                entries);
 
             if (entries.Length == 0)
             {
@@ -400,6 +405,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 await database
                     .HashGetAllAsync(requestKey)
                     .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.ScaleOutRequestTransitionLoad,
+                "HGETALL",
+                requestEntries);
 
             if (requestEntries.Length == 0)
             {
@@ -508,6 +518,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                     await database
                         .HashGetAllAsync(requestKey)
                         .ConfigureAwait(false);
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                    database,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.ScaleOutRequestListLoad,
+                    "HGETALL",
+                    entries);
 
                 if (entries.Length == 0)
                 {
@@ -647,6 +662,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling
                 await database
                     .StringGetAsync(controlPlaneIndexKey)
                     .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.ScaleOutRequestControlPlaneIndexLoad,
+                "GET",
+                controlPlaneId);
 
             if (controlPlaneId.IsNullOrEmpty)
             {

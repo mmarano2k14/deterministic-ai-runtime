@@ -184,6 +184,11 @@ namespace Multiplexed.AI.Stores.Cache.Redis
                 throw new ArgumentException("Execution id cannot be null or empty.", nameof(executionId));
 
             var value = await _database.StringGetAsync(_keyBuilder.GetExecutionRecordKey(executionId));
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                _database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.ExecutionRecordLoad,
+                "GET",
+                value);
 
             if (!value.HasValue)
                 return null;
@@ -202,6 +207,11 @@ namespace Multiplexed.AI.Stores.Cache.Redis
                 throw new ArgumentException("Execution id cannot be null or empty.", nameof(executionId));
 
             var value = await _database.StringGetAsync(_keyBuilder.GetExecutionStateKey(executionId));
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                _database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.ExecutionStateLoad,
+                "GET",
+                value);
 
             if (!value.HasValue)
                 return null;
@@ -250,6 +260,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis
                         newRecordJson = (RedisValue)recordPayload,
                         newStateJson = (RedisValue)statePayload
                     });
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                    _database,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaExecution);
 
                 return (int)result! == 1;
             }
@@ -267,6 +280,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis
                         newRecordJson = (RedisValue)recordPayload,
                         newStateJson = (RedisValue)statePayload
                     });
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                    _database,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaExecution);
 
                 return (int)result! == 1;
             }
@@ -390,6 +406,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis
                         recordJson = (RedisValue)recordPayload,
                         stateJson = (RedisValue)statePayload
                     });
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                    _database,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaExecution);
 
                 if ((int)result! != 1)
                 {
@@ -410,6 +429,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis
                         recordJson = (RedisValue)recordPayload,
                         stateJson = (RedisValue)statePayload
                     });
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                    _database,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaExecution);
 
                 if ((int)result! != 1)
                 {

@@ -153,12 +153,52 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
             return effectiveRecord;
         }
 
-        public async Task<AiSharedRunRecord?> GetAsync(
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        public Task<AiSharedRunRecord?> GetAsync(
             string sharedRunId,
             CancellationToken cancellationToken = default)
         {
+            var attributionOperation =
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.SharedRunPublicGetRecordLoad;
+
+            if (Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.IsEnabled)
+            {
+                var callerAssemblyName =
+                    System.Reflection.Assembly
+                        .GetCallingAssembly()
+                        .GetName()
+                        .Name;
+
+                if (string.Equals(
+                        callerAssemblyName,
+                        "Multiplexed.AI.McpServer.Tests.Integration",
+                        StringComparison.Ordinal))
+                {
+                    attributionOperation =
+                        Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.TestHarnessSharedRunPublicGetRecordLoad;
+                }
+            }
+
+            return GetPublicAsync(
+                sharedRunId,
+                attributionOperation,
+                cancellationToken);
+        }
+
+        private async Task<AiSharedRunRecord?> GetPublicAsync(
+            string sharedRunId,
+            string attributionOperation,
+            CancellationToken cancellationToken)
+        {
             ArgumentException.ThrowIfNullOrWhiteSpace(sharedRunId);
             cancellationToken.ThrowIfCancellationRequested();
+
+            using var perf1PublicGetAttribution =
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics
+                    .OverrideOperationIfUnchanged(
+                        Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.SharedRunRecordLoad,
+                        attributionOperation);
 
             var controlPlaneId = await ResolveControlPlaneIdAsync(
                     requestedControlPlaneId: null,
@@ -227,7 +267,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
                 var rawRecord = await GetRawAsync(
                         controlPlaneId,
                         sharedRunId,
-                        cancellationToken)
+                        cancellationToken,
+                        Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.SharedRunListRecordLoad)
                     .ConfigureAwait(false);
 
                 if (rawRecord is null)
@@ -816,13 +857,19 @@ namespace Multiplexed.AI.Runtime.ControlPlane.SharedController.Store
         private async Task<AiSharedRunRecord?> GetRawAsync(
             string controlPlaneId,
             string sharedRunId,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            string attributionOperation = Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.SharedRunRecordLoad)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             var entries = await _database
                 .HashGetAllAsync(BuildRunKey(controlPlaneId, sharedRunId))
                 .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                _database,
+                attributionOperation,
+                "HGETALL",
+                entries);
 
             cancellationToken.ThrowIfCancellationRequested();
 

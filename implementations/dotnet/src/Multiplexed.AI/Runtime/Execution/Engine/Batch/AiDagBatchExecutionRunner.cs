@@ -496,7 +496,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
             Console.WriteLine(
                 $"[AI DAG BATCH PHASE] Phase='retention-started', ExecutionId='{executionId}', ClaimedStepCount='{claimedSteps.Count}'.");
 
-            await _retentionCoordinator.ApplyBatchRetentionPersistAndWarmAsync(
+            var retentionMutatedDurableState = await _retentionCoordinator.ApplyBatchRetentionPersistAndWarmAsync(
                     executionId,
                     retentionState,
                     retentionStepContext,
@@ -507,9 +507,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
             Console.WriteLine(
                 $"[AI DAG BATCH PHASE] Phase='retention-completed', ExecutionId='{executionId}', ClaimedStepCount='{claimedSteps.Count}'.");
 
-            var finalState = await _engineServices.DagStore.GetStateAsync(
-                executionId,
-                cancellationToken) ?? retentionState;
+            var finalState = retentionMutatedDurableState
+                ? await _engineServices.DagStore.GetStateAsync(
+                    executionId,
+                    cancellationToken) ?? retentionState
+                : retentionState;
 
             record.Steps = resolvedPipeline.Steps
                 .Select(x => x.Name)

@@ -38,6 +38,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
 
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+        private readonly IConnectionMultiplexer redis;
         private readonly IDatabase database;
         private readonly AiRuntimeInstanceRegistrationOptions registrationOptions;
         private readonly IAiControlPlaneIdResolver controlPlaneIdResolver;
@@ -85,6 +86,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             ArgumentNullException.ThrowIfNull(controlPlaneIdResolver);
             ArgumentNullException.ThrowIfNull(visibilityEvaluator);
 
+            this.redis = redis;
             this.database = redis.GetDatabase();
             this.registrationOptions = registrationOptions.Value;
             this.controlPlaneIdResolver = controlPlaneIdResolver;
@@ -312,33 +314,30 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                 await this.database
                     .SetMembersAsync(instanceSetKey)
                     .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                this.database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.RuntimeRegistryIndexLoad,
+                "SMEMBERS",
+                members);
 
             var snapshots =
                 new List<AiRuntimeInstanceSnapshot>();
 
-            foreach (var member in members)
+            var indexedEntries =
+                await this.LoadIndexedEntriesAsync(
+                        controlPlaneId,
+                        members,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            foreach (var indexedEntry in indexedEntries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (!member.HasValue)
-                {
-                    continue;
-                }
-
                 var runtimeInstanceId =
-                    member.ToString();
-
-                if (string.IsNullOrWhiteSpace(runtimeInstanceId))
-                {
-                    continue;
-                }
-
+                    indexedEntry.RuntimeInstanceId;
                 var entry =
-                    await this.GetRawEntryAsync(
-                            controlPlaneId,
-                            runtimeInstanceId,
-                            cancellationToken)
-                        .ConfigureAwait(false);
+                    indexedEntry.Entry;
 
                 if (entry is null)
                 {
@@ -724,6 +723,107 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
         }
 
         /// <summary>
+        /// Loads the entries referenced by the scoped runtime-instance index.
+        /// </summary>
+        /// <remarks>
+        /// Standalone Redis uses one multi-key read for the complete index snapshot. Redis Cluster
+        /// preserves the existing one-key-per-command path because registry entry keys do not share
+        /// a hash tag and may belong to different slots.
+        /// </remarks>
+        /// <param name="controlPlaneId">The logical control-plane identifier used to build Redis keys.</param>
+        /// <param name="members">The runtime instance identifiers returned by the scoped index.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The valid indexed identifiers paired with their raw entries, including missing entries.</returns>
+        private async Task<IReadOnlyList<(string RuntimeInstanceId, RuntimeInstanceEntry? Entry)>> LoadIndexedEntriesAsync(
+            string controlPlaneId,
+            RedisValue[] members,
+            CancellationToken cancellationToken)
+        {
+            var runtimeInstanceIds =
+                new List<string>(members.Length);
+
+            foreach (var member in members)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!member.HasValue)
+                {
+                    continue;
+                }
+
+                var runtimeInstanceId =
+                    member.ToString();
+
+                if (!string.IsNullOrWhiteSpace(runtimeInstanceId))
+                {
+                    runtimeInstanceIds.Add(runtimeInstanceId);
+                }
+            }
+
+            if (runtimeInstanceIds.Count == 0)
+            {
+                return Array.Empty<(string RuntimeInstanceId, RuntimeInstanceEntry? Entry)>();
+            }
+
+            var indexedEntries =
+                new List<(string RuntimeInstanceId, RuntimeInstanceEntry? Entry)>(
+                    runtimeInstanceIds.Count);
+
+            if (!this.UsesRedisCluster())
+            {
+                var keys =
+                    runtimeInstanceIds
+                        .Select(runtimeInstanceId =>
+                            (RedisKey)GetInstanceKey(
+                                controlPlaneId,
+                                runtimeInstanceId))
+                        .ToArray();
+
+                var values =
+                    await this.database
+                        .StringGetAsync(keys)
+                        .ConfigureAwait(false);
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                    this.database,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.RuntimeRegistryEntryLoadMany,
+                    "MGET",
+                    values);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                for (var index = 0; index < runtimeInstanceIds.Count; index++)
+                {
+                    var value = index < values.Length
+                        ? values[index]
+                        : RedisValue.Null;
+
+                    indexedEntries.Add(
+                        (
+                            runtimeInstanceIds[index],
+                            DeserializeEntry(value)));
+                }
+
+                return indexedEntries;
+            }
+
+            foreach (var runtimeInstanceId in runtimeInstanceIds)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var entry =
+                    await this.GetRawEntryAsync(
+                            controlPlaneId,
+                            runtimeInstanceId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                indexedEntries.Add((runtimeInstanceId, entry));
+            }
+
+            return indexedEntries;
+        }
+
+        /// <summary>
         /// Gets a runtime instance entry from the scoped Redis key without applying control-plane validation.
         /// </summary>
         /// <param name="controlPlaneId">The logical control-plane identifier used to build the Redis key.</param>
@@ -744,7 +844,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
                             controlPlaneId,
                             runtimeInstanceId))
                     .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                this.database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.RuntimeRegistryEntryLoad,
+                "GET",
+                value);
 
+            return DeserializeEntry(value);
+        }
+
+        /// <summary>
+        /// Deserializes one raw Redis runtime-instance entry.
+        /// </summary>
+        /// <param name="value">The raw Redis value.</param>
+        /// <returns>The runtime instance entry when present; otherwise, <c>null</c>.</returns>
+        private static RuntimeInstanceEntry? DeserializeEntry(
+            RedisValue value)
+        {
             if (!value.HasValue)
             {
                 return null;
@@ -753,6 +869,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances
             return JsonSerializer.Deserialize<RuntimeInstanceEntry>(
                 value.ToString(),
                 JsonOptions);
+        }
+
+        /// <summary>
+        /// Determines whether the configured Redis topology contains a cluster server.
+        /// </summary>
+        private bool UsesRedisCluster()
+        {
+            foreach (var endpoint in this.redis.GetEndPoints())
+            {
+                if (this.redis.GetServer(endpoint).ServerType == ServerType.Cluster)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>

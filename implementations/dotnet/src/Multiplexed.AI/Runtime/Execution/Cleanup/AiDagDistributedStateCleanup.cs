@@ -49,6 +49,11 @@ namespace Multiplexed.AI.Runtime.Execution.Cleanup
             {
                 var stepIdsKey = _keyBuilder.GetDagStepIdsKey(executionId);
                 var stepIds = await _redis.SetMembersAsync(stepIdsKey);
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                    _redis,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.DagDistributedCleanupStepIndexLoad,
+                    "SMEMBERS",
+                    stepIds);
 
                 stepCountDiscovered = stepIds.Length;
 

@@ -11,7 +11,6 @@ using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Execution.Engine.Helpers;
 using Multiplexed.AI.Runtime.Observability.Helpers;
 using Multiplexed.Abstractions.AI.Observability.Events;
-
 namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 {
     /// <summary>
@@ -64,12 +63,10 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
         private const string ClaimModeMetadataKey = "claim.mode";
         private const string SingleClaimMode = "single";
         private const string BatchClaimMode = "batch";
-
         private static readonly IAiConcurrencyDefinitionResolver ConcurrencyDefinitionResolver =
             new DefaultAiConcurrencyDefinitionResolver();
 
         private readonly IAiDagExecutionEngineServices _services;
-
         /// <summary>
         /// Initializes a new instance of the <see cref="AiDagStepClaimService"/> class.
         /// </summary>
@@ -83,7 +80,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
         {
             _services = services ?? throw new ArgumentNullException(nameof(services));
         }
-
         /// <summary>
         /// Recovers timed-out steps and attempts to claim one ready DAG step.
         /// </summary>
@@ -117,12 +113,10 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             ArgumentNullException.ThrowIfNull(pipeline);
             ArgumentException.ThrowIfNullOrWhiteSpace(pipelineKey);
             ArgumentException.ThrowIfNullOrWhiteSpace(workerId);
-
             if (_services.DagStore is null)
             {
                 throw new InvalidOperationException("Distributed DAG store is not configured.");
             }
-
             await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
                     _services,
                     executionId,
@@ -144,14 +138,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
-
             var controlDecision = await CheckExecutionControlAsync(
                     executionId,
                     pipelineKey,
                     workerId,
                     cancellationToken)
                 .ConfigureAwait(false);
-
             if (controlDecision is not null)
             {
                 if (controlDecision.ShouldCancel)
@@ -179,10 +171,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
-
                     return null;
                 }
-
                 if (!controlDecision.CanContinue)
                 {
                     await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -209,19 +199,19 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
-
                     return null;
                 }
             }
 
-            var recoveredCount = await RecoverTimedOutStepsAsync(
+            var recoveryResult = await RecoverTimedOutStepsAsync(
                     executionId,
                     pipelineKey,
                     workerId,
                     pipeline,
                     cancellationToken)
                 .ConfigureAwait(false);
-
+            var recoveredCount = recoveryResult.RecoveredCount;
+            var state = recoveryResult.State;
             if (recoveredCount > 0)
             {
                 _services.Logger.Engine.StepsRecovered(
@@ -230,13 +220,13 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 
                 _services.Logger.Engine.LogInformation(
                     $"[AI DAG] Timed-out steps recovered. ExecutionId='{executionId}', RecoveredCount='{recoveredCount}'.");
+
+                // Preserve the existing post-recovery refresh semantics on the rare mutation path.
+                state = await _services.DagStore.GetStateAsync(
+                        executionId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
-
-            var state = await _services.DagStore.GetStateAsync(
-                    executionId,
-                    cancellationToken)
-                .ConfigureAwait(false);
-
             if (state is null || state.Steps.Count == 0)
             {
                 await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -264,16 +254,14 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
-
                 return null;
             }
 
-            var readySteps = await _services.DagStore.GetReadyStepsAsync(
-                    executionId,
-                    maxSteps: 16,
-                    cancellationToken)
-                .ConfigureAwait(false);
-
+            var readySteps = AiDagReadyStepSelector.Select(
+                executionId,
+                state,
+                maxSteps: 16,
+                nowUtc: DateTime.UtcNow);
             if (readySteps.Count == 0)
             {
                 await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -299,7 +287,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
-
                 return null;
             }
 
@@ -313,7 +300,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 var stepDefinition = FindPipelineStep(
                     pipeline,
                     readyStep.StepName);
-
                 var concurrencyAdmission = AiDagExecutionHelpers.CreateConcurrencyAdmission(
                     executionId,
                     pipelineKey,
@@ -323,10 +309,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     pipeline.Config,
                     stepDefinition,
                     ConcurrencyDefinitionResolver);
-
                 var concurrencyContext = concurrencyAdmission.Context;
                 var concurrencyDefinition = concurrencyAdmission.Definition;
-
                 var gateDecision = await TryAcquireConcurrencyLeaseAsync(
                         concurrencyContext,
                         concurrencyDefinition,
@@ -336,7 +320,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         readyStep.StepName,
                         cancellationToken)
                     .ConfigureAwait(false);
-
                 if (!gateDecision.Allowed)
                 {
                     await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -361,7 +344,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
-
                     LogThrottledStep(
                         executionId,
                         pipelineKey,
@@ -373,7 +355,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 }
 
                 var leaseTransferred = false;
-
                 try
                 {
                     await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -399,14 +380,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
-
                     var claimed = await TryClaimStepAsync(
                             executionId,
                             readyStep.StepName,
                             workerId,
                             cancellationToken)
                         .ConfigureAwait(false);
-
                     if (claimed is null)
                     {
                         await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -432,10 +411,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 },
                                 cancellationToken)
                             .ConfigureAwait(false);
-
                         continue;
                     }
-
                     await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
                             _services,
                             executionId,
@@ -459,13 +436,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
-
                     _services.Logger.Engine.StepClaimed(
                         executionId,
                         stepDefinition.Name,
                         workerId,
                         claimed.ClaimToken);
-
                     leaseTransferred = true;
                     return claimed;
                 }
@@ -486,7 +461,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     }
                 }
             }
-
             await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
                     _services,
                     executionId,
@@ -509,10 +483,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
-
             return null;
         }
-
         /// <summary>
         /// Recovers timed-out steps and attempts to claim a bounded number of ready DAG steps.
         /// </summary>
@@ -550,12 +522,10 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             ArgumentException.ThrowIfNullOrWhiteSpace(pipelineKey);
             ArgumentException.ThrowIfNullOrWhiteSpace(workerId);
             ArgumentOutOfRangeException.ThrowIfLessThan(maxSteps, 1);
-
             if (_services.DagStore is null)
             {
                 return Array.Empty<AiClaimedStep>();
             }
-
             await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
                     _services,
                     executionId,
@@ -578,14 +548,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
-
             var controlDecision = await CheckExecutionControlAsync(
                     executionId,
                     pipelineKey,
                     workerId,
                     cancellationToken)
                 .ConfigureAwait(false);
-
             if (controlDecision is not null)
             {
                 if (controlDecision.ShouldCancel)
@@ -613,10 +581,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
-
                     return Array.Empty<AiClaimedStep>();
                 }
-
                 if (!controlDecision.CanContinue)
                 {
                     await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -643,19 +609,19 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
-
                     return Array.Empty<AiClaimedStep>();
                 }
             }
 
-            var recoveredCount = await RecoverTimedOutStepsAsync(
+            var recoveryResult = await RecoverTimedOutStepsAsync(
                     executionId,
                     pipelineKey,
                     workerId,
                     pipeline,
                     cancellationToken)
                 .ConfigureAwait(false);
-
+            var recoveredCount = recoveryResult.RecoveredCount;
+            var state = recoveryResult.State;
             if (recoveredCount > 0)
             {
                 _services.Logger.Engine.StepsRecovered(
@@ -664,13 +630,13 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 
                 _services.Logger.Engine.LogInformation(
                     $"[AI DAG] Timed-out steps recovered. ExecutionId='{executionId}', RecoveredCount='{recoveredCount}'.");
+
+                // Preserve the existing post-recovery refresh semantics on the rare mutation path.
+                state = await _services.DagStore.GetStateAsync(
+                        executionId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
-
-            var state = await _services.DagStore.GetStateAsync(
-                    executionId,
-                    cancellationToken)
-                .ConfigureAwait(false);
-
             if (state is null || state.Steps.Count == 0)
             {
                 await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -698,16 +664,14 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
-
                 return Array.Empty<AiClaimedStep>();
             }
 
-            var readySteps = await _services.DagStore.GetReadyStepsAsync(
-                    executionId,
-                    maxSteps,
-                    cancellationToken)
-                .ConfigureAwait(false);
-
+            var readySteps = AiDagReadyStepSelector.Select(
+                executionId,
+                state,
+                maxSteps,
+                DateTime.UtcNow);
             if (readySteps.Count == 0)
             {
                 await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -733,7 +697,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
-
                 return Array.Empty<AiClaimedStep>();
             }
 
@@ -750,11 +713,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 {
                     continue;
                 }
-
                 var stepDefinition = FindPipelineStep(
                     pipeline,
                     readyStep.StepName);
-
                 var concurrencyAdmission = AiDagExecutionHelpers.CreateConcurrencyAdmission(
                     executionId,
                     pipelineKey,
@@ -764,10 +725,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     pipeline.Config,
                     stepDefinition,
                     ConcurrencyDefinitionResolver);
-
                 var concurrencyContext = concurrencyAdmission.Context;
                 var concurrencyDefinition = concurrencyAdmission.Definition;
-
                 var gateDecision = await TryAcquireConcurrencyLeaseAsync(
                         concurrencyContext,
                         concurrencyDefinition,
@@ -777,7 +736,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         readyStep.StepName,
                         cancellationToken)
                     .ConfigureAwait(false);
-
                 if (!gateDecision.Allowed)
                 {
                     await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -803,7 +761,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
-
                     LogThrottledStep(
                         executionId,
                         pipelineKey,
@@ -815,7 +772,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 }
 
                 var leaseTransferred = false;
-
                 try
                 {
                     await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -842,14 +798,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
-
                     var claimed = await TryClaimStepAsync(
                             executionId,
                             readyStep.StepName,
                             workerId,
                             cancellationToken)
                         .ConfigureAwait(false);
-
                     if (claimed is null)
                     {
                         await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -876,7 +830,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 },
                                 cancellationToken)
                             .ConfigureAwait(false);
-
                         continue;
                     }
 
@@ -885,7 +838,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         claimed.StepName,
                         workerId,
                         claimed.ClaimToken);
-
                     await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
                             _services,
                             executionId,
@@ -910,7 +862,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             },
                             cancellationToken)
                         .ConfigureAwait(false);
-
                     claimedSteps.Add(claimed);
                     leaseTransferred = true;
                 }
@@ -931,7 +882,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     }
                 }
             }
-
             if (claimedSteps.Count == 0)
             {
                 await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -958,10 +908,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         cancellationToken)
                     .ConfigureAwait(false);
             }
-
             return claimedSteps;
         }
-
         /// <summary>
         /// Releases a concurrency lease that was acquired by this claim service but was not
         /// transferred to a successfully returned claimed step.
@@ -983,7 +931,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         concurrencyDefinition,
                         CancellationToken.None)
                     .ConfigureAwait(false);
-
                 try
                 {
                     await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -1020,7 +967,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         $"LeaseId='{concurrencyContext.LeaseId}', ClaimMode='{claimMode}', " +
                         $"ExceptionType='{ledgerException.GetType().Name}', ExceptionMessage='{ledgerException.Message}'.");
                 }
-
                 _services.Logger.Engine.LogInformation(
                     $"[AI DAG] Untransferred concurrency lease released. " +
                     $"ExecutionId='{executionId}', StepName='{stepDefinition.Name}', Worker='{workerId}', " +
@@ -1035,7 +981,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     $"ExceptionType='{releaseException.GetType().Name}', ExceptionMessage='{releaseException.Message}'.");
             }
         }
-
         /// <summary>
         /// Attempts to acquire distributed concurrency capacity for a ready step candidate.
         /// </summary>
@@ -1101,7 +1046,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         trace.SetTag("concurrency.model", context.Model ?? string.Empty);
                         trace.SetTag("concurrency.operation", context.Operation ?? string.Empty);
                         trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, _services.ObservabilityService?.Correlation?.Current?.WorkerId ?? context.RuntimeInstanceId);
-
                         var policyDecision = await EvaluateConfiguredConcurrencyPoliciesAsync(
                                 context,
                                 definition,
@@ -1111,16 +1055,13 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 stepName,
                                 cancellationToken)
                             .ConfigureAwait(false);
-
                         trace.SetTag("concurrency.policy.allowed", policyDecision.Allowed);
-
                         if (!policyDecision.Allowed)
                         {
                             trace.SetTag(AiEngineEvents.Concurrency.Allowed, false);
                             trace.SetTag(AiEngineEvents.Concurrency.Denied, true);
                             trace.SetTag("concurrency.policy.denied", true);
                             trace.SetTag("concurrency.reason", policyDecision.Reason ?? "Concurrency policy denied execution.");
-
                             return policyDecision;
                         }
 
@@ -1129,7 +1070,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 definition,
                                 cancellationToken)
                             .ConfigureAwait(false);
-
                         trace.SetTag(AiEngineEvents.Concurrency.Allowed, gateDecision.Allowed);
                         trace.SetTag("concurrency.gate.allowed", gateDecision.Allowed);
 
@@ -1138,12 +1078,10 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             trace.SetTag(AiEngineEvents.Concurrency.Denied, true);
                             trace.SetTag("concurrency.reason", gateDecision.Reason ?? "Concurrency limit reached.");
                         }
-
                         return gateDecision;
                     })
                 .ConfigureAwait(false);
         }
-
         /// <summary>
         /// Evaluates configured concurrency policies for the ready step candidate.
         /// </summary>
@@ -1191,7 +1129,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             {
                 return AiConcurrencyDecision.Allow();
             }
-
             var stepContext = CreateStepExecutionContext(
                 context.ExecutionId,
                 state,
@@ -1203,7 +1140,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             var policyEngine = _services.PolicyEngineFactory.Create(
                 AiPolicyKind.Concurrency,
                 stepContext);
-
             if (policyEngine is not IAiConcurrencyEngine concurrencyEngine)
             {
                 throw new InvalidOperationException(
@@ -1215,7 +1151,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     cancellationToken)
                 .ConfigureAwait(false);
         }
-
         /// <summary>
         /// Creates a minimal step execution context for policy-engine evaluation during admission.
         /// </summary>
@@ -1265,7 +1200,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 PipelineName = state.PipelineName,
                 ExecutionMode = AiExecutionMode.Dag
             };
-
             var executionContext = new AiExecutionContext(
                 record,
                 state,
@@ -1273,7 +1207,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 _services.StateReader,
                 _services.StateWriter,
                 cancellationToken);
-
             var resolvedStep = new ResolvedAiPipelineStep
             {
                 Name = stepName,
@@ -1287,7 +1220,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 executionContext,
                 resolvedStep);
         }
-
         /// <summary>
         /// Finds the pipeline step definition for a ready step.
         /// </summary>
@@ -1307,7 +1239,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
         {
             var step = pipeline.Steps.FirstOrDefault(x =>
                 string.Equals(x.Name, stepName, StringComparison.OrdinalIgnoreCase));
-
             if (step is not null)
             {
                 return new AiPipelineStepDefinition
@@ -1318,7 +1249,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     DependsOn = step.DependsOn ?? Array.Empty<string>()
                 };
             }
-
             return new AiPipelineStepDefinition
             {
                 Name = stepName,
@@ -1327,7 +1257,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 DependsOn = Array.Empty<string>()
             };
         }
-
         /// <summary>
         /// Attempts to atomically claim a specific ready step through the distributed DAG store.
         /// </summary>
@@ -1367,11 +1296,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 workerId,
                                 cancellationToken)
                             .ConfigureAwait(false);
-
                         trace.SetTag("claimAcquired", result is not null);
                         trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, _services?.ObservabilityService?.Correlation?.Current?.WorkerId ?? workerId);
                         trace.SetTag(AiStepMetadataKeys.CamelCaseStepId, stepName);
-
                         if (result is not null)
                         {
                             trace.SetTag(AiExecutionClaimMetadataKeys.CamelCaseClaimToken, result.ClaimToken);
@@ -1381,7 +1308,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     })
                 .ConfigureAwait(false);
         }
-
         /// <summary>
         /// Logs a throttled ready step candidate.
         /// </summary>
@@ -1410,7 +1336,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             _services.Logger.Engine.LogInformation(
                 $"[AI DAG] Step throttled. ExecutionId='{executionId}', PipelineKey='{pipelineKey}', StepName='{stepName}', Worker='{workerId}', Reason='{decision.Reason ?? "Concurrency limit reached."}'.");
         }
-
         /// <summary>
         /// Recovers timed-out running DAG steps through the distributed store.
         /// </summary>
@@ -1427,9 +1352,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
         /// The cancellation token.
         /// </param>
         /// <returns>
-        /// The number of recovered steps.
+        /// The recovery count together with the already materialized pre-recovery state when
+        /// the atomic recovery scan reports no mutation. On a positive recovery the state is
+        /// returned as <see langword="null"/> so the caller preserves the existing refresh path.
         /// </returns>
-        private async Task<int> RecoverTimedOutStepsAsync(
+        private async Task<(int RecoveredCount, AiExecutionState? State)> RecoverTimedOutStepsAsync(
             string executionId,
             string pipelineKey,
             string workerId,
@@ -1439,7 +1366,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
             ArgumentException.ThrowIfNullOrWhiteSpace(pipelineKey);
             ArgumentException.ThrowIfNullOrWhiteSpace(workerId);
-
             return await _services.ObservabilityService.Tracer.TraceStorageAsync(
                     new AiStorageTraceContext
                     {
@@ -1453,28 +1379,28 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 executionId,
                                 cancellationToken)
                             .ConfigureAwait(false);
-
                         var beforeRecoveryCounts = beforeState?.Steps
                             .ToDictionary(
                                 pair => pair.Key,
                                 pair => pair.Value.RecoveryCount,
                                 StringComparer.Ordinal)
                             ?? new Dictionary<string, int>(StringComparer.Ordinal);
-
                         var result = await _services.DagStore!.RecoverTimedOutStepsAsync(
                                 executionId,
                                 cancellationToken)
                             .ConfigureAwait(false);
-
                         trace.SetTag("recoveredCount", result);
                         trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, _services.ObservabilityService?.Correlation?.Current?.WorkerId ?? workerId);
                         trace.SetTag("recovered", result > 0);
 
                         if (result <= 0)
                         {
-                            return result;
+                            // The recovery scan did not mutate the DAG, so the state materialized
+                            // immediately before the atomic scan is still valid for local ready-step
+                            // selection. Reusing it avoids one full GetStateAsync reconstruction on
+                            // the normal claim path while leaving atomic claim authority unchanged.
+                            return (result, beforeState);
                         }
-
                         var afterState = await _services.DagStore.GetStateAsync(
                                 executionId,
                                 cancellationToken)
@@ -1485,7 +1411,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                             afterState);
 
                         var recoveredStepNamesText = string.Join(",", recoveredStepNames);
-
                         await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
                                 _services,
                                 executionId,
@@ -1508,7 +1433,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 },
                                 cancellationToken)
                             .ConfigureAwait(false);
-
                         await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
                                 _services,
                                 executionId,
@@ -1531,13 +1455,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                 },
                                 cancellationToken)
                             .ConfigureAwait(false);
-
                         foreach (var recoveredStepName in recoveredStepNames)
                         {
                             var stepDefinition = FindPipelineStep(
                                 pipeline,
                                 recoveredStepName);
-
                             await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
                                     _services,
                                     executionId,
@@ -1561,7 +1483,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                     cancellationToken)
                                 .ConfigureAwait(false);
                         }
-
                         if (recoveredStepNames.Count == 0)
                         {
                             await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -1586,12 +1507,13 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                                     cancellationToken)
                                 .ConfigureAwait(false);
                         }
-
-                        return result;
+                        // A positive recovery mutates durable state. The caller deliberately performs
+                        // the same post-recovery refresh it performed before PERF1-2B, so recovery-event
+                        // and post-mutation visibility semantics remain unchanged.
+                        return (result, (AiExecutionState?)null);
                     })
                 .ConfigureAwait(false);
         }
-
         /// <summary>
         /// Marks an execution as effectively paused when no active claimed or running work remains.
         /// </summary>
@@ -1603,7 +1525,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             string workerId,
             CancellationToken cancellationToken)
         {
-
             if (_services.ExecutionControlService is null)
             {
                 return;
@@ -1623,7 +1544,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             {
                 return;
             }
-
             var hasActiveWork = state.Steps.Values.Any(step =>
                 step.Status == AiStepExecutionStatus.Running ||
                 !string.IsNullOrWhiteSpace(step.ClaimedBy) ||
@@ -1635,21 +1555,18 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             {
                 return;
             }
-
             var paused = await _services.ExecutionControlService
                 .MarkPausedAsync(
                     executionId,
                     requestedBy: workerId,
                     cancellationToken)
                 .ConfigureAwait(false);
-
             if (paused.Status == AiExecutionControlStatus.Paused)
             {
                 _services.Logger.Engine.LogInformation(
                     $"[AI DAG] Execution pause completed after active work drained. ExecutionId='{executionId}', WorkerId='{workerId}', ControlStatus='{paused.Status}'.");
             }
         }
-
         /// <summary>
         /// Marks an execution as effectively running when a runtime worker observes that a resuming execution may advance.
         /// </summary>
@@ -1665,21 +1582,18 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             {
                 return;
             }
-
             var running = await _services.ExecutionControlService
                 .MarkRunningAsync(
                     executionId,
                     requestedBy: workerId,
                     cancellationToken)
                 .ConfigureAwait(false);
-
             if (running.Status == AiExecutionControlStatus.Running)
             {
                 _services.Logger.Engine.LogInformation(
                     $"[AI DAG] Execution resumed and marked as running. ExecutionId='{executionId}', WorkerId='{workerId}', ControlStatus='{running.Status}'.");
             }
         }
-
 
         /// <summary>
         /// Checks whether the execution is currently allowed to claim or advance work.
@@ -1709,7 +1623,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             {
                 return null;
             }
-
             var decision = await _services.ExecutionControlGate
                 .CheckBeforeAdvanceAsync(
                     executionId,
@@ -1720,7 +1633,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             {
                 return null;
             }
-
             if (decision.CanContinue)
             {
                 if (decision.Status == AiExecutionControlStatus.Resuming)
@@ -1734,7 +1646,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 
                 return decision;
             }
-
             if (decision.Status == AiExecutionControlStatus.Pausing)
             {
                 await MarkPausedIfExecutionHasDrainedAsync(
@@ -1743,7 +1654,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         cancellationToken)
                     .ConfigureAwait(false);
             }
-
             if (decision.ShouldCancel)
             {
                 await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -1772,7 +1682,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         cancellationToken)
                     .ConfigureAwait(false);
             }
-
             if (decision.IsWaitingForInput ||
                 decision.Status == AiExecutionControlStatus.WaitingForInput)
             {
@@ -1802,7 +1711,6 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         cancellationToken)
                     .ConfigureAwait(false);
             }
-
             _services.Logger.Engine.LogInformation(
                 $"[AI DAG] Execution advancement blocked by control state. ExecutionId='{executionId}', WorkerId='{workerId}', Status='{decision.Status}', StopClaiming='{decision.ShouldStopClaiming}', ShouldCancel='{decision.ShouldCancel}', WaitingForInput='{decision.IsWaitingForInput}', Reason='{decision.Reason}'.");
 

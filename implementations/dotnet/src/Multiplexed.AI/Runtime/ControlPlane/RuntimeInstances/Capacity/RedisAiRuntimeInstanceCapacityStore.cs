@@ -166,6 +166,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
                     await database
                         .StringGetAsync(capacityKey)
                         .ConfigureAwait(false);
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                    database,
+                    Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.RuntimeCapacityPublishCompareExchangeLoad,
+                    "GET",
+                    existingValue);
 
                 var descriptorToPublish =
                     PreserveExternallyPublishedKubernetesMetadata(
@@ -272,6 +277,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
                 await database
                     .SetMembersAsync(capacitySetKey)
                     .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.RuntimeCapacityIndexLoad,
+                "SMEMBERS",
+                members);
 
             var descriptors =
                 new List<AiRuntimeInstanceCapacityDescriptor>();
@@ -942,6 +952,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Capacity
                             controlPlaneId,
                             runtimeInstanceId))
                     .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.RuntimeCapacityDescriptorLoad,
+                "GET",
+                value);
 
             if (!value.HasValue)
             {

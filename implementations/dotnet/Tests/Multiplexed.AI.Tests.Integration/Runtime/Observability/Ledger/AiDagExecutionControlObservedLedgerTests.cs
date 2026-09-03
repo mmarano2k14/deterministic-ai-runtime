@@ -177,11 +177,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
                 .Returns(0);
 
             services.DagStore!
-                .GetReadyStepsAsync(
+                .TryClaimStepAsync(
                     executionId,
-                    Arg.Any<int>(),
+                    "step-a",
+                    workerId,
                     Arg.Any<CancellationToken>())
-                .Returns(Array.Empty<AiClaimedStep>());
+                .Returns((AiClaimedStep?)null);
 
             var service = new AiDagStepClaimService(services);
 
@@ -213,6 +214,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
             var runtimeMetrics = Substitute.For<IAiRuntimeMetrics>();
             var logger = Substitute.For<IAiRuntimeLogger>();
             var controlGate = Substitute.For<IAiExecutionControlGate>();
+            var concurrencyGate = Substitute.For<IAiConcurrencyGate>();
 
             IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity =
             new DefaultAiRuntimeInstanceIdentity();
@@ -240,10 +242,18 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
                     Arg.Any<CancellationToken>())
                 .Returns(controlDecision);
 
+            concurrencyGate
+                .TryAcquireAsync(
+                    Arg.Any<AiConcurrencyContext>(),
+                    Arg.Any<AiConcurrencyDefinition>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(AiConcurrencyDecision.Allow());
+
             services.DagStore.Returns(dagStore);
             services.ObservabilityService.Returns(observability);
             services.Logger.Returns(logger);
             services.ExecutionControlGate.Returns(controlGate);
+            services.ConcurrencyGate.Returns(concurrencyGate);
 
             return services;
         }

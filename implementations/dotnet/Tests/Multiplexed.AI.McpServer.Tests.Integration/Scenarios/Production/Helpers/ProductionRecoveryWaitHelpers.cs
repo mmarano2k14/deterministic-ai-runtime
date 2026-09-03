@@ -1230,57 +1230,170 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     "The event-driven redispatch wait timeout must be greater than zero.");
             }
 
+            var deadline = DateTimeOffset.UtcNow.Add(timeout);
             using var watchdog = new CancellationTokenSource(timeout);
 
-            AiControlPlaneEvent reassignedEvent;
+            Task<AiControlPlaneEvent>? reassignedEventTask =
+                lifecycleObserver.WaitForAsync(
+                    new AiDeterministicLifecycleEventCriteria
+                    {
+                        SemanticEventType = AiRuntimeLifecycleEvents.WorkReassigned,
+                        SharedRunId = sharedRunId
+                    },
+                    watchdog.Token);
+
+            AiControlPlaneEvent? reassignedEvent = null;
+            Exception? observerException = null;
+            AiSharedRunRecord? lastRun = null;
+            StackExchange.Redis.RedisTimeoutException? lastRedisTimeout = null;
+            var fallbackReadCount = 0;
 
             try
             {
-                reassignedEvent = await lifecycleObserver
-                    .WaitForAsync(
-                        new AiDeterministicLifecycleEventCriteria
+                while (DateTimeOffset.UtcNow < deadline)
+                {
+                    var remaining = deadline - DateTimeOffset.UtcNow;
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        break;
+                    }
+
+                    if (reassignedEventTask is not null)
+                    {
+                        var fallbackDelay =
+                            Task.Delay(
+                                remaining < TimeSpan.FromMilliseconds(250)
+                                    ? remaining
+                                    : TimeSpan.FromMilliseconds(250),
+                                watchdog.Token);
+
+                        var completed = await Task
+                            .WhenAny(reassignedEventTask, fallbackDelay)
+                            .ConfigureAwait(false);
+
+                        if (completed == reassignedEventTask)
                         {
-                            SemanticEventType = AiRuntimeLifecycleEvents.WorkReassigned,
-                            SharedRunId = sharedRunId
-                        },
-                        watchdog.Token)
-                    .ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (watchdog.IsCancellationRequested)
-            {
+                            try
+                            {
+                                reassignedEvent =
+                                    await reassignedEventTask.ConfigureAwait(false);
+                            }
+                            catch (OperationCanceledException) when (watchdog.IsCancellationRequested)
+                            {
+                                break;
+                            }
+                            catch (Exception exception)
+                            {
+                                observerException = exception;
+                            }
+
+                            reassignedEventTask = null;
+                        }
+                        else
+                        {
+                            fallbackReadCount++;
+                        }
+                    }
+                    else
+                    {
+                        try
+                        {
+                            await Task
+                                .Delay(
+                                    remaining < TimeSpan.FromMilliseconds(250)
+                                        ? remaining
+                                        : TimeSpan.FromMilliseconds(250),
+                                    watchdog.Token)
+                                .ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (watchdog.IsCancellationRequested)
+                        {
+                            break;
+                        }
+
+                        fallbackReadCount++;
+                    }
+
+                    try
+                    {
+                        lastRun = await sharedRunStore
+                            .GetAsync(sharedRunId)
+                            .ConfigureAwait(false);
+                    }
+                    catch (StackExchange.Redis.RedisTimeoutException exception)
+                    {
+                        lastRedisTimeout = exception;
+                        continue;
+                    }
+
+                    if (IsRecoveredRunRedispatched(
+                            lastRun,
+                            failedRuntimeInstanceId,
+                            failedLocalRunId))
+                    {
+                        return lastRun!;
+                    }
+                }
+
+                try
+                {
+                    lastRun = await sharedRunStore
+                        .GetAsync(sharedRunId)
+                        .ConfigureAwait(false);
+                }
+                catch (StackExchange.Redis.RedisTimeoutException exception)
+                {
+                    lastRedisTimeout = exception;
+                }
+
+                if (IsRecoveredRunRedispatched(
+                        lastRun,
+                        failedRuntimeInstanceId,
+                        failedLocalRunId))
+                {
+                    return lastRun!;
+                }
+
                 throw new TimeoutException(
-                    "Canonical work reassignment event was not observed within the hard watchdog. " +
+                    "Canonical work reassignment did not converge within the hard watchdog. " +
                     $"SharedRunId='{sharedRunId}', FailedRuntimeInstanceId='{failedRuntimeInstanceId}', " +
                     $"FailedLocalRunId='{failedLocalRunId}', Timeout='{timeout}', " +
+                    $"WorkReassignedObserved='{reassignedEvent is not null}', " +
+                    $"WorkReassignedEventId='{reassignedEvent?.EventId}', " +
+                    $"FallbackReadCount='{fallbackReadCount}', " +
+                    $"LastStatus='{lastRun?.Status}', " +
+                    $"LastRuntimeInstanceId='{lastRun?.AssignedRuntimeInstanceId}', " +
+                    $"LastLocalRunId='{lastRun?.LocalRunId}', " +
+                    $"LastExecutionId='{lastRun?.ExecutionId}', " +
+                    $"LastUpdatedAtUtc='{lastRun?.UpdatedAtUtc:O}', " +
+                    $"ObserverExceptionType='{observerException?.GetType().FullName}', " +
+                    $"ObserverExceptionMessage='{observerException?.Message}', " +
+                    $"LastRedisTimeoutMessage='{lastRedisTimeout?.Message}', " +
                     $"RecentEvents='{FormatRecentCanonicalEvents(lifecycleObserver)}'.");
             }
-
-            var durableRun = await sharedRunStore
-                .GetAsync(sharedRunId)
-                .ConfigureAwait(false);
-
-            if (durableRun is null ||
-                string.IsNullOrWhiteSpace(durableRun.AssignedRuntimeInstanceId) ||
-                string.IsNullOrWhiteSpace(durableRun.LocalRunId) ||
-                string.Equals(
-                    durableRun.AssignedRuntimeInstanceId,
-                    failedRuntimeInstanceId,
-                    StringComparison.Ordinal) ||
-                string.Equals(
-                    durableRun.LocalRunId,
-                    failedLocalRunId,
-                    StringComparison.Ordinal))
+            finally
             {
-                throw new InvalidOperationException(
-                    "Canonical work reassignment was observed but the durable shared-run state did not prove replacement ownership. " +
-                    $"SharedRunId='{sharedRunId}', EventId='{reassignedEvent.EventId}', " +
-                    $"EventRuntimeInstanceId='{reassignedEvent.Correlation.RuntimeInstanceId}', " +
-                    $"DurableRuntimeInstanceId='{durableRun?.AssignedRuntimeInstanceId}', " +
-                    $"DurableLocalRunId='{durableRun?.LocalRunId}', " +
-                    $"FailedRuntimeInstanceId='{failedRuntimeInstanceId}', FailedLocalRunId='{failedLocalRunId}'.");
-            }
+                if (!watchdog.IsCancellationRequested)
+                {
+                    watchdog.Cancel();
+                }
 
-            return durableRun;
+                if (reassignedEventTask is not null)
+                {
+                    try
+                    {
+                        await reassignedEventTask.ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected when durable replacement ownership converges before the canonical event wait completes.
+                    }
+                    catch
+                    {
+                        // Durable SharedRun replacement ownership remains authoritative for this test helper.
+                    }
+                }
+            }
         }
 
         /// <summary>

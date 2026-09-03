@@ -89,6 +89,11 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Control
 
             var key = _keyBuilder.BuildExecutionControlKey(executionId);
             var value = await _database.StringGetAsync(key).ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                _database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.ExecutionControlStateLoad,
+                "GET",
+                value);
 
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -163,6 +168,9 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Control
                     new RedisKey[] { key },
                     new RedisValue[] { expectedVersion, payload })
                 .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                _database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaExecutionControl);
 
             cancellationToken.ThrowIfCancellationRequested();
 

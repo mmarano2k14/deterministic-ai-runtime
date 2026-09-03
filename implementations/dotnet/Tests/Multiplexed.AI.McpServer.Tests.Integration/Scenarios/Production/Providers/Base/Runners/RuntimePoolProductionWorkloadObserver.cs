@@ -2,6 +2,7 @@
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeQueue;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
+using Multiplexed.AI.Runtime.Observability.Performance;
 using Multiplexed.AI.Stores;
 
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Runners
@@ -39,6 +40,15 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             {
                 throw new ArgumentOutOfRangeException(nameof(noProgressTimeout));
             }
+
+            using var perf1SharedRunAttribution =
+                AiRedisReadAttributionDiagnostics.OverrideOperation(
+                    AiRedisReadAttributionOperations.SharedRunRecordLoad,
+                    AiRedisReadAttributionOperations.TestHarnessRuntimePoolWorkloadSharedRunLoad);
+            using var perf1SharedRunListAttribution =
+                AiRedisReadAttributionDiagnostics.OverrideOperation(
+                    AiRedisReadAttributionOperations.SharedRunListRecordLoad,
+                    AiRedisReadAttributionOperations.TestHarnessRuntimePoolWorkloadSharedRunLoad);
 
             var deadline = DateTimeOffset.UtcNow.Add(timeout);
             var lastProgressAtUtc = DateTimeOffset.UtcNow;

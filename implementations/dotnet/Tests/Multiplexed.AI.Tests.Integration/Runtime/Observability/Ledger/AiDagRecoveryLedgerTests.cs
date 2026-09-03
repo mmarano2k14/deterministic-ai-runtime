@@ -48,6 +48,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
             var concurrencyGate = Substitute.For<IAiConcurrencyGate>();
             var ledger = new InMemoryAiDecisionLedger();
 
+            concurrencyGate.TryAcquireAsync(
+                    Arg.Any<AiConcurrencyContext>(),
+                    Arg.Any<AiConcurrencyDefinition>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(AiConcurrencyDecision.Allow());
+
             var stepConfig = new Dictionary<string, object?>();
 
             var pipeline = CreatePipeline(
@@ -119,6 +125,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
             var dagStore = Substitute.For<IAiDagExecutionStore>();
             var concurrencyGate = Substitute.For<IAiConcurrencyGate>();
             var ledger = new InMemoryAiDecisionLedger();
+
+            concurrencyGate.TryAcquireAsync(
+                    Arg.Any<AiConcurrencyContext>(),
+                    Arg.Any<AiConcurrencyDefinition>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(AiConcurrencyDecision.Allow());
 
             var stepConfig = new Dictionary<string, object?>();
 
@@ -205,7 +217,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
             Assert.Equal(pipelineKey, recoveryDetected.CorrelationContext.PipelineName);
             Assert.Equal(workerId, recoveryDetected.CorrelationContext.WorkerId);
             Assert.Equal(workerId, recoveryDetected.CorrelationContext.RuntimeInstanceId);
-            Assert.Equal("1", recoveryDetected?.Metadata["recovered.count"] );
+            Assert.Equal("1", recoveryDetected?.Metadata["recovered.count"]);
             Assert.Equal(stepName, recoveryDetected?.Metadata["recovered.steps"]);
 
             var recoveryApplied = Assert.Single(entries, entry =>
@@ -347,7 +359,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
         }
 
         /// <summary>
-        /// Configures the DAG store to simulate a timeout recovery and no ready step claim afterwards.
+        /// Configures the DAG store to simulate timeout recovery followed by a lost atomic claim race.
         /// </summary>
         private static void ConfigureRecoveryDagStore(
             IAiDagExecutionStore dagStore,
@@ -369,11 +381,12 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
                     Arg.Any<CancellationToken>())
                 .Returns(1);
 
-            dagStore.GetReadyStepsAsync(
+            dagStore.TryClaimStepAsync(
                     executionId,
-                    Arg.Any<int>(),
+                    Arg.Any<string>(),
+                    Arg.Any<string>(),
                     Arg.Any<CancellationToken>())
-                .Returns(Array.Empty<AiClaimedStep>());
+                .Returns((AiClaimedStep?)null);
         }
 
         /// <summary>

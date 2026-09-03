@@ -1108,6 +1108,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.ShareQueue.Redis
                         controlPlaneId,
                         sharedRunId))
                 .ConfigureAwait(false);
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.Record(
+                _database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.SharedQueueItemLoad,
+                "HGETALL",
+                entries);
 
             cancellationToken.ThrowIfCancellationRequested();
 
