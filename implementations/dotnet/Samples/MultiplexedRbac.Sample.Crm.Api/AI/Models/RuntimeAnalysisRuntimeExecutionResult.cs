@@ -5,8 +5,8 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Models
         public string RunId { get; init; } = string.Empty;
 
         /// <summary>
-        /// Physical controller run created when a durable external-wait
-        /// continuation re-drives the same ExecutionId.
+        /// Latest physical controller run created when an external-wait
+        /// continuation re-drives the same durable ExecutionId.
         /// </summary>
         public string? ContinuationRunId { get; init; }
 
@@ -29,5 +29,14 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Models
 
         public RuntimeAnalysisHumanApprovalResult HumanApproval { get; init; } =
             new RuntimeAnalysisHumanApprovalResult();
+
+        public RuntimeAnalysisScenarioExecutionResult ScenarioExecution
+        {
+            get;
+            init;
+        } = new RuntimeAnalysisScenarioExecutionResult();
+
+        public RuntimeAnalysisVerificationResult Verification { get; init; } =
+            new RuntimeAnalysisVerificationResult();
     }
 }

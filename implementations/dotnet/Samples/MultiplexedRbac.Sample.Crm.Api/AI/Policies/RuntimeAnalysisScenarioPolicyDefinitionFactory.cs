@@ -27,6 +27,16 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Policies
                             ["maxTotalRequests"] = 1000,
                             ["minMaxInFlight"] = 1,
                             ["maxMaxInFlight"] = 20,
+                            ["allowedMaxInFlightValues"] = new[]
+                            {
+                                1,
+                                2,
+                                3,
+                                4,
+                                5,
+                                10,
+                                20
+                            },
                             ["maxConcurrency"] = 20,
                             ["maxBatchSize"] = 100,
                             ["maxDelayMs"] = 5000,

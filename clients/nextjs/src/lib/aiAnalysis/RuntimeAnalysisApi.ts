@@ -4,6 +4,7 @@ import type {
   RuntimeAnalysisHumanApprovalDecision,
   RuntimeAnalysisProviderStatus,
   RuntimeAnalysisRuntimeExecutionResult,
+  RuntimeAnalysisScenarioExecutionObservation,
   RuntimeAnalysisSnapshot,
   RuntimeAnalysisSnapshotRequest,
 } from "./RuntimeAnalysisType";
@@ -95,6 +96,28 @@ export class RuntimeAnalysisApi {
     return this.parseResponse<RuntimeAnalysisRuntimeExecutionResult>(
       result,
       "human approval"
+    );
+  }
+
+  public async completeScenarioExecution(
+    executionId: string,
+    observation: RuntimeAnalysisScenarioExecutionObservation,
+    signal?: AbortSignal
+  ): Promise<RuntimeAnalysisRuntimeExecutionResult> {
+    const result = await this.rbacApi.call(
+      {
+        name: "RUNTIME ANALYSIS SCENARIO EXECUTION",
+        method: "POST",
+        path: `/runtime-analysis/executions/${encodeURIComponent(executionId)}/scenario-execution`,
+        body: observation,
+      },
+      undefined,
+      signal
+    );
+
+    return this.parseResponse<RuntimeAnalysisRuntimeExecutionResult>(
+      result,
+      "scenario execution"
     );
   }
 

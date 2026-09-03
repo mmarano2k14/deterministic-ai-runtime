@@ -69,9 +69,9 @@ export function AiHumanApprovalCard(
             loading={isDeciding}
             disabled={isDeciding}
             onClick={() => onDecision("approve")}
-            title="Approve the proposal and continue the same durable ExecutionId"
+            title="Approve the proposal; the same durable ExecutionId will continue to the approved-scenario execution boundary"
           >
-            Approve &amp; continue
+            Approve &amp; run
           </Button>
         </div>
       ) : null}

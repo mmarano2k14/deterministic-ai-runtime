@@ -18,17 +18,21 @@ namespace MultiplexedRbac.Sample.Crm.Api.Controllers
         private readonly IAiRuntimeAnalysisProvider _analysisProvider;
         private readonly IRuntimeAnalysisRuntimeExecutor _runtimeExecutor;
         private readonly IRuntimeAnalysisHumanApprovalService _approvalService;
+        private readonly IRuntimeAnalysisScenarioExecutionService
+            _scenarioExecutionService;
 
         public RuntimeAnalysisController(
             IRuntimeAnalysisSnapshotBuilder snapshotBuilder,
             IAiRuntimeAnalysisProvider analysisProvider,
             IRuntimeAnalysisRuntimeExecutor runtimeExecutor,
-            IRuntimeAnalysisHumanApprovalService approvalService)
+            IRuntimeAnalysisHumanApprovalService approvalService,
+            IRuntimeAnalysisScenarioExecutionService scenarioExecutionService)
         {
             _snapshotBuilder = snapshotBuilder;
             _analysisProvider = analysisProvider;
             _runtimeExecutor = runtimeExecutor;
             _approvalService = approvalService;
+            _scenarioExecutionService = scenarioExecutionService;
         }
 
         [HttpGet("provider-status")]
@@ -136,6 +140,61 @@ namespace MultiplexedRbac.Sample.Crm.Api.Controllers
                 return StatusCode(
                     StatusCodes.Status502BadGateway,
                     new { error = exception.Message });
+            }
+        }
+
+        [HttpPost("executions/{executionId}/scenario-execution")]
+        [ProducesResponseType<RuntimeAnalysisRuntimeExecutionResult>(
+            StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status409Conflict)]
+        [ProducesResponseType(StatusCodes.Status502BadGateway)]
+        public async Task<ActionResult<RuntimeAnalysisRuntimeExecutionResult>>
+            CompleteScenarioExecutionAsync(
+                string executionId,
+                [FromBody] RuntimeAnalysisScenarioExecutionObservation observation,
+                CancellationToken cancellationToken)
+        {
+            try
+            {
+                var completedBy =
+                    User.Identity?.Name
+                    ?? "authenticated-user";
+
+                var result = await _scenarioExecutionService.CompleteAsync(
+                        executionId,
+                        observation,
+                        completedBy,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return Ok(
+                    result);
+            }
+            catch (ArgumentException exception)
+            {
+                return BadRequest(
+                    new
+                    {
+                        error = exception.Message
+                    });
+            }
+            catch (InvalidOperationException exception)
+            {
+                return Conflict(
+                    new
+                    {
+                        error = exception.Message
+                    });
+            }
+            catch (RuntimeAnalysisRuntimeExecutionException exception)
+            {
+                return StatusCode(
+                    StatusCodes.Status502BadGateway,
+                    new
+                    {
+                        error = exception.Message
+                    });
             }
         }
 

@@ -4,9 +4,9 @@ import { JSX } from "react";
 import type { BurstRuntime } from "@/lib/console/burst/runtime/BurstMachineType";
 import type { ConsoleLogEntry } from "@/lib/infrastructure/logs/inMemoryLogType";
 import type { MultiplexedRbacApi } from "@/lib/rbac/MultiplexedRbacApi";
+import type { RuntimeAnalysisSuggestedScenario } from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import { ConsoleSidePanel } from "@/components/ui/ConsoleSidePanel";
 import { AiAnalysisPanel } from "./AiAnalysisPanel";
-
 
 export type AiAnalysisSidebarProps = {
   isCollapsed: boolean;
@@ -15,6 +15,10 @@ export type AiAnalysisSidebarProps = {
   maxInFlight: string;
   rotationOverlapMs: string;
   api: MultiplexedRbacApi;
+  onExecuteScenario: (
+    scenario: RuntimeAnalysisSuggestedScenario,
+    planKey: string
+  ) => Promise<void>;
   onCollapsedChange: (next: boolean) => void;
 };
 
@@ -26,6 +30,7 @@ export function AiAnalysisSidebar(props: AiAnalysisSidebarProps): JSX.Element {
     maxInFlight,
     rotationOverlapMs,
     api,
+    onExecuteScenario,
     onCollapsedChange,
   } = props;
 
@@ -53,6 +58,7 @@ export function AiAnalysisSidebar(props: AiAnalysisSidebarProps): JSX.Element {
         maxInFlight={maxInFlight}
         rotationOverlapMs={rotationOverlapMs}
         api={api}
+        onExecuteScenario={onExecuteScenario}
       />
     </ConsoleSidePanel>
   );

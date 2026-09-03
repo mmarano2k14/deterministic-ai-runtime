@@ -41,6 +41,11 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Policies
                     Key,
                     "maxMaxInFlight");
 
+            var allowedMaxInFlightValues =
+                context.GetRequiredPolicyConfig<int[]>(
+                    Key,
+                    "allowedMaxInFlightValues");
+
             var maximumConcurrency =
                 context.GetRequiredPolicyConfig<int>(
                     Key,
@@ -85,6 +90,13 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Policies
             {
                 return Block(
                     $"MaxInFlight must be between {minimumMaxInFlight} and {maximumMaxInFlight}.");
+            }
+
+            if (!allowedMaxInFlightValues.Contains(
+                    scenario.MaxInFlight))
+            {
+                return Block(
+                    $"MaxInFlight '{scenario.MaxInFlight}' is not supported by the configured console execution boundary. Allowed values: {string.Join(", ", allowedMaxInFlightValues)}.");
             }
 
             if (scenario.Concurrency is < 0

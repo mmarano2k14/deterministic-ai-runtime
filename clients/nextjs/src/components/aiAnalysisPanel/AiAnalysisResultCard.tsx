@@ -3,22 +3,31 @@ import type {
   RuntimeAnalysisHumanApprovalDecision,
   RuntimeAnalysisHumanApprovalResult,
   RuntimeAnalysisResult,
+  RuntimeAnalysisScenarioExecutionResult,
   RuntimeAnalysisScenarioPolicyValidationResult,
+  RuntimeAnalysisVerificationResult,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import { AiAnalysisObservations } from "./AiAnalysisObservations";
 import { AiSuggestedScenarioCard } from "./AiSuggestedScenarioCard";
+import { AiScenarioExecutionCard } from "./AiScenarioExecutionCard";
+import { AiVerificationCard } from "./AiVerificationCard";
 import styles from "./AiAnalysisPanel.module.css";
 
 export type AiAnalysisResultCardProps = {
   result: RuntimeAnalysisResult | null;
   policyValidation: RuntimeAnalysisScenarioPolicyValidationResult | null;
   humanApproval: RuntimeAnalysisHumanApprovalResult | null;
+  scenarioExecution: RuntimeAnalysisScenarioExecutionResult | null;
+  verification: RuntimeAnalysisVerificationResult | null;
   error: string | null;
   isDecidingApproval: boolean;
   approvalError: string | null;
   onApprovalDecision: (
     decision: RuntimeAnalysisHumanApprovalDecision
   ) => void;
+  isExecutingScenario: boolean;
+  scenarioExecutionError: string | null;
+  onExecuteScenario: () => void;
 };
 
 export function AiAnalysisResultCard(
@@ -28,10 +37,15 @@ export function AiAnalysisResultCard(
     result,
     policyValidation,
     humanApproval,
+    scenarioExecution,
+    verification,
     error,
     isDecidingApproval,
     approvalError,
     onApprovalDecision,
+    isExecutingScenario,
+    scenarioExecutionError,
+    onExecuteScenario,
   } = props;
 
   if (error) {
@@ -54,6 +68,17 @@ export function AiAnalysisResultCard(
       </section>
     );
   }
+
+  const approvalBoundaryResolved =
+    humanApproval.status !== "Pending";
+
+  const scenarioExecutionStarted =
+    scenarioExecution !== null &&
+    scenarioExecution.status !== "NotStarted";
+
+  const showPostApprovalRuntime =
+    approvalBoundaryResolved &&
+    scenarioExecutionStarted;
 
   return (
     <section className={`${styles.section} ${styles.resultSection}`}>
@@ -87,6 +112,21 @@ export function AiAnalysisResultCard(
         approvalError={approvalError}
         onApprovalDecision={onApprovalDecision}
       />
+
+      {showPostApprovalRuntime && scenarioExecution ? (
+        <AiScenarioExecutionCard
+          execution={scenarioExecution}
+          isExecuting={isExecutingScenario}
+          error={scenarioExecutionError}
+          onExecute={onExecuteScenario}
+        />
+      ) : null}
+
+      {showPostApprovalRuntime && verification ? (
+        <AiVerificationCard
+          verification={verification}
+        />
+      ) : null}
     </section>
   );
 }

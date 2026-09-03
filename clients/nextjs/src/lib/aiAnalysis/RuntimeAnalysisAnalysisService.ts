@@ -5,6 +5,7 @@ import type {
   RuntimeAnalysisPreparedContext,
   RuntimeAnalysisProviderStatus,
   RuntimeAnalysisRuntimeExecutionResult,
+  RuntimeAnalysisScenarioExecutionObservation,
 } from "./RuntimeAnalysisType";
 
 export class RuntimeAnalysisAnalysisService {
@@ -42,6 +43,18 @@ export class RuntimeAnalysisAnalysisService {
     return this.api.decideHumanApproval(
       executionId,
       decision,
+      signal
+    );
+  }
+
+  public completeScenarioExecution(
+    executionId: string,
+    observation: RuntimeAnalysisScenarioExecutionObservation,
+    signal?: AbortSignal
+  ): Promise<RuntimeAnalysisRuntimeExecutionResult> {
+    return this.api.completeScenarioExecution(
+      executionId,
+      observation,
       signal
     );
   }

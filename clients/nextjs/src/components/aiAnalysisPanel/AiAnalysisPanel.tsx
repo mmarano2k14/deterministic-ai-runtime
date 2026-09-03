@@ -1,6 +1,6 @@
 "use client";
 
-import { JSX, useEffect, useMemo, useState } from "react";
+import { JSX, useEffect, useMemo, useRef, useState } from "react";
 import type { BurstRuntime } from "@/lib/console/burst/runtime/BurstMachineType";
 import type { ConsoleLogEntry } from "@/lib/infrastructure/logs/inMemoryLogType";
 import type { MultiplexedRbacApi } from "@/lib/rbac/MultiplexedRbacApi";
@@ -9,15 +9,23 @@ import type {
   AiAnalysisStatus,
 } from "@/lib/aiAnalysis/AiAnalysisType";
 import { AiAnalysisContextSnapshotBuilder } from "@/lib/aiAnalysis/AiAnalysisContextSnapshotBuilder";
+import { AiAnalysisUxModel } from "@/lib/aiAnalysis/AiAnalysisUxModel";
 import { RuntimeAnalysisAnalysisService } from "@/lib/aiAnalysis/RuntimeAnalysisAnalysisService";
 import { RuntimeAnalysisSnapshotService } from "@/lib/aiAnalysis/RuntimeAnalysisSnapshotService";
+import { RuntimeAnalysisScenarioObservationBuilder } from "@/lib/aiAnalysis/RuntimeAnalysisScenarioObservationBuilder";
 import type {
   RuntimeAnalysisHumanApprovalDecision,
   RuntimeAnalysisPreparedContext,
   RuntimeAnalysisProviderStatus,
   RuntimeAnalysisRuntimeExecutionResult,
+  RuntimeAnalysisSuggestedScenario,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import { AiAnalysisContextCard } from "./AiAnalysisContextCard";
+import {
+  AiAnalysisActivityIndicator,
+  type AiAnalysisActivityLog,
+  type AiAnalysisActivityPhase,
+} from "./AiAnalysisActivityIndicator";
 import { AiAnalysisPromptPanel } from "./AiAnalysisPromptPanel";
 import { AiAnalysisResultCard } from "./AiAnalysisResultCard";
 import { AiRuntimeExecutionCard } from "./AiRuntimeExecutionCard";
@@ -31,18 +39,35 @@ export type AiAnalysisPanelProps = {
   maxInFlight: string;
   rotationOverlapMs: string;
   api: MultiplexedRbacApi;
+  onExecuteScenario: (
+    scenario: RuntimeAnalysisSuggestedScenario,
+    planKey: string
+  ) => Promise<void>;
 };
 
 export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
-  const { model, logs, maxInFlight, rotationOverlapMs, api } = props;
+  const {
+    model,
+    logs,
+    maxInFlight,
+    rotationOverlapMs,
+    api,
+    onExecuteScenario,
+  } = props;
 
   const [scope, setScope] = useState<AiAnalysisScope>("current-run");
-  const [question, setQuestion] = useState("");
+  const [question, setQuestion] = useState(
+    AiAnalysisUxModel.promptForAction("analyze")
+  );
   const [providerStatus, setProviderStatus] =
     useState<RuntimeAnalysisProviderStatus | null>(null);
-  const [isPreparingContext, setIsPreparingContext] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisPhase, setAnalysisPhase] =
+    useState<AiAnalysisActivityPhase | null>(null);
+  const [analysisStartedAt, setAnalysisStartedAt] =
+    useState<number | null>(null);
   const [isDecidingApproval, setIsDecidingApproval] = useState(false);
+  const [isExecutingScenario, setIsExecutingScenario] = useState(false);
   const [preparedContext, setPreparedContext] =
     useState<RuntimeAnalysisPreparedContext | null>(null);
   const [runtimeExecution, setRuntimeExecution] =
@@ -50,6 +75,18 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [scenarioExecutionError, setScenarioExecutionError] =
+    useState<string | null>(null);
+  const [pendingScenarioExecution, setPendingScenarioExecution] =
+    useState<{
+      executionId: string;
+      previousStartedAt: number | undefined;
+    } | null>(null);
+  const reportingScenarioExecutionIdRef = useRef<string | null>(null);
+  const approvedScenarioRunInProgressRef = useRef(false);
+  const observedRunStartedAtRef = useRef<number | undefined>(
+    model.report?.timing.startedAt
+  );
 
   const contextSnapshot = useMemo(
     () => AiAnalysisContextSnapshotBuilder.build(model, logs.length),
@@ -82,10 +119,115 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
   useEffect(() => {
     setPreparedContext(null);
     setRuntimeExecution(null);
+    setAnalysisPhase(null);
+    setAnalysisStartedAt(null);
     setSnapshotError(null);
     setAnalysisError(null);
     setApprovalError(null);
-  }, [scope, runStartedAt]);
+    setScenarioExecutionError(null);
+    setPendingScenarioExecution(null);
+    reportingScenarioExecutionIdRef.current = null;
+    approvedScenarioRunInProgressRef.current = false;
+  }, [scope]);
+
+  useEffect(() => {
+    const previousStartedAt =
+      observedRunStartedAtRef.current;
+
+    observedRunStartedAtRef.current =
+      runStartedAt;
+
+    if (
+      previousStartedAt === runStartedAt ||
+      approvedScenarioRunInProgressRef.current
+    ) {
+      return;
+    }
+
+    // A new manually-started/external burst invalidates the previously
+    // prepared analysis context. An AI-approved burst is deliberately excluded:
+    // it is part of the same durable runtime-analysis workflow.
+    setPreparedContext(null);
+    setRuntimeExecution(null);
+    setAnalysisPhase(null);
+    setAnalysisStartedAt(null);
+    setSnapshotError(null);
+    setAnalysisError(null);
+    setApprovalError(null);
+    setScenarioExecutionError(null);
+    setPendingScenarioExecution(null);
+    reportingScenarioExecutionIdRef.current = null;
+  }, [runStartedAt]);
+
+  useEffect(() => {
+    if (!pendingScenarioExecution) {
+      return;
+    }
+
+    const startedAt = model.report?.timing.startedAt;
+
+    if (
+      startedAt === undefined ||
+      startedAt === pendingScenarioExecution.previousStartedAt
+    ) {
+      return;
+    }
+
+    if (model.state !== "Completed" && model.state !== "Error") {
+      return;
+    }
+
+    if (
+      reportingScenarioExecutionIdRef.current ===
+      pendingScenarioExecution.executionId
+    ) {
+      return;
+    }
+
+    reportingScenarioExecutionIdRef.current =
+      pendingScenarioExecution.executionId;
+
+    let observation;
+
+    try {
+      observation =
+        RuntimeAnalysisScenarioObservationBuilder.build(model);
+    } catch (error: unknown) {
+      setScenarioExecutionError(errorMessage(error));
+      setIsExecutingScenario(false);
+      reportingScenarioExecutionIdRef.current = null;
+      return;
+    }
+
+    void analysisService
+      .completeScenarioExecution(
+        pendingScenarioExecution.executionId,
+        observation
+      )
+      .then((execution) => {
+        setRuntimeExecution(execution);
+        setPendingScenarioExecution(null);
+        setScenarioExecutionError(null);
+        approvedScenarioRunInProgressRef.current = false;
+      })
+      .catch((error: unknown) => {
+        setScenarioExecutionError(errorMessage(error));
+        reportingScenarioExecutionIdRef.current = null;
+        approvedScenarioRunInProgressRef.current = false;
+      })
+      .finally(() => {
+        setIsExecutingScenario(false);
+      });
+  }, [
+    analysisService,
+    model,
+    pendingScenarioExecution,
+  ]);
+
+  const latestAnalysisLog = useMemo(
+    () => resolveLatestAnalysisLog(logs, analysisPhase, analysisStartedAt),
+    [logs, analysisPhase, analysisStartedAt]
+  );
 
   const analysisStatus = resolveAnalysisStatus(
     providerStatus,
@@ -95,20 +237,29 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
 
   const canAnalyze =
     providerStatus?.configured === true &&
-    preparedContext !== null &&
+    AiAnalysisUxModel.isScopeAvailable(scope) &&
     question.trim().length > 0 &&
-    !isPreparingContext &&
     !isAnalyzing;
 
-  async function handlePrepareContext(): Promise<void> {
-    setIsPreparingContext(true);
-    setSnapshotError(null);
+  async function handleAnalyze(): Promise<void> {
+    if (!canAnalyze) {
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setAnalysisStartedAt(Date.now());
+    setAnalysisPhase("preparing-context");
+    setPreparedContext(null);
     setRuntimeExecution(null);
+    setSnapshotError(null);
     setAnalysisError(null);
     setApprovalError(null);
+    setScenarioExecutionError(null);
+
+    let context: RuntimeAnalysisPreparedContext;
 
     try {
-      const context = await snapshotService.prepare({
+      context = await snapshotService.prepare({
         scope,
         model,
         logs,
@@ -118,26 +269,18 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
 
       setPreparedContext(context);
     } catch (error: unknown) {
-      setPreparedContext(null);
       setSnapshotError(errorMessage(error));
-    } finally {
-      setIsPreparingContext(false);
-    }
-  }
-
-  async function handleAnalyze(): Promise<void> {
-    if (!preparedContext) {
+      setAnalysisPhase(null);
+      setAnalysisStartedAt(null);
+      setIsAnalyzing(false);
       return;
     }
 
-    setIsAnalyzing(true);
-    setRuntimeExecution(null);
-    setAnalysisError(null);
-    setApprovalError(null);
+    setAnalysisPhase("analyzing-evidence");
 
     try {
       const execution = await analysisService.analyze(
-        preparedContext,
+        context,
         question.trim()
       );
 
@@ -145,6 +288,8 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     } catch (error: unknown) {
       setAnalysisError(errorMessage(error));
     } finally {
+      setAnalysisPhase(null);
+      setAnalysisStartedAt(null);
       setIsAnalyzing(false);
     }
   }
@@ -158,6 +303,7 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
 
     setIsDecidingApproval(true);
     setApprovalError(null);
+    setScenarioExecutionError(null);
 
     try {
       const execution = await analysisService.decideHumanApproval(
@@ -166,10 +312,60 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
       );
 
       setRuntimeExecution(execution);
+
+      if (
+        decision === "approve" &&
+        execution.scenarioExecution.status === "Pending"
+      ) {
+        await startApprovedScenario(execution);
+      }
     } catch (error: unknown) {
       setApprovalError(errorMessage(error));
     } finally {
       setIsDecidingApproval(false);
+    }
+  }
+
+  async function handleExecuteScenario(): Promise<void> {
+    if (!runtimeExecution) {
+      return;
+    }
+
+    await startApprovedScenario(runtimeExecution);
+  }
+
+  async function startApprovedScenario(
+    execution: RuntimeAnalysisRuntimeExecutionResult
+  ): Promise<void> {
+    if (
+      execution.scenarioExecution.status !== "Pending" ||
+      isExecutingScenario
+    ) {
+      return;
+    }
+
+    const previousStartedAt =
+      model.report?.timing.startedAt;
+
+    approvedScenarioRunInProgressRef.current = true;
+    setIsExecutingScenario(true);
+    setScenarioExecutionError(null);
+    reportingScenarioExecutionIdRef.current = null;
+    setPendingScenarioExecution({
+      executionId: execution.executionId,
+      previousStartedAt,
+    });
+
+    try {
+      await onExecuteScenario(
+        execution.scenarioExecution.scenario,
+        execution.scenarioExecution.planKey
+      );
+    } catch (error: unknown) {
+      approvedScenarioRunInProgressRef.current = false;
+      setPendingScenarioExecution(null);
+      setIsExecutingScenario(false);
+      setScenarioExecutionError(errorMessage(error));
     }
   }
 
@@ -182,8 +378,9 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
         </div>
 
         <p className={styles.text}>
-          Analyze execution evidence, let deterministic policies validate the AI
-          proposal automatically, then stop at a durable human-approval boundary.
+          Analyze evidence, validate the AI proposal with deterministic policies,
+          require human approval, execute through the existing burst runner, then
+          verify the observed outcome in the same durable DAG.
         </p>
       </section>
 
@@ -194,13 +391,14 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
       <AiAnalysisPromptPanel
         scope={scope}
         question={question}
-        isPreparingContext={isPreparingContext}
         isAnalyzing={isAnalyzing}
         canAnalyze={canAnalyze}
         providerHint={providerHint(providerStatus)}
+        activityPhase={analysisPhase}
+        activityStartedAt={analysisStartedAt}
+        latestActivityLog={latestAnalysisLog}
         onScopeChange={setScope}
         onQuestionChange={setQuestion}
-        onPrepareContext={handlePrepareContext}
         onAnalyze={handleAnalyze}
       />
 
@@ -215,13 +413,68 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
         result={runtimeExecution?.result ?? null}
         policyValidation={runtimeExecution?.policyValidation ?? null}
         humanApproval={runtimeExecution?.humanApproval ?? null}
+        scenarioExecution={runtimeExecution?.scenarioExecution ?? null}
+        verification={runtimeExecution?.verification ?? null}
         error={analysisError}
         isDecidingApproval={isDecidingApproval}
         approvalError={approvalError}
         onApprovalDecision={handleApprovalDecision}
+        isExecutingScenario={isExecutingScenario}
+        scenarioExecutionError={scenarioExecutionError}
+        onExecuteScenario={handleExecuteScenario}
       />
     </div>
   );
+}
+
+function resolveLatestAnalysisLog(
+  logs: readonly ConsoleLogEntry[],
+  phase: AiAnalysisActivityPhase | null,
+  analysisStartedAt: number | null
+): AiAnalysisActivityLog | null {
+  if (!phase || analysisStartedAt === null) {
+    return null;
+  }
+
+  const expectedPath =
+    phase === "preparing-context"
+      ? "/runtime-analysis/snapshot"
+      : "/runtime-analysis/analyze";
+
+  const entry = logs.find((candidate) => {
+    if (candidate.kind !== "http" || candidate.path !== expectedPath) {
+      return false;
+    }
+
+    const activityAt =
+      candidate.updatedAt ?? Date.parse(candidate.t);
+
+    return (
+      Number.isFinite(activityAt) &&
+      activityAt >= analysisStartedAt - 250
+    );
+  });
+
+  if (!entry || entry.kind !== "http") {
+    return null;
+  }
+
+  let status = "waiting for response";
+
+  if (entry.error) {
+    status = "request failed";
+  } else if (entry.status !== undefined) {
+    status = entry.statusText
+      ? `${entry.status} ${entry.statusText}`
+      : String(entry.status);
+  }
+
+  return {
+    name: entry.name,
+    method: entry.method,
+    path: entry.path,
+    status,
+  };
 }
 
 function resolveAnalysisStatus(

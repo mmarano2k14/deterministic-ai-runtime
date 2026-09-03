@@ -7,18 +7,24 @@ import type {
   AiAnalysisScope,
 } from "@/lib/aiAnalysis/AiAnalysisType";
 import { AiAnalysisUxModel } from "@/lib/aiAnalysis/AiAnalysisUxModel";
+import {
+  AiAnalysisActivityIndicator,
+  type AiAnalysisActivityLog,
+  type AiAnalysisActivityPhase,
+} from "./AiAnalysisActivityIndicator";
 import styles from "./AiAnalysisPanel.module.css";
 
 export type AiAnalysisPromptPanelProps = {
   scope: AiAnalysisScope;
   question: string;
-  isPreparingContext: boolean;
   isAnalyzing: boolean;
   canAnalyze: boolean;
   providerHint: string;
+  activityPhase: AiAnalysisActivityPhase | null;
+  activityStartedAt: number | null;
+  latestActivityLog: AiAnalysisActivityLog | null;
   onScopeChange: (scope: AiAnalysisScope) => void;
   onQuestionChange: (question: string) => void;
-  onPrepareContext: () => void;
   onAnalyze: () => void;
 };
 
@@ -28,13 +34,14 @@ export function AiAnalysisPromptPanel(
   const {
     scope,
     question,
-    isPreparingContext,
     isAnalyzing,
     canAnalyze,
     providerHint,
+    activityPhase,
+    activityStartedAt,
+    latestActivityLog,
     onScopeChange,
     onQuestionChange,
-    onPrepareContext,
     onAnalyze,
   } = props;
 
@@ -55,6 +62,7 @@ export function AiAnalysisPromptPanel(
         <select
           id="ai-analysis-scope"
           value={scope}
+          disabled={isAnalyzing}
           onChange={(event) =>
             onScopeChange(event.target.value as AiAnalysisScope)
           }
@@ -77,15 +85,24 @@ export function AiAnalysisPromptPanel(
       </div>
 
       <div className={styles.quickActions}>
-        {AiAnalysisUxModel.quickActions().map((action) => (
-          <Button
-            key={action.key}
-            onClick={() => handleQuickAction(action.key)}
-            title={action.prompt}
-          >
-            {action.label}
-          </Button>
-        ))}
+        {AiAnalysisUxModel.quickActions().map((action) => {
+          const isSelected = question === action.prompt;
+
+          return (
+            <button
+              key={action.key}
+              type="button"
+              className={styles.quickActionButton}
+              data-selected={isSelected}
+              aria-pressed={isSelected}
+              disabled={isAnalyzing}
+              onClick={() => handleQuickAction(action.key)}
+              title={action.prompt}
+            >
+              {action.label}
+            </button>
+          );
+        })}
       </div>
 
       <div className={styles.question}>
@@ -94,6 +111,7 @@ export function AiAnalysisPromptPanel(
         <textarea
           id="ai-analysis-question"
           value={question}
+          disabled={isAnalyzing}
           onChange={(event) => onQuestionChange(event.target.value)}
           placeholder="Why did latency increase? Which events caused this failure? What scenario should validate the hypothesis?"
         />
@@ -102,24 +120,27 @@ export function AiAnalysisPromptPanel(
 
         <div className={styles.analysisActions}>
           <Button
-            loading={isPreparingContext}
-            disabled={!isScopeAvailable || isAnalyzing}
-            onClick={onPrepareContext}
-            title="Build and validate the bounded runtime analysis snapshot"
-          >
-            Prepare context
-          </Button>
-
-          <Button
             variant="primary"
             loading={isAnalyzing}
-            disabled={!canAnalyze}
+            disabled={!canAnalyze || !isScopeAvailable}
             onClick={onAnalyze}
-            title="Analyze the prepared runtime evidence with the configured AI provider"
+            title="Prepare the bounded runtime context and analyze it with the configured AI provider"
           >
-            Ask AI
+            {isAnalyzing ? "Working…" : "Ask AI"}
           </Button>
         </div>
+
+        {
+          isAnalyzing &&
+          activityPhase &&
+          activityStartedAt !== null ? (
+            <AiAnalysisActivityIndicator
+              phase={activityPhase}
+              startedAt={activityStartedAt}
+              latestLog={latestActivityLog}
+            />
+          ) : null
+        }
       </div>
     </section>
   );

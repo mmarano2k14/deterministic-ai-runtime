@@ -17,8 +17,10 @@ import { ConsoleSidePanel } from "@/components/ui/ConsoleSidePanel";
 import { ControlSidebarTabs } from "@/components/ui/ControlSidebarTabs";
 import { ConsoleStatusBar } from "@/components/ui/status/ConsoleStatusBar";
 import { BurstScenarioDefinition } from "@/lib/console/burst/scenarios/BurstScenarioPresetType";
+import { RuntimeAnalysisApprovedScenarioMapper } from "@/lib/aiAnalysis/RuntimeAnalysisApprovedScenarioMapper";
+import type { RuntimeAnalysisSuggestedScenario } from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import { useBurstController } from "@/lib/console/burst/useBurstController";
-import { InFlightMaxValue } from "@/lib/console/ConsoleType";
+import type { InFlightMaxValue } from "@/lib/console/ConsoleType";
 import { useConsoleContext } from "@/lib/console/contextProvider/useConsoleContext";
 import {
   ConsoleControlTabKey,
@@ -63,6 +65,34 @@ export default function Page(): JSX.Element {
     }
 
     await burst.actions.start(scenario.burstConfig);
+  }
+
+  async function handleExecuteAiScenario(
+    scenario: RuntimeAnalysisSuggestedScenario,
+    planKey: string
+  ): Promise<void> {
+    const launch =
+      RuntimeAnalysisApprovedScenarioMapper.map(
+        scenario,
+        planKey
+      );
+
+    dispatch({
+      type: "maxInFlightChanged",
+      maxInFlightValue:
+        launch.maxInFlight,
+    });
+
+    dispatch({
+      type: "rotationOverlapMsChange",
+      rotationOverlapMs:
+        launch.rotationOverlapMs,
+    });
+
+    // IMPORTANT: reuse the exact same execution path as the manual presets.
+    await burst.actions.start(
+      launch.burstConfig
+    );
   }
 
   function handleControlSidebarCollapsedChange(next: boolean): void {
@@ -218,6 +248,7 @@ export default function Page(): JSX.Element {
             maxInFlight={String(state.maxInFlight)}
             rotationOverlapMs={String(state.rotationOverlapMs)}
             api={api}
+            onExecuteScenario={handleExecuteAiScenario}
             onCollapsedChange={handleAiSidebarCollapsedChange}
           />
         </div>

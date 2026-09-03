@@ -42,7 +42,7 @@ export type RuntimeAnalysisEvidenceInput = {
   stepId?: string;
   childExecutionId?: string;
   policyKey?: string;
-  metadata?: Record<string, string | undefined>;
+  metadata?: Record<string, string | null | undefined>;
 };
 
 export type RuntimeAnalysisSnapshotRequest = {
@@ -172,4 +172,70 @@ export type RuntimeAnalysisRuntimeExecutionResult = {
   result: RuntimeAnalysisResult;
   policyValidation: RuntimeAnalysisScenarioPolicyValidationResult;
   humanApproval: RuntimeAnalysisHumanApprovalResult;
+  scenarioExecution: RuntimeAnalysisScenarioExecutionResult;
+  verification: RuntimeAnalysisVerificationResult;
+};
+
+
+export type RuntimeAnalysisScenarioExecutionStatus =
+  | "NotStarted"
+  | "Pending"
+  | "Completed"
+  | "Failed"
+  | "NotExecuted";
+
+export type RuntimeAnalysisScenarioExecutionObservation = {
+  clientState: string;
+  startedAtUtc: string;
+  finishedAtUtc: string;
+  completed: number;
+  inFlight: number;
+  ok: number;
+  unauthorized: number;
+  forbidden: number;
+  tooManyRequests: number;
+  otherHttp: number;
+  errors: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  elapsedMs: number | null;
+  error: string | null;
+};
+
+export type RuntimeAnalysisScenarioExecutionResult = {
+  required: boolean;
+  status: RuntimeAnalysisScenarioExecutionStatus;
+  continuationId: string | null;
+  requestedAtUtc: string | null;
+  completedAtUtc: string | null;
+  scenario: RuntimeAnalysisSuggestedScenario;
+  planKey: string;
+  observation: RuntimeAnalysisScenarioExecutionObservation | null;
+  completedBy: string | null;
+  message: string | null;
+};
+
+export type RuntimeAnalysisVerificationStatus =
+  | "Pending"
+  | "Verified"
+  | "Skipped";
+
+export type RuntimeAnalysisVerificationResult = {
+  status: RuntimeAnalysisVerificationStatus;
+  executed: boolean;
+  completedMatchesPlan: boolean;
+  noResidualInFlight: boolean;
+  outcomeCountConsistent: boolean;
+  expectedRequests: number;
+  observedCompleted: number;
+  observedOk: number;
+  observedHttpNonOk: number;
+  observedErrors: number;
+  baselineP50Ms: number | null;
+  observedP50Ms: number | null;
+  p50DeltaMs: number | null;
+  baselineP95Ms: number | null;
+  observedP95Ms: number | null;
+  p95DeltaMs: number | null;
+  summary: string;
 };

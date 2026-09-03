@@ -16,10 +16,12 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 
         private readonly IAiDagExecutionStore _dagStore;
         private readonly IRuntimeAnalysisHumanApprovalStore _approvalStore;
+        private readonly IRuntimeAnalysisScenarioExecutionStore _executionStore;
 
         public RuntimeAnalysisExecutionResultReader(
             IAiDagExecutionStore dagStore,
-            IRuntimeAnalysisHumanApprovalStore approvalStore)
+            IRuntimeAnalysisHumanApprovalStore approvalStore,
+            IRuntimeAnalysisScenarioExecutionStore executionStore)
         {
             _dagStore =
                 dagStore
@@ -29,6 +31,10 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                 approvalStore
                 ?? throw new ArgumentNullException(
                     nameof(approvalStore));
+            _executionStore =
+                executionStore
+                ?? throw new ArgumentNullException(
+                    nameof(executionStore));
         }
 
         public async Task<RuntimeAnalysisRuntimeExecutionResult> ReadAsync(
@@ -44,15 +50,18 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            var analysis = DeserializeRequiredOutput<RuntimeAnalysisResult>(
-                state,
-                RuntimeAnalysisPipelineDefinitionFactory.AnalyzeStepName,
-                "AI analysis");
+            var analysis =
+                DeserializeRequiredOutput<RuntimeAnalysisResult>(
+                    state,
+                    RuntimeAnalysisPipelineDefinitionFactory.AnalyzeStepName,
+                    "AI analysis");
 
             var policyValidation =
-                DeserializeRequiredOutput<RuntimeAnalysisScenarioPolicyValidationResult>(
+                DeserializeRequiredOutput<
+                    RuntimeAnalysisScenarioPolicyValidationResult>(
                     state,
-                    RuntimeAnalysisPipelineDefinitionFactory.ValidateScenarioStepName,
+                    RuntimeAnalysisPipelineDefinitionFactory
+                        .ValidateScenarioStepName,
                     "policy validation");
 
             var approval = await ReadApprovalAsync(
@@ -61,8 +70,17 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            var approvalStep = state.Steps[
-                RuntimeAnalysisPipelineDefinitionFactory.AwaitHumanApprovalStepName];
+            var scenarioExecution =
+                await ReadScenarioExecutionAsync(
+                        state,
+                        executionId,
+                        policyValidation,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            var verification = ReadVerification(
+                state,
+                scenarioExecution);
 
             return new RuntimeAnalysisRuntimeExecutionResult
             {
@@ -71,16 +89,44 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                 ExecutionId = executionId,
                 PipelineName = pipelineName,
                 StepName = ResolveCurrentStepName(
-                    approvalStep),
+                    state),
                 RuntimeStatus = runtimeStatus,
                 Result = analysis,
                 PolicyValidation = policyValidation,
-                HumanApproval = approval
+                HumanApproval = approval,
+                ScenarioExecution = scenarioExecution,
+                Verification = verification
             };
         }
 
         public async Task<AiStepExecutionStatus> GetApprovalStepStatusAsync(
             string executionId,
+            CancellationToken cancellationToken)
+        {
+            return await GetStepStatusAsync(
+                    executionId,
+                    RuntimeAnalysisPipelineDefinitionFactory
+                        .AwaitHumanApprovalStepName,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        public async Task<AiStepExecutionStatus>
+            GetScenarioExecutionStepStatusAsync(
+                string executionId,
+                CancellationToken cancellationToken)
+        {
+            return await GetStepStatusAsync(
+                    executionId,
+                    RuntimeAnalysisPipelineDefinitionFactory
+                        .ExecuteApprovedScenarioStepName,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        private async Task<AiStepExecutionStatus> GetStepStatusAsync(
+            string executionId,
+            string stepName,
             CancellationToken cancellationToken)
         {
             var state = await GetStateAsync(
@@ -89,11 +135,11 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                 .ConfigureAwait(false);
 
             if (!state.Steps.TryGetValue(
-                    RuntimeAnalysisPipelineDefinitionFactory.AwaitHumanApprovalStepName,
+                    stepName,
                     out var step))
             {
                 throw new RuntimeAnalysisRuntimeExecutionException(
-                    $"Execution '{executionId}' does not contain human approval step '{RuntimeAnalysisPipelineDefinitionFactory.AwaitHumanApprovalStepName}'.");
+                    $"Execution '{executionId}' does not contain step '{stepName}'.");
             }
 
             return step.Status;
@@ -117,11 +163,12 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
             CancellationToken cancellationToken)
         {
             if (!state.Steps.TryGetValue(
-                    RuntimeAnalysisPipelineDefinitionFactory.AwaitHumanApprovalStepName,
+                    RuntimeAnalysisPipelineDefinitionFactory
+                        .AwaitHumanApprovalStepName,
                     out var step))
             {
                 throw new RuntimeAnalysisRuntimeExecutionException(
-                    $"Execution '{executionId}' does not contain human approval step '{RuntimeAnalysisPipelineDefinitionFactory.AwaitHumanApprovalStepName}'.");
+                    $"Execution '{executionId}' does not contain human approval step.");
             }
 
             if (step.Status == AiStepExecutionStatus.WaitingForExternal)
@@ -141,13 +188,15 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                     RequestedAtUtc = record.RequestedAtUtc,
                     DecidedAtUtc = record.DecidedAtUtc,
                     DecidedBy = record.DecidedBy,
-                    Message = "Deterministic policies passed. Explicit human approval is required before execution can continue."
+                    Message =
+                        "Deterministic policies passed. Explicit human approval is required before execution can continue."
                 };
             }
 
             if (step.Status == AiStepExecutionStatus.Completed)
             {
-                return DeserializeRequiredStepOutput<RuntimeAnalysisHumanApprovalResult>(
+                return DeserializeRequiredStepOutput<
+                    RuntimeAnalysisHumanApprovalResult>(
                     step,
                     "human approval");
             }
@@ -156,12 +205,182 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                 $"Human approval step for execution '{executionId}' is in unexpected status '{step.Status}'.");
         }
 
-        private static string ResolveCurrentStepName(
-            AiStepState approvalStep)
+        private async Task<RuntimeAnalysisScenarioExecutionResult>
+            ReadScenarioExecutionAsync(
+                AiExecutionState state,
+                string executionId,
+                RuntimeAnalysisScenarioPolicyValidationResult policyValidation,
+                CancellationToken cancellationToken)
         {
-            return approvalStep.Status == AiStepExecutionStatus.WaitingForExternal
-                ? RuntimeAnalysisPipelineDefinitionFactory.AwaitHumanApprovalStepName
-                : approvalStep.StepName;
+            if (!state.Steps.TryGetValue(
+                    RuntimeAnalysisPipelineDefinitionFactory
+                        .ExecuteApprovedScenarioStepName,
+                    out var step))
+            {
+                return CreateNotStartedScenarioExecution(
+                    policyValidation,
+                    "Approved scenario execution step has not been created yet.");
+            }
+
+            if (step.Status == AiStepExecutionStatus.None)
+            {
+                return CreateNotStartedScenarioExecution(
+                    policyValidation,
+                    "Approved scenario execution has not started because the human-approval boundary has not completed yet.");
+            }
+
+            if (step.Status == AiStepExecutionStatus.WaitingForExternal)
+            {
+                var record = await _executionStore.GetAsync(
+                        executionId,
+                        cancellationToken)
+                    .ConfigureAwait(false)
+                    ?? throw new RuntimeAnalysisRuntimeExecutionException(
+                        $"Execution '{executionId}' is waiting for approved scenario execution without a durable execution record.");
+
+                return new RuntimeAnalysisScenarioExecutionResult
+                {
+                    Required = true,
+                    Status = record.Status,
+                    ContinuationId = record.ContinuationId,
+                    RequestedAtUtc = record.RequestedAtUtc,
+                    CompletedAtUtc = record.CompletedAtUtc,
+                    Scenario = record.Scenario,
+                    PlanKey = record.PlanKey,
+                    Observation = record.Observation,
+                    CompletedBy = record.CompletedBy,
+                    Message =
+                        "Human approval accepted. The runtime is parked while the existing Next.js BurstController executes the approved scenario."
+                };
+            }
+
+            if (step.Status == AiStepExecutionStatus.Completed)
+            {
+                return DeserializeRequiredStepOutput<
+                    RuntimeAnalysisScenarioExecutionResult>(
+                    step,
+                    "approved scenario execution");
+            }
+
+            return new RuntimeAnalysisScenarioExecutionResult
+            {
+                Required = true,
+                Status =
+                    RuntimeAnalysisScenarioExecutionStatuses.Pending,
+                Scenario = policyValidation.Scenario,
+                PlanKey = policyValidation.PlanKey,
+                Message =
+                    $"Approved scenario execution step is currently '{step.Status}'."
+            };
+        }
+
+        private static RuntimeAnalysisScenarioExecutionResult
+            CreateNotStartedScenarioExecution(
+                RuntimeAnalysisScenarioPolicyValidationResult policyValidation,
+                string message)
+        {
+            return new RuntimeAnalysisScenarioExecutionResult
+            {
+                Required = false,
+                Status =
+                    RuntimeAnalysisScenarioExecutionStatuses.NotStarted,
+                Scenario = policyValidation.Scenario,
+                PlanKey = policyValidation.PlanKey,
+                Message = message
+            };
+        }
+
+        private static RuntimeAnalysisVerificationResult ReadVerification(
+            AiExecutionState state,
+            RuntimeAnalysisScenarioExecutionResult scenarioExecution)
+        {
+            if (state.Steps.TryGetValue(
+                    RuntimeAnalysisPipelineDefinitionFactory
+                        .VerifyScenarioOutcomeStepName,
+                    out var step)
+                && step.Status == AiStepExecutionStatus.Completed)
+            {
+                return DeserializeRequiredStepOutput<
+                    RuntimeAnalysisVerificationResult>(
+                    step,
+                    "outcome verification");
+            }
+
+            if (string.Equals(
+                    scenarioExecution.Status,
+                    RuntimeAnalysisScenarioExecutionStatuses.NotExecuted,
+                    StringComparison.Ordinal))
+            {
+                return new RuntimeAnalysisVerificationResult
+                {
+                    Status =
+                        RuntimeAnalysisVerificationStatuses.Skipped,
+                    Executed = false,
+                    ExpectedRequests =
+                        scenarioExecution.Scenario.TotalRequests,
+                    Summary =
+                        "Verification was skipped because the proposed scenario did not cross the execution boundary."
+                };
+            }
+
+            return new RuntimeAnalysisVerificationResult
+            {
+                Status =
+                    RuntimeAnalysisVerificationStatuses.Pending,
+                Executed = false,
+                ExpectedRequests =
+                    scenarioExecution.Scenario.TotalRequests,
+                Summary =
+                    string.Equals(
+                        scenarioExecution.Status,
+                        RuntimeAnalysisScenarioExecutionStatuses.Completed,
+                        StringComparison.Ordinal)
+                        ? "Observed scenario execution has been returned; deterministic verification is completing in the same DAG."
+                        : "Verification is waiting for the approved scenario result to resume the DAG."
+            };
+        }
+
+        private static string ResolveCurrentStepName(
+            AiExecutionState state)
+        {
+            var orderedNames = new[]
+            {
+                RuntimeAnalysisPipelineDefinitionFactory.AnalyzeStepName,
+                RuntimeAnalysisPipelineDefinitionFactory.ValidateScenarioStepName,
+                RuntimeAnalysisPipelineDefinitionFactory.AwaitHumanApprovalStepName,
+                RuntimeAnalysisPipelineDefinitionFactory.ExecuteApprovedScenarioStepName,
+                RuntimeAnalysisPipelineDefinitionFactory.VerifyScenarioOutcomeStepName
+            };
+
+            foreach (var stepName in orderedNames)
+            {
+                if (!state.Steps.TryGetValue(
+                        stepName,
+                        out var step))
+                {
+                    continue;
+                }
+
+                if (step.Status == AiStepExecutionStatus.WaitingForExternal)
+                {
+                    return stepName;
+                }
+            }
+
+            for (var index = orderedNames.Length - 1;
+                 index >= 0;
+                 index--)
+            {
+                if (state.Steps.TryGetValue(
+                        orderedNames[index],
+                        out var step)
+                    && step.Status == AiStepExecutionStatus.Completed)
+                {
+                    return step.StepName;
+                }
+            }
+
+            return RuntimeAnalysisPipelineDefinitionFactory.AnalyzeStepName;
         }
 
         private static T DeserializeRequiredOutput<T>(

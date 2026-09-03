@@ -284,6 +284,9 @@ builder.Services.AddScoped<RuntimeAnalysisExecutionResultReader>();
 builder.Services.AddSingleton<
     IRuntimeAnalysisHumanApprovalStore,
     RedisRuntimeAnalysisHumanApprovalStore>();
+builder.Services.AddSingleton<
+    IRuntimeAnalysisScenarioExecutionStore,
+    RedisRuntimeAnalysisScenarioExecutionStore>();
 builder.Services.AddSingleton(
     new RuntimeAnalysisRuntimeOptions());
 
@@ -294,6 +297,9 @@ builder.Services.AddScoped<
 builder.Services.AddScoped<
     IRuntimeAnalysisHumanApprovalService,
     RuntimeAnalysisHumanApprovalService>();
+builder.Services.AddScoped<
+    IRuntimeAnalysisScenarioExecutionService,
+    RuntimeAnalysisScenarioExecutionService>();
 
 builder.Services.AddHostedService<RuntimeAnalysisRuntimeHostedService>();
 

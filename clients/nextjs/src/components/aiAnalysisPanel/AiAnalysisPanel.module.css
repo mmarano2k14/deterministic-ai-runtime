@@ -166,6 +166,20 @@
 
 .scope select {
   width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #111827;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.scope select:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
 }
 
 .scopeDescription {
@@ -180,10 +194,36 @@
   gap: 8px;
 }
 
-.quickActions button {
+.quickActionButton {
   width: 100%;
   min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #111827;
+  cursor: pointer;
+  font: inherit;
   font-size: 11px;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.quickActionButton:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.quickActionButton[data-selected="true"] {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.2);
+}
+
+.quickActionButton[data-selected="true"]:hover {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
 }
 
 .question {
@@ -198,7 +238,7 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px;
-  background: #ffffff;
+  background: #f8fafc;
   color: #111827;
   font: inherit;
   font-size: 12px;
@@ -207,8 +247,8 @@
 }
 
 .question textarea:focus {
-  border-color: #94a3b8;
-  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.15);
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
 }
 
 .questionFooter {
@@ -281,7 +321,7 @@
 
 .analysisActions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
@@ -665,4 +705,353 @@
 .runtimeStatus[data-status="waiting"] {
   background: #eff6ff;
   color: #1d4ed8;
+}
+
+
+.scenarioExecutionCard,
+.verificationCard {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid #dbeafe;
+  border-radius: 9px;
+  background: #f8fbff;
+}
+
+.scenarioExecutionCard[data-status="Completed"],
+.verificationCard[data-status="Verified"] {
+  border-color: #bbf7d0;
+  background: #f7fff9;
+}
+
+.scenarioExecutionCard[data-status="NotExecuted"],
+.verificationCard[data-status="Skipped"] {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+
+.scenarioExecutionMetrics,
+.verificationGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.scenarioExecutionMetrics > div,
+.verificationGrid > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.scenarioExecutionMetrics span,
+.verificationGrid span {
+  font-size: 8px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.scenarioExecutionMetrics strong,
+.verificationGrid strong {
+  font-size: 10px;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+
+.verificationCard[data-status="Pending"] {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+.scope select:disabled,
+.question textarea:disabled {
+  cursor: wait;
+  opacity: 0.78;
+}
+
+.quickActionButton:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.quickActionButton[data-selected="true"]:disabled {
+  opacity: 0.85;
+}
+
+.aiActivity {
+  position: relative;
+  display: grid;
+  gap: 11px;
+  overflow: hidden;
+  padding: 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #f8fbff 0%, #ffffff 52%, #f5f3ff 100%);
+  box-shadow: 0 8px 22px rgba(37, 99, 235, 0.08);
+}
+
+.aiActivitySweep {
+  position: absolute;
+  inset: 0 auto 0 -42%;
+  width: 38%;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(96, 165, 250, 0.12) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  transform: skewX(-16deg);
+  animation: aiActivitySweep 2.4s ease-in-out infinite;
+}
+
+.aiActivityHeader {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.aiActivityIdentity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.aiActivityOrb {
+  position: relative;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  box-shadow: 0 0 0 5px rgba(59, 130, 246, 0.06);
+  animation: aiActivityOrbPulse 1.8s ease-in-out infinite;
+}
+
+.aiActivityOrb > span {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: #2563eb;
+  animation: aiActivityDot 1.2s ease-in-out infinite;
+}
+
+.aiActivityOrb > span:nth-child(1) {
+  animation-delay: 0ms;
+}
+
+.aiActivityOrb > span:nth-child(2) {
+  animation-delay: 160ms;
+}
+
+.aiActivityOrb > span:nth-child(3) {
+  animation-delay: 320ms;
+}
+
+.aiActivityHeading {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.aiActivityHeading strong {
+  font-size: 11px;
+  color: #0f172a;
+}
+
+.aiActivityHeading span {
+  font-size: 10px;
+  line-height: 1.4;
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+
+.aiActivityElapsed {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #475569;
+  font-size: 9px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.aiActivitySteps {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 7px;
+}
+
+.aiActivityStep {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.72);
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.aiActivityStep[data-state="active"] {
+  border-color: #93c5fd;
+  background: rgba(239, 246, 255, 0.88);
+}
+
+.aiActivityStep[data-state="done"] {
+  border-color: #bbf7d0;
+  background: rgba(247, 255, 249, 0.9);
+}
+
+.aiActivityStep[data-state="pending"] {
+  opacity: 0.58;
+}
+
+.aiActivityStepDot {
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+
+.aiActivityStep[data-state="active"] .aiActivityStepDot {
+  background: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+  animation: aiActivityStepPulse 1.25s ease-in-out infinite;
+}
+
+.aiActivityStep[data-state="done"] .aiActivityStepDot {
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.09);
+}
+
+.aiActivityStep > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.aiActivityStep strong {
+  font-size: 10px;
+  color: #0f172a;
+}
+
+.aiActivityStep span:not(.aiActivityStepDot) {
+  font-size: 9px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.aiActivityLog {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 5px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(191, 219, 254, 0.8);
+}
+
+.aiActivityLogLabel {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.aiActivityLogValue {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.aiActivityLogValue strong {
+  font-size: 9px;
+  color: #334155;
+}
+
+.aiActivityLogValue span {
+  font-size: 9px;
+  line-height: 1.4;
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+
+@keyframes aiActivitySweep {
+  0% {
+    left: -42%;
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  72% {
+    opacity: 0.8;
+  }
+  100% {
+    left: 116%;
+    opacity: 0;
+  }
+}
+
+@keyframes aiActivityOrbPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 5px rgba(59, 130, 246, 0.05);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0.09);
+  }
+}
+
+@keyframes aiActivityDot {
+  0%,
+  70%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(1px) scale(0.88);
+  }
+  35% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1);
+  }
+}
+
+
+@keyframes aiActivityStepPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aiActivitySweep,
+  .aiActivityOrb,
+  .aiActivityOrb > span,
+  .aiActivityStep[data-state="active"] .aiActivityStepDot {
+    animation: none;
+  }
 }

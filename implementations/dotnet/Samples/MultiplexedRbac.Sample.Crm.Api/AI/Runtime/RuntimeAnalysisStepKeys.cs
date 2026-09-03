@@ -10,6 +10,12 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 
         public const string AwaitHumanApproval =
             "runtime-analysis.await-human-approval";
+
+        public const string ExecuteApprovedScenario =
+            "runtime-analysis.execute-approved-scenario";
+
+        public const string VerifyScenarioOutcome =
+            "runtime-analysis.verify-scenario-outcome";
     }
 
     public static class RuntimeAnalysisStepInputKeys
@@ -19,11 +25,18 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 
         public const string PolicyValidationJson =
             "policyValidationJson";
+
+        public const string HumanApprovalJson =
+            "humanApprovalJson";
+
+        public const string ScenarioExecutionJson =
+            "scenarioExecutionJson";
     }
 
     public static class RuntimeAnalysisStepConfigKeys
     {
-        public const string ProviderRequestJson = "providerRequestJson";
+        public const string ProviderRequestJson =
+            "providerRequestJson";
 
         public const string ScenarioPolicyDefinition =
             "scenarioPolicyValidation";
