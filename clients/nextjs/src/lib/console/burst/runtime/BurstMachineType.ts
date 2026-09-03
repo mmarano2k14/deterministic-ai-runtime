@@ -3,7 +3,6 @@ import { RequestSpec } from "@/lib/infrastructure/transport/http/HttpClientType"
 export type BurstState = "Idle" | "Running" | "Stopping" | "Completed" | "Error";
 
 export type BurstPlanKey = "read" | "refund";
-
 /**
  * Explicit dispatch modes.
  * - single-burst: all requests are fired immediately
@@ -15,7 +14,6 @@ export type BurstDispatchModeKey =
   | "maintained-concurrency"
   | "wave-batches"
   | "wave-batches-staggered";
-
 /**
  * Shared fields across all burst modes.
  */
@@ -34,7 +32,6 @@ export type BurstConfigBase = {
 export type SingleBurstConfig = BurstConfigBase & {
   dispatchMode: "single-burst";
 };
-
 /**
  * Maintained concurrency:
  * keep "concurrency" requests in flight until total is reached.
@@ -53,7 +50,6 @@ export type WaveBatchesConfig = BurstConfigBase & {
   batchSize: number;
   wavePauseMs: number;
 };
-
 /**
  * Wave batches:
  * send fixed-size batches and wait for each wave to finish, ms between  each request in batch
@@ -72,7 +68,6 @@ export type BurstConfig =
   | MaintainedConcurrencyConfig
   | WaveBatchesConfig
   | WaveBatchesStaggeredConfig;
-
 export type BurstCounters = {
   ok: number;
   unauthorized: number; // 401
@@ -99,7 +94,6 @@ export type BurstStats = {
   p50ms?: number;
   p95ms?: number;
 };
-
 export type BurstReport = {
   config: BurstConfig;
   progress: BurstProgress;
@@ -121,10 +115,9 @@ export type BurstPlan = {
   displayName: string;
   makeRequest(i: number): RequestSpec;
 };
-
 export type BurstEvent =
   | { type: "Configure"; config: BurstConfig } // updates config even if not running
-  | { type: "Start"; config: BurstConfig  } // transitions -> Running, initializes report
+  | { type: "Start"; config: BurstConfig; startedAt: number } // transitions -> Running, initializes report
   | { type: "Stop" } // transitions -> Stopping (soft)
   | { type: "TickStart"; count: number } // when N new requests start
   | { type: "TickComplete"; count: number } // when N requests complete (any outcome)

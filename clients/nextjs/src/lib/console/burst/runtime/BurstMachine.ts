@@ -1,5 +1,4 @@
 import { BurstConfig, BurstEvent, BurstRuntime, BurstReport } from "./BurstMachineType";
-
 export class BurstMachine {
   static initial(defaultConfig: BurstConfig): BurstRuntime {
     return {
@@ -14,22 +13,20 @@ export class BurstMachine {
       stopRequested: false,
     };
   }
-
   static reduce(model: BurstRuntime, ev: BurstEvent): BurstRuntime {
     switch (model.state) {
       case "Idle":
         return BurstMachine.reduceIdle(model, ev);
       case "Completed":
         return BurstMachine.reduceCompleted(model, ev);
-      case "Error": 
+      case "Error":
         return BurstMachine.reduceError(model, ev);
-      case "Running": 
+      case "Running":
         return BurstMachine.reduceRunning(model, ev);
-      case "Stopping": 
+      case "Stopping":
         return BurstMachine.reduceStopping(model, ev);
     }
   }
-
   private static reduceIdle(model: BurstRuntime, ev: BurstEvent): BurstRuntime {
     switch (ev.type) {
       case "Configure": {
@@ -41,7 +38,6 @@ export class BurstMachine {
             : BurstMachine.newReport(nextCfg),
         };
       }
-
       case "Start": {
         /*
         const cfg = BurstMachine.sanitize(
@@ -53,10 +49,9 @@ export class BurstMachine {
         return {
           state: "Running",
           stopRequested: false,
-          report: BurstMachine.newReport(cfg, Date.now()),
+          report: BurstMachine.newReport(cfg, ev.startedAt),
         };
       }
-
       case "Reset": {
         const cfg = BurstMachine.sanitize(BurstMachine.defaultConfig());
         return BurstMachine.initial(cfg);
@@ -66,7 +61,6 @@ export class BurstMachine {
         return model;
     }
   }
-
   private static reduceCompleted(model: BurstRuntime, ev: BurstEvent): BurstRuntime {
     switch (ev.type) {
       case "Configure": {
@@ -78,7 +72,6 @@ export class BurstMachine {
             : BurstMachine.newReport(nextCfg),
         };
       }
-
       case "Start": {
         /*
         const cfg = BurstMachine.sanitize(
@@ -90,10 +83,9 @@ export class BurstMachine {
         return {
           state: "Running",
           stopRequested: false,
-          report: BurstMachine.newReport(cfg, Date.now()),
+          report: BurstMachine.newReport(cfg, ev.startedAt),
         };
       }
-
       case "Reset": {
         const cfg = BurstMachine.sanitize(
           model.report?.config ?? BurstMachine.defaultConfig()
@@ -105,7 +97,6 @@ export class BurstMachine {
         return model;
     }
   }
-
   private static reduceError(model: BurstRuntime, ev: BurstEvent): BurstRuntime {
     switch (ev.type) {
         case "Configure": {
@@ -120,7 +111,7 @@ export class BurstMachine {
             return {
                 state: "Running",
                 stopRequested: false,
-                report: BurstMachine.newReport(cfg, Date.now()),
+                report: BurstMachine.newReport(cfg, ev.startedAt),
             };
         }
         case "Reset": {
@@ -131,7 +122,6 @@ export class BurstMachine {
             return model;
     }
   }
-
   private static reduceRunning(model: BurstRuntime, ev: BurstEvent): BurstRuntime {
     if (!model.report) return { ...model, state: "Error", report: null, stopRequested: false };
     switch (ev.type) {
@@ -141,21 +131,18 @@ export class BurstMachine {
 
         case "Stop":
             return { ...model, state: "Stopping", stopRequested: true };
-
         case "TickStart": {
             const r = model.report;
             const started = r.progress.started + ev.count;
             const inFlight = r.progress.inFlight + ev.count;
             return { ...model, report: { ...r, progress: { ...r.progress, started, inFlight } } };
         }
-
         case "TickComplete": {
             const r = model.report;
             const completed = r.progress.completed + ev.count;
             const inFlight = Math.max(0, r.progress.inFlight - ev.count);
             return { ...model, report: { ...r, progress: { ...r.progress, completed, inFlight } } };
         }
-
         case "ResultOk": {
             const r = model.report;
             const durationsMs = BurstMachine.pushDuration(r.stats.durationsMs, ev.durationMs);
@@ -170,7 +157,6 @@ export class BurstMachine {
               },
             };
         }
-
         case "ResultHttp": {
             const r = model.report;
             const durationsMs = BurstMachine.pushDuration(r.stats.durationsMs, ev.durationMs);
@@ -181,7 +167,6 @@ export class BurstMachine {
             else if (ev.status === 403) c.forbidden += 1;
             else if (ev.status === 429) c.rejected += 1;
             else c.other += 1;
-
             return {
               ...model,
               report: {
@@ -191,7 +176,6 @@ export class BurstMachine {
               },
             };
         }
-
         case "ResultError": {
             const r = model.report;
             return {
@@ -203,7 +187,6 @@ export class BurstMachine {
                 },
             };
         }
-
         case "Finish": {
             const r = model.report;
             const finishedAt = Date.now();
@@ -214,7 +197,6 @@ export class BurstMachine {
                 report: { ...r, timing: { ...r.timing, finishedAt }, stats: { ...r.stats, ...stats } },
             };
         }
-
         case "Fail": {
             const r = model.report;
             return { state: "Error", stopRequested: false, report: { ...r, error: ev.message } };
@@ -228,7 +210,6 @@ export class BurstMachine {
   private static reduceStopping(model: BurstRuntime, ev: BurstEvent): BurstRuntime {
     // allow inflight to drain; controller may still dispatch results
     if (!model.report) return { ...model, state: "Error", report: null, stopRequested: true };
-
     switch (ev.type) {
         case "TickComplete": {
             const r = model.report;
@@ -236,14 +217,12 @@ export class BurstMachine {
             const inFlight = Math.max(0, r.progress.inFlight - ev.count);
             return { ...model, report: { ...r, progress: { ...r.progress, completed, inFlight } } };
         }
-
         case "ResultOk":
         case "ResultHttp":
         case "ResultError":
             // reuse Running logic by temporary call:
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return BurstMachine.reduce({ ...model, state: "Running" }, ev as any) as BurstRuntime;
-
         case "Finish": {
             const r = model.report;
             const finishedAt = Date.now();
@@ -254,14 +233,13 @@ export class BurstMachine {
             report: { ...r, timing: { ...r.timing, finishedAt }, stats: { ...r.stats, ...stats } },
         };
         }
-
         case "Fail": {
             const r = model.report;
             return { state: "Error", stopRequested: false, report: { ...r, error: ev.message } };
         }
 
         default:
-            return model;
+        return model;
     }
   }
 
@@ -270,7 +248,6 @@ export class BurstMachine {
   static sanitize(cfg: BurstConfig): BurstConfig {
     const total = Math.max(1, Math.floor(cfg.total));
     const delayMs = Math.max(0, Math.floor(cfg.delayMs));
-
     switch (cfg.dispatchMode) {
       case "single-burst":
         return {
@@ -288,7 +265,6 @@ export class BurstMachine {
           planKey: cfg.planKey,
           concurrency: Math.max(1, Math.floor(cfg.concurrency)),
         };
-
       case "wave-batches":
         return {
           dispatchMode: "wave-batches",
@@ -298,7 +274,6 @@ export class BurstMachine {
           batchSize: Math.max(1, Math.floor(cfg.batchSize)),
           wavePauseMs: Math.max(0, Math.floor(cfg.wavePauseMs)),
         };
-
       case "wave-batches-staggered":
         return {
           dispatchMode: "wave-batches-staggered",
@@ -310,7 +285,6 @@ export class BurstMachine {
         };
     }
   }
-
   static defaultConfig(): BurstConfig {
     return {
       dispatchMode: "maintained-concurrency",
@@ -320,7 +294,6 @@ export class BurstMachine {
       planKey: "read",
     };
   }
-
   static newReport(cfg: BurstConfig, startedAt?: number): BurstReport {
     return {
       config: cfg,
@@ -331,14 +304,12 @@ export class BurstMachine {
       error: undefined,
     };
   }
-
   static pushDuration(list: number[], value: number): number[] {
     // Keep memory bounded (demo): last 50k durations
     const v = Number.isFinite(value) && value >= 0 ? value : 0;
     if (list.length >= 50_000) return [...list.slice(1), v];
     return [...list, v];
   }
-
   static computeStats(durations: number[]): { p50ms?: number; p95ms?: number } {
     if (!durations.length) return {};
     const sorted = [...durations].sort((a, b) => a - b);

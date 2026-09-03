@@ -272,3 +272,215 @@
 .snapshotError .placeholderText {
   color: #991b1b;
 }
+
+.providerHint {
+  font-size: 10px;
+  line-height: 1.4;
+  color: #64748b;
+}
+
+.analysisActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.analysisActions button {
+  width: 100%;
+  min-width: 0;
+}
+
+.resultSection {
+  gap: 14px;
+}
+
+.resultHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.confidence {
+  margin-top: 3px;
+  font-size: 10px;
+  color: #64748b;
+}
+
+.severity {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.severity[data-severity="medium"] {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.severity[data-severity="high"],
+.severity[data-severity="critical"] {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.answer {
+  font-size: 13px;
+  line-height: 1.55;
+  font-weight: 700;
+  color: #111827;
+}
+
+.summary {
+  padding: 10px;
+  border-radius: 10px;
+  background: #f8fafc;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #475569;
+}
+
+.resultSubheading {
+  font-size: 11px;
+  font-weight: 800;
+  color: #334155;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.observations {
+  display: grid;
+  gap: 8px;
+}
+
+.observation {
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.observationTitle {
+  font-size: 11px;
+  font-weight: 800;
+  color: #111827;
+}
+
+.observationDetail {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.evidenceReferences {
+  font-size: 9px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.suggestedScenario {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: #fbfdff;
+}
+
+.scenarioName {
+  font-size: 12px;
+  font-weight: 800;
+  color: #111827;
+}
+
+.scenarioRationale {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.scenarioGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.scenarioGrid > div {
+  display: grid;
+  gap: 2px;
+  padding: 7px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.scenarioGrid span {
+  font-size: 9px;
+  color: #64748b;
+}
+
+.scenarioGrid strong {
+  font-size: 10px;
+  color: #111827;
+  overflow-wrap: anywhere;
+}
+
+.policyPending {
+  padding-top: 7px;
+  border-top: 1px solid #e2e8f0;
+  font-size: 9px;
+  font-weight: 700;
+  color: #92400e;
+}
+
+
+.runtimeExecution {
+  border-color: #dbeafe;
+  background: #f8fbff;
+}
+
+.runtimeStatus {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #ecfdf3;
+  color: #166534;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.runtimeIdentityGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.runtimeIdentityGrid > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 7px;
+  border-radius: 8px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+}
+
+.runtimeIdentityGrid span {
+  font-size: 9px;
+  color: #64748b;
+}
+
+.runtimeIdentityGrid strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: #111827;
+}

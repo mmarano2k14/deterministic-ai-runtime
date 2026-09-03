@@ -13,9 +13,13 @@ export type AiAnalysisPromptPanelProps = {
   scope: AiAnalysisScope;
   question: string;
   isPreparingContext: boolean;
+  isAnalyzing: boolean;
+  canAnalyze: boolean;
+  providerHint: string;
   onScopeChange: (scope: AiAnalysisScope) => void;
   onQuestionChange: (question: string) => void;
   onPrepareContext: () => void;
+  onAnalyze: () => void;
 };
 
 export function AiAnalysisPromptPanel(
@@ -25,9 +29,13 @@ export function AiAnalysisPromptPanel(
     scope,
     question,
     isPreparingContext,
+    isAnalyzing,
+    canAnalyze,
+    providerHint,
     onScopeChange,
     onQuestionChange,
     onPrepareContext,
+    onAnalyze,
   } = props;
 
   const isScopeAvailable = AiAnalysisUxModel.isScopeAvailable(scope);
@@ -62,6 +70,7 @@ export function AiAnalysisPromptPanel(
             </option>
           ))}
         </select>
+
         <div className={styles.scopeDescription}>
           {AiAnalysisUxModel.scopeDescription(scope)}
         </div>
@@ -81,6 +90,7 @@ export function AiAnalysisPromptPanel(
 
       <div className={styles.question}>
         <label htmlFor="ai-analysis-question">Ask about this execution</label>
+
         <textarea
           id="ai-analysis-question"
           value={question}
@@ -88,19 +98,26 @@ export function AiAnalysisPromptPanel(
           placeholder="Why did latency increase? Which events caused this failure? What scenario should validate the hypothesis?"
         />
 
-        <div className={styles.questionFooter}>
-          <div className={styles.hint}>
-            Prepare the bounded server-validated evidence context before the AI
-            provider is connected.
-          </div>
+        <div className={styles.providerHint}>{providerHint}</div>
+
+        <div className={styles.analysisActions}>
           <Button
-            variant="primary"
             loading={isPreparingContext}
-            disabled={!isScopeAvailable}
+            disabled={!isScopeAvailable || isAnalyzing}
             onClick={onPrepareContext}
             title="Build and validate the bounded runtime analysis snapshot"
           >
             Prepare context
+          </Button>
+
+          <Button
+            variant="primary"
+            loading={isAnalyzing}
+            disabled={!canAnalyze}
+            onClick={onAnalyze}
+            title="Analyze the prepared runtime evidence with the configured AI provider"
+          >
+            Ask AI
           </Button>
         </div>
       </div>

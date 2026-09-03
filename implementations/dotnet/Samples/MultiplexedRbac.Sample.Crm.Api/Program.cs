@@ -1,12 +1,22 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.OpenApi.Models;
+using Multiplexed.AI.Configuration;
+using Multiplexed.AI.DI;
+using Multiplexed.AI.DI.Persistence;
+using Multiplexed.AI.Runtime;
+using Multiplexed.AI.Runtime.ControlPlane.DI;
+using Multiplexed.AI.Runtime.ControlPlane.Discovery;
 using Multiplexed.Rbac.Core.ExecutionContext;
 using Multiplexed.Rbac.Core.Runtime;
 using Multiplexed.Rbac.Core.Runtime.DI;
 using Multiplexed.Rbac.Core.Runtime.Messaging.NServiceBus;
 using Multiplexed.Rbac.Core.Runtime.Messaging.NServiceBus.DI;
 using Multiplexed.Realtime.DI;
+using Multiplexed.Realtime.Events;
 using Multiplexed.Realtime.Resolvers;
+using MultiplexedRbac.Sample.Crm.Api.AI.Providers;
+using MultiplexedRbac.Sample.Crm.Api.AI.Runtime;
+using MultiplexedRbac.Sample.Crm.Api.AI.Steps;
 using MultiplexedRbac.Sample.Crm.Api.AI.Services;
 using MultiplexedRbac.Sample.Crm.Api.Auth;
 using MultiplexedRbac.Sample.Crm.Services;
@@ -14,8 +24,20 @@ using MultiplexedRbac.Sample.Crm.Services;
 
 // Alias to avoid System.ExecutionContext confusion
 using ExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext;
+using Multiplexed.AI.DI.Engine;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// The Deterministic AI Runtime contains context-bound and optional services
+// that are intentionally resolved only inside runtime execution scopes.
+// EnterpriseRuntimeDemoHost uses the default ServiceProvider semantics.
+// Match that host behavior when embedding the runtime in ASP.NET.
+builder.Host.UseDefaultServiceProvider(options =>
+{
+    options.ValidateOnBuild = false;
+    options.ValidateScopes = false;
+});
+
 builder.WebHost.UseUrls("http://localhost:5000");
 
 
@@ -124,16 +146,6 @@ builder.Services
     .AddMultiplexedRbacHttp()
     .AddMultiplexedRbacNServiceBus()
     .AddCrmServices()
-    .AddMultiplexRealtime()
-    .AddSignalRRealtimeTransport(options =>
-    {
-        options.CorsPolicy = "SignalRCors";
-        options.AllowedOrigins =
-        [
-            "http://localhost:3000"
-        ];
-        options.UseUserIdentifier<QueryStringRealtimeUserIdentifierResolver>();
-    })
     .AddMultiplexedRbacAuthorizedServices(typeof(Program).Assembly);
 
 builder.Services.AddSingleton<MultiplexedRbac.Sample.Crm.Api.Context.DemoSeedState>();
@@ -150,9 +162,151 @@ builder.Services.AddSingleton<
     IRuntimeAnalysisSnapshotBuilder,
     RuntimeAnalysisSnapshotBuilder>();
 
+builder.Services
+    .AddOptions<OpenAiRuntimeAnalysisOptions>()
+    .Bind(
+        builder.Configuration.GetSection(
+            OpenAiRuntimeAnalysisOptions.SectionName))
+    .PostConfigure(options =>
+    {
+        var apiKey = Environment.GetEnvironmentVariable(
+            OpenAiRuntimeAnalysisOptions.ApiKeyEnvironmentVariable);
+
+        if (!string.IsNullOrWhiteSpace(apiKey))
+        {
+            options.ApiKey = apiKey;
+        }
+    });
+
+builder.Services.AddSingleton<RuntimeAnalysisResultValidator>();
+
+builder.Services.AddHttpClient<
+        IAiRuntimeAnalysisProvider,
+        OpenAiRuntimeAnalysisProvider>()
+    .ConfigureHttpClient(client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(90);
+    });
+
 
 // --------------------------------------------------------------------
-// 5️⃣ Cookies ticket for protection
+// 5️⃣ Deterministic AI Runtime — hosted by this sample API
+// --------------------------------------------------------------------
+// OpenAI execution does NOT run from the controller.
+// The controller submits a one-step DAG to the existing runtime.
+// The custom step resolves IAiRuntimeAnalysisProvider inside the DAG.
+
+var aiEngineOptions = new AiEngineOptions
+{
+    // The controller submits the pipeline definition with the run request.
+    // This matches the runtime-defined pipeline pattern used by the
+    // Enterprise Runtime demo.
+    DefaultPipelineDefinitionSource = "Runtime"
+};
+
+// The runtime's durable archived-step index is Mongo-backed even when most
+// analysis payloads remain inline. Match the Enterprise Runtime host profile:
+// Mongo is the durable source of truth and Redis is the bounded hot cache.
+var mongoConnectionString =
+    builder.Configuration.GetConnectionString("Mongo")
+    ?? "mongodb://localhost:27017";
+
+var mongoDatabaseName =
+    builder.Configuration["Mongo:DatabaseName"]
+    ?? "deterministic_ai_runtime_demo";
+
+aiEngineOptions.PayloadStore.Enabled = true;
+aiEngineOptions.PayloadStore.Provider = "mongo-redis";
+aiEngineOptions.PayloadStore.RequireReplaySafePayloads = true;
+
+// The current analysis request/result normally remains inline. Larger payloads
+// can be externalized durably without changing the DAG or controller contract.
+aiEngineOptions.PayloadStore.MaxInlineSizeBytes = 256 * 1024;
+
+aiEngineOptions.PayloadStore.Mongo.Enabled = true;
+aiEngineOptions.PayloadStore.Mongo.ConnectionString =
+    mongoConnectionString;
+aiEngineOptions.PayloadStore.Mongo.DatabaseName =
+    mongoDatabaseName;
+aiEngineOptions.PayloadStore.Mongo.CollectionName =
+    "ai_runtime_analysis_payloads";
+
+aiEngineOptions.PayloadStore.RedisCache.Enabled = true;
+aiEngineOptions.PayloadStore.RedisCache.KeyPrefix =
+    "ai-demo:runtime-analysis:payload";
+aiEngineOptions.PayloadStore.RedisCache.ExpirationSeconds = 3600;
+aiEngineOptions.PayloadStore.RedisCache.MaxCacheablePayloadBytes =
+    256 * 1024;
+
+aiEngineOptions.PayloadStore.StepIndexCache.Enabled = true;
+aiEngineOptions.PayloadStore.StepIndexCache.KeyPrefix =
+    "ai-demo:runtime-analysis:step-index";
+aiEngineOptions.PayloadStore.StepIndexCache.ExpirationSeconds = 3600;
+aiEngineOptions.PayloadStore.StepIndexCache.RefreshTtlOnRead = true;
+
+// Mongo observability is still disabled for this first one-step analysis DAG.
+// Canonical lifecycle events / realtime remain available independently.
+aiEngineOptions.Snapshots.Enabled = false;
+aiEngineOptions.Observability.EnableTracing = false;
+aiEngineOptions.Observability.EnableInMemoryRecording = false;
+aiEngineOptions.Observability.EnableMetrics = false;
+
+builder.Services.AddMemoryCache();
+
+builder.Services.AddMultiplexAI(
+    aiEngineOptions);
+
+// AiDagExecutionEngineServices requires the replay metadata service even when
+// this first demo execution does not actively invoke replay.
+builder.Services.AddAiExecutionReplay();
+
+// AiDagLocalExecutionRunner requires the runtime signal publisher and the
+// logical control-plane id resolver. Use the runtime's existing Redis-backed
+// signal implementation and discovery core rather than application stubs.
+builder.Services.AddAiRuntimeSignals();
+builder.Services.AddAiControlPlaneDiscoveryCore();
+
+builder.Services.AddAiStepsFromAssemblies(
+    typeof(AnalyzeRuntimeWithAiStep).Assembly);
+
+builder.Services.AddSingleton<RuntimeAnalysisPipelineDefinitionFactory>();
+builder.Services.AddSingleton(
+    new RuntimeAnalysisRuntimeOptions());
+
+builder.Services.AddScoped<RuntimeAnalysisExecutionContextSnapshotFactory>();
+builder.Services.AddScoped<
+    IRuntimeAnalysisRuntimeExecutor,
+    RuntimeAnalysisRuntimeExecutor>();
+
+builder.Services.AddHostedService<RuntimeAnalysisRuntimeHostedService>();
+
+// IMPORTANT: one realtime channel / one worker.
+//
+// The original RBAC sample called AddMultiplexRealtime() without assemblies,
+// which implicitly scanned typeof(IRuntimeEvent).Assembly and therefore
+// registered the SignalR dispatch handler for RuntimeLogEvent.
+//
+// The AI runtime adds its own [RealtimeEvent] event types in Multiplexed.AI.
+// Scan BOTH event assemblies in this single call. Do not call
+// AddMultiplexRealtime() twice: every call adds another RuntimeEventWorker.
+builder.Services
+    .AddMultiplexRealtime(
+        configureChannel: null,
+        typeof(IRuntimeEvent).Assembly,
+        typeof(AiRuntimeAssemblyMarker).Assembly)
+    .AddSignalRRealtimeTransport(options =>
+    {
+        options.CorsPolicy = "SignalRCors";
+        options.AllowedOrigins =
+        [
+            "http://localhost:3000"
+        ];
+        options.UseUserIdentifier<QueryStringRealtimeUserIdentifierResolver>();
+    });
+
+
+// --------------------------------------------------------------------
+// 6️⃣ Cookies ticket for protection
 // --------------------------------------------------------------------
 
 builder.Services.AddDataProtection();
@@ -160,7 +314,7 @@ builder.Services.AddSingleton<IDemoBootstrapTicketProtector, DemoBootstrapTicket
 
 
 // --------------------------------------------------------------------
-// 6️⃣ NServiceBus Endpoint (API acts as publisher)
+// 7️⃣ NServiceBus Endpoint (API acts as publisher)
 // --------------------------------------------------------------------
 
 builder.Host.UseNServiceBus(_ =>
@@ -188,7 +342,7 @@ var app = builder.Build();
 
 
 // --------------------------------------------------------------------
-// 7️⃣ DEV Seed — deterministic test context
+// 8️⃣ DEV Seed — deterministic test context
 // --------------------------------------------------------------------
 // This simulates a login phase (Part 1).
 // In production, context would be created at authentication time.
@@ -206,7 +360,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 // --------------------------------------------------------------------
-// 8️⃣ HTTP Pipeline Ordering (CRITICAL)
+// 9️⃣ HTTP Pipeline Ordering (CRITICAL)
 // --------------------------------------------------------------------
 
 if (app.Environment.IsDevelopment())

@@ -7,7 +7,6 @@ import { SingleBurstDispatchMode } from "../modes/SingleBurstDispatchMode";
 import { MaintainedConcurrencyDispatchMode } from "../modes/MaintainedConcurrencyDispatchMode";
 import { WaveBatchesDispatchMode } from "../modes/WaveBatchesDispatchMode";
 import { WaveBatchesStaggeredDispatchMode } from "../modes/WaveBatchesStaggeredDispatchMode";
-
 export type ApiCallResult =
   | { kind: "ok"; status: number; durationMs: number; rotation?: HeaderKeyRotation }
   | { kind: "error"; status?: number; durationMs: number; message: string };
@@ -22,7 +21,6 @@ export interface IBurstApi {
 export class BurstController {
   private _stopRequested = false;
   private _consoleContextAccessor: ConsoleContextAccessor;
-
   constructor(
     private readonly dispatch: (ev: BurstEvent) => void,
     consoleContextAccessor: ConsoleContextAccessor
@@ -43,7 +41,6 @@ export class BurstController {
     this._stopRequested = true;
     this.dispatch({ type: "Stop" });
   }
-
   public async start(
     api: IBurstApi,
     model: BurstRuntime,
@@ -58,19 +55,24 @@ export class BurstController {
      * but React has not rerendered the model yet.
      */
     const cfg = configOverride ?? model.report?.config;
-
     if (!cfg) {
       this.dispatch({ type: "Fail", message: "Burst config missing" });
       return;
     }
 
     this._stopRequested = false;
+
+    /**
+     * Capture the execution boundary synchronously before a dispatch mode can
+     * create any HTTP log entries. React reducer processing can happen later.
+     */
+    const startedAt = Date.now();
+
     // ✅ snapshot explicite
-    this.dispatch({ type: "Start", config: cfg });
+    this.dispatch({ type: "Start", config: cfg, startedAt });
 
     const plan = BurstPlans.byKey(cfg.planKey);
     const mode = this.createDispatchMode(cfg);
-
     try {
       await mode.execute({
         api,
@@ -87,7 +89,6 @@ export class BurstController {
       this.dispatch({ type: "Fail", message: msg });
     }
   }
-
   /**
    * Factory selecting the execution strategy from the explicit dispatch mode.
    */
@@ -101,7 +102,6 @@ export class BurstController {
 
       case "wave-batches":
         return new WaveBatchesDispatchMode();
-
       case "wave-batches-staggered":
         return new WaveBatchesStaggeredDispatchMode();
     }

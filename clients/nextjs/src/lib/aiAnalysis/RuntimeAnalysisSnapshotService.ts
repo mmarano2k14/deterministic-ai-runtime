@@ -4,7 +4,9 @@ import {
   RuntimeAnalysisSnapshotRequestBuilder,
   type RuntimeAnalysisSnapshotBuildInput,
 } from "./RuntimeAnalysisSnapshotRequestBuilder";
-import type { RuntimeAnalysisSnapshot } from "./RuntimeAnalysisType";
+import type {
+  RuntimeAnalysisPreparedContext,
+} from "./RuntimeAnalysisType";
 
 export class RuntimeAnalysisSnapshotService {
   private readonly api: RuntimeAnalysisApi;
@@ -16,9 +18,13 @@ export class RuntimeAnalysisSnapshotService {
   public async prepare(
     input: RuntimeAnalysisSnapshotBuildInput,
     signal?: AbortSignal
-  ): Promise<RuntimeAnalysisSnapshot> {
+  ): Promise<RuntimeAnalysisPreparedContext> {
     const request = RuntimeAnalysisSnapshotRequestBuilder.build(input);
+    const snapshot = await this.api.buildSnapshot(request, signal);
 
-    return this.api.buildSnapshot(request, signal);
+    return {
+      request,
+      snapshot,
+    };
   }
 }

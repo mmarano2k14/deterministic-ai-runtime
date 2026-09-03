@@ -13,7 +13,7 @@ export class AiAnalysisUxModel {
       key: "current-run",
       label: "Current scenario / run",
       description:
-        "Analyze the current scenario metrics and the logs captured since this run started.",
+        "Analyze the current scenario metrics and the logs captured around this run.",
       available: true,
     },
     {
@@ -72,17 +72,18 @@ export class AiAnalysisUxModel {
       key: "provider-pending",
       label: "Provider pending",
       description:
-        "Runtime evidence can be prepared now; the AI provider is not wired yet.",
+        "The AI provider exists but is not configured with server-side credentials.",
     },
     {
       key: "ready",
       label: "Ready",
-      description: "Runtime evidence is ready for AI analysis.",
+      description:
+        "The AI provider is configured and ready for runtime analysis.",
     },
     {
       key: "analyzing",
       label: "Analyzing",
-      description: "AI analysis is in progress.",
+      description: "Structured runtime analysis is in progress.",
     },
     {
       key: "finding-available",

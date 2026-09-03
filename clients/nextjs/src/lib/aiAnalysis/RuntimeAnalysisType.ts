@@ -54,9 +54,7 @@ export type RuntimeAnalysisSnapshotRequest = {
 };
 
 export type RuntimeAnalysisScenarioSnapshot = RuntimeAnalysisScenarioInput;
-
 export type RuntimeAnalysisMetricsSnapshot = RuntimeAnalysisMetricsInput;
-
 export type RuntimeAnalysisEvidence = RuntimeAnalysisEvidenceInput;
 
 export type RuntimeAnalysisEvidenceSummary = {
@@ -77,4 +75,64 @@ export type RuntimeAnalysisSnapshot = {
   evidenceSummary: RuntimeAnalysisEvidenceSummary;
   evidenceReceivedCount: number;
   evidenceTruncated: boolean;
+};
+
+export type RuntimeAnalysisPreparedContext = {
+  request: RuntimeAnalysisSnapshotRequest;
+  snapshot: RuntimeAnalysisSnapshot;
+};
+
+export type RuntimeAnalysisProviderStatus = {
+  provider: string;
+  model: string;
+  configured: boolean;
+};
+
+export type RuntimeAnalysisObservation = {
+  title: string;
+  detail: string;
+  evidenceIndexes: number[];
+};
+
+export type RuntimeAnalysisSuggestedScenario = {
+  name: string;
+  rationale: string;
+  scenarioType:
+    | "single-burst"
+    | "maintained-concurrency"
+    | "wave-batches"
+    | "wave-batches-staggered"
+    | "custom";
+  totalRequests: number;
+  concurrency: number | null;
+  batchSize: number | null;
+  delayMs: number;
+  wavePauseMs: number | null;
+  maxInFlight: number;
+  rotationOverlapMs: number;
+  durationSeconds: number | null;
+};
+
+export type RuntimeAnalysisResult = {
+  answer: string;
+  summary: string;
+  severity: "info" | "low" | "medium" | "high" | "critical";
+  confidence: number;
+  observations: RuntimeAnalysisObservation[];
+  suggestedScenario: RuntimeAnalysisSuggestedScenario;
+};
+
+export type RuntimeAnalysisAnalyzeRequest = {
+  question: string;
+  snapshotRequest: RuntimeAnalysisSnapshotRequest;
+};
+
+
+export type RuntimeAnalysisRuntimeExecutionResult = {
+  runId: string;
+  executionId: string;
+  pipelineName: string;
+  stepName: string;
+  runtimeStatus: string;
+  result: RuntimeAnalysisResult;
 };
