@@ -17,15 +17,18 @@ namespace MultiplexedRbac.Sample.Crm.Api.Controllers
         private readonly IRuntimeAnalysisSnapshotBuilder _snapshotBuilder;
         private readonly IAiRuntimeAnalysisProvider _analysisProvider;
         private readonly IRuntimeAnalysisRuntimeExecutor _runtimeExecutor;
+        private readonly IRuntimeAnalysisScenarioPolicyExecutor _scenarioPolicyExecutor;
 
         public RuntimeAnalysisController(
             IRuntimeAnalysisSnapshotBuilder snapshotBuilder,
             IAiRuntimeAnalysisProvider analysisProvider,
-            IRuntimeAnalysisRuntimeExecutor runtimeExecutor)
+            IRuntimeAnalysisRuntimeExecutor runtimeExecutor,
+            IRuntimeAnalysisScenarioPolicyExecutor scenarioPolicyExecutor)
         {
             _snapshotBuilder = snapshotBuilder;
             _analysisProvider = analysisProvider;
             _runtimeExecutor = runtimeExecutor;
+            _scenarioPolicyExecutor = scenarioPolicyExecutor;
         }
 
         [HttpGet("provider-status")]
@@ -109,6 +112,58 @@ namespace MultiplexedRbac.Sample.Crm.Api.Controllers
             {
                 return StatusCode(
                     StatusCodes.Status503ServiceUnavailable,
+                    new
+                    {
+                        error = exception.Message
+                    });
+            }
+            catch (RuntimeAnalysisRuntimeExecutionException exception)
+            {
+                return StatusCode(
+                    StatusCodes.Status502BadGateway,
+                    new
+                    {
+                        error = exception.Message
+                    });
+            }
+        }
+
+        [HttpPost("validate-scenario")]
+        [ProducesResponseType<
+            RuntimeAnalysisScenarioPolicyRuntimeExecutionResult>(
+                StatusCodes.Status200OK)]
+        [ProducesResponseType(
+            StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(
+            StatusCodes.Status502BadGateway)]
+        public async Task<
+            ActionResult<RuntimeAnalysisScenarioPolicyRuntimeExecutionResult>>
+            ValidateScenarioAsync(
+                [FromBody] RuntimeAnalysisScenarioPolicyValidationRequest request,
+                CancellationToken cancellationToken)
+        {
+            if (request.Scenario is null)
+            {
+                return BadRequest(
+                    new
+                    {
+                        error = "Suggested scenario is required."
+                    });
+            }
+
+            try
+            {
+                var result = await _scenarioPolicyExecutor.ValidateAsync(
+                        request.Scenario,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                return Ok(
+                    result);
+            }
+            catch (ArgumentException exception)
+            {
+                return BadRequest(
                     new
                     {
                         error = exception.Message

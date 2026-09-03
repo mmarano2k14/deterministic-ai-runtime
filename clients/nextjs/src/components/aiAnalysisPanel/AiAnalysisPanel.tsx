@@ -15,6 +15,7 @@ import type {
   RuntimeAnalysisPreparedContext,
   RuntimeAnalysisProviderStatus,
   RuntimeAnalysisRuntimeExecutionResult,
+  RuntimeAnalysisScenarioPolicyRuntimeExecutionResult,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import { AiAnalysisContextCard } from "./AiAnalysisContextCard";
 import { AiAnalysisPromptPanel } from "./AiAnalysisPromptPanel";
@@ -45,8 +46,12 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     useState<RuntimeAnalysisPreparedContext | null>(null);
   const [runtimeExecution, setRuntimeExecution] =
     useState<RuntimeAnalysisRuntimeExecutionResult | null>(null);
+  const [isValidatingScenario, setIsValidatingScenario] = useState(false);
+  const [policyExecution, setPolicyExecution] =
+    useState<RuntimeAnalysisScenarioPolicyRuntimeExecutionResult | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [policyError, setPolicyError] = useState<string | null>(null);
 
   const contextSnapshot = useMemo(
     () => AiAnalysisContextSnapshotBuilder.build(model, logs.length),
@@ -79,8 +84,10 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
   useEffect(() => {
     setPreparedContext(null);
     setRuntimeExecution(null);
+    setPolicyExecution(null);
     setSnapshotError(null);
     setAnalysisError(null);
+    setPolicyError(null);
   }, [scope, runStartedAt]);
 
   const analysisStatus = resolveAnalysisStatus(
@@ -100,7 +107,9 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     setIsPreparingContext(true);
     setSnapshotError(null);
     setRuntimeExecution(null);
+    setPolicyExecution(null);
     setAnalysisError(null);
+    setPolicyError(null);
 
     try {
       const context = await snapshotService.prepare({
@@ -127,7 +136,9 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
 
     setIsAnalyzing(true);
     setRuntimeExecution(null);
+    setPolicyExecution(null);
     setAnalysisError(null);
+    setPolicyError(null);
 
     try {
       const execution = await analysisService.analyze(
@@ -140,6 +151,30 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
       setAnalysisError(errorMessage(error));
     } finally {
       setIsAnalyzing(false);
+    }
+  }
+
+  async function handleValidateScenario(): Promise<void> {
+    const scenario = runtimeExecution?.result.suggestedScenario;
+
+    if (!scenario) {
+      return;
+    }
+
+    setIsValidatingScenario(true);
+    setPolicyExecution(null);
+    setPolicyError(null);
+
+    try {
+      const execution = await analysisService.validateScenario(
+        scenario
+      );
+
+      setPolicyExecution(execution);
+    } catch (error: unknown) {
+      setPolicyError(errorMessage(error));
+    } finally {
+      setIsValidatingScenario(false);
     }
   }
 
@@ -184,6 +219,10 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
       <AiAnalysisResultCard
         result={runtimeExecution?.result ?? null}
         error={analysisError}
+        isValidatingScenario={isValidatingScenario}
+        policyExecution={policyExecution}
+        policyError={policyError}
+        onValidateScenario={handleValidateScenario}
       />
     </div>
   );

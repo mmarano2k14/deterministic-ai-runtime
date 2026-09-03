@@ -3,6 +3,8 @@ import type {
   RuntimeAnalysisAnalyzeRequest,
   RuntimeAnalysisProviderStatus,
   RuntimeAnalysisRuntimeExecutionResult,
+  RuntimeAnalysisScenarioPolicyRuntimeExecutionResult,
+  RuntimeAnalysisSuggestedScenario,
   RuntimeAnalysisSnapshot,
   RuntimeAnalysisSnapshotRequest,
 } from "./RuntimeAnalysisType";
@@ -70,6 +72,29 @@ export class RuntimeAnalysisApi {
     return this.parseResponse<RuntimeAnalysisRuntimeExecutionResult>(
       result,
       "analysis"
+    );
+  }
+
+  public async validateScenario(
+    scenario: RuntimeAnalysisSuggestedScenario,
+    signal?: AbortSignal
+  ): Promise<RuntimeAnalysisScenarioPolicyRuntimeExecutionResult> {
+    const result = await this.rbacApi.call(
+      {
+        name: "RUNTIME ANALYSIS POLICY VALIDATION",
+        method: "POST",
+        path: "/runtime-analysis/validate-scenario",
+        body: {
+          scenario,
+        },
+      },
+      undefined,
+      signal
+    );
+
+    return this.parseResponse<RuntimeAnalysisScenarioPolicyRuntimeExecutionResult>(
+      result,
+      "scenario policy validation"
     );
   }
 

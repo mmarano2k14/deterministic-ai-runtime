@@ -136,3 +136,28 @@ export type RuntimeAnalysisRuntimeExecutionResult = {
   runtimeStatus: string;
   result: RuntimeAnalysisResult;
 };
+
+
+export type RuntimeAnalysisScenarioPolicyDecision = {
+  policyKey: string;
+  resultKind: string;
+  allowed: boolean;
+  message: string;
+};
+
+export type RuntimeAnalysisScenarioPolicyValidationResult = {
+  allowed: boolean;
+  requiresHumanApproval: boolean;
+  planKey: string;
+  scenario: RuntimeAnalysisSuggestedScenario;
+  policyDecisions: RuntimeAnalysisScenarioPolicyDecision[];
+};
+
+export type RuntimeAnalysisScenarioPolicyRuntimeExecutionResult = {
+  runId: string;
+  executionId: string;
+  pipelineName: string;
+  stepName: string;
+  runtimeStatus: string;
+  result: RuntimeAnalysisScenarioPolicyValidationResult;
+};

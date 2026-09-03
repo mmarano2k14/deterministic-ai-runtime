@@ -484,3 +484,117 @@
   font-size: 10px;
   color: #111827;
 }
+
+
+.policyAction {
+  display: grid;
+}
+
+.policyAction button {
+  width: 100%;
+}
+
+.policyValidation {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid #dbeafe;
+  border-radius: 9px;
+  background: #f8fbff;
+}
+
+.policyValidationHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.policyPipeline {
+  margin-top: 3px;
+  font-size: 9px;
+  line-height: 1.4;
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+
+.policyDecisionBadge {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.policyDecisionBadge[data-allowed="true"] {
+  background: #ecfdf3;
+  color: #166534;
+}
+
+.policyRuntimeIdentity {
+  font-size: 9px;
+  color: #64748b;
+}
+
+.policyDecisionList {
+  display: grid;
+  gap: 6px;
+}
+
+.policyDecision {
+  display: grid;
+  gap: 3px;
+  padding: 7px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fffafa;
+}
+
+.policyDecision[data-allowed="true"] {
+  border-color: #bbf7d0;
+  background: #f7fff9;
+}
+
+.policyDecisionTopline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 9px;
+  color: #991b1b;
+}
+
+.policyDecision[data-allowed="true"] .policyDecisionTopline {
+  color: #166534;
+}
+
+.policyDecisionTopline strong {
+  text-transform: capitalize;
+}
+
+.policyDecisionMessage {
+  font-size: 9px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.humanApprovalRequired {
+  padding-top: 7px;
+  border-top: 1px solid #bfdbfe;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: #1d4ed8;
+}
+
+.policyValidationError {
+  padding: 8px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff7f7;
+  color: #991b1b;
+  font-size: 9px;
+  line-height: 1.45;
+}

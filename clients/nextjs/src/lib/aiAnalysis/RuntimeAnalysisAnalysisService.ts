@@ -4,6 +4,8 @@ import type {
   RuntimeAnalysisPreparedContext,
   RuntimeAnalysisProviderStatus,
   RuntimeAnalysisRuntimeExecutionResult,
+  RuntimeAnalysisScenarioPolicyRuntimeExecutionResult,
+  RuntimeAnalysisSuggestedScenario,
 } from "./RuntimeAnalysisType";
 
 export class RuntimeAnalysisAnalysisService {
@@ -29,6 +31,15 @@ export class RuntimeAnalysisAnalysisService {
         question,
         snapshotRequest: context.request,
       },
+      signal
+    );
+  }
+  public validateScenario(
+    scenario: RuntimeAnalysisSuggestedScenario,
+    signal?: AbortSignal
+  ): Promise<RuntimeAnalysisScenarioPolicyRuntimeExecutionResult> {
+    return this.api.validateScenario(
+      scenario,
       signal
     );
   }

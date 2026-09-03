@@ -1,5 +1,8 @@
 import { JSX } from "react";
-import type { RuntimeAnalysisResult } from "@/lib/aiAnalysis/RuntimeAnalysisType";
+import type {
+  RuntimeAnalysisResult,
+  RuntimeAnalysisScenarioPolicyRuntimeExecutionResult,
+} from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import { AiAnalysisObservations } from "./AiAnalysisObservations";
 import { AiSuggestedScenarioCard } from "./AiSuggestedScenarioCard";
 import styles from "./AiAnalysisPanel.module.css";
@@ -7,12 +10,23 @@ import styles from "./AiAnalysisPanel.module.css";
 export type AiAnalysisResultCardProps = {
   result: RuntimeAnalysisResult | null;
   error: string | null;
+  isValidatingScenario: boolean;
+  policyExecution: RuntimeAnalysisScenarioPolicyRuntimeExecutionResult | null;
+  policyError: string | null;
+  onValidateScenario: () => void;
 };
 
 export function AiAnalysisResultCard(
   props: AiAnalysisResultCardProps
 ): JSX.Element {
-  const { result, error } = props;
+  const {
+    result,
+    error,
+    isValidatingScenario,
+    policyExecution,
+    policyError,
+    onValidateScenario,
+  } = props;
 
   if (error) {
     return (
@@ -59,7 +73,13 @@ export function AiAnalysisResultCard(
 
       <AiAnalysisObservations observations={result.observations} />
 
-      <AiSuggestedScenarioCard scenario={result.suggestedScenario} />
+      <AiSuggestedScenarioCard
+        scenario={result.suggestedScenario}
+        isValidating={isValidatingScenario}
+        policyExecution={policyExecution}
+        policyError={policyError}
+        onValidate={onValidateScenario}
+      />
     </section>
   );
 }

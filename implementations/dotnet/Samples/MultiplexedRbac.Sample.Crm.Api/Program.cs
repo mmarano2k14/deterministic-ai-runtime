@@ -14,6 +14,7 @@ using Multiplexed.Rbac.Core.Runtime.Messaging.NServiceBus.DI;
 using Multiplexed.Realtime.DI;
 using Multiplexed.Realtime.Events;
 using Multiplexed.Realtime.Resolvers;
+using MultiplexedRbac.Sample.Crm.Api.AI.Policies;
 using MultiplexedRbac.Sample.Crm.Api.AI.Providers;
 using MultiplexedRbac.Sample.Crm.Api.AI.Runtime;
 using MultiplexedRbac.Sample.Crm.Api.AI.Steps;
@@ -269,7 +270,16 @@ builder.Services.AddAiControlPlaneDiscoveryCore();
 builder.Services.AddAiStepsFromAssemblies(
     typeof(AnalyzeRuntimeWithAiStep).Assembly);
 
+// Application-level governance policies.
+//
+// AddMultiplexAI already owns the policy registry and built-in policy engine
+// infrastructure. We only contribute custom IAiPolicy implementations from
+// this sample assembly; the runtime core remains unchanged.
+builder.Services.AddAiPoliciesFromAssemblies(
+    typeof(RuntimeAnalysisScenarioLimitsPolicy).Assembly);
+
 builder.Services.AddSingleton<RuntimeAnalysisPipelineDefinitionFactory>();
+builder.Services.AddSingleton<RuntimeAnalysisScenarioPolicyPipelineDefinitionFactory>();
 builder.Services.AddSingleton(
     new RuntimeAnalysisRuntimeOptions());
 
@@ -277,6 +287,9 @@ builder.Services.AddScoped<RuntimeAnalysisExecutionContextSnapshotFactory>();
 builder.Services.AddScoped<
     IRuntimeAnalysisRuntimeExecutor,
     RuntimeAnalysisRuntimeExecutor>();
+builder.Services.AddScoped<
+    IRuntimeAnalysisScenarioPolicyExecutor,
+    RuntimeAnalysisScenarioPolicyRuntimeExecutor>();
 
 builder.Services.AddHostedService<RuntimeAnalysisRuntimeHostedService>();
 
