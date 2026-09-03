@@ -8,7 +8,6 @@ import React, {
   useState,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-
 import { HttpLogCard } from "./components/HttpLogCard";
 import { RealtimeLogCard } from "./components/RealtimeLogCard";
 import { LogFilterKind } from "./LogsPanelType";
@@ -94,10 +93,35 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
   ).length;
 
   const realtimeCount = logs.filter((x) => x.kind === "realtime").length;
-
   const contextRotationCount = logs.filter((x) =>
     LogUiHelper.isContextRotationLog(x)
   ).length;
+
+  /**
+   * Returns a realistic initial row estimate by entry type.
+   *
+   * The actual height is still measured dynamically by measureElement.
+   * These estimates only reduce layout error before the first measurement,
+   * especially for realtime entries which are naturally taller than a
+   * collapsed HTTP row.
+   */
+  const estimateRowSize = (index: number): number => {
+    const log = filteredLogs[index];
+
+    if (!log) {
+      return 72;
+    }
+
+    if (filter === "rotation" && LogUiHelper.isContextRotationLog(log)) {
+      return 96;
+    }
+
+    if (LogUiHelper.isRealtimeLogEntry(log)) {
+      return 112;
+    }
+
+    return 64;
+  };
 
   /**
    * ------------------------------------------------------------
@@ -107,7 +131,7 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
   const rowVirtualizer = useVirtualizer({
     count: filteredLogs.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 56,
+    estimateSize: estimateRowSize,
     overscan: 6,
     getItemKey: (index) => filteredLogs[index]?.id ?? index,
   });
@@ -133,14 +157,11 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
   }, [filteredLogs, stickToTop]);
 
   /**
-   * Re-measure virtual rows whenever the filtered source changes.
-   */
-  useEffect(() => {
-    rowVirtualizer.measure();
-  }, [filter, filteredLogs, rowVirtualizer]);
-
-  /**
-   * On filter switch, jump to the top and re-enable live follow mode.
+   * On filter switch, jump to the top, re-enable live follow mode,
+   * and rebuild measurements for the newly selected row population.
+   *
+   * Do not call measure() for every incoming realtime log:
+   * measureElement / ResizeObserver owns dynamic row measurement.
    */
   useEffect(() => {
     const container = scrollRef.current;
@@ -181,9 +202,34 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
     setStickToTop(true);
   };
 
+  /**
+   * Render exactly one card for one virtual row.
+   *
+   * Context-rotation entries are ordinary HTTP entries with rotation metadata.
+   * In the "all", "http", and "http-error" views they stay represented by the
+   * normal HTTP card (which already exposes the rotation badge/details).
+   *
+   * The dedicated ContextRotationLogCard is used only by the rotation filter.
+   * This prevents one log from producing multiple cards inside one measured row.
+   */
+  const renderLogCard = (log: ConsoleLogEntry): JSX.Element | null => {
+    if (filter === "rotation" && LogUiHelper.isContextRotationLog(log)) {
+      return <ContextRotationLogCard log={log} />;
+    }
+
+    if (LogUiHelper.isHttpLogEntry(log)) {
+      return <HttpLogCard log={log} />;
+    }
+
+    if (LogUiHelper.isRealtimeLogEntry(log)) {
+      return <RealtimeLogCard log={log} />;
+    }
+
+    return null;
+  };
+
   return (
     <section className="panel">
-
       <div className="tab-header">
         <button
           className={filter === "all" ? "active" : ""}
@@ -226,11 +272,11 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
         </button>
 
         <button
-            type="button"
-            className="logs-jump-button active"
-            onClick={onClearClick}
-          >
-           Clear Logs 
+          type="button"
+          className="logs-jump-button active"
+          onClick={onClearClick}
+        >
+          Clear Logs
         </button>
 
         {!stickToTop && filteredLogs.length > 0 && (
@@ -242,7 +288,6 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
             Jump to latest
           </button>
         )}
-
       </div>
 
       <div
@@ -280,19 +325,7 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
                 >
-                  {LogUiHelper.isHttpLogEntry(log) && <HttpLogCard log={log} />}
-
-                  {LogUiHelper.isHttpErrorLogEntry(log) && (
-                    <HttpLogCard log={log} />
-                  )}
-
-                  {LogUiHelper.isContextRotationLog(log) && (
-                    <ContextRotationLogCard log={log} />
-                  )}
-
-                  {LogUiHelper.isRealtimeLogEntry(log) && (
-                    <RealtimeLogCard log={log} />
-                  )}
+                  {renderLogCard(log)}
                 </div>
               );
             })}
