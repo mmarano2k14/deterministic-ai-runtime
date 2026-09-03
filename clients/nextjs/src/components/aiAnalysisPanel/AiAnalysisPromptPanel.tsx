@@ -12,14 +12,25 @@ import styles from "./AiAnalysisPanel.module.css";
 export type AiAnalysisPromptPanelProps = {
   scope: AiAnalysisScope;
   question: string;
+  isPreparingContext: boolean;
   onScopeChange: (scope: AiAnalysisScope) => void;
   onQuestionChange: (question: string) => void;
+  onPrepareContext: () => void;
 };
 
 export function AiAnalysisPromptPanel(
   props: AiAnalysisPromptPanelProps
 ): JSX.Element {
-  const { scope, question, onScopeChange, onQuestionChange } = props;
+  const {
+    scope,
+    question,
+    isPreparingContext,
+    onScopeChange,
+    onQuestionChange,
+    onPrepareContext,
+  } = props;
+
+  const isScopeAvailable = AiAnalysisUxModel.isScopeAvailable(scope);
 
   function handleQuickAction(action: AiAnalysisQuickActionKey): void {
     onQuestionChange(AiAnalysisUxModel.promptForAction(action));
@@ -41,8 +52,13 @@ export function AiAnalysisPromptPanel(
           }
         >
           {AiAnalysisUxModel.scopes().map((definition) => (
-            <option key={definition.key} value={definition.key}>
+            <option
+              key={definition.key}
+              value={definition.key}
+              disabled={!definition.available}
+            >
               {definition.label}
+              {!definition.available ? " — coming next" : ""}
             </option>
           ))}
         </select>
@@ -74,14 +90,17 @@ export function AiAnalysisPromptPanel(
 
         <div className={styles.questionFooter}>
           <div className={styles.hint}>
-            UX is connected to live run context. Provider/API wiring follows next.
+            Prepare the bounded server-validated evidence context before the AI
+            provider is connected.
           </div>
           <Button
             variant="primary"
-            disabled
-            title="AI provider integration follows in the next implementation pack"
+            loading={isPreparingContext}
+            disabled={!isScopeAvailable}
+            onClick={onPrepareContext}
+            title="Build and validate the bounded runtime analysis snapshot"
           >
-            Ask AI
+            Prepare context
           </Button>
         </div>
       </div>

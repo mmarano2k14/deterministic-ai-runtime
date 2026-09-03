@@ -13,24 +13,29 @@ export class AiAnalysisUxModel {
       key: "current-run",
       label: "Current scenario / run",
       description:
-        "Analyze the current burst scenario, metrics and correlated runtime evidence.",
+        "Analyze the current scenario metrics and the logs captured since this run started.",
+      available: true,
     },
     {
       key: "current-execution",
       label: "Current DAG / execution",
       description:
-        "Focus the analysis on one execution and its DAG lifecycle events.",
+        "Available after runtime DAG execution selection and lifecycle correlation are connected.",
+      available: false,
     },
     {
       key: "selected-logs",
       label: "Selected logs",
       description:
-        "Analyze a user-selected evidence set from the live log stream.",
+        "Available after explicit Live log selection is connected to the analysis workspace.",
+      available: false,
     },
     {
       key: "last-30s",
       label: "Last 30 seconds",
-      description: "Analyze the most recent bounded observability window.",
+      description:
+        "Analyze a bounded rolling window from the current live observability stream.",
+      available: true,
     },
   ];
 
@@ -67,7 +72,7 @@ export class AiAnalysisUxModel {
       key: "provider-pending",
       label: "Provider pending",
       description:
-        "The analysis UX is connected to live runtime context; the AI provider is not wired yet.",
+        "Runtime evidence can be prepared now; the AI provider is not wired yet.",
     },
     {
       key: "ready",
@@ -98,6 +103,13 @@ export class AiAnalysisUxModel {
     return (
       this.scopeDefinitions.find((definition) => definition.key === scope)
         ?.description ?? ""
+    );
+  }
+
+  public static isScopeAvailable(scope: AiAnalysisScope): boolean {
+    return (
+      this.scopeDefinitions.find((definition) => definition.key === scope)
+        ?.available ?? false
     );
   }
 

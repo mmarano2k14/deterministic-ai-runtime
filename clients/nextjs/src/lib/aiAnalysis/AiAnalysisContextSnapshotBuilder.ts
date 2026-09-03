@@ -1,4 +1,5 @@
 import type { BurstRuntime } from "@/lib/console/burst/runtime/BurstMachineType";
+import { RuntimeAnalysisRunReader } from "./RuntimeAnalysisRunReader";
 import type { AiAnalysisContextSnapshot } from "./AiAnalysisType";
 
 export class AiAnalysisContextSnapshotBuilder {
@@ -6,28 +7,21 @@ export class AiAnalysisContextSnapshotBuilder {
     model: BurstRuntime,
     logCount: number
   ): AiAnalysisContextSnapshot {
-    const report = model.report;
-    const counters = report?.counters;
-    const progress = report?.progress;
-    const stats = report?.stats;
-
-    const dispatchMode = report?.config.dispatchMode ?? "No scenario yet";
-    const completed = progress?.completed ?? 0;
-    const total = progress?.total ?? report?.config.total ?? 0;
+    const run = RuntimeAnalysisRunReader.read(model);
 
     return {
-      title: dispatchMode,
-      subtitle: `${model.state} · ${completed}/${total} requests completed`,
+      title: run.dispatchMode,
+      subtitle: `${run.state} · ${run.completed}/${run.total} requests completed`,
       metrics: [
-        { label: "OK", value: String(counters?.ok ?? 0) },
-        { label: "403", value: String(counters?.forbidden ?? 0) },
-        { label: "429", value: String(counters?.rejected ?? 0) },
+        { label: "OK", value: String(run.ok) },
+        { label: "403", value: String(run.forbidden) },
+        { label: "429", value: String(run.tooManyRequests) },
         {
           label: "p50 / p95",
-          value: `${this.formatMs(stats?.p50ms)} / ${this.formatMs(stats?.p95ms)}`,
+          value: `${this.formatMs(run.p50Ms)} / ${this.formatMs(run.p95Ms)}`,
         },
         { label: "Live logs", value: String(logCount) },
-        { label: "In flight", value: String(progress?.inFlight ?? 0) },
+        { label: "In flight", value: String(run.inFlight) },
       ],
     };
   }

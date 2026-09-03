@@ -20,6 +20,7 @@ export type AiAnalysisScopeDefinition = {
   key: AiAnalysisScope;
   label: string;
   description: string;
+  available: boolean;
 };
 
 export type AiAnalysisQuickActionDefinition = {

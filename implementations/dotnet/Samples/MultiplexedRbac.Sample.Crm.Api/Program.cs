@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.OpenApi.Models;
 using Multiplexed.Rbac.Core.ExecutionContext;
 using Multiplexed.Rbac.Core.Runtime;
@@ -7,6 +7,7 @@ using Multiplexed.Rbac.Core.Runtime.Messaging.NServiceBus;
 using Multiplexed.Rbac.Core.Runtime.Messaging.NServiceBus.DI;
 using Multiplexed.Realtime.DI;
 using Multiplexed.Realtime.Resolvers;
+using MultiplexedRbac.Sample.Crm.Api.AI.Services;
 using MultiplexedRbac.Sample.Crm.Api.Auth;
 using MultiplexedRbac.Sample.Crm.Services;
 
@@ -137,17 +138,29 @@ builder.Services
 
 builder.Services.AddSingleton<MultiplexedRbac.Sample.Crm.Api.Context.DemoSeedState>();
 
-// --------------------------------------------------------------------
-// 6️⃣ Cookies ticket for protection
-// --------------------------------------------------------------------
 
+// --------------------------------------------------------------------
+// 4️⃣ AI Runtime Analysis — bounded snapshot foundation
+// --------------------------------------------------------------------
+// This is application/demo behavior.
+// It does not modify or replace the Deterministic AI Runtime.
+// The next AI provider layer will consume the normalized snapshot produced here.
+
+builder.Services.AddSingleton<
+    IRuntimeAnalysisSnapshotBuilder,
+    RuntimeAnalysisSnapshotBuilder>();
+
+
+// --------------------------------------------------------------------
+// 5️⃣ Cookies ticket for protection
+// --------------------------------------------------------------------
 
 builder.Services.AddDataProtection();
 builder.Services.AddSingleton<IDemoBootstrapTicketProtector, DemoBootstrapTicketProtector>();
 
 
 // --------------------------------------------------------------------
-// 4️⃣ NServiceBus Endpoint (API acts as publisher)
+// 6️⃣ NServiceBus Endpoint (API acts as publisher)
 // --------------------------------------------------------------------
 
 builder.Host.UseNServiceBus(_ =>
@@ -175,7 +188,7 @@ var app = builder.Build();
 
 
 // --------------------------------------------------------------------
-// 5️⃣ DEV Seed — deterministic test context
+// 7️⃣ DEV Seed — deterministic test context
 // --------------------------------------------------------------------
 // This simulates a login phase (Part 1).
 // In production, context would be created at authentication time.
@@ -193,7 +206,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 // --------------------------------------------------------------------
-// 6️⃣ HTTP Pipeline Ordering (CRITICAL)
+// 8️⃣ HTTP Pipeline Ordering (CRITICAL)
 // --------------------------------------------------------------------
 
 if (app.Environment.IsDevelopment())

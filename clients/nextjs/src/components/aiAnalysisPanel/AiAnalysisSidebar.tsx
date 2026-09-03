@@ -2,18 +2,32 @@
 
 import { JSX } from "react";
 import type { BurstRuntime } from "@/lib/console/burst/runtime/BurstMachineType";
+import type { ConsoleLogEntry } from "@/lib/infrastructure/logs/inMemoryLogType";
+import type { MultiplexedRbacApi } from "@/lib/rbac/MultiplexedRbacApi";
 import { ConsoleSidePanel } from "@/components/ui/ConsoleSidePanel";
 import { AiAnalysisPanel } from "./AiAnalysisPanel";
+
 
 export type AiAnalysisSidebarProps = {
   isCollapsed: boolean;
   model: BurstRuntime;
-  logCount: number;
+  logs: readonly ConsoleLogEntry[];
+  maxInFlight: string;
+  rotationOverlapMs: string;
+  api: MultiplexedRbacApi;
   onCollapsedChange: (next: boolean) => void;
 };
 
 export function AiAnalysisSidebar(props: AiAnalysisSidebarProps): JSX.Element {
-  const { isCollapsed, model, logCount, onCollapsedChange } = props;
+  const {
+    isCollapsed,
+    model,
+    logs,
+    maxInFlight,
+    rotationOverlapMs,
+    api,
+    onCollapsedChange,
+  } = props;
 
   return (
     <ConsoleSidePanel
@@ -33,7 +47,13 @@ export function AiAnalysisSidebar(props: AiAnalysisSidebarProps): JSX.Element {
         </button>
       }
     >
-      <AiAnalysisPanel model={model} logCount={logCount} />
+      <AiAnalysisPanel
+        model={model}
+        logs={logs}
+        maxInFlight={maxInFlight}
+        rotationOverlapMs={rotationOverlapMs}
+        api={api}
+      />
     </ConsoleSidePanel>
   );
 }

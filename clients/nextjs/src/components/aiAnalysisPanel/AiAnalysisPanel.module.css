@@ -245,3 +245,30 @@
   line-height: 1.5;
   color: #64748b;
 }
+
+.snapshotReady {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #ecfdf3;
+  color: #166534;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.snapshotMeta {
+  font-size: 10px;
+  color: #64748b;
+}
+
+.snapshotError {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.snapshotError .placeholderTitle,
+.snapshotError .placeholderText {
+  color: #991b1b;
+}

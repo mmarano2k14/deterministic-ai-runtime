@@ -214,7 +214,10 @@ export default function Page(): JSX.Element {
           <AiAnalysisSidebar
             isCollapsed={sidebars.aiCollapsed}
             model={burst.model}
-            logCount={state.logs.length}
+            logs={state.logs}
+            maxInFlight={String(state.maxInFlight)}
+            rotationOverlapMs={String(state.rotationOverlapMs)}
+            api={api}
             onCollapsedChange={handleAiSidebarCollapsedChange}
           />
         </div>
