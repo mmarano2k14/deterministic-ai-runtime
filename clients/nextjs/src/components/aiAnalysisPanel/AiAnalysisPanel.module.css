@@ -598,3 +598,71 @@
   font-size: 9px;
   line-height: 1.45;
 }
+
+
+.humanApprovalCard {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 9px;
+  background: #f8fbff;
+}
+
+.humanApprovalCard[data-status="Rejected"] {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+
+.humanApprovalCard[data-status="Approved"] {
+  border-color: #bbf7d0;
+  background: #f7fff9;
+}
+
+.humanApprovalHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.humanApprovalBadge {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.humanApprovalCard[data-status="Approved"] .humanApprovalBadge {
+  background: #ecfdf3;
+  color: #166534;
+}
+
+.humanApprovalCard[data-status="Rejected"] .humanApprovalBadge {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.humanApprovalMessage {
+  font-size: 10px;
+  line-height: 1.5;
+  color: #475569;
+}
+
+.approvalActions {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 7px;
+}
+
+.approvalActions button {
+  width: 100%;
+}
+
+.runtimeStatus[data-status="waiting"] {
+  background: #eff6ff;
+  color: #1d4ed8;
+}

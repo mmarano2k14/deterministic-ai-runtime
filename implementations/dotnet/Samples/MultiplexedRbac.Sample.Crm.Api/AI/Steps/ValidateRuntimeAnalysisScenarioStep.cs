@@ -27,32 +27,25 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Steps
 
             var helper = context.GetHelper();
 
-            var scenarioJson = await helper.GetConfigAsync<string>(
-                    RuntimeAnalysisStepConfigKeys.SuggestedScenarioJson,
+            var analysisResultJson = await helper.GetRequiredInputAsync<string>(
+                    RuntimeAnalysisStepInputKeys.AnalysisResultJson,
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            if (string.IsNullOrWhiteSpace(
-                    scenarioJson))
-            {
-                throw new InvalidOperationException(
-                    $"Scenario validation step '{helper.StepName}' is missing '{RuntimeAnalysisStepConfigKeys.SuggestedScenarioJson}'.");
-            }
-
-            RuntimeAnalysisSuggestedScenario scenario;
+            RuntimeAnalysisResult analysisResult;
 
             try
             {
-                scenario =
-                    JsonSerializer.Deserialize<RuntimeAnalysisSuggestedScenario>(
-                        scenarioJson)
+                analysisResult =
+                    JsonSerializer.Deserialize<RuntimeAnalysisResult>(
+                        analysisResultJson)
                     ?? throw new InvalidOperationException(
-                        "Suggested scenario deserialized to null.");
+                        "Upstream runtime analysis result deserialized to null.");
             }
             catch (JsonException exception)
             {
                 throw new InvalidOperationException(
-                    "Suggested scenario is invalid JSON.",
+                    "Upstream runtime analysis result is invalid JSON.",
                     exception);
             }
 
@@ -69,7 +62,7 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Steps
                     observability);
 
             var evaluation = await policyEngine.ValidateAsync(
-                    scenario,
+                    analysisResult.SuggestedScenario,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -91,15 +84,10 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Steps
 
                             return new RuntimeAnalysisScenarioPolicyDecision
                             {
-                                PolicyKey =
-                                    policyDefinition.Name,
-                                ResultKind =
-                                    result.Kind.ToString(),
-                                Allowed =
-                                    result.IsSuccess,
-                                Message =
-                                    result.Message
-                                    ?? string.Empty
+                                PolicyKey = policyDefinition.Name,
+                                ResultKind = result.Kind.ToString(),
+                                Allowed = result.IsSuccess,
+                                Message = result.Message ?? string.Empty
                             };
                         })
                     .ToArray();
@@ -114,17 +102,15 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Steps
                     RequiresHumanApproval =
                         allowed
                         && evaluation.Definition.RequireHumanApproval,
-                    PlanKey =
-                        evaluation.Definition.PlanKey,
-                    Scenario = scenario,
+                    PlanKey = evaluation.Definition.PlanKey,
+                    Scenario = analysisResult.SuggestedScenario,
                     PolicyDecisions = decisions
                 };
 
             return AiStepResult.Ok(
                 output: JsonSerializer.Serialize(
                     validation),
-                data: new Dictionary<string, object?>(
-                    StringComparer.Ordinal)
+                data: new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
                     ["runtimeStepKey"] = Name,
                     ["executionId"] = helper.ExecutionId,
@@ -134,8 +120,7 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Steps
                     ["allowed"] = allowed,
                     ["requiresHumanApproval"] =
                         validation.RequiresHumanApproval,
-                    ["planKey"] =
-                        validation.PlanKey
+                    ["planKey"] = validation.PlanKey
                 });
         }
     }

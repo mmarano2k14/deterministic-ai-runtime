@@ -42,7 +42,7 @@ export type RuntimeAnalysisEvidenceInput = {
   stepId?: string;
   childExecutionId?: string;
   policyKey?: string;
-  metadata?: Record<string, string | null | undefined>;
+  metadata?: Record<string, string | undefined>;
 };
 
 export type RuntimeAnalysisSnapshotRequest = {
@@ -127,17 +127,6 @@ export type RuntimeAnalysisAnalyzeRequest = {
   snapshotRequest: RuntimeAnalysisSnapshotRequest;
 };
 
-
-export type RuntimeAnalysisRuntimeExecutionResult = {
-  runId: string;
-  executionId: string;
-  pipelineName: string;
-  stepName: string;
-  runtimeStatus: string;
-  result: RuntimeAnalysisResult;
-};
-
-
 export type RuntimeAnalysisScenarioPolicyDecision = {
   policyKey: string;
   resultKind: string;
@@ -153,11 +142,34 @@ export type RuntimeAnalysisScenarioPolicyValidationResult = {
   policyDecisions: RuntimeAnalysisScenarioPolicyDecision[];
 };
 
-export type RuntimeAnalysisScenarioPolicyRuntimeExecutionResult = {
+export type RuntimeAnalysisHumanApprovalStatus =
+  | "Pending"
+  | "Approved"
+  | "Rejected"
+  | "NotRequired";
+
+export type RuntimeAnalysisHumanApprovalResult = {
+  required: boolean;
+  status: RuntimeAnalysisHumanApprovalStatus;
+  continuationId: string | null;
+  requestedAtUtc: string | null;
+  decidedAtUtc: string | null;
+  decidedBy: string | null;
+  message: string | null;
+};
+
+export type RuntimeAnalysisHumanApprovalDecision =
+  | "approve"
+  | "reject";
+
+export type RuntimeAnalysisRuntimeExecutionResult = {
   runId: string;
+  continuationRunId: string | null;
   executionId: string;
   pipelineName: string;
   stepName: string;
   runtimeStatus: string;
-  result: RuntimeAnalysisScenarioPolicyValidationResult;
+  result: RuntimeAnalysisResult;
+  policyValidation: RuntimeAnalysisScenarioPolicyValidationResult;
+  humanApproval: RuntimeAnalysisHumanApprovalResult;
 };

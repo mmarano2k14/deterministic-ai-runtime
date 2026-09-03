@@ -1,7 +1,3 @@
-namespace MultiplexedRbac.Sample.Crm.Api.AI.Models
-{
-    public sealed class RuntimeAnalysisScenarioPolicyValidationRequest
-    {
-        public RuntimeAnalysisSuggestedScenario? Scenario { get; init; }
-    }
-}
+// Intentionally empty.
+// The separate manual policy-validation execution path was merged into the single runtime-analysis DAG.
+// This tombstone can be removed with git rm after validation.

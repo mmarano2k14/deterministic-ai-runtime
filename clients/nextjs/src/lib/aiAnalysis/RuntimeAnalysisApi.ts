@@ -1,10 +1,9 @@
 import type { MultiplexedRbacApi } from "@/lib/rbac/MultiplexedRbacApi";
 import type {
   RuntimeAnalysisAnalyzeRequest,
+  RuntimeAnalysisHumanApprovalDecision,
   RuntimeAnalysisProviderStatus,
   RuntimeAnalysisRuntimeExecutionResult,
-  RuntimeAnalysisScenarioPolicyRuntimeExecutionResult,
-  RuntimeAnalysisSuggestedScenario,
   RuntimeAnalysisSnapshot,
   RuntimeAnalysisSnapshotRequest,
 } from "./RuntimeAnalysisType";
@@ -75,26 +74,27 @@ export class RuntimeAnalysisApi {
     );
   }
 
-  public async validateScenario(
-    scenario: RuntimeAnalysisSuggestedScenario,
+  public async decideHumanApproval(
+    executionId: string,
+    decision: RuntimeAnalysisHumanApprovalDecision,
     signal?: AbortSignal
-  ): Promise<RuntimeAnalysisScenarioPolicyRuntimeExecutionResult> {
+  ): Promise<RuntimeAnalysisRuntimeExecutionResult> {
     const result = await this.rbacApi.call(
       {
-        name: "RUNTIME ANALYSIS POLICY VALIDATION",
+        name: "RUNTIME ANALYSIS HUMAN APPROVAL",
         method: "POST",
-        path: "/runtime-analysis/validate-scenario",
+        path: `/runtime-analysis/executions/${encodeURIComponent(executionId)}/approval`,
         body: {
-          scenario,
+          decision,
         },
       },
       undefined,
       signal
     );
 
-    return this.parseResponse<RuntimeAnalysisScenarioPolicyRuntimeExecutionResult>(
+    return this.parseResponse<RuntimeAnalysisRuntimeExecutionResult>(
       result,
-      "scenario policy validation"
+      "human approval"
     );
   }
 

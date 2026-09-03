@@ -1,45 +1,40 @@
 import { JSX } from "react";
 import type {
-  RuntimeAnalysisScenarioPolicyRuntimeExecutionResult,
+  RuntimeAnalysisScenarioPolicyValidationResult,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import styles from "./AiAnalysisPanel.module.css";
 
 export type AiScenarioPolicyValidationCardProps = {
-  execution: RuntimeAnalysisScenarioPolicyRuntimeExecutionResult;
+  validation: RuntimeAnalysisScenarioPolicyValidationResult;
 };
 
 export function AiScenarioPolicyValidationCard(
   props: AiScenarioPolicyValidationCardProps
 ): JSX.Element {
-  const { execution } = props;
-  const { result } = execution;
+  const { validation } = props;
 
   return (
     <div className={styles.policyValidation}>
       <div className={styles.policyValidationHeader}>
         <div>
-          <div className={styles.resultSubheading}>Policy validation</div>
+          <div className={styles.resultSubheading}>
+            Automatic policy validation
+          </div>
           <div className={styles.policyPipeline}>
-            {execution.pipelineName} · {execution.stepName}
+            Same runtime-analysis DAG · dynamic pipeline policy config
           </div>
         </div>
 
         <div
           className={styles.policyDecisionBadge}
-          data-allowed={result.allowed}
+          data-allowed={validation.allowed}
         >
-          {result.allowed ? "ALLOWED" : "DENIED"}
+          {validation.allowed ? "ALLOWED" : "DENIED"}
         </div>
       </div>
 
-      <div className={styles.policyRuntimeIdentity}>
-        Execution {shortIdentity(execution.executionId)}
-        {" · "}
-        {execution.runtimeStatus}
-      </div>
-
       <div className={styles.policyDecisionList}>
-        {result.policyDecisions.map((decision) => (
+        {validation.policyDecisions.map((decision) => (
           <div
             key={decision.policyKey}
             className={styles.policyDecision}
@@ -55,13 +50,6 @@ export function AiScenarioPolicyValidationCard(
           </div>
         ))}
       </div>
-
-      {result.allowed && result.requiresHumanApproval ? (
-        <div className={styles.humanApprovalRequired}>
-          Policies passed · explicit human approval is still required before
-          execution.
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -69,10 +57,4 @@ export function AiScenarioPolicyValidationCard(
 function shortPolicyKey(policyKey: string): string {
   const parts = policyKey.split(".");
   return parts[parts.length - 1] || policyKey;
-}
-
-function shortIdentity(value: string): string {
-  return value.length <= 14
-    ? value
-    : `${value.slice(0, 7)}…${value.slice(-6)}`;
 }

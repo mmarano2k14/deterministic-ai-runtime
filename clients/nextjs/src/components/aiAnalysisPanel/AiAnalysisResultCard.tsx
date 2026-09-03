@@ -1,7 +1,9 @@
 import { JSX } from "react";
 import type {
+  RuntimeAnalysisHumanApprovalDecision,
+  RuntimeAnalysisHumanApprovalResult,
   RuntimeAnalysisResult,
-  RuntimeAnalysisScenarioPolicyRuntimeExecutionResult,
+  RuntimeAnalysisScenarioPolicyValidationResult,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import { AiAnalysisObservations } from "./AiAnalysisObservations";
 import { AiSuggestedScenarioCard } from "./AiSuggestedScenarioCard";
@@ -9,11 +11,14 @@ import styles from "./AiAnalysisPanel.module.css";
 
 export type AiAnalysisResultCardProps = {
   result: RuntimeAnalysisResult | null;
+  policyValidation: RuntimeAnalysisScenarioPolicyValidationResult | null;
+  humanApproval: RuntimeAnalysisHumanApprovalResult | null;
   error: string | null;
-  isValidatingScenario: boolean;
-  policyExecution: RuntimeAnalysisScenarioPolicyRuntimeExecutionResult | null;
-  policyError: string | null;
-  onValidateScenario: () => void;
+  isDecidingApproval: boolean;
+  approvalError: string | null;
+  onApprovalDecision: (
+    decision: RuntimeAnalysisHumanApprovalDecision
+  ) => void;
 };
 
 export function AiAnalysisResultCard(
@@ -21,11 +26,12 @@ export function AiAnalysisResultCard(
 ): JSX.Element {
   const {
     result,
+    policyValidation,
+    humanApproval,
     error,
-    isValidatingScenario,
-    policyExecution,
-    policyError,
-    onValidateScenario,
+    isDecidingApproval,
+    approvalError,
+    onApprovalDecision,
   } = props;
 
   if (error) {
@@ -37,7 +43,7 @@ export function AiAnalysisResultCard(
     );
   }
 
-  if (!result) {
+  if (!result || !policyValidation || !humanApproval) {
     return (
       <section className={styles.placeholder}>
         <div className={styles.placeholderTitle}>AI analysis output</div>
@@ -75,10 +81,11 @@ export function AiAnalysisResultCard(
 
       <AiSuggestedScenarioCard
         scenario={result.suggestedScenario}
-        isValidating={isValidatingScenario}
-        policyExecution={policyExecution}
-        policyError={policyError}
-        onValidate={onValidateScenario}
+        policyValidation={policyValidation}
+        humanApproval={humanApproval}
+        isDecidingApproval={isDecidingApproval}
+        approvalError={approvalError}
+        onApprovalDecision={onApprovalDecision}
       />
     </section>
   );

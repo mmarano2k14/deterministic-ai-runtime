@@ -1,11 +1,10 @@
 import type { MultiplexedRbacApi } from "@/lib/rbac/MultiplexedRbacApi";
 import { RuntimeAnalysisApi } from "./RuntimeAnalysisApi";
 import type {
+  RuntimeAnalysisHumanApprovalDecision,
   RuntimeAnalysisPreparedContext,
   RuntimeAnalysisProviderStatus,
   RuntimeAnalysisRuntimeExecutionResult,
-  RuntimeAnalysisScenarioPolicyRuntimeExecutionResult,
-  RuntimeAnalysisSuggestedScenario,
 } from "./RuntimeAnalysisType";
 
 export class RuntimeAnalysisAnalysisService {
@@ -34,12 +33,15 @@ export class RuntimeAnalysisAnalysisService {
       signal
     );
   }
-  public validateScenario(
-    scenario: RuntimeAnalysisSuggestedScenario,
+
+  public decideHumanApproval(
+    executionId: string,
+    decision: RuntimeAnalysisHumanApprovalDecision,
     signal?: AbortSignal
-  ): Promise<RuntimeAnalysisScenarioPolicyRuntimeExecutionResult> {
-    return this.api.validateScenario(
-      scenario,
+  ): Promise<RuntimeAnalysisRuntimeExecutionResult> {
+    return this.api.decideHumanApproval(
+      executionId,
+      decision,
       signal
     );
   }

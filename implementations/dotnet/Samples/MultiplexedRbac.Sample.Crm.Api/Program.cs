@@ -278,8 +278,12 @@ builder.Services.AddAiStepsFromAssemblies(
 builder.Services.AddAiPoliciesFromAssemblies(
     typeof(RuntimeAnalysisScenarioLimitsPolicy).Assembly);
 
+builder.Services.AddSingleton<RuntimeAnalysisScenarioPolicyDefinitionFactory>();
 builder.Services.AddSingleton<RuntimeAnalysisPipelineDefinitionFactory>();
-builder.Services.AddSingleton<RuntimeAnalysisScenarioPolicyPipelineDefinitionFactory>();
+builder.Services.AddScoped<RuntimeAnalysisExecutionResultReader>();
+builder.Services.AddSingleton<
+    IRuntimeAnalysisHumanApprovalStore,
+    RedisRuntimeAnalysisHumanApprovalStore>();
 builder.Services.AddSingleton(
     new RuntimeAnalysisRuntimeOptions());
 
@@ -288,8 +292,8 @@ builder.Services.AddScoped<
     IRuntimeAnalysisRuntimeExecutor,
     RuntimeAnalysisRuntimeExecutor>();
 builder.Services.AddScoped<
-    IRuntimeAnalysisScenarioPolicyExecutor,
-    RuntimeAnalysisScenarioPolicyRuntimeExecutor>();
+    IRuntimeAnalysisHumanApprovalService,
+    RuntimeAnalysisHumanApprovalService>();
 
 builder.Services.AddHostedService<RuntimeAnalysisRuntimeHostedService>();
 

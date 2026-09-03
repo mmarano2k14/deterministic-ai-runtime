@@ -12,10 +12,10 @@ import { AiAnalysisContextSnapshotBuilder } from "@/lib/aiAnalysis/AiAnalysisCon
 import { RuntimeAnalysisAnalysisService } from "@/lib/aiAnalysis/RuntimeAnalysisAnalysisService";
 import { RuntimeAnalysisSnapshotService } from "@/lib/aiAnalysis/RuntimeAnalysisSnapshotService";
 import type {
+  RuntimeAnalysisHumanApprovalDecision,
   RuntimeAnalysisPreparedContext,
   RuntimeAnalysisProviderStatus,
   RuntimeAnalysisRuntimeExecutionResult,
-  RuntimeAnalysisScenarioPolicyRuntimeExecutionResult,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import { AiAnalysisContextCard } from "./AiAnalysisContextCard";
 import { AiAnalysisPromptPanel } from "./AiAnalysisPromptPanel";
@@ -42,16 +42,14 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     useState<RuntimeAnalysisProviderStatus | null>(null);
   const [isPreparingContext, setIsPreparingContext] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isDecidingApproval, setIsDecidingApproval] = useState(false);
   const [preparedContext, setPreparedContext] =
     useState<RuntimeAnalysisPreparedContext | null>(null);
   const [runtimeExecution, setRuntimeExecution] =
     useState<RuntimeAnalysisRuntimeExecutionResult | null>(null);
-  const [isValidatingScenario, setIsValidatingScenario] = useState(false);
-  const [policyExecution, setPolicyExecution] =
-    useState<RuntimeAnalysisScenarioPolicyRuntimeExecutionResult | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [policyError, setPolicyError] = useState<string | null>(null);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
 
   const contextSnapshot = useMemo(
     () => AiAnalysisContextSnapshotBuilder.build(model, logs.length),
@@ -84,10 +82,9 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
   useEffect(() => {
     setPreparedContext(null);
     setRuntimeExecution(null);
-    setPolicyExecution(null);
     setSnapshotError(null);
     setAnalysisError(null);
-    setPolicyError(null);
+    setApprovalError(null);
   }, [scope, runStartedAt]);
 
   const analysisStatus = resolveAnalysisStatus(
@@ -107,9 +104,8 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     setIsPreparingContext(true);
     setSnapshotError(null);
     setRuntimeExecution(null);
-    setPolicyExecution(null);
     setAnalysisError(null);
-    setPolicyError(null);
+    setApprovalError(null);
 
     try {
       const context = await snapshotService.prepare({
@@ -136,9 +132,8 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
 
     setIsAnalyzing(true);
     setRuntimeExecution(null);
-    setPolicyExecution(null);
     setAnalysisError(null);
-    setPolicyError(null);
+    setApprovalError(null);
 
     try {
       const execution = await analysisService.analyze(
@@ -154,27 +149,27 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     }
   }
 
-  async function handleValidateScenario(): Promise<void> {
-    const scenario = runtimeExecution?.result.suggestedScenario;
-
-    if (!scenario) {
+  async function handleApprovalDecision(
+    decision: RuntimeAnalysisHumanApprovalDecision
+  ): Promise<void> {
+    if (!runtimeExecution) {
       return;
     }
 
-    setIsValidatingScenario(true);
-    setPolicyExecution(null);
-    setPolicyError(null);
+    setIsDecidingApproval(true);
+    setApprovalError(null);
 
     try {
-      const execution = await analysisService.validateScenario(
-        scenario
+      const execution = await analysisService.decideHumanApproval(
+        runtimeExecution.executionId,
+        decision
       );
 
-      setPolicyExecution(execution);
+      setRuntimeExecution(execution);
     } catch (error: unknown) {
-      setPolicyError(errorMessage(error));
+      setApprovalError(errorMessage(error));
     } finally {
-      setIsValidatingScenario(false);
+      setIsDecidingApproval(false);
     }
   }
 
@@ -187,8 +182,8 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
         </div>
 
         <p className={styles.text}>
-          Analyze the execution evidence already visible in graphs and live logs,
-          with DAG and policy correlation as lifecycle events become available.
+          Analyze execution evidence, let deterministic policies validate the AI
+          proposal automatically, then stop at a durable human-approval boundary.
         </p>
       </section>
 
@@ -218,11 +213,12 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
 
       <AiAnalysisResultCard
         result={runtimeExecution?.result ?? null}
+        policyValidation={runtimeExecution?.policyValidation ?? null}
+        humanApproval={runtimeExecution?.humanApproval ?? null}
         error={analysisError}
-        isValidatingScenario={isValidatingScenario}
-        policyExecution={policyExecution}
-        policyError={policyError}
-        onValidateScenario={handleValidateScenario}
+        isDecidingApproval={isDecidingApproval}
+        approvalError={approvalError}
+        onApprovalDecision={handleApprovalDecision}
       />
     </div>
   );

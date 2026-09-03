@@ -19,7 +19,10 @@ export function AiRuntimeExecutionCard(
     <section className={`${styles.section} ${styles.runtimeExecution}`}>
       <div className={styles.sectionHeader}>
         <div className={styles.sectionTitle}>Runtime DAG</div>
-        <div className={styles.runtimeStatus}>
+        <div
+          className={styles.runtimeStatus}
+          data-status={execution.runtimeStatus.toLowerCase()}
+        >
           {execution.runtimeStatus}
         </div>
       </div>
@@ -30,11 +33,11 @@ export function AiRuntimeExecutionCard(
           <strong>{execution.pipelineName}</strong>
         </div>
         <div>
-          <span>Step</span>
+          <span>Current step</span>
           <strong>{execution.stepName}</strong>
         </div>
         <div>
-          <span>RunId</span>
+          <span>Initial RunId</span>
           <strong title={execution.runId}>
             {execution.runId}
           </strong>
@@ -45,6 +48,14 @@ export function AiRuntimeExecutionCard(
             {execution.executionId}
           </strong>
         </div>
+        {execution.continuationRunId ? (
+          <div>
+            <span>Continuation RunId</span>
+            <strong title={execution.continuationRunId}>
+              {execution.continuationRunId}
+            </strong>
+          </div>
+        ) : null}
       </div>
     </section>
   );

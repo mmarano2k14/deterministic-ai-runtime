@@ -1,18 +1,23 @@
 import { JSX } from "react";
-import { Button } from "@/components/ui/Button";
 import type {
-  RuntimeAnalysisScenarioPolicyRuntimeExecutionResult,
+  RuntimeAnalysisHumanApprovalDecision,
+  RuntimeAnalysisHumanApprovalResult,
+  RuntimeAnalysisScenarioPolicyValidationResult,
   RuntimeAnalysisSuggestedScenario,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
+import { AiHumanApprovalCard } from "./AiHumanApprovalCard";
 import { AiScenarioPolicyValidationCard } from "./AiScenarioPolicyValidationCard";
 import styles from "./AiAnalysisPanel.module.css";
 
 export type AiSuggestedScenarioCardProps = {
   scenario: RuntimeAnalysisSuggestedScenario;
-  isValidating: boolean;
-  policyExecution: RuntimeAnalysisScenarioPolicyRuntimeExecutionResult | null;
-  policyError: string | null;
-  onValidate: () => void;
+  policyValidation: RuntimeAnalysisScenarioPolicyValidationResult;
+  humanApproval: RuntimeAnalysisHumanApprovalResult;
+  isDecidingApproval: boolean;
+  approvalError: string | null;
+  onApprovalDecision: (
+    decision: RuntimeAnalysisHumanApprovalDecision
+  ) => void;
 };
 
 export function AiSuggestedScenarioCard(
@@ -20,10 +25,11 @@ export function AiSuggestedScenarioCard(
 ): JSX.Element {
   const {
     scenario,
-    isValidating,
-    policyExecution,
-    policyError,
-    onValidate,
+    policyValidation,
+    humanApproval,
+    isDecidingApproval,
+    approvalError,
+    onApprovalDecision,
   } = props;
 
   return (
@@ -62,34 +68,16 @@ export function AiSuggestedScenarioCard(
         </div>
       </div>
 
-      <div className={styles.policyAction}>
-        <Button
-          variant="primary"
-          loading={isValidating}
-          disabled={isValidating}
-          onClick={onValidate}
-          title="Run deterministic custom policies inside the runtime before any scenario can be approved"
-        >
-          {policyExecution ? "Revalidate policies" : "Validate with policies"}
-        </Button>
-      </div>
+      <AiScenarioPolicyValidationCard
+        validation={policyValidation}
+      />
 
-      {policyError ? (
-        <div className={styles.policyValidationError}>
-          {policyError}
-        </div>
-      ) : null}
-
-      {policyExecution ? (
-        <AiScenarioPolicyValidationCard
-          execution={policyExecution}
-        />
-      ) : (
-        <div className={styles.policyPending}>
-          Proposal only · deterministic policy validation required before
-          human approval.
-        </div>
-      )}
+      <AiHumanApprovalCard
+        approval={humanApproval}
+        isDeciding={isDecidingApproval}
+        error={approvalError}
+        onDecision={onApprovalDecision}
+      />
     </div>
   );
 }

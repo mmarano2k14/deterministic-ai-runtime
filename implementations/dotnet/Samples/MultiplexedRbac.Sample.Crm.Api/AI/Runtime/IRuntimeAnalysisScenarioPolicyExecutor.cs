@@ -1,11 +1,3 @@
-using MultiplexedRbac.Sample.Crm.Api.AI.Models;
-
-namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
-{
-    public interface IRuntimeAnalysisScenarioPolicyExecutor
-    {
-        Task<RuntimeAnalysisScenarioPolicyRuntimeExecutionResult> ValidateAsync(
-            RuntimeAnalysisSuggestedScenario scenario,
-            CancellationToken cancellationToken);
-    }
-}
+// Intentionally empty.
+// The separate manual policy-validation execution path was merged into the single runtime-analysis DAG.
+// This tombstone can be removed with git rm after validation.
