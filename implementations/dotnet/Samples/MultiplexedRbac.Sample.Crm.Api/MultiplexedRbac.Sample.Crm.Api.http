@@ -1,2 +1,2 @@
-@MultiplexedRbac.Sample.Crm.Api_HostAddress = http://localhost:5194
+@MultiplexedRbac.Sample.Crm.Api_HostAddress = http://localhost:5000
 ###

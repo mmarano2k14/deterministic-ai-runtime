@@ -1,0 +1,54 @@
+.consoleBody {
+  grid-template-columns: 340px minmax(0, 1fr) 64px;
+  transition: grid-template-columns 180ms ease;
+}
+
+.controlsCollapsed {
+  grid-template-columns: 64px minmax(0, 1fr) 64px;
+}
+
+.aiOpen {
+  grid-template-columns: 64px minmax(0, 1fr) minmax(380px, 440px);
+}
+
+.consoleBody :global(.console-main) {
+  min-width: 0;
+  transition: height 180ms ease;
+}
+
+/*
+ * When AI is open, the Live log remains open at the same vertical height,
+ * but its horizontal footprint is constrained to the central observability
+ * column:
+ *
+ * 12px shell inset
+ * + 64px collapsed Controls rail
+ * + 12px grid gap
+ * = 88px left
+ *
+ * 12px shell inset
+ * + 440px AI sidebar
+ * + 12px grid gap
+ * = 464px right
+ */
+.logsDrawerAiOpen:global(.bottom-drawer) {
+  left: 88px;
+  right: 464px;
+  transition:
+    height 180ms ease,
+    left 180ms ease,
+    right 180ms ease;
+}
+
+@media (max-width: 1200px) {
+  .consoleBody,
+  .controlsCollapsed,
+  .aiOpen {
+    grid-template-columns: 1fr;
+  }
+
+  .logsDrawerAiOpen:global(.bottom-drawer) {
+    left: 12px;
+    right: 12px;
+  }
+}

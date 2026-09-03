@@ -1,0 +1,247 @@
+.panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.hero {
+  display: grid;
+  gap: 7px;
+  padding: 11px 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f7f9fc 100%);
+}
+
+.heroHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #475569;
+}
+
+.text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.analysisStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.analysisStatusDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.analysisStatus[data-status="ready"] .analysisStatusDot {
+  background: #22c55e;
+}
+
+.analysisStatus[data-status="analyzing"] .analysisStatusDot {
+  background: #3b82f6;
+}
+
+.analysisStatus[data-status="finding-available"] .analysisStatusDot {
+  background: #8b5cf6;
+}
+
+.contextSticky {
+  position: static;
+}
+
+.contextSection {
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.04);
+}
+
+.section {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sectionTitle {
+  font-size: 13px;
+  font-weight: 800;
+  color: #111827;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.statusDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.contextTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+  overflow-wrap: anywhere;
+}
+
+.contextSubtitle {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.metric {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #eef2f7;
+}
+
+.metricLabel {
+  font-size: 10px;
+  color: #64748b;
+}
+
+.metricValue {
+  font-size: 12px;
+  font-weight: 800;
+  color: #111827;
+  overflow-wrap: anywhere;
+}
+
+.scope {
+  display: grid;
+  gap: 6px;
+}
+
+.scope select {
+  width: 100%;
+}
+
+.scopeDescription {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.quickActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quickActions button {
+  width: 100%;
+  min-width: 0;
+  font-size: 11px;
+}
+
+.question {
+  display: grid;
+  gap: 8px;
+}
+
+.question textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: #ffffff;
+  color: #111827;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  outline: none;
+}
+
+.question textarea:focus {
+  border-color: #94a3b8;
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.15);
+}
+
+.questionFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hint {
+  font-size: 10px;
+  line-height: 1.4;
+  color: #94a3b8;
+}
+
+.placeholder {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #fafafa;
+}
+
+.placeholderTitle {
+  font-size: 12px;
+  font-weight: 800;
+  color: #334155;
+}
+
+.placeholderText {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #64748b;
+}

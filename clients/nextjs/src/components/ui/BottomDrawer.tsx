@@ -10,6 +10,7 @@ export type BottomDrawerProps = {
   minHeight?: number;
   maxHeight?: number;
   collapsedHeight?: number;
+  className?: string;
   onCollapsedChange: (next: boolean) => void;
   onHeightChange: (next: number) => void;
 };
@@ -23,6 +24,7 @@ export function BottomDrawer(props: BottomDrawerProps): JSX.Element {
     minHeight = 140,
     maxHeight = 640,
     collapsedHeight = 56,
+    className,
     onCollapsedChange,
     onHeightChange,
   } = props;
@@ -35,7 +37,6 @@ export function BottomDrawer(props: BottomDrawerProps): JSX.Element {
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent): void => {
       const dragState = dragStateRef.current;
-
       if (!dragState) {
         return;
       }
@@ -78,13 +79,17 @@ export function BottomDrawer(props: BottomDrawerProps): JSX.Element {
     document.body.style.cursor = "ns-resize";
   }
 
+  const rootClassName = [
+    "bottom-drawer",
+    isCollapsed ? "bottom-drawer--collapsed" : "",
+    className ?? "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <section
-      className={
-        isCollapsed
-          ? "bottom-drawer bottom-drawer--collapsed"
-          : "bottom-drawer"
-      }
+      className={rootClassName}
       style={{
         height: isCollapsed ? `${collapsedHeight}px` : `${height}px`,
       }}
