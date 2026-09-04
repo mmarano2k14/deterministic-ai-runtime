@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { HttpLogCard } from "./components/HttpLogCard";
 import { RealtimeLogCard } from "./components/RealtimeLogCard";
@@ -17,11 +18,16 @@ import { ConsoleLogEntry } from "@/lib/infrastructure/logs/inMemoryLogType";
 
 export type LogsPanelProps = {
   logs: ConsoleLogEntry[];
+  headerPortalId?: string;
   onClearClick: () => void;
 };
 
 export function LogsPanel(props: LogsPanelProps): JSX.Element {
-  const { logs, onClearClick } = props;
+  const {
+    logs,
+    headerPortalId,
+    onClearClick,
+  } = props;
 
   /**
    * Selected filter used to show:
@@ -34,6 +40,18 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
   const [filter, setFilter] = useState<LogFilterKind>("all");
 
   const [searchQuery, setSearchQuery] = useState("");
+
+  const [headerPortalTarget, setHeaderPortalTarget] =
+    useState<HTMLElement | null>(null);
+
+  const seenLogClassifications = useRef(
+    new Map<string, number>()
+  );
+
+  const [cumulativeCounts, setCumulativeCounts] =
+    useState<LogCumulativeCounts>(
+      createEmptyLogCumulativeCounts()
+    );
 
   /**
    * Controls whether the panel should keep following the live head.
@@ -51,6 +69,21 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
    * - the virtualizer
    */
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!headerPortalId) {
+      setHeaderPortalTarget(null);
+      return;
+    }
+
+    setHeaderPortalTarget(
+      document.getElementById(headerPortalId)
+    );
+
+    return () => {
+      setHeaderPortalTarget(null);
+    };
+  }, [headerPortalId]);
 
   /**
    * Apply the active filter while preserving the original source order.
@@ -113,31 +146,96 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
   }, [logs, filter, searchQuery]);
 
   /**
-   * Counts displayed in filter buttons.
+   * Lifetime counters since the last explicit Clear Logs.
+   *
+   * The retained log array is a bounded recency window (max 4000 in the
+   * current sink). Old rows may therefore be evicted while the console keeps
+   * running. Filter counters must not decrease when that happens.
+   *
+   * Classification is tracked per stable log id. This also handles HTTP
+   * entries that are initially pushed and later patched with:
+   * - final HTTP status / error;
+   * - context-rotation metadata.
+   *
+   * A category is incremented only the first time one log id acquires it.
    */
-  const httpCount = logs.filter((x) => LogUiHelper.isHttpLogEntry(x)).length;
+  useEffect(() => {
+    const deltas =
+      createEmptyLogCumulativeCounts();
 
-  const httpErrorCount = logs.filter(
+    let changed = false;
+
+    for (const log of logs) {
+      const currentMask =
+        classifyLogForCumulativeCounts(log);
+
+      const previousMask =
+        seenLogClassifications.current.get(log.id)
+        ?? 0;
+
+      const newlyAcquiredMask =
+        currentMask & ~previousMask;
+
+      if (newlyAcquiredMask === 0) {
+        continue;
+      }
+
+      seenLogClassifications.current.set(
+        log.id,
+        previousMask | currentMask
+      );
+
+      applyLogCounterMask(
+        deltas,
+        newlyAcquiredMask
+      );
+
+      changed = true;
+    }
+
+    if (!changed) {
+      return;
+    }
+
+    setCumulativeCounts((current) =>
+      addLogCumulativeCounts(
+        current,
+        deltas
+      )
+    );
+  }, [logs]);
+
+  /**
+   * Current retained counts.
+   *
+   * These are used only for tooltips / retained-window information.
+   * The visible button counters use cumulativeCounts.
+   */
+  const retainedHttpCount =
+    logs.filter((x) => LogUiHelper.isHttpLogEntry(x)).length;
+
+  const retainedHttpErrorCount = logs.filter(
     (x) =>
       LogUiHelper.isHttpLogEntry(x) &&
       ((typeof x.status === "number" && x.status >= 400) || !!x.error)
   ).length;
 
-  const realtimeCount = logs.filter((x) => x.kind === "realtime").length;
+  const retainedRealtimeCount =
+    logs.filter((x) => x.kind === "realtime").length;
 
-  const contextRotationCount = logs.filter((x) =>
+  const retainedContextRotationCount = logs.filter((x) =>
     LogUiHelper.isContextRotationLog(x)
   ).length;
 
-  const contextKeyCount = logs.filter((x) =>
+  const retainedContextKeyCount = logs.filter((x) =>
     LogUiHelper.isContextKeyLog(x)
   ).length;
 
-  const runtimeEngineCount = logs.filter((x) =>
+  const retainedRuntimeEngineCount = logs.filter((x) =>
     LogUiHelper.isRuntimeEngineLog(x)
   ).length;
 
-  const aiCount = logs.filter((x) =>
+  const retainedAiCount = logs.filter((x) =>
     LogUiHelper.isAiLog(x)
   ).length;
 
@@ -247,6 +345,21 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
   };
 
   /**
+   * Clear is the explicit lifetime boundary for both:
+   * - retained rows;
+   * - cumulative counters.
+   */
+  const handleClearLogs = (): void => {
+    seenLogClassifications.current.clear();
+    setCumulativeCounts(
+      createEmptyLogCumulativeCounts()
+    );
+    setSearchQuery("");
+    setStickToTop(true);
+    onClearClick();
+  };
+
+  /**
    * Render exactly one card for one virtual row.
    *
    * Context-rotation entries are ordinary HTTP entries with rotation metadata.
@@ -272,8 +385,7 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
     return null;
   };
 
-  return (
-    <section className="panel">
+  const toolbar = (
       <div className="logs-filter-toolbar">
         <div
           className="logs-filter-group logs-filter-group--all"
@@ -285,8 +397,13 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
             className={filter === "all" ? "active" : ""}
             onClick={() => setFilter("all")}
             type="button"
+            title={logCounterTitle(
+              "All",
+              cumulativeCounts.all,
+              logs.length
+            )}
           >
-            All ({logs.length})
+            All ({cumulativeCounts.all})
           </button>
         </div>
 
@@ -300,24 +417,39 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
             className={filter === "http" ? "active" : ""}
             onClick={() => setFilter("http")}
             type="button"
+            title={logCounterTitle(
+              "HTTP",
+              cumulativeCounts.http,
+              retainedHttpCount
+            )}
           >
-            HTTP ({httpCount})
+            HTTP ({cumulativeCounts.http})
           </button>
 
           <button
             className={filter === "http-error" ? "active" : ""}
             onClick={() => setFilter("http-error")}
             type="button"
+            title={logCounterTitle(
+              "HTTP Error",
+              cumulativeCounts.httpError,
+              retainedHttpErrorCount
+            )}
           >
-            HTTP Error ({httpErrorCount})
+            HTTP Error ({cumulativeCounts.httpError})
           </button>
 
           <button
             className={filter === "rotation" ? "active" : ""}
             onClick={() => setFilter("rotation")}
             type="button"
+            title={logCounterTitle(
+              "Context",
+              cumulativeCounts.context,
+              retainedContextRotationCount
+            )}
           >
-            Context ({contextRotationCount})
+            Context ({cumulativeCounts.context})
           </button>
         </div>
 
@@ -331,32 +463,52 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
             className={filter === "realtime" ? "active" : ""}
             onClick={() => setFilter("realtime")}
             type="button"
+            title={logCounterTitle(
+              "Realtime",
+              cumulativeCounts.realtime,
+              retainedRealtimeCount
+            )}
           >
-            Realtime ({realtimeCount})
+            Realtime ({cumulativeCounts.realtime})
           </button>
 
           <button
             className={filter === "context-key" ? "active" : ""}
             onClick={() => setFilter("context-key")}
             type="button"
+            title={logCounterTitle(
+              "ContextKey",
+              cumulativeCounts.contextKey,
+              retainedContextKeyCount
+            )}
           >
-            ContextKey ({contextKeyCount})
+            ContextKey ({cumulativeCounts.contextKey})
           </button>
 
           <button
             className={filter === "runtime-engine" ? "active" : ""}
             onClick={() => setFilter("runtime-engine")}
             type="button"
+            title={logCounterTitle(
+              "Runtime Engine",
+              cumulativeCounts.runtimeEngine,
+              retainedRuntimeEngineCount
+            )}
           >
-            Runtime Engine ({runtimeEngineCount})
+            Runtime Engine ({cumulativeCounts.runtimeEngine})
           </button>
 
           <button
             className={filter === "ai" ? "active" : ""}
             onClick={() => setFilter("ai")}
             type="button"
+            title={logCounterTitle(
+              "AI",
+              cumulativeCounts.ai,
+              retainedAiCount
+            )}
           >
-            AI ({aiCount})
+            AI ({cumulativeCounts.ai})
           </button>
         </div>
 
@@ -401,10 +553,17 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
             {stickToTop ? "Follow live" : "Paused"}
           </span>
 
+          <span
+            className="logs-retained-window"
+            title="Rows currently retained in the bounded in-memory log buffer. Filter counters show totals observed since the last Clear Logs."
+          >
+            {logs.length} retained
+          </span>
+
           <button
             type="button"
             className="logs-jump-button active"
-            onClick={onClearClick}
+            onClick={handleClearLogs}
           >
             Clear Logs
           </button>
@@ -420,6 +579,16 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
           )}
         </div>
       </div>
+  );
+
+  return (
+    <section className="logs-panel">
+      {headerPortalTarget
+        ? createPortal(
+            toolbar,
+            headerPortalTarget
+          )
+        : toolbar}
 
       <div
         ref={scrollRef}
@@ -465,6 +634,120 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
       </div>
     </section>
   );
+}
+
+type LogCumulativeCounts = {
+  all: number;
+  http: number;
+  httpError: number;
+  context: number;
+  realtime: number;
+  contextKey: number;
+  runtimeEngine: number;
+  ai: number;
+};
+
+const LogCounterMask = {
+  All: 1 << 0,
+  Http: 1 << 1,
+  HttpError: 1 << 2,
+  Context: 1 << 3,
+  Realtime: 1 << 4,
+  ContextKey: 1 << 5,
+  RuntimeEngine: 1 << 6,
+  Ai: 1 << 7,
+} as const;
+
+function createEmptyLogCumulativeCounts(): LogCumulativeCounts {
+  return {
+    all: 0,
+    http: 0,
+    httpError: 0,
+    context: 0,
+    realtime: 0,
+    contextKey: 0,
+    runtimeEngine: 0,
+    ai: 0,
+  };
+}
+
+function classifyLogForCumulativeCounts(
+  log: ConsoleLogEntry
+): number {
+  let mask = LogCounterMask.All;
+
+  if (LogUiHelper.isHttpLogEntry(log)) {
+    mask |= LogCounterMask.Http;
+
+    if (
+      (typeof log.status === "number" && log.status >= 400)
+      || !!log.error
+    ) {
+      mask |= LogCounterMask.HttpError;
+    }
+
+    if (LogUiHelper.isContextRotationLog(log)) {
+      mask |= LogCounterMask.Context;
+    }
+
+    return mask;
+  }
+
+  if (LogUiHelper.isRealtimeLogEntry(log)) {
+    mask |= LogCounterMask.Realtime;
+
+    if (LogUiHelper.isContextKeyLog(log)) {
+      mask |= LogCounterMask.ContextKey;
+    }
+
+    if (LogUiHelper.isRuntimeEngineLog(log)) {
+      mask |= LogCounterMask.RuntimeEngine;
+    }
+
+    if (LogUiHelper.isAiLog(log)) {
+      mask |= LogCounterMask.Ai;
+    }
+  }
+
+  return mask;
+}
+
+function applyLogCounterMask(
+  target: LogCumulativeCounts,
+  mask: number
+): void {
+  if (mask & LogCounterMask.All) target.all++;
+  if (mask & LogCounterMask.Http) target.http++;
+  if (mask & LogCounterMask.HttpError) target.httpError++;
+  if (mask & LogCounterMask.Context) target.context++;
+  if (mask & LogCounterMask.Realtime) target.realtime++;
+  if (mask & LogCounterMask.ContextKey) target.contextKey++;
+  if (mask & LogCounterMask.RuntimeEngine) target.runtimeEngine++;
+  if (mask & LogCounterMask.Ai) target.ai++;
+}
+
+function addLogCumulativeCounts(
+  current: LogCumulativeCounts,
+  delta: LogCumulativeCounts
+): LogCumulativeCounts {
+  return {
+    all: current.all + delta.all,
+    http: current.http + delta.http,
+    httpError: current.httpError + delta.httpError,
+    context: current.context + delta.context,
+    realtime: current.realtime + delta.realtime,
+    contextKey: current.contextKey + delta.contextKey,
+    runtimeEngine: current.runtimeEngine + delta.runtimeEngine,
+    ai: current.ai + delta.ai,
+  };
+}
+
+function logCounterTitle(
+  label: string,
+  observed: number,
+  retained: number
+): string {
+  return `${label}: ${observed} observed since Clear Logs · ${retained} currently retained`;
 }
 
 function buildSearchText(log: ConsoleLogEntry): string {

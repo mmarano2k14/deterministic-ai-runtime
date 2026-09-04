@@ -1,8 +1,11 @@
-import { JSX } from "react";
+"use client";
+
+import { JSX, useState } from "react";
 import type {
   RuntimeAnalysisChildDagRelationResult,
   RuntimeAnalysisHumanApprovalDecision,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
+import { AiChildReanalysisResultModal } from "./AiChildReanalysisResultModal";
 import { AiScenarioExecutionCard } from "./AiScenarioExecutionCard";
 import { AiSuggestedScenarioCard } from "./AiSuggestedScenarioCard";
 import { AiVerificationCard } from "./AiVerificationCard";
@@ -38,6 +41,9 @@ export function AiChildReanalysisCard(
     relation.investigationMode ?? "stop-when-conclusive";
   const continueMode =
     investigationMode === "continue-useful-experiments";
+
+  const [isResultModalOpen, setIsResultModalOpen] =
+    useState(false);
 
   if (!reanalysis) {
     return (
@@ -104,20 +110,15 @@ export function AiChildReanalysisCard(
         </strong>
       </div>
 
-      <p className={styles.childReanalysisAnswer}>
-        {reanalysis.answer}
-      </p>
-
-      {reanalysis.reasons.length > 0 ? (
-        <div className={styles.childReanalysisReasons}>
-          <span>Why</span>
-          <ul>
-            {reanalysis.reasons.map((reason, index) => (
-              <li key={`${relation.depth}:${index}`}>{reason}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+      <div className={styles.childReanalysisResultAction}>
+        <button
+          type="button"
+          className={styles.childReanalysisViewResultButton}
+          onClick={() => setIsResultModalOpen(true)}
+        >
+          View result
+        </button>
+      </div>
 
       {!reanalysis.shouldContinue ? (
         <div className={styles.childReanalysisStop}>
@@ -167,6 +168,12 @@ export function AiChildReanalysisCard(
       {verification ? (
         <AiVerificationCard verification={verification} />
       ) : null}
+
+      <AiChildReanalysisResultModal
+        relation={relation}
+        isOpen={isResultModalOpen}
+        onClose={() => setIsResultModalOpen(false)}
+      />
     </div>
   );
 }

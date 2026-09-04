@@ -29,9 +29,11 @@ export function BurstStats(props: BurstStatsProps): JSX.Element {
       <UiHelpers.Stat label="Errors" value={counters?.errors ?? 0} />
       <UiHelpers.Stat
         label="p50 / p95"
-        value={`${UiHelpers.formatMs(stats?.p50ms)} / ${UiHelpers.formatMs(
+        value={UiHelpers.formatMsPair(
+          stats?.p50ms,
           stats?.p95ms
-        )}`}
+        )}
+        valueClassName="kpi-value--latency-pair"
       />
       <UiHelpers.Stat label="Elapsed" value={UiHelpers.formatMs(elapsedMs)} />
     </section>

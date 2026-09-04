@@ -30,6 +30,7 @@ import layoutStyles from "./DashboardLayout.module.css";
 
 const LOGS_COLLAPSED_HEIGHT = 56;
 const WORKSPACE_GAP = 12;
+const LIVE_LOG_HEADER_PORTAL_ID = "live-log-header-controls";
 
 export default function Page(): JSX.Element {
   const { state, actions, dispatch, api } = useConsoleContext();
@@ -127,6 +128,13 @@ export default function Page(): JSX.Element {
         height: `calc(100% - ${visibleLogsHeight + WORKSPACE_GAP}px)`,
       }
     : undefined;
+
+  const logsDrawerClassName = [
+    "bottom-drawer--logs",
+    isAiOpen ? layoutStyles.logsDrawerAiOpen : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div className="console-shell">
@@ -261,11 +269,16 @@ export default function Page(): JSX.Element {
         minHeight={140}
         maxHeight={620}
         collapsedHeight={LOGS_COLLAPSED_HEIGHT}
-        className={isAiOpen ? layoutStyles.logsDrawerAiOpen : undefined}
+        className={logsDrawerClassName}
+        headerPortalId={LIVE_LOG_HEADER_PORTAL_ID}
         onCollapsedChange={setIsLogsCollapsed}
         onHeightChange={setLogsHeight}
       >
-        <LogsPanel logs={state.logs} onClearClick={actions.clearLogs} />
+        <LogsPanel
+          logs={state.logs}
+          headerPortalId={LIVE_LOG_HEADER_PORTAL_ID}
+          onClearClick={actions.clearLogs}
+        />
       </BottomDrawer>
     </div>
   );

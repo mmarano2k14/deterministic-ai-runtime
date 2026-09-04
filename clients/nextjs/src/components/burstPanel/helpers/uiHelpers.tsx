@@ -18,27 +18,41 @@ export class UiHelpers {
     );
   }
 
-  public static Stat({ label, value }: { label: string; value: React.ReactNode }) {
+  public static Stat({
+    label,
+    value,
+    valueClassName,
+  }: {
+    label: string;
+    value: React.ReactNode;
+    valueClassName?: string;
+  }) {
     return (
-            <div className="kpi-card">
-              <span className="kpi-label">{label}</span>
-              <strong>{value}</strong>
-            </div>
-
+      <div className="kpi-card">
+        <span className="kpi-label">{label}</span>
+        <strong className={valueClassName}>{value}</strong>
+      </div>
     );
   }
 
   public static ProgressBar({ value }: { value: number }) {
     const pct = Math.round(value * 100);
+    const isActive = pct > 0 && pct < 100;
+
     return (
-      <div style={{ height: 10, background: "#f3f3f3", borderRadius: 999 }}>
+      <div
+        className="burst-progress-track"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+      >
         <div
+          className={`burst-progress-fill ${
+            isActive ? "is-active" : ""
+          }`}
           style={{
-            height: "100%",
             width: `${pct}%`,
-            background: "#111",
-            borderRadius: 999,
-            transition: "width 120ms linear",
           }}
         />
       </div>
@@ -55,6 +69,35 @@ export class UiHelpers {
     if (!v || v < 0) return "0 ms";
     if (v < 1000) return `${Math.round(v)} ms`;
     return `${(v / 1000).toFixed(2)} s`;
+  }
+
+  /**
+   * Compact latency-pair display for KPI cards.
+   *
+   * When both values use milliseconds, render one shared unit:
+   *   110 / 221 ms
+   *
+   * If either value crosses one second, keep explicit units because the
+   * values may use different scales:
+   *   850 ms / 1.21 s
+   */
+  public static formatMsPair(
+    first?: number,
+    second?: number
+  ): string {
+    const safeFirst =
+      first && first > 0 ? first : 0;
+    const safeSecond =
+      second && second > 0 ? second : 0;
+
+    if (
+      safeFirst < 1000
+      && safeSecond < 1000
+    ) {
+      return `${Math.round(safeFirst)} / ${Math.round(safeSecond)} ms`;
+    }
+
+    return `${this.formatMs(safeFirst)} / ${this.formatMs(safeSecond)}`;
   }
 
   public static StyleOnce() {

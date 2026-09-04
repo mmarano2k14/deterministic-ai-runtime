@@ -209,6 +209,8 @@ body {
 
 .log-list {
   min-height: 0;
+  flex: 1 1 auto;
+  max-height: none;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -419,19 +421,55 @@ form-grid {
 }
 
 /* --------------------------------------------------------------
+   Live Log inside the resizable BottomDrawer
+   -------------------------------------------------------------- */
+
+/*
+ * BottomDrawer already owns:
+ * - outer panel border / radius / shadow
+ * - 12px shell padding
+ * - title/header
+ * - resize handle
+ *
+ * LogsPanel must therefore be a layout container, not another generic .panel.
+ * This removes the nested card/padding that pushed the toolbar too far down.
+ */
+.logs-panel {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.bottom-drawer__content > .logs-panel {
+  height: 100%;
+  min-height: 0;
+}
+
+/* --------------------------------------------------------------
    Live Log filter groups
    -------------------------------------------------------------- */
 
 .logs-filter-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns:
+    max-content
+    max-content
+    max-content
+    minmax(150px, 1fr)
+    max-content;
   align-items: center;
-  gap: 5px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  overflow-y: hidden;
-  margin-bottom: 8px;
-  padding-bottom: 2px;
-  scrollbar-width: thin;
+  gap: 10px;
+  width: 100%;
+  flex: 0 0 auto;
+  margin: 0 0 10px;
+  padding: 0 2px 10px;
+  overflow: visible;
+  border: 0;
+  border-bottom: 1px solid #e5e7eb;
+  border-radius: 0;
+  background: transparent;
 }
 
 .logs-filter-group,
@@ -440,11 +478,11 @@ form-grid {
   align-items: center;
   gap: 4px;
   min-width: 0;
-  flex: 0 0 auto;
-  padding: 3px;
+  padding: 4px 5px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #f8fafc;
+  border-radius: 9px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
 }
 
 .logs-filter-group__label {
@@ -480,7 +518,7 @@ form-grid {
 
 .logs-filter-group--http {
   border-color: #dbeafe;
-  background: #f8fbff;
+  background: #f9fbff;
 }
 
 .logs-filter-group--http .logs-filter-group__label {
@@ -488,8 +526,8 @@ form-grid {
 }
 
 .logs-filter-group--realtime {
-  border-color: #dcfce7;
-  background: #f8fff9;
+  border-color: #d1fae5;
+  background: #f8fffb;
 }
 
 .logs-filter-group--realtime .logs-filter-group__label {
@@ -497,8 +535,9 @@ form-grid {
 }
 
 .logs-filter-actions {
-  margin-left: auto;
-  background: #fff;
+  justify-self: end;
+  margin-left: 0;
+  background: #ffffff;
 }
 
 .logs-filter-actions .logs-jump-button {
@@ -511,13 +550,22 @@ form-grid {
   font-size: 11px;
 }
 
-@media (max-width: 1050px) {
-  .logs-filter-actions {
-    margin-left: 0;
+@media (max-width: 1450px) {
+  .logs-filter-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    overflow: visible;
+    gap: 8px;
+    padding-bottom: 12px;
   }
 
-  .logs-filter-toolbar {
-    overflow-x: auto;
+  .logs-filter-search {
+    flex: 1 1 220px;
+  }
+
+  .logs-filter-actions {
+    margin-left: auto;
   }
 }
 
@@ -525,8 +573,10 @@ form-grid {
   .logs-filter-toolbar {
     display: grid;
     grid-template-columns: 1fr;
+    gap: 7px;
+    margin: 0 0 10px;
+    padding: 0 0 9px;
     overflow: visible;
-    padding-bottom: 0;
   }
 
   .logs-filter-group,
@@ -547,9 +597,12 @@ form-grid {
 }
 
 .log-list {
-  max-height: 520px;
+  min-height: 0;
+  flex: 1 1 auto;
+  max-height: none;
   overflow-y: auto;
   padding-right: 4px;
+  margin-top: 0;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: #fcfcfd;
@@ -986,7 +1039,7 @@ form-grid {
   bottom: 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1033,6 +1086,7 @@ form-grid {
   gap: 12px;
   flex: 0 0 auto;
   padding-top: 4px;
+  padding-bottom: 2px;
 }
 
 .bottom-drawer__title {
@@ -1652,17 +1706,18 @@ form-grid {
 .logs-filter-search {
   display: flex;
   align-items: center;
-  gap: 4px;
-  min-width: 230px;
-  flex: 0 0 auto;
-  padding: 3px;
+  gap: 5px;
+  min-width: 0;
+  width: 100%;
+  padding: 4px 5px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
+  border-radius: 9px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
 }
 
 .logs-filter-search input {
-  width: 160px;
+  width: 100%;
   min-width: 100px;
   height: 28px;
   padding: 0 8px;
@@ -1781,5 +1836,548 @@ form-grid {
   .ai-sidebar-mini-tab[data-ai-status="working"]
     .ai-sidebar-mini-tab__status {
     animation: none;
+  }
+}
+
+.logs-retained-window {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 8px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------
+   Burst KPI latency pair + progress
+   -------------------------------------------------------------- */
+
+.kpi-value--latency-pair {
+  white-space: nowrap;
+  font-size: clamp(14px, 1.05vw, 18px);
+  letter-spacing: -0.02em;
+}
+
+/*
+ * Runtime progress uses a quiet blue/violet gradient instead of the old
+ * solid black bar. The shimmer only runs while progress is between 0–100%.
+ */
+.burst-progress-track {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      180deg,
+      #eef2ff 0%,
+      #e9eefb 100%
+    );
+  box-shadow:
+    inset 0 0 0 1px rgba(99, 102, 241, 0.08);
+}
+
+.burst-progress-fill {
+  position: relative;
+  overflow: hidden;
+  height: 100%;
+  border-radius: inherit;
+  background:
+    linear-gradient(
+      90deg,
+      #4f7df3 0%,
+      #5b6ee8 48%,
+      #7357d9 100%
+    );
+  box-shadow:
+    0 0 10px rgba(79, 125, 243, 0.18);
+  transition:
+    width 160ms linear,
+    filter 180ms ease;
+}
+
+.burst-progress-fill.is-active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  background:
+    linear-gradient(
+      105deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.08) 35%,
+      rgba(255, 255, 255, 0.45) 50%,
+      rgba(255, 255, 255, 0.08) 65%,
+      transparent 100%
+    );
+  transform: translateX(-120%);
+  animation: burstProgressShimmer 1.8s ease-in-out infinite;
+}
+
+@keyframes burstProgressShimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  55%,
+  100% {
+    transform: translateX(260%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .burst-progress-fill {
+    transition: none;
+  }
+
+  .burst-progress-fill.is-active::after {
+    animation: none;
+    display: none;
+  }
+}
+
+/* ==================================================================
+   FINAL LIVE LOG DRAWER OVERRIDE
+   ------------------------------------------------------------------
+   globals.css currently contains duplicated generic .bottom-drawer
+   definitions. This logs-specific modifier intentionally lives at EOF so
+   generic duplicates can never restore the older 12px gap / 36px header.
+   ================================================================== */
+
+.bottom-drawer.bottom-drawer--logs {
+  gap: 3px;
+  padding: 10px 12px 12px;
+}
+
+/*
+ * The collapse button no longer determines header row height.
+ * It floats on the right, leaving the Live log title in a compact 26px row.
+ */
+.bottom-drawer--logs .bottom-drawer__header {
+  position: relative;
+  min-height: 26px;
+  padding: 2px 42px 0 4px;
+  gap: 0;
+}
+
+.bottom-drawer--logs .bottom-drawer__title {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  line-height: 1.2;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.bottom-drawer--logs .bottom-drawer__toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+/*
+ * The resize handle remains exactly where it was. It is absolute and does not
+ * consume layout height.
+ */
+.bottom-drawer--logs .bottom-drawer__resize-handle {
+  height: 9px;
+}
+
+.bottom-drawer--logs .bottom-drawer__content {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.bottom-drawer--logs .bottom-drawer__content > .logs-panel {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Toolbar now starts immediately after the compact title row. */
+.bottom-drawer--logs .logs-filter-toolbar {
+  flex: 0 0 auto;
+  margin: 0 0 7px;
+  padding-top: 0;
+  padding-bottom: 7px;
+}
+
+/* The list consumes every remaining pixel of the resized drawer. */
+.bottom-drawer--logs .log-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  max-height: none;
+  overflow: auto;
+}
+
+/* Keep the visual rhythm compact even when the medium-width toolbar wraps. */
+@media (max-width: 1450px) {
+  .bottom-drawer--logs .logs-filter-toolbar {
+    margin-top: 0;
+    padding-bottom: 7px;
+  }
+}
+
+@media (max-width: 720px) {
+  .bottom-drawer.bottom-drawer--logs {
+    padding: 10px;
+  }
+
+  .bottom-drawer--logs .bottom-drawer__header {
+    padding-left: 2px;
+  }
+}
+
+/* ==================================================================
+   LIVE LOG DRAWER — CONTAINER-RESPONSIVE TOOLBAR
+   ------------------------------------------------------------------
+   The Live Log drawer changes width independently from the browser viewport
+   when sidebars are opened/closed. Media queries therefore cannot correctly
+   decide when the toolbar should reflow.
+
+   The drawer itself becomes the responsive container.
+   ================================================================== */
+
+.bottom-drawer.bottom-drawer--logs {
+  container-type: inline-size;
+  container-name: live-log-drawer;
+}
+
+/* Stable semantic grid areas. */
+.bottom-drawer--logs .logs-filter-group--all {
+  grid-area: all;
+}
+
+.bottom-drawer--logs .logs-filter-group--http {
+  grid-area: http;
+}
+
+.bottom-drawer--logs .logs-filter-group--realtime {
+  grid-area: realtime;
+}
+
+.bottom-drawer--logs .logs-filter-search {
+  grid-area: search;
+}
+
+.bottom-drawer--logs .logs-filter-actions {
+  grid-area: actions;
+}
+
+/*
+ * LARGE DRAWER
+ * One clean row.
+ */
+.bottom-drawer--logs .logs-filter-toolbar {
+  display: grid;
+  grid-template-columns:
+    max-content
+    max-content
+    max-content
+    minmax(150px, 1fr)
+    max-content;
+  grid-template-areas:
+    "all http realtime search actions";
+  align-items: center;
+  gap: 8px;
+  overflow: visible;
+}
+
+.bottom-drawer--logs .logs-filter-search {
+  min-width: 0;
+  width: 100%;
+}
+
+.bottom-drawer--logs .logs-filter-actions {
+  justify-self: end;
+  margin-left: 0;
+}
+
+/*
+ * MEDIUM DRAWER
+ *
+ * Transport groups stay together on the first row.
+ * Search receives the second row's flexible space.
+ * Actions remain fully visible on the right.
+ */
+@container live-log-drawer (max-width: 1480px) {
+  .bottom-drawer--logs .logs-filter-toolbar {
+    grid-template-columns:
+      max-content
+      max-content
+      minmax(0, 1fr)
+      max-content;
+    grid-template-areas:
+      "all http realtime realtime"
+      "search search search actions";
+    row-gap: 7px;
+  }
+
+  .bottom-drawer--logs .logs-filter-search {
+    min-width: 0;
+  }
+
+  .bottom-drawer--logs .logs-filter-actions {
+    justify-self: end;
+  }
+}
+
+/*
+ * COMPACT DRAWER
+ *
+ * HTTP and Realtime each get their own row so none of their buttons collide
+ * with Search or Actions.
+ */
+@container live-log-drawer (max-width: 1120px) {
+  .bottom-drawer--logs .logs-filter-toolbar {
+    grid-template-columns:
+      minmax(0, 1fr)
+      max-content;
+    grid-template-areas:
+      "all all"
+      "http http"
+      "realtime realtime"
+      "search actions";
+    row-gap: 7px;
+  }
+
+  .bottom-drawer--logs .logs-filter-group--http,
+  .bottom-drawer--logs .logs-filter-group--realtime {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+  }
+
+  .bottom-drawer--logs .logs-filter-actions {
+    justify-self: end;
+  }
+}
+
+/*
+ * NARROW DRAWER
+ *
+ * Every logical area gets a full row.
+ */
+@container live-log-drawer (max-width: 760px) {
+  .bottom-drawer--logs .logs-filter-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "all"
+      "http"
+      "realtime"
+      "search"
+      "actions";
+  }
+
+  .bottom-drawer--logs .logs-filter-group--all,
+  .bottom-drawer--logs .logs-filter-group--http,
+  .bottom-drawer--logs .logs-filter-group--realtime,
+  .bottom-drawer--logs .logs-filter-search,
+  .bottom-drawer--logs .logs-filter-actions {
+    width: 100%;
+  }
+
+  .bottom-drawer--logs .logs-filter-actions {
+    justify-self: stretch;
+    overflow-x: auto;
+  }
+}
+
+/* ==================================================================
+   LIVE LOG HEADER TOOLBAR — FINAL STRUCTURAL STYLE
+   ------------------------------------------------------------------
+   Desired composition:
+     resize handle
+     Live log                               ▼
+     ALL | HTTP | REALTIME | SEARCH | ACTIONS
+     ----------------------------------------
+     log rows
+
+   Toolbar is physically mounted in BottomDrawer header via React portal.
+   ================================================================== */
+
+.bottom-drawer.bottom-drawer--logs {
+  container-type: inline-size;
+  container-name: live-log-drawer;
+  gap: 4px;
+  padding: 10px 12px 12px;
+}
+
+/*
+ * Two header rows:
+ * row 1 = title + collapse
+ * row 2 = complete filter toolbar
+ *
+ * This matches the visual fix: filters sit immediately under "Live log",
+ * not beside it and not inside a second content panel.
+ */
+.bottom-drawer--logs .bottom-drawer__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-template-areas:
+    "title toggle"
+    "controls controls";
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 4px;
+  min-height: 0;
+  padding: 0;
+}
+
+.bottom-drawer--logs .bottom-drawer__title {
+  grid-area: title;
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  padding-left: 4px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.bottom-drawer--logs .bottom-drawer__header-content {
+  grid-area: controls;
+  min-width: 0;
+  width: 100%;
+}
+
+.bottom-drawer--logs .bottom-drawer__toggle {
+  grid-area: toggle;
+  position: static;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+/* Resize handle remains above both header rows. */
+.bottom-drawer--logs .bottom-drawer__resize-handle {
+  height: 9px;
+}
+
+/* Header-mounted toolbar has no standalone top/bottom section spacing. */
+.bottom-drawer--logs
+  .bottom-drawer__header-content
+  .logs-filter-toolbar {
+  display: grid;
+  grid-template-columns:
+    max-content
+    max-content
+    max-content
+    minmax(140px, 1fr)
+    max-content;
+  grid-template-areas:
+    "all http realtime search actions";
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin: 0;
+  padding: 0 0 7px;
+  border: 0;
+  border-bottom: 1px solid #e5e7eb;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+/* Drawer content is now only the log list. */
+.bottom-drawer--logs .bottom-drawer__content {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.bottom-drawer--logs .bottom-drawer__content > .logs-panel {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.bottom-drawer--logs .logs-panel > .log-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  max-height: none;
+  margin-top: 0;
+  overflow: auto;
+}
+
+/* Medium actual DRAWER width — two compact toolbar rows. */
+@container live-log-drawer (max-width: 1500px) {
+  .bottom-drawer--logs
+    .bottom-drawer__header-content
+    .logs-filter-toolbar {
+    grid-template-columns:
+      max-content
+      max-content
+      minmax(0, 1fr)
+      max-content;
+    grid-template-areas:
+      "all http realtime realtime"
+      "search search search actions";
+    row-gap: 6px;
+  }
+}
+
+/* Compact actual drawer width — transport groups get their own rows. */
+@container live-log-drawer (max-width: 1120px) {
+  .bottom-drawer--logs
+    .bottom-drawer__header-content
+    .logs-filter-toolbar {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    grid-template-areas:
+      "all all"
+      "http http"
+      "realtime realtime"
+      "search actions";
+  }
+
+  .bottom-drawer--logs
+    .bottom-drawer__header-content
+    .logs-filter-group--http,
+  .bottom-drawer--logs
+    .bottom-drawer__header-content
+    .logs-filter-group--realtime {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+  }
+}
+
+/* Narrow drawer — each logical group on a clean full row. */
+@container live-log-drawer (max-width: 760px) {
+  .bottom-drawer--logs
+    .bottom-drawer__header-content
+    .logs-filter-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "all"
+      "http"
+      "realtime"
+      "search"
+      "actions";
+  }
+
+  .bottom-drawer--logs
+    .bottom-drawer__header-content
+    .logs-filter-actions {
+    justify-self: stretch;
+    overflow-x: auto;
   }
 }

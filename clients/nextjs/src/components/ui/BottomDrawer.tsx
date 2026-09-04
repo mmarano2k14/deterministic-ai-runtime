@@ -11,6 +11,7 @@ export type BottomDrawerProps = {
   maxHeight?: number;
   collapsedHeight?: number;
   className?: string;
+  headerPortalId?: string;
   onCollapsedChange: (next: boolean) => void;
   onHeightChange: (next: number) => void;
 };
@@ -25,6 +26,7 @@ export function BottomDrawer(props: BottomDrawerProps): JSX.Element {
     maxHeight = 640,
     collapsedHeight = 56,
     className,
+    headerPortalId,
     onCollapsedChange,
     onHeightChange,
   } = props;
@@ -103,6 +105,13 @@ export function BottomDrawer(props: BottomDrawerProps): JSX.Element {
 
       <div className="bottom-drawer__header">
         <div className="bottom-drawer__title">{title}</div>
+
+        {headerPortalId && !isCollapsed ? (
+          <div
+            id={headerPortalId}
+            className="bottom-drawer__header-content"
+          />
+        ) : null}
 
         <button
           type="button"
