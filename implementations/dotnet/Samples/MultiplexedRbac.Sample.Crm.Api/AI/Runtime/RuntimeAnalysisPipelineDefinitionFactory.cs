@@ -51,7 +51,7 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
             return new AiPipelineDefinition
             {
                 Name = PipelineName,
-                Version = "6",
+                Version = "7",
                 ExecutionMode = AiExecutionMode.Dag,
                 Steps =
                 [
@@ -170,10 +170,17 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 
         private AiPipelineStepDefinition CreateChildDagStep()
         {
+            // One approved root decision creates exactly one durable child.
+            // There is intentionally no pre-built Depth 2 / Depth 3 chain.
+            // A later child will be created only by a new approved decision
+            // produced by the re-analysis loop.
+            const int childDepth =
+                RuntimeAnalysisChildDagDefinitionFactory
+                    .InitialApprovedChildDepth;
+
             var childDefinition =
-                _childDagDefinitionFactory.CreateChildDefinition(
-                    PipelineName,
-                    RuntimeAnalysisChildDagDefinitionFactory.ChildDepth);
+                _childDagDefinitionFactory.CreateApprovedChildDefinition(
+                    childDepth);
 
             return new AiPipelineStepDefinition
             {
@@ -198,9 +205,7 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                         [ExecuteChildDagStep.LogicalInvocationKeyConfigKey] =
                             RuntimeAnalysisChildDagDefinitionFactory
                                 .CreateChildLogicalInvocationKey(
-                                    PipelineName,
-                                    RuntimeAnalysisChildDagDefinitionFactory
-                                        .ChildDepth),
+                                    childDepth),
                         [ExecuteChildDagStep.ChildDagDefinitionConfigKey] =
                             childDefinition
                     },

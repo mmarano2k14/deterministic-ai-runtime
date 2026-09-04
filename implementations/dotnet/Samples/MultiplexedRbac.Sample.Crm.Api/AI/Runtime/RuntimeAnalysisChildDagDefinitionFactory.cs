@@ -1,125 +1,97 @@
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Pipeline;
-using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution;
 
 namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 {
     /// <summary>
-    /// Builds the demo's recursive Child DAG definition by following the same
-    /// deterministic nesting pattern exercised by the MCP production matrix.
+    /// Builds one durable child execution for one approved decision.
     /// </summary>
+    /// <remarks>
+    /// Child depth is deliberately NOT pre-expanded.
+    ///
+    /// The product invariant is:
+    ///
+    /// one durable approval -> one durable child execution.
+    ///
+    /// A deeper child may only be created later after that child has its own
+    /// re-analysis, deterministic policy validation, and human approval.
+    ///
+    /// The MCP production matrix remains the proof that the runtime primitive
+    /// itself supports recursive depth. The demo no longer turns that proof
+    /// shape into automatic product semantics.
+    /// </remarks>
     public sealed class RuntimeAnalysisChildDagDefinitionFactory
     {
-        public const int ChildDepth = 3;
+        public const int InitialApprovedChildDepth = 1;
 
-        public const string PipelineVersion = "1.0.0";
+        public const int MaxProjectedApprovalDepth = 16;
+
+        public const string PipelineVersion = "2.0.0";
 
         public const string ChildDagStepName = "execute-child-dag";
 
         public const string CaptureEvidenceStepName =
             "capture-runtime-analysis-evidence";
 
-        public AiPipelineDefinition CreateChildDefinition(
-            string parentPipelineName,
-            int remainingDepth)
+        public AiPipelineDefinition CreateApprovedChildDefinition(
+            int childDepth)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                parentPipelineName);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
-                remainingDepth);
+                childDepth);
 
-            var childPipelineName = CreateChildPipelineName(
-                parentPipelineName,
-                remainingDepth);
-
-            var depth = ChildDepth - remainingDepth + 1;
-
-            var steps = new List<AiPipelineStepDefinition>
+            if (childDepth > MaxProjectedApprovalDepth)
             {
-                new()
-                {
-                    Name = CaptureEvidenceStepName,
-                    StepKey = RuntimeAnalysisStepKeys.CaptureChildDagEvidence,
-                    Order = 1,
-                    Input = CreateEvidenceInputs(),
-                    Config = new Dictionary<string, object?>(
-                        StringComparer.Ordinal)
-                    {
-                        [RuntimeAnalysisStepConfigKeys.ChildDagDepth] =
-                            depth
-                    },
-                    Execution = NoRetry()
-                }
-            };
-
-            if (remainingDepth > 1)
-            {
-                var nestedChild = CreateChildDefinition(
-                    childPipelineName,
-                    remainingDepth - 1);
-
-                steps.Add(
-                    new AiPipelineStepDefinition
-                    {
-                        Name = ChildDagStepName,
-                        StepKey = ExecuteChildDagStep.StepKey,
-                        Order = 2,
-                        DependsOn =
-                        [
-                            CaptureEvidenceStepName
-                        ],
-                        Input = CreateEvidenceInputs(),
-                        Config = new Dictionary<string, object?>(
-                            StringComparer.Ordinal)
-                        {
-                            [ExecuteChildDagStep.ChildDagIdConfigKey] =
-                                nestedChild.Name,
-                            [ExecuteChildDagStep.ChildDagVersionConfigKey] =
-                                nestedChild.Version,
-                            [ExecuteChildDagStep.LogicalInvocationKeyConfigKey] =
-                                CreateChildLogicalInvocationKey(
-                                    childPipelineName,
-                                    remainingDepth - 1),
-                            [ExecuteChildDagStep.ChildDagDefinitionConfigKey] =
-                                nestedChild
-                        },
-                        Execution = NoRetry()
-                    });
+                throw new ArgumentOutOfRangeException(
+                    nameof(childDepth),
+                    childDepth,
+                    $"Approval-driven Child DAG depth cannot exceed {MaxProjectedApprovalDepth}.");
             }
 
             return new AiPipelineDefinition
             {
-                Name = childPipelineName,
+                Name = CreateChildPipelineName(
+                    childDepth),
                 Version = PipelineVersion,
                 ExecutionMode = AiExecutionMode.Dag,
-                Steps = steps
+                Steps =
+                [
+                    new AiPipelineStepDefinition
+                    {
+                        Name = CaptureEvidenceStepName,
+                        StepKey =
+                            RuntimeAnalysisStepKeys.CaptureChildDagEvidence,
+                        Order = 1,
+                        Input = CreateEvidenceInputs(),
+                        Config = new Dictionary<string, object?>(
+                            StringComparer.Ordinal)
+                        {
+                            [RuntimeAnalysisStepConfigKeys.ChildDagDepth] =
+                                childDepth
+                        },
+                        Execution = NoRetry()
+                    }
+                ]
             };
         }
 
         public static string CreateChildPipelineName(
-            string parentPipelineName,
-            int remainingDepth)
+            int childDepth)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                parentPipelineName);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
-                remainingDepth);
+                childDepth);
 
             return
-                $"{parentPipelineName}-child-depth-{remainingDepth:000}";
+                $"runtime-analysis-approved-child-depth-{childDepth:000}";
         }
 
         public static string CreateChildLogicalInvocationKey(
-            string parentPipelineName,
-            int remainingDepth)
+            int childDepth)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(
-                parentPipelineName);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
-                remainingDepth);
+                childDepth);
 
             return
-                $"{parentPipelineName}|child-depth={remainingDepth}";
+                $"approved-child-depth={childDepth:000}";
         }
 
         public static Dictionary<string, object?> CreateRootInputs()
@@ -140,14 +112,8 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 
         private static Dictionary<string, object?> CreateEvidenceInputs()
         {
-            // Child invocation input is seeded into the child execution's
-            // structured state by the normal DAG creation path. Resolve those
-            // inherited values through state.* rather than input.*.
-            //
-            // input.* addresses the current step's declarative Input bag; using
-            // it here returns the literal path expression itself
-            // (for example "input.analysisResultJson") instead of the
-            // invocation value frozen by ExecuteChildDagStep.
+            // Frozen child invocation input is seeded into the child
+            // execution's structured state by the normal DAG creation path.
             return new Dictionary<string, object?>(
                 StringComparer.Ordinal)
             {

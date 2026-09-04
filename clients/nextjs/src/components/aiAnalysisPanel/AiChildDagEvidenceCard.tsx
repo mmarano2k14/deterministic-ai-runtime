@@ -36,11 +36,6 @@ export function AiChildDagEvidenceCard(
     ? childDag.observedDepth
     : relations.length;
 
-  const expectedDepth =
-    Number.isFinite(childDag.expectedDepth) && childDag.expectedDepth > 0
-      ? childDag.expectedDepth
-      : null;
-
   const terminal =
     status === "Completed" || status === "Failed";
 
@@ -55,7 +50,7 @@ export function AiChildDagEvidenceCard(
             Current DAG / execution
           </div>
           <div className={styles.childDagTitle}>
-            Native recursive Child DAG
+            Approval-driven Child DAG
           </div>
         </div>
 
@@ -69,15 +64,12 @@ export function AiChildDagEvidenceCard(
 
       <div className={styles.childDagSummaryRow}>
         <div>
-          <span>Observed depth</span>
-          <strong>
-            {observedDepth}
-            {expectedDepth !== null ? ` / ${expectedDepth}` : ""}
-          </strong>
+          <span>Current depth</span>
+          <strong>{observedDepth}</strong>
         </div>
         <p>
           {childDag.summary ||
-            "Runtime Child DAG evidence is being projected from the durable execution relation store."}
+            "Approval-driven Child DAG evidence is being projected from the durable execution relation store."}
         </p>
       </div>
 
@@ -97,8 +89,9 @@ export function AiChildDagEvidenceCard(
 
         {relations.length === 0 ? (
           <div className={styles.childDagNotStarted}>
-            Child relations will appear here after the approved scenario
-            reaches the native <code>execution.child-dag</code> step.
+            One approved decision creates one durable child execution.
+            Additional depth is never automatic: the next child will require
+            its own re-analysis, policy validation, and human approval.
           </div>
         ) : (
           relations.map((relation) => (

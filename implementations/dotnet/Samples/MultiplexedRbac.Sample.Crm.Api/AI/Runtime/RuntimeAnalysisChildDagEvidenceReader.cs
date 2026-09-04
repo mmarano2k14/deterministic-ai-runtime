@@ -21,8 +21,14 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
             IAiDagExecutionStore dagStore,
             IAiChildExecutionRelationStore relationStore)
         {
-            _dagStore = dagStore ?? throw new ArgumentNullException(nameof(dagStore));
-            _relationStore = relationStore ?? throw new ArgumentNullException(nameof(relationStore));
+            _dagStore =
+                dagStore
+                ?? throw new ArgumentNullException(
+                    nameof(dagStore));
+            _relationStore =
+                relationStore
+                ?? throw new ArgumentNullException(
+                    nameof(relationStore));
         }
 
         public async Task<RuntimeAnalysisChildDagResult> ReadAsync(
@@ -30,8 +36,10 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
             string executionId,
             CancellationToken cancellationToken)
         {
-            ArgumentNullException.ThrowIfNull(state);
-            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+            ArgumentNullException.ThrowIfNull(
+                state);
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                executionId);
 
             if (!state.Steps.TryGetValue(
                     RuntimeAnalysisChildDagDefinitionFactory.ChildDagStepName,
@@ -49,16 +57,18 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                 ?? throw new RuntimeAnalysisRuntimeExecutionException(
                     $"Runtime analysis execution '{executionId}' has no persisted execution record.");
 
-            var tenantId = record.ExecutionContextSnapshot?.TenantId;
+            var tenantId =
+                record.ExecutionContextSnapshot?.TenantId;
 
-            if (string.IsNullOrWhiteSpace(tenantId))
+            if (string.IsNullOrWhiteSpace(
+                    tenantId))
             {
                 throw new RuntimeAnalysisRuntimeExecutionException(
                     $"Runtime analysis execution '{executionId}' does not contain the durable TenantId required to read Child DAG relations.");
             }
 
             var relations =
-                await ReadRelationsAsync(
+                await ReadApprovalDrivenRelationsAsync(
                         tenantId,
                         executionId,
                         cancellationToken)
@@ -70,48 +80,49 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
         }
 
         private async Task<IReadOnlyList<RuntimeAnalysisChildDagRelationResult>>
-            ReadRelationsAsync(
+            ReadApprovalDrivenRelationsAsync(
                 string tenantId,
                 string rootExecutionId,
                 CancellationToken cancellationToken)
         {
             var results =
-                new List<RuntimeAnalysisChildDagRelationResult>(
-                    RuntimeAnalysisChildDagDefinitionFactory.ChildDepth);
+                new List<RuntimeAnalysisChildDagRelationResult>();
 
-            var currentParentExecutionId = rootExecutionId;
-            var currentParentPipelineName =
-                RuntimeAnalysisPipelineDefinitionFactory.PipelineName;
+            var currentParentExecutionId =
+                rootExecutionId;
 
+            // No depth is assumed to exist. We only follow relations that are
+            // actually durable. Today the root approval creates Depth 1 only.
+            // The future re-analysis loop may create Depth 2, Depth 3, ...
+            // after additional independent approvals.
             for (var depth = 1;
-                 depth <= RuntimeAnalysisChildDagDefinitionFactory.ChildDepth;
+                 depth
+                 <= RuntimeAnalysisChildDagDefinitionFactory
+                     .MaxProjectedApprovalDepth;
                  depth++)
             {
-                var remainingDepth =
-                    RuntimeAnalysisChildDagDefinitionFactory.ChildDepth
-                    - depth
-                    + 1;
-
-                var identity = new AiChildInvocationIdentity
-                {
-                    TenantId = tenantId,
-                    ParentExecutionId = currentParentExecutionId,
-                    ParentCallSiteId =
-                        RuntimeAnalysisChildDagDefinitionFactory.ChildDagStepName,
-                    ChildDagId =
-                        RuntimeAnalysisChildDagDefinitionFactory
-                            .CreateChildPipelineName(
-                                currentParentPipelineName,
-                                remainingDepth),
-                    ChildDagDefinitionVersion =
-                        RuntimeAnalysisChildDagDefinitionFactory.PipelineVersion,
-                    CanonicalLogicalInvocationKey =
-                        RuntimeAnalysisChildDagDefinitionFactory
-                            .CreateChildLogicalInvocationKey(
-                                currentParentPipelineName,
-                                remainingDepth),
-                    InvocationGeneration = 0
-                };
+                var identity =
+                    new AiChildInvocationIdentity
+                    {
+                        TenantId = tenantId,
+                        ParentExecutionId =
+                            currentParentExecutionId,
+                        ParentCallSiteId =
+                            RuntimeAnalysisChildDagDefinitionFactory
+                                .ChildDagStepName,
+                        ChildDagId =
+                            RuntimeAnalysisChildDagDefinitionFactory
+                                .CreateChildPipelineName(
+                                    depth),
+                        ChildDagDefinitionVersion =
+                            RuntimeAnalysisChildDagDefinitionFactory
+                                .PipelineVersion,
+                        CanonicalLogicalInvocationKey =
+                            RuntimeAnalysisChildDagDefinitionFactory
+                                .CreateChildLogicalInvocationKey(
+                                    depth),
+                        InvocationGeneration = 0
+                    };
 
                 var relation = await _relationStore
                     .GetAsync(
@@ -125,27 +136,9 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                 }
 
                 results.Add(
-                    new RuntimeAnalysisChildDagRelationResult
-                    {
-                        Depth = depth,
-                        TenantId = relation.TenantId,
-                        ParentExecutionId = relation.ParentExecutionId,
-                        ChildExecutionId = relation.ChildExecutionId,
-                        ChildInvocationKey = relation.ChildInvocationKey,
-                        ChildDagId = relation.ChildDagId,
-                        ChildDagDefinitionVersion =
-                            relation.ChildDagDefinitionVersion,
-                        InvocationGeneration = relation.InvocationGeneration,
-                        RelationStatus = relation.Status.ToString(),
-                        ContinuationStatus =
-                            relation.ContinuationStatus.ToString(),
-                        ChildResultDigest =
-                            relation.ChildResult?.ContentHash,
-                        ChildFailureReason = relation.ChildFailureReason,
-                        CreatedAtUtc = relation.CreatedAtUtc,
-                        CompletedAtUtc = relation.CompletedAtUtc,
-                        ParentResumedAtUtc = relation.ParentResumedAtUtc
-                    });
+                    MapRelation(
+                        relation,
+                        depth));
 
                 if (string.IsNullOrWhiteSpace(
                         relation.ChildExecutionId))
@@ -153,11 +146,48 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                     break;
                 }
 
-                currentParentExecutionId = relation.ChildExecutionId;
-                currentParentPipelineName = relation.ChildDagId;
+                currentParentExecutionId =
+                    relation.ChildExecutionId;
             }
 
             return results;
+        }
+
+        private static RuntimeAnalysisChildDagRelationResult MapRelation(
+            AiChildExecutionRelation relation,
+            int depth)
+        {
+            return new RuntimeAnalysisChildDagRelationResult
+            {
+                Depth = depth,
+                TenantId = relation.TenantId,
+                ParentExecutionId =
+                    relation.ParentExecutionId,
+                ChildExecutionId =
+                    relation.ChildExecutionId,
+                ChildInvocationKey =
+                    relation.ChildInvocationKey,
+                ChildDagId =
+                    relation.ChildDagId,
+                ChildDagDefinitionVersion =
+                    relation.ChildDagDefinitionVersion,
+                InvocationGeneration =
+                    relation.InvocationGeneration,
+                RelationStatus =
+                    relation.Status.ToString(),
+                ContinuationStatus =
+                    relation.ContinuationStatus.ToString(),
+                ChildResultDigest =
+                    relation.ChildResult?.ContentHash,
+                ChildFailureReason =
+                    relation.ChildFailureReason,
+                CreatedAtUtc =
+                    relation.CreatedAtUtc,
+                CompletedAtUtc =
+                    relation.CompletedAtUtc,
+                ParentResumedAtUtc =
+                    relation.ParentResumedAtUtc
+            };
         }
 
         private static RuntimeAnalysisChildDagResult BuildResult(
@@ -165,7 +195,7 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
             IReadOnlyList<RuntimeAnalysisChildDagRelationResult> relations)
         {
             var allCompleted =
-                relations.Count == RuntimeAnalysisChildDagDefinitionFactory.ChildDepth
+                relations.Count > 0
                 && relations.All(
                     relation => string.Equals(
                         relation.RelationStatus,
@@ -173,7 +203,7 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                         StringComparison.Ordinal));
 
             var allResumed =
-                relations.Count == RuntimeAnalysisChildDagDefinitionFactory.ChildDepth
+                relations.Count > 0
                 && relations.All(
                     relation => string.Equals(
                         relation.ContinuationStatus,
@@ -181,39 +211,63 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                         StringComparison.Ordinal));
 
             var allGenerationZero =
-                relations.All(
-                    relation => relation.InvocationGeneration == 0);
+                relations.Count > 0
+                && relations.All(
+                    relation =>
+                        relation.InvocationGeneration == 0);
 
             var childIds = relations
-                .Select(relation => relation.ChildExecutionId)
-                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(
+                    relation => relation.ChildExecutionId)
+                .Where(
+                    value => !string.IsNullOrWhiteSpace(
+                        value))
                 .Cast<string>()
                 .ToArray();
 
             var childIdsUnique =
-                childIds.Distinct(StringComparer.Ordinal).Count()
-                == childIds.Length;
+                childIds.Length > 0
+                && childIds
+                    .Distinct(
+                        StringComparer.Ordinal)
+                    .Count()
+                   == childIds.Length;
 
             var status = childStepStatus switch
             {
-                AiStepExecutionStatus.Completed when allCompleted =>
+                AiStepExecutionStatus.Completed
+                    when allCompleted =>
                     RuntimeAnalysisChildDagStatuses.Completed,
                 AiStepExecutionStatus.Failed =>
                     RuntimeAnalysisChildDagStatuses.Failed,
-                _ => RuntimeAnalysisChildDagStatuses.Running
+                _ =>
+                    RuntimeAnalysisChildDagStatuses.Running
             };
 
             return new RuntimeAnalysisChildDagResult
             {
                 Status = status,
+
+                // ExpectedDepth is retained for API compatibility. It now
+                // represents the currently durable approved depth, not a
+                // preconfigured target depth.
                 ExpectedDepth =
-                    RuntimeAnalysisChildDagDefinitionFactory.ChildDepth,
-                ObservedDepth = relations.Count,
-                AllRelationsCompleted = allCompleted,
-                AllContinuationsResumed = allResumed,
-                AllInvocationGenerationsZero = allGenerationZero,
-                ChildExecutionIdsUnique = childIdsUnique,
-                Relations = relations,
+                    Math.Max(
+                        RuntimeAnalysisChildDagDefinitionFactory
+                            .InitialApprovedChildDepth,
+                        relations.Count),
+                ObservedDepth =
+                    relations.Count,
+                AllRelationsCompleted =
+                    allCompleted,
+                AllContinuationsResumed =
+                    allResumed,
+                AllInvocationGenerationsZero =
+                    allGenerationZero,
+                ChildExecutionIdsUnique =
+                    childIdsUnique,
+                Relations =
+                    relations,
                 Summary = BuildSummary(
                     status,
                     relations,
@@ -228,11 +282,13 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
         {
             return new RuntimeAnalysisChildDagResult
             {
-                Status = RuntimeAnalysisChildDagStatuses.NotStarted,
+                Status =
+                    RuntimeAnalysisChildDagStatuses.NotStarted,
                 ExpectedDepth =
-                    RuntimeAnalysisChildDagDefinitionFactory.ChildDepth,
+                    RuntimeAnalysisChildDagDefinitionFactory
+                        .InitialApprovedChildDepth,
                 Summary =
-                    "Recursive Child DAG evidence has not started yet."
+                    "No approved child execution has started yet. One durable approval creates one child; deeper children require later child approvals."
             };
         }
 
@@ -244,7 +300,8 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
             bool allGenerationZero,
             bool childIdsUnique)
         {
-            var observedDepth = relations.Count;
+            var observedDepth =
+                relations.Count;
 
             if (string.Equals(
                     status,
@@ -277,18 +334,18 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                     && resumedCount + scheduledCount == relations.Count)
                 {
                     return
-                        $"Recursive Child DAG depth {observedDepth} completed; "
-                        + "all child relations are terminal and continuation "
-                        + $"proof is still converging ({resumedCount}/{relations.Count} resumed, "
-                        + $"{scheduledCount} scheduled).";
+                        $"Approval-driven Child DAG currently has {observedDepth} durable child execution(s); "
+                        + $"continuation proof is still converging ({resumedCount}/{relations.Count} resumed, "
+                        + $"{scheduledCount} scheduled). No deeper child is created without another approval.";
                 }
 
                 return
-                    $"Recursive Child DAG depth {observedDepth} completed; "
+                    $"Approval-driven Child DAG currently has {observedDepth} durable child execution(s); "
                     + $"relationsCompleted={allCompleted}, "
                     + $"continuationsResumed={allResumed}, "
                     + $"generationZero={allGenerationZero}, "
-                    + $"childExecutionIdsUnique={childIdsUnique}.";
+                    + $"childExecutionIdsUnique={childIdsUnique}. "
+                    + "Additional depth requires a new child re-analysis and approval.";
             }
 
             if (string.Equals(
@@ -297,11 +354,12 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                     StringComparison.Ordinal))
             {
                 return
-                    $"Recursive Child DAG execution failed after observing depth {observedDepth}.";
+                    $"Approval-driven Child DAG failed after observing {observedDepth} durable child execution(s).";
             }
 
             return
-                $"Recursive Child DAG is converging; observed depth {observedDepth}/{RuntimeAnalysisChildDagDefinitionFactory.ChildDepth}.";
+                $"Approval-driven Child DAG is converging at depth {observedDepth}. "
+                + "No deeper child is created automatically.";
         }
     }
 }
