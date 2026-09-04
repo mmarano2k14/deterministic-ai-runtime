@@ -22,7 +22,7 @@ export function BurstCharts(props: BurstChartsProps): JSX.Element | null {
     <div style={{ display: "grid", gap: 16 }}>
       <div>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>
-          Live Metrics
+          Throughput &amp; latency
         </div>
         <BurstGraph data={metrics} />
       </div>

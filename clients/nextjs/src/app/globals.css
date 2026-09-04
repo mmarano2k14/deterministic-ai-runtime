@@ -418,6 +418,134 @@ form-grid {
   font-weight: 700;
 }
 
+/* --------------------------------------------------------------
+   Live Log filter groups
+   -------------------------------------------------------------- */
+
+.logs-filter-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin-bottom: 8px;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.logs-filter-group,
+.logs-filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.logs-filter-group__label {
+  flex: 0 0 auto;
+  padding: 0 3px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.logs-filter-group button,
+.logs-filter-actions button {
+  height: 28px;
+  padding: 0 7px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: #111827;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.logs-filter-group button.active {
+  background: #111;
+  color: #fff;
+  border-color: #111;
+  font-weight: 700;
+}
+
+.logs-filter-group--http {
+  border-color: #dbeafe;
+  background: #f8fbff;
+}
+
+.logs-filter-group--http .logs-filter-group__label {
+  color: #1d4ed8;
+}
+
+.logs-filter-group--realtime {
+  border-color: #dcfce7;
+  background: #f8fff9;
+}
+
+.logs-filter-group--realtime .logs-filter-group__label {
+  color: #15803d;
+}
+
+.logs-filter-actions {
+  margin-left: auto;
+  background: #fff;
+}
+
+.logs-filter-actions .logs-jump-button {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border-color: #111;
+  background: #111;
+  color: #fff;
+  font-size: 11px;
+}
+
+@media (max-width: 1050px) {
+  .logs-filter-actions {
+    margin-left: 0;
+  }
+
+  .logs-filter-toolbar {
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .logs-filter-toolbar {
+    display: grid;
+    grid-template-columns: 1fr;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .logs-filter-group,
+  .logs-filter-actions {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  .logs-filter-group__label {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    align-self: stretch;
+    display: inline-flex;
+    align-items: center;
+    background: inherit;
+  }
+}
+
 .log-list {
   max-height: 520px;
   overflow-y: auto;
@@ -1514,5 +1642,144 @@ form-grid {
 
   .login-shell__title {
     font-size: 30px;
+  }
+}
+
+/* --------------------------------------------------------------
+   Live Log search + follow state
+   -------------------------------------------------------------- */
+
+.logs-filter-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 230px;
+  flex: 0 0 auto;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.logs-filter-search input {
+  width: 160px;
+  min-width: 100px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: #111827;
+  outline: none;
+  font-size: 11px;
+}
+
+.logs-filter-search input:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.08);
+}
+
+.logs-filter-search__count {
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 8px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.logs-live-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.logs-live-state.is-live {
+  background: #ecfdf3;
+  color: #15803d;
+}
+
+.logs-live-state.is-paused {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.logs-live-state > span {
+  font-size: 7px;
+}
+
+@media (max-width: 720px) {
+  .logs-filter-search {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .logs-filter-search input {
+    width: 100%;
+  }
+}
+
+/* --------------------------------------------------------------
+   Collapsed AI rail status
+   -------------------------------------------------------------- */
+
+.ai-sidebar-mini-tab {
+  position: relative;
+}
+
+.ai-sidebar-mini-tab__status {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #22c55e;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.ai-sidebar-mini-tab[data-ai-status="working"]
+  .ai-sidebar-mini-tab__status {
+  background: #3b82f6;
+  animation: aiSidebarStatusPulse 1.4s ease-in-out infinite;
+}
+
+.ai-sidebar-mini-tab[data-ai-status="error"]
+  .ai-sidebar-mini-tab__status {
+  background: #ef4444;
+}
+
+@keyframes aiSidebarStatusPulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.2);
+  }
+
+  50% {
+    transform: scale(1.06);
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-sidebar-mini-tab[data-ai-status="working"]
+    .ai-sidebar-mini-tab__status {
+    animation: none;
   }
 }

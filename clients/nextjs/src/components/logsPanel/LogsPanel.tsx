@@ -33,6 +33,8 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
    */
   const [filter, setFilter] = useState<LogFilterKind>("all");
 
+  const [searchQuery, setSearchQuery] = useState("");
+
   /**
    * Controls whether the panel should keep following the live head.
    *
@@ -58,40 +60,57 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
    * the correct order (newest first).
    */
   const filteredLogs = useMemo(() => {
-    if (filter === "all") {
-      return logs;
+    const filterMatchedLogs = (() => {
+      if (filter === "all") {
+        return logs;
+      }
+
+      if (filter === "rotation") {
+        return logs.filter((log) => LogUiHelper.isContextRotationLog(log));
+      }
+
+      if (filter === "http-error") {
+        return logs.filter(
+          (log) =>
+            LogUiHelper.isHttpLogEntry(log)
+            && (
+              (typeof log.status === "number" && log.status >= 400)
+              || !!log.error
+            )
+        );
+      }
+
+      if (filter === "http") {
+        return logs.filter((log) => LogUiHelper.isHttpLogEntry(log));
+      }
+
+      if (filter === "context-key") {
+        return logs.filter((log) => LogUiHelper.isContextKeyLog(log));
+      }
+
+      if (filter === "runtime-engine") {
+        return logs.filter((log) => LogUiHelper.isRuntimeEngineLog(log));
+      }
+
+      if (filter === "ai") {
+        return logs.filter((log) => LogUiHelper.isAiLog(log));
+      }
+
+      return logs.filter((log) => log.kind === filter);
+    })();
+
+    const normalizedQuery = searchQuery
+      .trim()
+      .toLowerCase();
+
+    if (!normalizedQuery) {
+      return filterMatchedLogs;
     }
 
-    if (filter === "rotation") {
-      return logs.filter((log) => LogUiHelper.isContextRotationLog(log));
-    }
-
-    if (filter === "http-error") {
-      return logs.filter(
-        (log) =>
-          LogUiHelper.isHttpLogEntry(log) &&
-          ((typeof log.status === "number" && log.status >= 400) || !!log.error)
-      );
-    }
-
-    if (filter === "http") {
-      return logs.filter((log) => LogUiHelper.isHttpLogEntry(log));
-    }
-
-    if (filter === "context-key") {
-      return logs.filter((log) => LogUiHelper.isContextKeyLog(log));
-    }
-
-    if (filter === "runtime-engine") {
-      return logs.filter((log) => LogUiHelper.isRuntimeEngineLog(log));
-    }
-
-    if (filter === "ai") {
-      return logs.filter((log) => LogUiHelper.isAiLog(log));
-    }
-
-    return logs.filter((log) => log.kind === filter);
-  }, [logs, filter]);
+    return filterMatchedLogs.filter((log) =>
+      buildSearchText(log).includes(normalizedQuery)
+    );
+  }, [logs, filter, searchQuery]);
 
   /**
    * Counts displayed in filter buttons.
@@ -198,7 +217,7 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
     container.scrollTop = 0;
     setStickToTop(true);
     rowVirtualizer.measure();
-  }, [filter, rowVirtualizer]);
+  }, [filter, searchQuery, rowVirtualizer]);
 
   /**
    * Updates follow mode depending on the user's current scroll position.
@@ -255,88 +274,151 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
 
   return (
     <section className="panel">
-      <div className="tab-header">
-        <button
-          className={filter === "all" ? "active" : ""}
-          onClick={() => setFilter("all")}
-          type="button"
+      <div className="logs-filter-toolbar">
+        <div
+          className="logs-filter-group logs-filter-group--all"
+          aria-label="All logs"
         >
-          All ({logs.length})
-        </button>
+          <span className="logs-filter-group__label">ALL</span>
 
-        <button
-          className={filter === "http" ? "active" : ""}
-          onClick={() => setFilter("http")}
-          type="button"
+          <button
+            className={filter === "all" ? "active" : ""}
+            onClick={() => setFilter("all")}
+            type="button"
+          >
+            All ({logs.length})
+          </button>
+        </div>
+
+        <div
+          className="logs-filter-group logs-filter-group--http"
+          aria-label="HTTP log filters"
         >
-          HTTP ({httpCount})
-        </button>
+          <span className="logs-filter-group__label">HTTP</span>
 
-        <button
-          className={filter === "http-error" ? "active" : ""}
-          onClick={() => setFilter("http-error")}
-          type="button"
+          <button
+            className={filter === "http" ? "active" : ""}
+            onClick={() => setFilter("http")}
+            type="button"
+          >
+            HTTP ({httpCount})
+          </button>
+
+          <button
+            className={filter === "http-error" ? "active" : ""}
+            onClick={() => setFilter("http-error")}
+            type="button"
+          >
+            HTTP Error ({httpErrorCount})
+          </button>
+
+          <button
+            className={filter === "rotation" ? "active" : ""}
+            onClick={() => setFilter("rotation")}
+            type="button"
+          >
+            Context ({contextRotationCount})
+          </button>
+        </div>
+
+        <div
+          className="logs-filter-group logs-filter-group--realtime"
+          aria-label="Realtime log filters"
         >
-          HTTP Error ({httpErrorCount})
-        </button>
+          <span className="logs-filter-group__label">REALTIME</span>
 
-        <button
-          className={filter === "rotation" ? "active" : ""}
-          onClick={() => setFilter("rotation")}
-          type="button"
+          <button
+            className={filter === "realtime" ? "active" : ""}
+            onClick={() => setFilter("realtime")}
+            type="button"
+          >
+            Realtime ({realtimeCount})
+          </button>
+
+          <button
+            className={filter === "context-key" ? "active" : ""}
+            onClick={() => setFilter("context-key")}
+            type="button"
+          >
+            ContextKey ({contextKeyCount})
+          </button>
+
+          <button
+            className={filter === "runtime-engine" ? "active" : ""}
+            onClick={() => setFilter("runtime-engine")}
+            type="button"
+          >
+            Runtime Engine ({runtimeEngineCount})
+          </button>
+
+          <button
+            className={filter === "ai" ? "active" : ""}
+            onClick={() => setFilter("ai")}
+            type="button"
+          >
+            AI ({aiCount})
+          </button>
+        </div>
+
+        <div
+          className="logs-filter-search"
+          aria-label="Search current log filter"
         >
-          Context ({contextRotationCount})
-        </button>
+          <span className="logs-filter-group__label">SEARCH</span>
 
-        <button
-          className={filter === "realtime" ? "active" : ""}
-          onClick={() => setFilter("realtime")}
-          type="button"
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search logs…"
+            aria-label="Search logs"
+          />
+
+          {searchQuery.trim() ? (
+            <span className="logs-filter-search__count">
+              {filteredLogs.length} match{filteredLogs.length === 1 ? "" : "es"}
+            </span>
+          ) : null}
+        </div>
+
+        <div
+          className="logs-filter-actions"
+          aria-label="Log actions"
         >
-          Realtime ({realtimeCount})
-        </button>
+          <span className="logs-filter-group__label">ACTIONS</span>
 
-        <button
-          className={filter === "context-key" ? "active" : ""}
-          onClick={() => setFilter("context-key")}
-          type="button"
-        >
-          ContextKey ({contextKeyCount})
-        </button>
+          <span
+            className={`logs-live-state ${
+              stickToTop ? "is-live" : "is-paused"
+            }`}
+            title={
+              stickToTop
+                ? "Following newest logs"
+                : "Live follow paused because you scrolled away from the newest logs"
+            }
+          >
+            <span aria-hidden="true">●</span>
+            {stickToTop ? "Follow live" : "Paused"}
+          </span>
 
-        <button
-          className={filter === "runtime-engine" ? "active" : ""}
-          onClick={() => setFilter("runtime-engine")}
-          type="button"
-        >
-          Runtime Engine ({runtimeEngineCount})
-        </button>
-
-        <button
-          className={filter === "ai" ? "active" : ""}
-          onClick={() => setFilter("ai")}
-          type="button"
-        >
-          AI ({aiCount})
-        </button>
-
-        <button
-          type="button"
-          className="logs-jump-button active"
-          onClick={onClearClick}
-        >
-          Clear Logs
-        </button>
-
-        {!stickToTop && filteredLogs.length > 0 && (
           <button
             type="button"
             className="logs-jump-button active"
-            onClick={jumpToLatest}
+            onClick={onClearClick}
           >
-            Jump to latest
+            Clear Logs
           </button>
-        )}
+
+          {!stickToTop && filteredLogs.length > 0 && (
+            <button
+              type="button"
+              className="logs-jump-button active"
+              onClick={jumpToLatest}
+            >
+              Jump to latest
+            </button>
+          )}
+        </div>
       </div>
 
       <div
@@ -384,3 +466,60 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
     </section>
   );
 }
+
+function buildSearchText(log: ConsoleLogEntry): string {
+  if (LogUiHelper.isHttpLogEntry(log)) {
+    return [
+      log.name,
+      log.method,
+      log.path,
+      log.url,
+      log.status,
+      log.statusText,
+      log.error,
+      log.rotation?.from,
+      log.rotation?.to,
+      safeSearchJson(log.requestHeaders),
+      safeSearchJson(log.requestBody),
+      safeSearchJson(log.responseHeaders),
+      log.responseBody,
+    ]
+      .filter((value) => value !== undefined && value !== null)
+      .join(" ")
+      .toLowerCase();
+  }
+
+  if (LogUiHelper.isRealtimeLogEntry(log)) {
+    return [
+      log.level,
+      log.category,
+      log.message,
+      log.eventName,
+      log.userId,
+      safeSearchJson(log.data),
+      safeSearchJson(log.payload),
+    ]
+      .filter((value) => value !== undefined && value !== null)
+      .join(" ")
+      .toLowerCase();
+  }
+
+  return "";
+}
+
+function safeSearchJson(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
