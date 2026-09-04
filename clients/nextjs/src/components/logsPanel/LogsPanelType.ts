@@ -9,4 +9,7 @@ export type LogFilterKind =
   | "http"
   | "rotation"
   | "http-error"
-  | "realtime";
+  | "realtime"
+  | "context-key"
+  | "runtime-engine"
+  | "ai";

@@ -7,6 +7,7 @@ import type { RuntimeAnalysisEvidenceInput } from "./RuntimeAnalysisType";
 
 export class RuntimeAnalysisEvidenceMapper {
   private static readonly RuntimeAnalysisPathPrefix = "/runtime-analysis";
+  private static readonly DemoUiCategoryPrefix = "demo.ui.";
 
   public static map(
     log: ConsoleLogEntry
@@ -55,6 +56,17 @@ export class RuntimeAnalysisEvidenceMapper {
     log: RealtimeLogEntry,
     timestampUtc: string
   ): RuntimeAnalysisEvidenceInput | null {
+    const sourceCategory =
+      this.nonEmpty(log.category);
+
+    if (
+      sourceCategory?.toLowerCase().startsWith(
+        this.DemoUiCategoryPrefix
+      )
+    ) {
+      return null;
+    }
+
     const payload = this.asRecord(log.payload);
     const payloadPath = this.readString(payload, "path");
 

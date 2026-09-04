@@ -1,4 +1,6 @@
-import { JSX } from "react";
+"use client";
+
+import { JSX, useEffect, useState } from "react";
 import type {
   RuntimeAnalysisChildDagRelationResult,
   RuntimeAnalysisChildDagResult,
@@ -39,6 +41,32 @@ export function AiChildDagEvidenceCard(
     onExecuteChildScenario,
   } = props;
 
+  const relations = Array.isArray(childDag?.relations)
+    ? [...childDag.relations].sort(
+        (left, right) => left.depth - right.depth
+      )
+    : [];
+
+  const latestRelationKey =
+    relations.length > 0
+      ? relationKey(relations[relations.length - 1])
+      : null;
+
+  const [selectedRelationKey, setSelectedRelationKey] =
+    useState<string | null>(latestRelationKey);
+
+  useEffect(() => {
+    // Select the deepest child on first load and only move the selection when
+    // a genuinely new durable child appears. Poll refreshes for the same
+    // topology do not steal a manual selection.
+    if (latestRelationKey === null) {
+      setSelectedRelationKey(null);
+      return;
+    }
+
+    setSelectedRelationKey(latestRelationKey);
+  }, [latestRelationKey]);
+
   if (!childDag) {
     return null;
   }
@@ -48,18 +76,19 @@ export function AiChildDagEvidenceCard(
       ? childDag.status.trim()
       : "Unknown";
 
-  const relations = Array.isArray(childDag.relations)
-    ? [...childDag.relations].sort(
-        (left, right) => left.depth - right.depth
-      )
-    : [];
-
   const observedDepth = Number.isFinite(childDag.observedDepth)
     ? childDag.observedDepth
     : relations.length;
 
   const terminal =
     status === "Completed" || status === "Failed";
+
+  const selectedRelation =
+    relations.find(
+      (relation) => relationKey(relation) === selectedRelationKey
+    )
+    ?? relations[relations.length - 1]
+    ?? null;
 
   return (
     <div
@@ -69,7 +98,7 @@ export function AiChildDagEvidenceCard(
       <div className={styles.childDagHeader}>
         <div>
           <div className={styles.childDagEyebrow}>
-            Current DAG / execution
+            Investigation
           </div>
           <div className={styles.childDagTitle}>
             Approval-driven Child DAG
@@ -91,7 +120,7 @@ export function AiChildDagEvidenceCard(
         </div>
         <p>
           {childDag.summary ||
-            "Approval-driven Child DAG evidence is being projected from the durable execution relation store."}
+            "Approval-driven Child DAG evidence is projected from the durable execution relation store."}
         </p>
       </div>
 
@@ -112,36 +141,25 @@ export function AiChildDagEvidenceCard(
         {relations.length === 0 ? (
           <div className={styles.childDagNotStarted}>
             One approved decision creates one durable child execution.
-            Additional depth is never automatic: the next child will require
-            its own re-analysis, policy validation, and human approval.
+            Additional depth requires another re-analysis, policy validation,
+            and human approval.
           </div>
         ) : (
-          relations.map((relation) => (
-            <ChildDagRelationNode
-              key={`${relation.depth}:${relation.childInvocationKey}`}
-              relation={relation}
-              isDecidingApproval={
-                decidingChildExecutionId === relation.childExecutionId
-              }
-              approvalError={
-                relation.humanApproval?.status === "Pending"
-                  ? childApprovalError
-                  : null
-              }
-              onApprovalDecision={(decision) =>
-                onChildApprovalDecision(relation, decision)
-              }
-              isExecutingScenario={
-                executingChildExecutionId === relation.childExecutionId
-              }
-              scenarioExecutionError={
-                relation.scenarioExecution?.status === "Pending"
-                  ? childScenarioExecutionError
-                  : null
-              }
-              onExecuteScenario={() => onExecuteChildScenario(relation)}
-            />
-          ))
+          relations.map((relation, index) => {
+            const key = relationKey(relation);
+            const selected = selectedRelationKey === key;
+            const latest = index === relations.length - 1;
+
+            return (
+              <ChildDagTreeNode
+                key={`${relation.depth}:${relation.childInvocationKey}`}
+                relation={relation}
+                selected={selected}
+                latest={latest}
+                onSelect={() => setSelectedRelationKey(key)}
+              />
+            );
+          })
         )}
       </div>
 
@@ -180,12 +198,164 @@ export function AiChildDagEvidenceCard(
           />
         </div>
       ) : null}
+
+      {selectedRelation ? (
+        <SelectedChildDetails
+          relation={selectedRelation}
+          latest={
+            relationKey(selectedRelation) === latestRelationKey
+          }
+          isDecidingApproval={
+            decidingChildExecutionId === selectedRelation.childExecutionId
+          }
+          approvalError={
+            selectedRelation.humanApproval?.status === "Pending"
+              ? childApprovalError
+              : null
+          }
+          onApprovalDecision={(decision) =>
+            onChildApprovalDecision(selectedRelation, decision)
+          }
+          isExecutingScenario={
+            executingChildExecutionId === selectedRelation.childExecutionId
+          }
+          scenarioExecutionError={
+            selectedRelation.scenarioExecution?.status === "Pending"
+              ? childScenarioExecutionError
+              : null
+          }
+          onExecuteScenario={() =>
+            onExecuteChildScenario(selectedRelation)
+          }
+        />
+      ) : null}
     </div>
   );
 }
 
-function ChildDagRelationNode(props: {
+function ChildDagTreeNode(props: {
   relation: RuntimeAnalysisChildDagRelationResult;
+  selected: boolean;
+  latest: boolean;
+  onSelect: () => void;
+}): JSX.Element {
+  const {
+    relation,
+    selected,
+    latest,
+    onSelect,
+  } = props;
+
+  const depth = Math.min(Math.max(relation.depth, 1), 5);
+
+  return (
+    <div
+      className={styles.childDagRelationNode}
+      data-depth={String(depth)}
+      data-selected={selected}
+      data-relation-status={normalizeToken(relation.relationStatus)}
+    >
+      <div className={styles.childDagConnector} aria-hidden="true" />
+
+      <button
+        type="button"
+        className={styles.childDagTreeNodeButton}
+        aria-pressed={selected}
+        onClick={onSelect}
+        title={`Show details for Child DAG depth ${relation.depth}`}
+      >
+        <div className={styles.childDagNodeTopline}>
+          <span className={styles.childDagNodeToggleTitle}>
+            <span className={styles.childDagNodeKind}>
+              CHILD DAG
+            </span>
+            {latest ? (
+              <span className={styles.childDagLatestBadge}>
+                Latest
+              </span>
+            ) : null}
+          </span>
+
+          <span className={styles.childDagNodeToggleRight}>
+            <span className={styles.childDagDepthBadge}>
+              Depth {relation.depth}
+            </span>
+            <span
+              className={styles.childDagTreeSelectIcon}
+              aria-hidden="true"
+            >
+              ›
+            </span>
+          </span>
+        </div>
+
+        <div className={styles.childDagNodeIdentity}>
+          <div>
+            <span>Child ExecutionId</span>
+            <strong title={relation.childExecutionId ?? ""}>
+              {relation.childExecutionId
+                ? shortId(relation.childExecutionId)
+                : "pending"}
+            </strong>
+          </div>
+          <div>
+            <span>Parent ExecutionId</span>
+            <strong title={relation.parentExecutionId}>
+              {shortId(relation.parentExecutionId)}
+            </strong>
+          </div>
+        </div>
+
+        <div className={styles.childDagNodeFacts}>
+          <span
+            className={styles.childDagFact}
+            data-state={statusState(relation.relationStatus)}
+          >
+            Relation · {relation.relationStatus || "Unknown"}
+          </span>
+          <span
+            className={styles.childDagFact}
+            data-state={statusState(relation.continuationStatus)}
+          >
+            Continuation · {relation.continuationStatus || "Unknown"}
+          </span>
+          <span
+            className={styles.childDagFact}
+            data-state={relation.invocationGeneration === 0 ? "pass" : "fail"}
+          >
+            Generation · {relation.invocationGeneration}
+          </span>
+        </div>
+
+        <div className={styles.childDagCompactOutcome}>
+          {relation.reanalysis ? (
+            <span>
+              AI · {relation.reanalysis.conclusion.replaceAll("_", " ")}
+            </span>
+          ) : (
+            <span>AI · working</span>
+          )}
+
+          {relation.verification ? (
+            <span>
+              Verification · {relation.verification.status}
+            </span>
+          ) : null}
+
+          {relation.humanApproval?.status === "Pending" ? (
+            <span className={styles.childDagNeedsAction}>
+              Approval required
+            </span>
+          ) : null}
+        </div>
+      </button>
+    </div>
+  );
+}
+
+function SelectedChildDetails(props: {
+  relation: RuntimeAnalysisChildDagRelationResult;
+  latest: boolean;
   isDecidingApproval: boolean;
   approvalError: string | null;
   onApprovalDecision: (
@@ -197,6 +367,7 @@ function ChildDagRelationNode(props: {
 }): JSX.Element {
   const {
     relation,
+    latest,
     isDecidingApproval,
     approvalError,
     onApprovalDecision,
@@ -204,26 +375,34 @@ function ChildDagRelationNode(props: {
     scenarioExecutionError,
     onExecuteScenario,
   } = props;
-  const depth = Math.min(Math.max(relation.depth, 1), 3);
 
   return (
-    <div
-      className={styles.childDagRelationNode}
-      data-depth={String(depth)}
-      data-relation-status={normalizeToken(relation.relationStatus)}
-    >
-      <div className={styles.childDagConnector} aria-hidden="true" />
+    <section className={styles.selectedChildPanel}>
+      <div className={styles.selectedChildHeader}>
+        <div>
+          <div className={styles.childDagEyebrow}>
+            Selected child
+          </div>
+          <div className={styles.selectedChildTitle}>
+            Depth {relation.depth}
+          </div>
+        </div>
 
-      <div className={styles.childDagNodeTopline}>
-        <span className={styles.childDagNodeKind}>
-          CHILD DAG
-        </span>
-        <span className={styles.childDagDepthBadge}>
-          Depth {relation.depth}
-        </span>
+        <div className={styles.selectedChildHeaderBadges}>
+          {latest ? (
+            <span className={styles.childDagLatestBadge}>
+              Latest
+            </span>
+          ) : null}
+          {relation.reanalysis ? (
+            <span className={styles.selectedChildConclusion}>
+              {relation.reanalysis.conclusion.replaceAll("_", " ")}
+            </span>
+          ) : null}
+        </div>
       </div>
 
-      <div className={styles.childDagNodeIdentity}>
+      <div className={styles.selectedChildIdentityGrid}>
         <div>
           <span>Child ExecutionId</span>
           <strong title={relation.childExecutionId ?? ""}>
@@ -232,42 +411,21 @@ function ChildDagRelationNode(props: {
               : "pending"}
           </strong>
         </div>
+
         <div>
           <span>Parent ExecutionId</span>
           <strong title={relation.parentExecutionId}>
             {shortId(relation.parentExecutionId)}
           </strong>
         </div>
-      </div>
 
-      <div className={styles.childDagNodeFacts}>
-        <span
-          className={styles.childDagFact}
-          data-state={statusState(relation.relationStatus)}
-        >
-          Relation · {relation.relationStatus || "Unknown"}
-        </span>
-        <span
-          className={styles.childDagFact}
-          data-state={statusState(relation.continuationStatus)}
-        >
-          Continuation · {relation.continuationStatus || "Unknown"}
-        </span>
-        <span
-          className={styles.childDagFact}
-          data-state={relation.invocationGeneration === 0 ? "pass" : "fail"}
-        >
-          Generation · {relation.invocationGeneration}
-        </span>
-      </div>
-
-      <div className={styles.childDagNodeDetails}>
         <div>
           <span>DAG</span>
           <strong title={relation.childDagId}>
             {relation.childDagId}
           </strong>
         </div>
+
         <div>
           <span>Invocation key</span>
           <strong title={relation.childInvocationKey}>
@@ -293,7 +451,7 @@ function ChildDagRelationNode(props: {
           onExecuteScenario={onExecuteScenario}
         />
       ) : null}
-    </div>
+    </section>
   );
 }
 
@@ -358,10 +516,6 @@ function continuationProofState(
     return "fail";
   }
 
-  // Pending and Scheduled are valid durable continuation states.
-  // Scheduled means the continuation has been durably recorded and may be
-  // safely re-enqueued; it is not proof of failure. Keep the aggregate
-  // evidence pending until every relation reaches Resumed.
   if (
     normalizedStatuses.every(
       (status) =>
@@ -397,6 +551,13 @@ function statusState(value: string): "pass" | "pending" | "fail" {
   }
 
   return "pending";
+}
+
+function relationKey(
+  relation: RuntimeAnalysisChildDagRelationResult
+): string {
+  return relation.childExecutionId?.trim()
+    || relation.childInvocationKey;
 }
 
 function normalizeToken(value: string): string {

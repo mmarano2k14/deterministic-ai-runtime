@@ -10,11 +10,6 @@ import { AiAnalysisUxModel } from "@/lib/aiAnalysis/AiAnalysisUxModel";
 import type {
   RuntimeAnalysisInvestigationMode,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
-import {
-  AiAnalysisActivityIndicator,
-  type AiAnalysisActivityLog,
-  type AiAnalysisActivityPhase,
-} from "./AiAnalysisActivityIndicator";
 import styles from "./AiAnalysisPanel.module.css";
 
 export type AiAnalysisPromptPanelProps = {
@@ -25,9 +20,6 @@ export type AiAnalysisPromptPanelProps = {
   isAnalyzing: boolean;
   canAnalyze: boolean;
   providerHint: string;
-  activityPhase: AiAnalysisActivityPhase | null;
-  activityStartedAt: number | null;
-  latestActivityLog: AiAnalysisActivityLog | null;
   onScopeChange: (scope: AiAnalysisScope) => void;
   onInvestigationModeChange: (
     mode: RuntimeAnalysisInvestigationMode
@@ -47,9 +39,6 @@ export function AiAnalysisPromptPanel(
     isAnalyzing,
     canAnalyze,
     providerHint,
-    activityPhase,
-    activityStartedAt,
-    latestActivityLog,
     onScopeChange,
     onInvestigationModeChange,
     onQuestionChange,
@@ -170,17 +159,6 @@ export function AiAnalysisPromptPanel(
           </Button>
         </div>
 
-        {
-          isAnalyzing &&
-          activityPhase &&
-          activityStartedAt !== null ? (
-            <AiAnalysisActivityIndicator
-              phase={activityPhase}
-              startedAt={activityStartedAt}
-              latestLog={latestActivityLog}
-            />
-          ) : null
-        }
       </div>
     </section>
   );

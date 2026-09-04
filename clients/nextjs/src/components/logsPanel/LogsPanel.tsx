@@ -78,6 +78,18 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
       return logs.filter((log) => LogUiHelper.isHttpLogEntry(log));
     }
 
+    if (filter === "context-key") {
+      return logs.filter((log) => LogUiHelper.isContextKeyLog(log));
+    }
+
+    if (filter === "runtime-engine") {
+      return logs.filter((log) => LogUiHelper.isRuntimeEngineLog(log));
+    }
+
+    if (filter === "ai") {
+      return logs.filter((log) => LogUiHelper.isAiLog(log));
+    }
+
     return logs.filter((log) => log.kind === filter);
   }, [logs, filter]);
 
@@ -93,8 +105,21 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
   ).length;
 
   const realtimeCount = logs.filter((x) => x.kind === "realtime").length;
+
   const contextRotationCount = logs.filter((x) =>
     LogUiHelper.isContextRotationLog(x)
+  ).length;
+
+  const contextKeyCount = logs.filter((x) =>
+    LogUiHelper.isContextKeyLog(x)
+  ).length;
+
+  const runtimeEngineCount = logs.filter((x) =>
+    LogUiHelper.isRuntimeEngineLog(x)
+  ).length;
+
+  const aiCount = logs.filter((x) =>
+    LogUiHelper.isAiLog(x)
   ).length;
 
   /**
@@ -269,6 +294,30 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
           type="button"
         >
           Realtime ({realtimeCount})
+        </button>
+
+        <button
+          className={filter === "context-key" ? "active" : ""}
+          onClick={() => setFilter("context-key")}
+          type="button"
+        >
+          ContextKey ({contextKeyCount})
+        </button>
+
+        <button
+          className={filter === "runtime-engine" ? "active" : ""}
+          onClick={() => setFilter("runtime-engine")}
+          type="button"
+        >
+          Runtime Engine ({runtimeEngineCount})
+        </button>
+
+        <button
+          className={filter === "ai" ? "active" : ""}
+          onClick={() => setFilter("ai")}
+          type="button"
+        >
+          AI ({aiCount})
         </button>
 
         <button

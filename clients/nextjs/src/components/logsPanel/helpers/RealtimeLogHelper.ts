@@ -40,12 +40,44 @@ export class RealtimeLogHelper {
 
     const eventName = (log.eventName ?? "").toLowerCase();
     const message = (log.message ?? "").toLowerCase();
+    const category = (log.category ?? "").toLowerCase();
 
     if (eventName.includes("context-rotated") || message.includes("rotated")) {
       badges.push({
         label: "CONTEXT ROTATED",
         color: "#b06000",
         background: "#fff4e5",
+      });
+    }
+
+    if (
+      category.includes("executioncontext")
+      || message.includes("executioncontext")
+      || message.includes("execution context")
+    ) {
+      badges.push({
+        label: "CONTEXT KEY",
+        color: "#7c3aed",
+        background: "#f3e8ff",
+      });
+    }
+
+    if (
+      category.startsWith("ai.")
+      && !category.startsWith("demo.ui.ai.")
+    ) {
+      badges.push({
+        label: "RUNTIME ENGINE",
+        color: "#0b57d0",
+        background: "#e8f0fe",
+      });
+    }
+
+    if (category.startsWith("demo.ui.ai.")) {
+      badges.push({
+        label: "AI",
+        color: "#4338ca",
+        background: "#eef2ff",
       });
     }
 

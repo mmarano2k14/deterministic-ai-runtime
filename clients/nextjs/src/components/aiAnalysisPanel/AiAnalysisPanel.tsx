@@ -24,10 +24,9 @@ import type {
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import { AiAnalysisContextCard } from "./AiAnalysisContextCard";
 import {
-  AiAnalysisActivityIndicator,
-  type AiAnalysisActivityLog,
-  type AiAnalysisActivityPhase,
-} from "./AiAnalysisActivityIndicator";
+  AiInvestigationActivityDock,
+  type AiOnlyActivity,
+} from "./AiInvestigationActivityDock";
 import { AiAnalysisPromptPanel } from "./AiAnalysisPromptPanel";
 import { AiAnalysisResultCard } from "./AiAnalysisResultCard";
 import { AiRuntimeExecutionCard } from "./AiRuntimeExecutionCard";
@@ -82,10 +81,6 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
   const [providerStatus, setProviderStatus] =
     useState<RuntimeAnalysisProviderStatus | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisPhase, setAnalysisPhase] =
-    useState<AiAnalysisActivityPhase | null>(null);
-  const [analysisStartedAt, setAnalysisStartedAt] =
-    useState<number | null>(null);
   const [isDecidingApproval, setIsDecidingApproval] = useState(false);
   const [decidingChildExecutionId, setDecidingChildExecutionId] =
     useState<string | null>(null);
@@ -144,8 +139,6 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
   useEffect(() => {
     setPreparedContext(null);
     setRuntimeExecution(null);
-    setAnalysisPhase(null);
-    setAnalysisStartedAt(null);
     setSnapshotError(null);
     setAnalysisError(null);
     setApprovalError(null);
@@ -178,8 +171,6 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     // it is part of the same durable runtime-analysis workflow.
     setPreparedContext(null);
     setRuntimeExecution(null);
-    setAnalysisPhase(null);
-    setAnalysisStartedAt(null);
     setSnapshotError(null);
     setAnalysisError(null);
     setApprovalError(null);
@@ -344,9 +335,9 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     pendingScenarioExecution,
   ]);
 
-  const latestAnalysisLog = useMemo(
-    () => resolveLatestAnalysisLog(logs, analysisPhase, analysisStartedAt),
-    [logs, analysisPhase, analysisStartedAt]
+  const aiActivity = useMemo(
+    () => resolveRealtimeAiActivity(logs),
+    [logs]
   );
 
   const analysisStatus = resolveAnalysisStatus(
@@ -367,8 +358,6 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     }
 
     setIsAnalyzing(true);
-    setAnalysisStartedAt(Date.now());
-    setAnalysisPhase("preparing-context");
     setPreparedContext(null);
     setRuntimeExecution(null);
     setSnapshotError(null);
@@ -394,13 +383,9 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
       setPreparedContext(context);
     } catch (error: unknown) {
       setSnapshotError(errorMessage(error));
-      setAnalysisPhase(null);
-      setAnalysisStartedAt(null);
-      setIsAnalyzing(false);
+          setIsAnalyzing(false);
       return;
     }
-
-    setAnalysisPhase("analyzing-evidence");
 
     try {
       const execution = await analysisService.analyze(
@@ -413,9 +398,7 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     } catch (error: unknown) {
       setAnalysisError(errorMessage(error));
     } finally {
-      setAnalysisPhase(null);
-      setAnalysisStartedAt(null);
-      setIsAnalyzing(false);
+          setIsAnalyzing(false);
     }
   }
 
@@ -597,56 +580,105 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     }
   }
 
+  const hasDurableAnalysis = runtimeExecution !== null;
+  const currentDepth =
+    runtimeExecution?.childDag?.observedDepth ?? 0;
+  const scopeLabel =
+    AiAnalysisUxModel.scopes().find(
+      (definition) => definition.key === scope
+    )?.label ?? scope;
+  const investigationModeLabel =
+    investigationMode === "continue-useful-experiments"
+      ? "Continue investigation"
+      : "Stop when conclusive";
+
   return (
     <div className={styles.panel}>
-      <section className={styles.hero}>
+      <section
+        className={`${styles.hero} ${
+          hasDurableAnalysis ? styles.heroCompact : ""
+        }`}
+      >
         <div className={styles.heroHeader}>
           <div className={styles.eyebrow}>Runtime intelligence</div>
           <AiAnalysisStatusBadge status={analysisStatus} />
         </div>
 
-        <p className={styles.text}>
-          Analyze evidence, validate the AI proposal with deterministic policies,
-          require human approval, execute through the existing burst runner, then
-          verify and re-analyze the outcome. Every approved follow-up creates exactly
-          one deeper durable child execution.
-        </p>
+        {hasDurableAnalysis ? (
+          <div className={styles.heroExecutionSummary}>
+            <span>
+              AI → Policy → Approval → Execute → Verify → Re-analyze
+            </span>
+            <div className={styles.heroExecutionBadges}>
+              <strong>{runtimeExecution.runtimeStatus}</strong>
+              <strong>Depth {currentDepth}</strong>
+              <strong>{investigationModeLabel}</strong>
+            </div>
+          </div>
+        ) : (
+          <p className={styles.text}>
+            Analyze evidence, validate the AI proposal with deterministic policies,
+            require human approval, execute through the existing burst runner, then
+            verify and re-analyze the outcome. Every approved follow-up creates exactly
+            one deeper durable child execution.
+          </p>
+        )}
       </section>
 
       <div className={styles.contextSticky}>
         <AiAnalysisContextCard snapshot={contextSnapshot} />
       </div>
 
-      <AiAnalysisPromptPanel
-        scope={scope}
-        investigationMode={investigationMode}
-        investigationModeLocked={runtimeExecution !== null}
-        question={question}
-        isAnalyzing={isAnalyzing}
-        canAnalyze={canAnalyze}
-        providerHint={providerHint(providerStatus)}
-        activityPhase={analysisPhase}
-        activityStartedAt={analysisStartedAt}
-        latestActivityLog={latestAnalysisLog}
-        onScopeChange={setScope}
-        onInvestigationModeChange={setInvestigationMode}
-        onQuestionChange={setQuestion}
-        onAnalyze={handleAnalyze}
-      />
+      {!hasDurableAnalysis ? (
+        <AiAnalysisPromptPanel
+          scope={scope}
+          investigationMode={investigationMode}
+          investigationModeLocked={false}
+          question={question}
+          isAnalyzing={isAnalyzing}
+          canAnalyze={canAnalyze}
+          providerHint={providerHint(providerStatus)}
+          onScopeChange={setScope}
+          onInvestigationModeChange={setInvestigationMode}
+          onQuestionChange={setQuestion}
+          onAnalyze={handleAnalyze}
+        />
+      ) : (
+        <section
+          className={`${styles.section} ${styles.analysisRequestSummary}`}
+        >
+          <div className={styles.analysisRequestHeader}>
+            <div>
+              <div className={styles.sectionTitle}>Analysis request</div>
+              <div className={styles.analysisRequestMeta}>
+                {scopeLabel} · {investigationModeLabel}
+              </div>
+            </div>
+
+            <div className={styles.analysisRequestLocked}>
+              Durable chain
+            </div>
+          </div>
+
+          <div
+            className={styles.analysisRequestQuestion}
+            title={question}
+          >
+            {question}
+          </div>
+
+          <div className={styles.analysisRequestFooter}>
+            <span>{providerHint(providerStatus)}</span>
+            <span>
+              A new manually-started scenario will reopen the analysis form.
+            </span>
+          </div>
+        </section>
+      )}
 
       <AiAnalysisSnapshotCard
         snapshot={preparedContext?.snapshot ?? null}
         error={snapshotError}
-      />
-
-      <AiRuntimeExecutionCard
-        execution={runtimeExecution}
-        decidingChildExecutionId={decidingChildExecutionId}
-        childApprovalError={childApprovalError}
-        onChildApprovalDecision={handleChildApprovalDecision}
-        executingChildExecutionId={executingChildExecutionId}
-        childScenarioExecutionError={childScenarioExecutionError}
-        onExecuteChildScenario={handleExecuteChildScenario}
       />
 
       <AiAnalysisResultCard
@@ -662,6 +694,20 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
         isExecutingScenario={isExecutingScenario}
         scenarioExecutionError={scenarioExecutionError}
         onExecuteScenario={handleExecuteScenario}
+      />
+
+      <AiRuntimeExecutionCard
+        execution={runtimeExecution}
+        decidingChildExecutionId={decidingChildExecutionId}
+        childApprovalError={childApprovalError}
+        onChildApprovalDecision={handleChildApprovalDecision}
+        executingChildExecutionId={executingChildExecutionId}
+        childScenarioExecutionError={childScenarioExecutionError}
+        onExecuteChildScenario={handleExecuteChildScenario}
+      />
+
+      <AiInvestigationActivityDock
+        activity={aiActivity}
       />
     </div>
   );
@@ -748,54 +794,222 @@ function shouldRefreshChildProgress(
   return childDag.status !== "Completed";
 }
 
-function resolveLatestAnalysisLog(
-  logs: readonly ConsoleLogEntry[],
-  phase: AiAnalysisActivityPhase | null,
-  analysisStartedAt: number | null
-): AiAnalysisActivityLog | null {
-  if (!phase || analysisStartedAt === null) {
-    return null;
-  }
+type DemoUiAiActivityPayload = {
+  activityId: string;
+  activityKind: string;
+  rootExecutionId: string | null;
+  childExecutionId: string | null;
+  depth: number | null;
+  provider: string | null;
+  model: string | null;
+};
 
-  const expectedPath =
-    phase === "preparing-context"
-      ? "/runtime-analysis/snapshot"
-      : "/runtime-analysis/analyze";
+const DemoUiAiStartedCategory =
+  "demo.ui.ai.started";
+const DemoUiAiCompletedCategory =
+  "demo.ui.ai.completed";
+const DemoUiAiFailedCategory =
+  "demo.ui.ai.failed";
 
-  const entry = logs.find((candidate) => {
-    if (candidate.kind !== "http" || candidate.path !== expectedPath) {
-      return false;
+function resolveRealtimeAiActivity(
+  logs: readonly ConsoleLogEntry[]
+): AiOnlyActivity | null {
+  const terminalActivityIds =
+    new Set<string>();
+
+  for (const log of logs) {
+    if (log.kind !== "realtime") {
+      continue;
     }
 
-    const activityAt =
-      candidate.updatedAt ?? Date.parse(candidate.t);
+    const category =
+      log.category?.trim().toLowerCase();
 
-    return (
-      Number.isFinite(activityAt) &&
-      activityAt >= analysisStartedAt - 250
-    );
-  });
+    if (
+      category !== DemoUiAiStartedCategory
+      && category !== DemoUiAiCompletedCategory
+      && category !== DemoUiAiFailedCategory
+    ) {
+      continue;
+    }
 
-  if (!entry || entry.kind !== "http") {
+    const payload =
+      parseDemoUiAiActivityPayload(
+        log.data ?? log.payload
+      );
+
+    if (!payload) {
+      continue;
+    }
+
+    if (
+      category === DemoUiAiCompletedCategory
+      || category === DemoUiAiFailedCategory
+    ) {
+      terminalActivityIds.add(
+        payload.activityId
+      );
+
+      continue;
+    }
+
+    if (
+      terminalActivityIds.has(
+        payload.activityId
+      )
+    ) {
+      continue;
+    }
+
+    const childReanalysis =
+      payload.activityKind === "child-reanalysis";
+
+    return {
+      key: payload.activityId,
+      title: childReanalysis
+        ? "AI is re-analyzing the verified outcome"
+        : "AI is analyzing runtime evidence",
+      detail: childReanalysis
+        ? "Comparing deterministic verification with the previous hypothesis and deciding whether another materially distinct experiment is useful."
+        : "The bounded runtime evidence is with the configured AI provider; waiting for the structured finding.",
+      context:
+        childReanalysis
+        && typeof payload.depth === "number"
+          ? `Depth ${payload.depth}`
+          : "Root analysis",
+      startedAtUtc:
+        log.occurredAtUtc ?? log.t,
+      provider: payload.provider,
+      model: payload.model,
+    };
+  }
+
+  return null;
+}
+
+function parseDemoUiAiActivityPayload(
+  value: unknown
+): DemoUiAiActivityPayload | null {
+  let candidate: unknown = value;
+
+  if (typeof candidate === "string") {
+    try {
+      candidate = JSON.parse(
+        candidate
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  if (
+    typeof candidate !== "object"
+    || candidate === null
+    || Array.isArray(candidate)
+  ) {
     return null;
   }
 
-  let status = "waiting for response";
+  const record =
+    candidate as Record<string, unknown>;
 
-  if (entry.error) {
-    status = "request failed";
-  } else if (entry.status !== undefined) {
-    status = entry.statusText
-      ? `${entry.status} ${entry.statusText}`
-      : String(entry.status);
+  const activityId =
+    readStringCaseInsensitive(
+      record,
+      "activityId"
+    );
+
+  const activityKind =
+    readStringCaseInsensitive(
+      record,
+      "activityKind"
+    );
+
+  if (!activityId || !activityKind) {
+    return null;
   }
 
   return {
-    name: entry.name,
-    method: entry.method,
-    path: entry.path,
-    status,
+    activityId,
+    activityKind,
+    rootExecutionId:
+      readStringCaseInsensitive(
+        record,
+        "rootExecutionId"
+      ) ?? null,
+    childExecutionId:
+      readStringCaseInsensitive(
+        record,
+        "childExecutionId"
+      ) ?? null,
+    depth:
+      readNumberCaseInsensitive(
+        record,
+        "depth"
+      ),
+    provider:
+      readStringCaseInsensitive(
+        record,
+        "provider"
+      ) ?? null,
+    model:
+      readStringCaseInsensitive(
+        record,
+        "model"
+      ) ?? null,
   };
+}
+
+function readStringCaseInsensitive(
+  record: Record<string, unknown>,
+  key: string
+): string | undefined {
+  const matchingKey =
+    Object.keys(record).find(
+      (candidate) =>
+        candidate.toLowerCase()
+        === key.toLowerCase()
+    );
+
+  if (!matchingKey) {
+    return undefined;
+  }
+
+  const value =
+    record[matchingKey];
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized =
+    value.trim();
+
+  return normalized || undefined;
+}
+
+function readNumberCaseInsensitive(
+  record: Record<string, unknown>,
+  key: string
+): number | null {
+  const matchingKey =
+    Object.keys(record).find(
+      (candidate) =>
+        candidate.toLowerCase()
+        === key.toLowerCase()
+    );
+
+  if (!matchingKey) {
+    return null;
+  }
+
+  const value =
+    record[matchingKey];
+
+  return typeof value === "number"
+         && Number.isFinite(value)
+    ? value
+    : null;
 }
 
 function resolveAnalysisStatus(
