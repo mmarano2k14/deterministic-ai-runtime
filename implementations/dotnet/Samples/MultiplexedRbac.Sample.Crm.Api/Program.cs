@@ -201,6 +201,7 @@ builder.Services
     });
 
 builder.Services.AddSingleton<RuntimeAnalysisResultValidator>();
+builder.Services.AddSingleton<RuntimeAnalysisReanalysisResultValidator>();
 
 builder.Services.AddHttpClient<
         IAiRuntimeAnalysisProvider,
@@ -343,6 +344,7 @@ builder.Services.AddSingleton<RuntimeAnalysisChildDagDefinitionFactory>();
 builder.Services.AddSingleton<RuntimeAnalysisPipelineDefinitionFactory>();
 builder.Services.AddScoped<RuntimeAnalysisChildDagEvidenceReader>();
 builder.Services.AddScoped<RuntimeAnalysisExecutionResultReader>();
+builder.Services.AddScoped<RuntimeAnalysisChildActionService>();
 builder.Services.AddSingleton<
     IRuntimeAnalysisHumanApprovalStore,
     RedisRuntimeAnalysisHumanApprovalStore>();

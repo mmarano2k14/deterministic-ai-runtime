@@ -41,7 +41,7 @@ export function AiScenarioExecutionCard(
         </div>
 
         <div className={styles.humanApprovalBadge}>
-          {isExecuting ? "CLIENT RUNNING" : execution.status.toUpperCase()}
+          {isExecuting && pending ? "CLIENT RUNNING" : execution.status.toUpperCase()}
         </div>
       </div>
 

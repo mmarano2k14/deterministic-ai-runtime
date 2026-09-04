@@ -17,6 +17,15 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
         public const string CaptureChildDagEvidence =
             "runtime-analysis.capture-child-dag-evidence";
 
+        public const string ReanalyzeVerifiedOutcome =
+            "runtime-analysis.reanalyze-verified-outcome";
+
+        public const string ValidateReanalysisScenario =
+            "runtime-analysis.validate-reanalysis-scenario";
+
+        public const string ExecuteApprovedChildDag =
+            "runtime-analysis.execute-approved-child-dag";
+
         public const string VerifyScenarioOutcome =
             "runtime-analysis.verify-scenario-outcome";
     }
@@ -37,6 +46,24 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 
         public const string RootExecutionId =
             "rootExecutionId";
+
+        public const string ProviderRequestJson =
+            "providerRequestJson";
+
+        public const string RootAnalysisResultJson =
+            "rootAnalysisResultJson";
+
+        public const string PreviousReanalysisJson =
+            "previousReanalysisJson";
+
+        public const string ReanalysisResultJson =
+            "reanalysisResultJson";
+
+        public const string ChildDagEvidenceJson =
+            "childDagEvidenceJson";
+
+        public const string VerificationJson =
+            "verificationJson";
     }
 
     public static class RuntimeAnalysisStepConfigKeys

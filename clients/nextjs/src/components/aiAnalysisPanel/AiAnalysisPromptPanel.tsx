@@ -7,6 +7,9 @@ import type {
   AiAnalysisScope,
 } from "@/lib/aiAnalysis/AiAnalysisType";
 import { AiAnalysisUxModel } from "@/lib/aiAnalysis/AiAnalysisUxModel";
+import type {
+  RuntimeAnalysisInvestigationMode,
+} from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import {
   AiAnalysisActivityIndicator,
   type AiAnalysisActivityLog,
@@ -16,6 +19,8 @@ import styles from "./AiAnalysisPanel.module.css";
 
 export type AiAnalysisPromptPanelProps = {
   scope: AiAnalysisScope;
+  investigationMode: RuntimeAnalysisInvestigationMode;
+  investigationModeLocked: boolean;
   question: string;
   isAnalyzing: boolean;
   canAnalyze: boolean;
@@ -24,6 +29,9 @@ export type AiAnalysisPromptPanelProps = {
   activityStartedAt: number | null;
   latestActivityLog: AiAnalysisActivityLog | null;
   onScopeChange: (scope: AiAnalysisScope) => void;
+  onInvestigationModeChange: (
+    mode: RuntimeAnalysisInvestigationMode
+  ) => void;
   onQuestionChange: (question: string) => void;
   onAnalyze: () => void;
 };
@@ -33,6 +41,8 @@ export function AiAnalysisPromptPanel(
 ): JSX.Element {
   const {
     scope,
+    investigationMode,
+    investigationModeLocked,
     question,
     isAnalyzing,
     canAnalyze,
@@ -41,6 +51,7 @@ export function AiAnalysisPromptPanel(
     activityStartedAt,
     latestActivityLog,
     onScopeChange,
+    onInvestigationModeChange,
     onQuestionChange,
     onAnalyze,
   } = props;
@@ -78,6 +89,38 @@ export function AiAnalysisPromptPanel(
 
         <div className={styles.scopeDescription}>
           {AiAnalysisUxModel.scopeDescription(scope)}
+        </div>
+      </div>
+
+      <div className={styles.scope}>
+        <label htmlFor="ai-analysis-investigation-mode">
+          Investigation mode
+        </label>
+        <select
+          id="ai-analysis-investigation-mode"
+          value={investigationMode}
+          disabled={isAnalyzing || investigationModeLocked}
+          onChange={(event) =>
+            onInvestigationModeChange(
+              event.target.value as RuntimeAnalysisInvestigationMode
+            )
+          }
+        >
+          <option value="stop-when-conclusive">
+            Stop when conclusion is strong
+          </option>
+          <option value="continue-useful-experiments">
+            Continue with another useful experiment
+          </option>
+        </select>
+
+        <div className={styles.scopeDescription}>
+          {investigationMode === "continue-useful-experiments"
+            ? "AI actively seeks one materially different bounded follow-up after each verified child. Every follow-up still requires deterministic policy + human approval. Maximum approved depth: 5."
+            : "AI may close the decision loop when deterministic evidence is conclusive. Select Continue before Ask AI when you want to exercise multiple approval-driven children."}
+          {investigationModeLocked
+            ? " Mode locked for this durable analysis chain."
+            : ""}
         </div>
       </div>
 

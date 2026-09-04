@@ -51,7 +51,7 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
             return new AiPipelineDefinition
             {
                 Name = PipelineName,
-                Version = "7",
+                Version = "9",
                 ExecutionMode = AiExecutionMode.Dag,
                 Steps =
                 [
@@ -136,17 +136,15 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                             },
                         Execution = NoRetry()
                     },
-                    CreateChildDagStep(),
                     new AiPipelineStepDefinition
                     {
                         Name = VerifyScenarioOutcomeStepName,
                         StepKey =
                             RuntimeAnalysisStepKeys.VerifyScenarioOutcome,
-                        Order = 6,
+                        Order = 5,
                         DependsOn =
                         [
-                            RuntimeAnalysisChildDagDefinitionFactory
-                                .ChildDagStepName
+                            ExecuteApprovedScenarioStepName
                         ],
                         Input =
                             new Dictionary<string, object?>(
@@ -163,17 +161,16 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                                     requestJson
                             },
                         Execution = NoRetry()
-                    }
+                    },
+                    CreateChildDagStep(
+                        requestJson)
                 ]
             };
         }
 
-        private AiPipelineStepDefinition CreateChildDagStep()
+        private AiPipelineStepDefinition CreateChildDagStep(
+            string providerRequestJson)
         {
-            // One approved root decision creates exactly one durable child.
-            // There is intentionally no pre-built Depth 2 / Depth 3 chain.
-            // A later child will be created only by a new approved decision
-            // produced by the re-analysis loop.
             const int childDepth =
                 RuntimeAnalysisChildDagDefinitionFactory
                     .InitialApprovedChildDepth;
@@ -186,14 +183,15 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
             {
                 Name =
                     RuntimeAnalysisChildDagDefinitionFactory.ChildDagStepName,
-                StepKey = ExecuteChildDagStep.StepKey,
-                Order = 5,
+                StepKey = RuntimeAnalysisStepKeys.ExecuteApprovedChildDag,
+                Order = 6,
                 DependsOn =
                 [
-                    ExecuteApprovedScenarioStepName
+                    VerifyScenarioOutcomeStepName
                 ],
                 Input =
-                    RuntimeAnalysisChildDagDefinitionFactory.CreateRootInputs(),
+                    RuntimeAnalysisChildDagDefinitionFactory.CreateRootInputs(
+                        providerRequestJson),
                 Config =
                     new Dictionary<string, object?>(
                         StringComparer.Ordinal)

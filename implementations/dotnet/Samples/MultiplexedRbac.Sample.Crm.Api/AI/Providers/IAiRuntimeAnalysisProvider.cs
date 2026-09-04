@@ -9,5 +9,9 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Providers
         Task<RuntimeAnalysisResult> AnalyzeAsync(
             RuntimeAnalysisProviderRequest request,
             CancellationToken cancellationToken);
+
+        Task<RuntimeAnalysisReanalysisResult> ReanalyzeAsync(
+            RuntimeAnalysisReanalysisProviderRequest request,
+            CancellationToken cancellationToken);
     }
 }

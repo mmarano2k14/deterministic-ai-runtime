@@ -68,6 +68,31 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Models
         public DateTimeOffset? CompletedAtUtc { get; init; }
 
         public DateTimeOffset? ParentResumedAtUtc { get; init; }
+
+        public string RuntimeStatus { get; init; } = string.Empty;
+
+        public string CurrentStep { get; init; } = string.Empty;
+
+        public string InvestigationMode { get; init; } =
+            RuntimeAnalysisInvestigationModes.StopWhenConclusive;
+
+        public RuntimeAnalysisReanalysisResult? Reanalysis { get; init; }
+
+        public RuntimeAnalysisScenarioPolicyValidationResult? PolicyValidation
+        {
+            get;
+            init;
+        }
+
+        public RuntimeAnalysisHumanApprovalResult? HumanApproval { get; init; }
+
+        public RuntimeAnalysisScenarioExecutionResult? ScenarioExecution
+        {
+            get;
+            init;
+        }
+
+        public RuntimeAnalysisVerificationResult? Verification { get; init; }
     }
 
     public sealed class RuntimeAnalysisChildDagNodeEvidence

@@ -121,6 +121,82 @@ export class RuntimeAnalysisApi {
     );
   }
 
+  public async getExecution(
+    rootExecutionId: string,
+    rootRunId: string,
+    signal?: AbortSignal
+  ): Promise<RuntimeAnalysisRuntimeExecutionResult> {
+    const query = new URLSearchParams({ rootRunId });
+    const result = await this.rbacApi.call(
+      {
+        name: "RUNTIME ANALYSIS EXECUTION",
+        method: "GET",
+        path: `/runtime-analysis/executions/${encodeURIComponent(rootExecutionId)}?${query.toString()}`,
+      },
+      undefined,
+      signal
+    );
+
+    return this.parseResponse<RuntimeAnalysisRuntimeExecutionResult>(
+      result,
+      "execution refresh"
+    );
+  }
+
+  public async decideChildHumanApproval(
+    rootExecutionId: string,
+    childExecutionId: string,
+    rootRunId: string,
+    decision: RuntimeAnalysisHumanApprovalDecision,
+    signal?: AbortSignal
+  ): Promise<RuntimeAnalysisRuntimeExecutionResult> {
+    const result = await this.rbacApi.call(
+      {
+        name: "RUNTIME ANALYSIS CHILD APPROVAL",
+        method: "POST",
+        path: `/runtime-analysis/executions/${encodeURIComponent(rootExecutionId)}/children/${encodeURIComponent(childExecutionId)}/approval`,
+        body: {
+          rootRunId,
+          decision,
+        },
+      },
+      undefined,
+      signal
+    );
+
+    return this.parseResponse<RuntimeAnalysisRuntimeExecutionResult>(
+      result,
+      "child approval"
+    );
+  }
+
+  public async completeChildScenarioExecution(
+    rootExecutionId: string,
+    childExecutionId: string,
+    rootRunId: string,
+    observation: RuntimeAnalysisScenarioExecutionObservation,
+    signal?: AbortSignal
+  ): Promise<RuntimeAnalysisRuntimeExecutionResult> {
+    const result = await this.rbacApi.call(
+      {
+        name: "RUNTIME ANALYSIS CHILD SCENARIO EXECUTION",
+        method: "POST",
+        path: `/runtime-analysis/executions/${encodeURIComponent(rootExecutionId)}/children/${encodeURIComponent(childExecutionId)}/scenario-execution`,
+        body: {
+          rootRunId,
+          observation,
+        },
+      },
+      undefined,
+      signal
+    );
+
+    return this.parseResponse<RuntimeAnalysisRuntimeExecutionResult>(
+      result,
+      "child scenario execution"
+    );
+  }
+
   private parseResponse<T>(
     result: Awaited<ReturnType<MultiplexedRbacApi["call"]>>,
     operation: string

@@ -2,12 +2,25 @@ import { JSX } from "react";
 import type {
   RuntimeAnalysisChildDagRelationResult,
   RuntimeAnalysisChildDagResult,
+  RuntimeAnalysisHumanApprovalDecision,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
+import { AiChildReanalysisCard } from "./AiChildReanalysisCard";
 import styles from "./AiAnalysisPanel.module.css";
 
 export type AiChildDagEvidenceCardProps = {
   childDag: RuntimeAnalysisChildDagResult | undefined;
   rootExecutionId: string;
+  decidingChildExecutionId: string | null;
+  childApprovalError: string | null;
+  onChildApprovalDecision: (
+    relation: RuntimeAnalysisChildDagRelationResult,
+    decision: RuntimeAnalysisHumanApprovalDecision
+  ) => void;
+  executingChildExecutionId: string | null;
+  childScenarioExecutionError: string | null;
+  onExecuteChildScenario: (
+    relation: RuntimeAnalysisChildDagRelationResult
+  ) => void;
 };
 
 type ChildDagProofState = "pass" | "pending" | "fail";
@@ -15,7 +28,16 @@ type ChildDagProofState = "pass" | "pending" | "fail";
 export function AiChildDagEvidenceCard(
   props: AiChildDagEvidenceCardProps
 ): JSX.Element | null {
-  const { childDag, rootExecutionId } = props;
+  const {
+    childDag,
+    rootExecutionId,
+    decidingChildExecutionId,
+    childApprovalError,
+    onChildApprovalDecision,
+    executingChildExecutionId,
+    childScenarioExecutionError,
+    onExecuteChildScenario,
+  } = props;
 
   if (!childDag) {
     return null;
@@ -98,6 +120,26 @@ export function AiChildDagEvidenceCard(
             <ChildDagRelationNode
               key={`${relation.depth}:${relation.childInvocationKey}`}
               relation={relation}
+              isDecidingApproval={
+                decidingChildExecutionId === relation.childExecutionId
+              }
+              approvalError={
+                relation.humanApproval?.status === "Pending"
+                  ? childApprovalError
+                  : null
+              }
+              onApprovalDecision={(decision) =>
+                onChildApprovalDecision(relation, decision)
+              }
+              isExecutingScenario={
+                executingChildExecutionId === relation.childExecutionId
+              }
+              scenarioExecutionError={
+                relation.scenarioExecution?.status === "Pending"
+                  ? childScenarioExecutionError
+                  : null
+              }
+              onExecuteScenario={() => onExecuteChildScenario(relation)}
             />
           ))
         )}
@@ -144,8 +186,24 @@ export function AiChildDagEvidenceCard(
 
 function ChildDagRelationNode(props: {
   relation: RuntimeAnalysisChildDagRelationResult;
+  isDecidingApproval: boolean;
+  approvalError: string | null;
+  onApprovalDecision: (
+    decision: RuntimeAnalysisHumanApprovalDecision
+  ) => void;
+  isExecutingScenario: boolean;
+  scenarioExecutionError: string | null;
+  onExecuteScenario: () => void;
 }): JSX.Element {
-  const { relation } = props;
+  const {
+    relation,
+    isDecidingApproval,
+    approvalError,
+    onApprovalDecision,
+    isExecutingScenario,
+    scenarioExecutionError,
+    onExecuteScenario,
+  } = props;
   const depth = Math.min(Math.max(relation.depth, 1), 3);
 
   return (
@@ -222,6 +280,18 @@ function ChildDagRelationNode(props: {
         <div className={styles.childDagFailure}>
           {relation.childFailureReason}
         </div>
+      ) : null}
+
+      {relation.childExecutionId ? (
+        <AiChildReanalysisCard
+          relation={relation}
+          isDecidingApproval={isDecidingApproval}
+          approvalError={approvalError}
+          onApprovalDecision={onApprovalDecision}
+          isExecutingScenario={isExecutingScenario}
+          scenarioExecutionError={scenarioExecutionError}
+          onExecuteScenario={onExecuteScenario}
+        />
       ) : null}
     </div>
   );

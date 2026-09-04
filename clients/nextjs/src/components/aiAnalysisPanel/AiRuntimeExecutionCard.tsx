@@ -1,16 +1,39 @@
 import { JSX } from "react";
-import type { RuntimeAnalysisRuntimeExecutionResult } from "@/lib/aiAnalysis/RuntimeAnalysisType";
+import type {
+  RuntimeAnalysisChildDagRelationResult,
+  RuntimeAnalysisHumanApprovalDecision,
+  RuntimeAnalysisRuntimeExecutionResult,
+} from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import { AiChildDagEvidenceCard } from "./AiChildDagEvidenceCard";
 import styles from "./AiAnalysisPanel.module.css";
 
 export type AiRuntimeExecutionCardProps = {
   execution: RuntimeAnalysisRuntimeExecutionResult | null;
+  decidingChildExecutionId: string | null;
+  childApprovalError: string | null;
+  onChildApprovalDecision: (
+    relation: RuntimeAnalysisChildDagRelationResult,
+    decision: RuntimeAnalysisHumanApprovalDecision
+  ) => void;
+  executingChildExecutionId: string | null;
+  childScenarioExecutionError: string | null;
+  onExecuteChildScenario: (
+    relation: RuntimeAnalysisChildDagRelationResult
+  ) => void;
 };
 
 export function AiRuntimeExecutionCard(
   props: AiRuntimeExecutionCardProps
 ): JSX.Element | null {
-  const { execution } = props;
+  const {
+    execution,
+    decidingChildExecutionId,
+    childApprovalError,
+    onChildApprovalDecision,
+    executingChildExecutionId,
+    childScenarioExecutionError,
+    onExecuteChildScenario,
+  } = props;
 
   if (!execution) {
     return null;
@@ -68,6 +91,12 @@ export function AiRuntimeExecutionCard(
       <AiChildDagEvidenceCard
         childDag={execution.childDag}
         rootExecutionId={execution.executionId}
+        decidingChildExecutionId={decidingChildExecutionId}
+        childApprovalError={childApprovalError}
+        onChildApprovalDecision={onChildApprovalDecision}
+        executingChildExecutionId={executingChildExecutionId}
+        childScenarioExecutionError={childScenarioExecutionError}
+        onExecuteChildScenario={onExecuteChildScenario}
       />
     </section>
   );

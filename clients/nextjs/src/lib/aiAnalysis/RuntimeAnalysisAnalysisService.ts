@@ -2,6 +2,7 @@ import type { MultiplexedRbacApi } from "@/lib/rbac/MultiplexedRbacApi";
 import { RuntimeAnalysisApi } from "./RuntimeAnalysisApi";
 import type {
   RuntimeAnalysisHumanApprovalDecision,
+  RuntimeAnalysisInvestigationMode,
   RuntimeAnalysisPreparedContext,
   RuntimeAnalysisProviderStatus,
   RuntimeAnalysisRuntimeExecutionResult,
@@ -24,11 +25,13 @@ export class RuntimeAnalysisAnalysisService {
   public analyze(
     context: RuntimeAnalysisPreparedContext,
     question: string,
+    investigationMode: RuntimeAnalysisInvestigationMode,
     signal?: AbortSignal
   ): Promise<RuntimeAnalysisRuntimeExecutionResult> {
     return this.api.analyze(
       {
         question,
+        investigationMode,
         snapshotRequest: context.request,
       },
       signal
@@ -54,6 +57,50 @@ export class RuntimeAnalysisAnalysisService {
   ): Promise<RuntimeAnalysisRuntimeExecutionResult> {
     return this.api.completeScenarioExecution(
       executionId,
+      observation,
+      signal
+    );
+  }
+
+  public getExecution(
+    rootExecutionId: string,
+    rootRunId: string,
+    signal?: AbortSignal
+  ): Promise<RuntimeAnalysisRuntimeExecutionResult> {
+    return this.api.getExecution(
+      rootExecutionId,
+      rootRunId,
+      signal
+    );
+  }
+
+  public decideChildHumanApproval(
+    rootExecutionId: string,
+    childExecutionId: string,
+    rootRunId: string,
+    decision: RuntimeAnalysisHumanApprovalDecision,
+    signal?: AbortSignal
+  ): Promise<RuntimeAnalysisRuntimeExecutionResult> {
+    return this.api.decideChildHumanApproval(
+      rootExecutionId,
+      childExecutionId,
+      rootRunId,
+      decision,
+      signal
+    );
+  }
+
+  public completeChildScenarioExecution(
+    rootExecutionId: string,
+    childExecutionId: string,
+    rootRunId: string,
+    observation: RuntimeAnalysisScenarioExecutionObservation,
+    signal?: AbortSignal
+  ): Promise<RuntimeAnalysisRuntimeExecutionResult> {
+    return this.api.completeChildScenarioExecution(
+      rootExecutionId,
+      childExecutionId,
+      rootRunId,
       observation,
       signal
     );

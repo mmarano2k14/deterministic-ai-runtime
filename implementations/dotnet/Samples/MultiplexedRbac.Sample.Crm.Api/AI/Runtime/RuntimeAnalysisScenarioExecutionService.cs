@@ -14,6 +14,13 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
         private static readonly TimeSpan ChildDagContinuationConvergenceTimeout =
             TimeSpan.FromSeconds(4);
 
+        // Keep browser-facing continuation requests below the Next.js API
+        // client's 30-second HTTP timeout. The runtime remains durable after
+        // this projection wait expires; the client then refreshes through the
+        // read-only execution endpoint.
+        private static readonly TimeSpan ChildDecisionProjectionTimeout =
+            TimeSpan.FromSeconds(20);
+
         private readonly IAiRuntimePipelineBackgroundController _controller;
         private readonly IAiDagExecutionStore _dagStore;
         private readonly IRuntimeAnalysisScenarioExecutionStore _executionStore;
@@ -85,19 +92,11 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                     ?? throw new RuntimeAnalysisRuntimeExecutionException(
                         $"Runtime analysis execution '{executionId}' has no persisted execution record.");
 
-                currentRecord = await WaitForTerminalExecutionAsync(
-                        currentRecord,
-                        executionId,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-                return await ReadFinalResultWithChildDagConvergenceAsync(
+                return await ReadAfterContinuationAsync(
                         record.InitialRunId ?? "unknown",
                         continuationRunId: null,
                         executionId,
-                        currentRecord.PipelineName
-                            ?? RuntimeAnalysisPipelineDefinitionFactory.PipelineName,
-                        currentRecord.Status.ToString(),
+                        currentRecord,
                         cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -160,21 +159,155 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                     $"Approved scenario execution continuation changed durable execution identity from '{executionId}' to '{finalRecord.ExecutionId}'.");
             }
 
-            finalRecord = await WaitForTerminalExecutionAsync(
-                    finalRecord,
-                    executionId,
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-            return await ReadFinalResultWithChildDagConvergenceAsync(
+            return await ReadAfterContinuationAsync(
                     record.InitialRunId ?? handle.RunId,
                     continuationRunId: handle.RunId,
                     executionId,
-                    finalRecord.PipelineName
-                        ?? RuntimeAnalysisPipelineDefinitionFactory.PipelineName,
-                    finalRecord.Status.ToString(),
+                    finalRecord,
                     cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+        private async Task<RuntimeAnalysisRuntimeExecutionResult>
+            ReadAfterContinuationAsync(
+                string runId,
+                string? continuationRunId,
+                string executionId,
+                AiExecutionRecord observedRecord,
+                CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(
+                observedRecord);
+
+            var pipelineName =
+                observedRecord.PipelineName
+                ?? RuntimeAnalysisPipelineDefinitionFactory.PipelineName;
+
+            if (!observedRecord.IsTerminal)
+            {
+                // The root has parked on the approval-driven child relation.
+                // Wait only until the child reaches a user-actionable durable
+                // boundary (normally child human approval), or until the whole
+                // chain becomes terminal. This avoids returning a projection
+                // while child AI re-analysis is still in flight.
+                return await WaitForChildDecisionBoundaryAsync(
+                        runId,
+                        continuationRunId,
+                        executionId,
+                        pipelineName,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            return await ReadFinalResultWithChildDagConvergenceAsync(
+                    runId,
+                    continuationRunId,
+                    executionId,
+                    pipelineName,
+                    observedRecord.Status.ToString(),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        private async Task<RuntimeAnalysisRuntimeExecutionResult>
+            WaitForChildDecisionBoundaryAsync(
+                string runId,
+                string? continuationRunId,
+                string executionId,
+                string pipelineName,
+                CancellationToken cancellationToken)
+        {
+            var deadline =
+                DateTimeOffset.UtcNow
+                + ChildDecisionProjectionTimeout;
+
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var currentRecord = await _dagStore.GetRecordAsync(
+                        executionId,
+                        cancellationToken)
+                    .ConfigureAwait(false)
+                    ?? throw new RuntimeAnalysisRuntimeExecutionException(
+                        $"Runtime analysis execution '{executionId}' has no persisted execution record.");
+
+                if (currentRecord.IsTerminal)
+                {
+                    return await ReadFinalResultWithChildDagConvergenceAsync(
+                            runId,
+                            continuationRunId,
+                            executionId,
+                            pipelineName,
+                            currentRecord.Status.ToString(),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
+                var result = await _resultReader.ReadAsync(
+                        runId,
+                        continuationRunId,
+                        executionId,
+                        pipelineName,
+                        currentRecord.Status.ToString(),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (HasUserActionableChildBoundary(result))
+                {
+                    return result;
+                }
+
+                if (DateTimeOffset.UtcNow >= deadline)
+                {
+                    // The runtime itself remains durable. The HTTP request is
+                    // bounded so a slow/failed AI re-analysis cannot hold the
+                    // browser forever. Return the truthful current projection.
+                    return result;
+                }
+
+                await Task.Delay(
+                        TerminalPollInterval,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+
+        private static bool HasUserActionableChildBoundary(
+            RuntimeAnalysisRuntimeExecutionResult result)
+        {
+            ArgumentNullException.ThrowIfNull(
+                result);
+
+            var latest = result.ChildDag.Relations
+                .OrderByDescending(relation => relation.Depth)
+                .FirstOrDefault();
+
+            if (latest is null
+                || string.IsNullOrWhiteSpace(latest.ChildExecutionId))
+            {
+                return false;
+            }
+
+            if (latest.HumanApproval is not null
+                && string.Equals(
+                    latest.HumanApproval.Status,
+                    RuntimeAnalysisHumanApprovalStatuses.Pending,
+                    StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (latest.ScenarioExecution is not null
+                && string.Equals(
+                    latest.ScenarioExecution.Status,
+                    RuntimeAnalysisScenarioExecutionStatuses.Pending,
+                    StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private async Task<RuntimeAnalysisRuntimeExecutionResult>
@@ -280,46 +413,7 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                         StringComparison.Ordinal));
         }
 
-        private async Task<AiExecutionRecord> WaitForTerminalExecutionAsync(
-            AiExecutionRecord observedRecord,
-            string executionId,
-            CancellationToken cancellationToken)
-        {
-            if (observedRecord.IsTerminal)
-            {
-                return observedRecord;
-            }
 
-            var deadline =
-                DateTimeOffset.UtcNow + _options.ExecutionTimeout;
-            var currentRecord = observedRecord;
-
-            while (DateTimeOffset.UtcNow < deadline)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                currentRecord =
-                    await _dagStore.GetRecordAsync(
-                            executionId,
-                            cancellationToken)
-                        .ConfigureAwait(false)
-                    ?? throw new RuntimeAnalysisRuntimeExecutionException(
-                        $"Runtime analysis execution '{executionId}' disappeared while waiting for recursive Child DAG convergence.");
-
-                if (currentRecord.IsTerminal)
-                {
-                    return currentRecord;
-                }
-
-                await Task.Delay(
-                        TerminalPollInterval,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-            }
-
-            throw new RuntimeAnalysisRuntimeExecutionException(
-                $"Runtime analysis execution '{executionId}' did not reach a terminal state after approved scenario execution and recursive Child DAG convergence within {_options.ExecutionTimeout.TotalSeconds:0} seconds. Last status='{currentRecord.Status}'.");
-        }
 
     }
 }

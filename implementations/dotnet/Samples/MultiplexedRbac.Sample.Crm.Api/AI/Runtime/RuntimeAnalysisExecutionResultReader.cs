@@ -362,8 +362,8 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                 RuntimeAnalysisPipelineDefinitionFactory.ValidateScenarioStepName,
                 RuntimeAnalysisPipelineDefinitionFactory.AwaitHumanApprovalStepName,
                 RuntimeAnalysisPipelineDefinitionFactory.ExecuteApprovedScenarioStepName,
-                RuntimeAnalysisChildDagDefinitionFactory.ChildDagStepName,
-                RuntimeAnalysisPipelineDefinitionFactory.VerifyScenarioOutcomeStepName
+                RuntimeAnalysisPipelineDefinitionFactory.VerifyScenarioOutcomeStepName,
+                RuntimeAnalysisChildDagDefinitionFactory.ChildDagStepName
             };
 
             foreach (var stepName in orderedNames)

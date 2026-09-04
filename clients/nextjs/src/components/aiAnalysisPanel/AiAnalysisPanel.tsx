@@ -14,7 +14,9 @@ import { RuntimeAnalysisAnalysisService } from "@/lib/aiAnalysis/RuntimeAnalysis
 import { RuntimeAnalysisSnapshotService } from "@/lib/aiAnalysis/RuntimeAnalysisSnapshotService";
 import { RuntimeAnalysisScenarioObservationBuilder } from "@/lib/aiAnalysis/RuntimeAnalysisScenarioObservationBuilder";
 import type {
+  RuntimeAnalysisChildDagRelationResult,
   RuntimeAnalysisHumanApprovalDecision,
+  RuntimeAnalysisInvestigationMode,
   RuntimeAnalysisPreparedContext,
   RuntimeAnalysisProviderStatus,
   RuntimeAnalysisRuntimeExecutionResult,
@@ -45,6 +47,20 @@ export type AiAnalysisPanelProps = {
   ) => Promise<void>;
 };
 
+type PendingScenarioExecution =
+  | {
+      kind: "root";
+      executionId: string;
+      previousStartedAt: number | undefined;
+    }
+  | {
+      kind: "child";
+      rootExecutionId: string;
+      childExecutionId: string;
+      rootRunId: string;
+      previousStartedAt: number | undefined;
+    };
+
 export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
   const {
     model,
@@ -56,6 +72,10 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
   } = props;
 
   const [scope, setScope] = useState<AiAnalysisScope>("current-run");
+  const [investigationMode, setInvestigationMode] =
+    useState<RuntimeAnalysisInvestigationMode>(
+      "stop-when-conclusive"
+    );
   const [question, setQuestion] = useState(
     AiAnalysisUxModel.promptForAction("analyze")
   );
@@ -67,7 +87,11 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
   const [analysisStartedAt, setAnalysisStartedAt] =
     useState<number | null>(null);
   const [isDecidingApproval, setIsDecidingApproval] = useState(false);
+  const [decidingChildExecutionId, setDecidingChildExecutionId] =
+    useState<string | null>(null);
   const [isExecutingScenario, setIsExecutingScenario] = useState(false);
+  const [executingChildExecutionId, setExecutingChildExecutionId] =
+    useState<string | null>(null);
   const [preparedContext, setPreparedContext] =
     useState<RuntimeAnalysisPreparedContext | null>(null);
   const [runtimeExecution, setRuntimeExecution] =
@@ -77,11 +101,12 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [scenarioExecutionError, setScenarioExecutionError] =
     useState<string | null>(null);
+  const [childApprovalError, setChildApprovalError] =
+    useState<string | null>(null);
+  const [childScenarioExecutionError, setChildScenarioExecutionError] =
+    useState<string | null>(null);
   const [pendingScenarioExecution, setPendingScenarioExecution] =
-    useState<{
-      executionId: string;
-      previousStartedAt: number | undefined;
-    } | null>(null);
+    useState<PendingScenarioExecution | null>(null);
   const reportingScenarioExecutionIdRef = useRef<string | null>(null);
   const approvedScenarioRunInProgressRef = useRef(false);
   const observedRunStartedAtRef = useRef<number | undefined>(
@@ -125,6 +150,10 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     setAnalysisError(null);
     setApprovalError(null);
     setScenarioExecutionError(null);
+    setChildApprovalError(null);
+    setChildScenarioExecutionError(null);
+    setDecidingChildExecutionId(null);
+    setExecutingChildExecutionId(null);
     setPendingScenarioExecution(null);
     reportingScenarioExecutionIdRef.current = null;
     approvedScenarioRunInProgressRef.current = false;
@@ -155,9 +184,74 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     setAnalysisError(null);
     setApprovalError(null);
     setScenarioExecutionError(null);
+    setChildApprovalError(null);
+    setChildScenarioExecutionError(null);
+    setDecidingChildExecutionId(null);
+    setExecutingChildExecutionId(null);
     setPendingScenarioExecution(null);
     reportingScenarioExecutionIdRef.current = null;
   }, [runStartedAt]);
+
+  useEffect(() => {
+    if (
+      !runtimeExecution ||
+      !shouldRefreshChildProgress(runtimeExecution) ||
+      isAnalyzing ||
+      isDecidingApproval ||
+      decidingChildExecutionId !== null ||
+      isExecutingScenario ||
+      executingChildExecutionId !== null ||
+      pendingScenarioExecution !== null
+    ) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const refresh = async (): Promise<void> => {
+      try {
+        const refreshed = await analysisService.getExecution(
+          runtimeExecution.executionId,
+          runtimeExecution.runId,
+          controller.signal
+        );
+
+        if (disposed) {
+          return;
+        }
+
+        setRuntimeExecution(refreshed);
+      } catch {
+        // The execution is durable and this is a best-effort read-only
+        // projection refresh. Keep the last truthful UI snapshot and retry on
+        // the next render/cycle instead of surfacing transient polling noise.
+      }
+    };
+
+    timer = setTimeout(() => {
+      void refresh();
+    }, 750);
+
+    return () => {
+      disposed = true;
+      controller.abort();
+
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+    };
+  }, [
+    analysisService,
+    decidingChildExecutionId,
+    executingChildExecutionId,
+    isAnalyzing,
+    isDecidingApproval,
+    isExecutingScenario,
+    pendingScenarioExecution,
+    runtimeExecution,
+  ]);
 
   useEffect(() => {
     if (!pendingScenarioExecution) {
@@ -177,15 +271,15 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
       return;
     }
 
-    if (
-      reportingScenarioExecutionIdRef.current ===
-      pendingScenarioExecution.executionId
-    ) {
+    const reportingKey = pendingScenarioExecution.kind === "root"
+      ? `root:${pendingScenarioExecution.executionId}`
+      : `child:${pendingScenarioExecution.childExecutionId}`;
+
+    if (reportingScenarioExecutionIdRef.current === reportingKey) {
       return;
     }
 
-    reportingScenarioExecutionIdRef.current =
-      pendingScenarioExecution.executionId;
+    reportingScenarioExecutionIdRef.current = reportingKey;
 
     let observation;
 
@@ -193,30 +287,56 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
       observation =
         RuntimeAnalysisScenarioObservationBuilder.build(model);
     } catch (error: unknown) {
-      setScenarioExecutionError(errorMessage(error));
+      const message = errorMessage(error);
+
+      if (pendingScenarioExecution.kind === "root") {
+        setScenarioExecutionError(message);
+      } else {
+        setChildScenarioExecutionError(message);
+        setExecutingChildExecutionId(null);
+      }
+
       setIsExecutingScenario(false);
       reportingScenarioExecutionIdRef.current = null;
       return;
     }
 
-    void analysisService
-      .completeScenarioExecution(
-        pendingScenarioExecution.executionId,
-        observation
-      )
+    const completion = pendingScenarioExecution.kind === "root"
+      ? analysisService.completeScenarioExecution(
+          pendingScenarioExecution.executionId,
+          observation
+        )
+      : analysisService.completeChildScenarioExecution(
+          pendingScenarioExecution.rootExecutionId,
+          pendingScenarioExecution.childExecutionId,
+          pendingScenarioExecution.rootRunId,
+          observation
+        );
+
+    void completion
       .then((execution) => {
         setRuntimeExecution(execution);
         setPendingScenarioExecution(null);
         setScenarioExecutionError(null);
+        setChildScenarioExecutionError(null);
+        setExecutingChildExecutionId(null);
         approvedScenarioRunInProgressRef.current = false;
       })
       .catch((error: unknown) => {
-        setScenarioExecutionError(errorMessage(error));
+        const message = errorMessage(error);
+
+        if (pendingScenarioExecution.kind === "root") {
+          setScenarioExecutionError(message);
+        } else {
+          setChildScenarioExecutionError(message);
+        }
+
         reportingScenarioExecutionIdRef.current = null;
         approvedScenarioRunInProgressRef.current = false;
       })
       .finally(() => {
         setIsExecutingScenario(false);
+        setExecutingChildExecutionId(null);
       });
   }, [
     analysisService,
@@ -255,6 +375,10 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     setAnalysisError(null);
     setApprovalError(null);
     setScenarioExecutionError(null);
+    setChildApprovalError(null);
+    setChildScenarioExecutionError(null);
+    setDecidingChildExecutionId(null);
+    setExecutingChildExecutionId(null);
 
     let context: RuntimeAnalysisPreparedContext;
 
@@ -281,7 +405,8 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     try {
       const execution = await analysisService.analyze(
         context,
-        question.trim()
+        question.trim(),
+        investigationMode
       );
 
       setRuntimeExecution(execution);
@@ -351,7 +476,9 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     setIsExecutingScenario(true);
     setScenarioExecutionError(null);
     reportingScenarioExecutionIdRef.current = null;
+    setExecutingChildExecutionId(null);
     setPendingScenarioExecution({
+      kind: "root",
       executionId: execution.executionId,
       previousStartedAt,
     });
@@ -369,6 +496,107 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
     }
   }
 
+  async function handleChildApprovalDecision(
+    relation: RuntimeAnalysisChildDagRelationResult,
+    decision: RuntimeAnalysisHumanApprovalDecision
+  ): Promise<void> {
+    if (!runtimeExecution || !relation.childExecutionId) {
+      return;
+    }
+
+    const childExecutionId = relation.childExecutionId;
+
+    setDecidingChildExecutionId(childExecutionId);
+    setChildApprovalError(null);
+    setChildScenarioExecutionError(null);
+
+    try {
+      const execution = await analysisService.decideChildHumanApproval(
+        runtimeExecution.executionId,
+        childExecutionId,
+        runtimeExecution.runId,
+        decision
+      );
+
+      setRuntimeExecution(execution);
+
+      const updatedRelation = execution.childDag?.relations.find(
+        (candidate) => candidate.childExecutionId === childExecutionId
+      );
+
+      if (
+        decision === "approve" &&
+        updatedRelation?.scenarioExecution?.status === "Pending"
+      ) {
+        await startApprovedChildScenario(
+          execution,
+          updatedRelation
+        );
+      }
+    } catch (error: unknown) {
+      setChildApprovalError(errorMessage(error));
+    } finally {
+      setDecidingChildExecutionId(null);
+    }
+  }
+
+  async function handleExecuteChildScenario(
+    relation: RuntimeAnalysisChildDagRelationResult
+  ): Promise<void> {
+    if (!runtimeExecution) {
+      return;
+    }
+
+    await startApprovedChildScenario(
+      runtimeExecution,
+      relation
+    );
+  }
+
+  async function startApprovedChildScenario(
+    execution: RuntimeAnalysisRuntimeExecutionResult,
+    relation: RuntimeAnalysisChildDagRelationResult
+  ): Promise<void> {
+    const childExecutionId = relation.childExecutionId;
+    const childScenarioExecution = relation.scenarioExecution;
+
+    if (
+      !childExecutionId ||
+      childScenarioExecution?.status !== "Pending" ||
+      isExecutingScenario
+    ) {
+      return;
+    }
+
+    const previousStartedAt = model.report?.timing.startedAt;
+
+    approvedScenarioRunInProgressRef.current = true;
+    setIsExecutingScenario(true);
+    setExecutingChildExecutionId(childExecutionId);
+    setChildScenarioExecutionError(null);
+    reportingScenarioExecutionIdRef.current = null;
+    setPendingScenarioExecution({
+      kind: "child",
+      rootExecutionId: execution.executionId,
+      childExecutionId,
+      rootRunId: execution.runId,
+      previousStartedAt,
+    });
+
+    try {
+      await onExecuteScenario(
+        childScenarioExecution.scenario,
+        childScenarioExecution.planKey
+      );
+    } catch (error: unknown) {
+      approvedScenarioRunInProgressRef.current = false;
+      setPendingScenarioExecution(null);
+      setIsExecutingScenario(false);
+      setExecutingChildExecutionId(null);
+      setChildScenarioExecutionError(errorMessage(error));
+    }
+  }
+
   return (
     <div className={styles.panel}>
       <section className={styles.hero}>
@@ -380,7 +608,8 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
         <p className={styles.text}>
           Analyze evidence, validate the AI proposal with deterministic policies,
           require human approval, execute through the existing burst runner, then
-          verify the observed outcome in the same durable DAG.
+          verify and re-analyze the outcome. Every approved follow-up creates exactly
+          one deeper durable child execution.
         </p>
       </section>
 
@@ -390,6 +619,8 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
 
       <AiAnalysisPromptPanel
         scope={scope}
+        investigationMode={investigationMode}
+        investigationModeLocked={runtimeExecution !== null}
         question={question}
         isAnalyzing={isAnalyzing}
         canAnalyze={canAnalyze}
@@ -398,6 +629,7 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
         activityStartedAt={analysisStartedAt}
         latestActivityLog={latestAnalysisLog}
         onScopeChange={setScope}
+        onInvestigationModeChange={setInvestigationMode}
         onQuestionChange={setQuestion}
         onAnalyze={handleAnalyze}
       />
@@ -407,7 +639,15 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
         error={snapshotError}
       />
 
-      <AiRuntimeExecutionCard execution={runtimeExecution} />
+      <AiRuntimeExecutionCard
+        execution={runtimeExecution}
+        decidingChildExecutionId={decidingChildExecutionId}
+        childApprovalError={childApprovalError}
+        onChildApprovalDecision={handleChildApprovalDecision}
+        executingChildExecutionId={executingChildExecutionId}
+        childScenarioExecutionError={childScenarioExecutionError}
+        onExecuteChildScenario={handleExecuteChildScenario}
+      />
 
       <AiAnalysisResultCard
         result={runtimeExecution?.result ?? null}
@@ -425,6 +665,87 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
       />
     </div>
   );
+}
+
+function shouldRefreshChildProgress(
+  execution: RuntimeAnalysisRuntimeExecutionResult
+): boolean {
+  const childDag = execution.childDag;
+
+  if (!childDag) {
+    return false;
+  }
+
+  if (childDag.status === "Failed") {
+    return false;
+  }
+
+  const relations = childDag.relations ?? [];
+
+  if (relations.length === 0) {
+    return childDag.status === "Running";
+  }
+
+  if (
+    childDag.status === "Completed" &&
+    !childDag.allContinuationsResumed
+  ) {
+    const hasSuppressedContinuation = relations.some(
+      (relation) =>
+        relation.continuationStatus.trim().toLowerCase() === "suppressed"
+    );
+
+    return !hasSuppressedContinuation;
+  }
+
+  const latest = [...relations].sort(
+    (left, right) => right.depth - left.depth
+  )[0];
+
+  if (!latest?.childExecutionId) {
+    return true;
+  }
+
+  if (!latest.reanalysis || !latest.policyValidation) {
+    return true;
+  }
+
+  if (!latest.reanalysis.shouldContinue) {
+    return childDag.status !== "Completed";
+  }
+
+  if (!latest.policyValidation.allowed) {
+    return childDag.status !== "Completed";
+  }
+
+  if (!latest.humanApproval) {
+    return true;
+  }
+
+  if (latest.humanApproval.status === "Pending") {
+    return false;
+  }
+
+  if (latest.humanApproval.status === "Rejected") {
+    return childDag.status !== "Completed";
+  }
+
+  if (!latest.scenarioExecution) {
+    return latest.humanApproval.status === "Approved";
+  }
+
+  if (latest.scenarioExecution.status === "Pending") {
+    return false;
+  }
+
+  if (!latest.verification || latest.verification.status === "Pending") {
+    return true;
+  }
+
+  // An approved + verified child experiment may be creating/re-analyzing the
+  // next durable child. Keep refreshing until the next user boundary appears
+  // or the approval-driven chain becomes terminal.
+  return childDag.status !== "Completed";
 }
 
 function resolveLatestAnalysisLog(

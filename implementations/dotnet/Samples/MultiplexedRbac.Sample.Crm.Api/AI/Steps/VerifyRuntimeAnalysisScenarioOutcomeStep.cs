@@ -30,10 +30,20 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Steps
                     .ConfigureAwait(false);
 
             var providerRequestJson =
-                await helper.GetConfigAsync<string>(
-                        RuntimeAnalysisStepConfigKeys.ProviderRequestJson,
+                await helper.GetInputAsync<string>(
+                        RuntimeAnalysisStepInputKeys.ProviderRequestJson,
                         cancellationToken)
                     .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(
+                    providerRequestJson))
+            {
+                providerRequestJson =
+                    await helper.GetConfigAsync<string>(
+                            RuntimeAnalysisStepConfigKeys.ProviderRequestJson,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+            }
 
             if (string.IsNullOrWhiteSpace(
                     providerRequestJson))

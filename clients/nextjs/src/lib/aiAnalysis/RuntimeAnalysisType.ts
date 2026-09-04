@@ -122,9 +122,31 @@ export type RuntimeAnalysisResult = {
   suggestedScenario: RuntimeAnalysisSuggestedScenario;
 };
 
+export type RuntimeAnalysisInvestigationMode =
+  | "stop-when-conclusive"
+  | "continue-useful-experiments";
+
 export type RuntimeAnalysisAnalyzeRequest = {
   question: string;
+  investigationMode: RuntimeAnalysisInvestigationMode;
   snapshotRequest: RuntimeAnalysisSnapshotRequest;
+};
+
+
+export type RuntimeAnalysisReanalysisConclusion =
+  | "CONFIRMED"
+  | "WEAKENED"
+  | "NOT_REPRODUCED"
+  | "INCONCLUSIVE";
+
+export type RuntimeAnalysisReanalysisResult = {
+  conclusion: RuntimeAnalysisReanalysisConclusion;
+  answer: string;
+  summary: string;
+  confidence: number;
+  shouldContinue: boolean;
+  reasons: string[];
+  suggestedScenario: RuntimeAnalysisSuggestedScenario;
 };
 
 export type RuntimeAnalysisScenarioPolicyDecision = {
@@ -184,6 +206,14 @@ export type RuntimeAnalysisChildDagRelationResult = {
   createdAtUtc: string;
   completedAtUtc: string | null;
   parentResumedAtUtc: string | null;
+  runtimeStatus: string;
+  currentStep: string;
+  investigationMode: RuntimeAnalysisInvestigationMode;
+  reanalysis: RuntimeAnalysisReanalysisResult | null;
+  policyValidation: RuntimeAnalysisScenarioPolicyValidationResult | null;
+  humanApproval: RuntimeAnalysisHumanApprovalResult | null;
+  scenarioExecution: RuntimeAnalysisScenarioExecutionResult | null;
+  verification: RuntimeAnalysisVerificationResult | null;
 };
 
 export type RuntimeAnalysisChildDagResult = {

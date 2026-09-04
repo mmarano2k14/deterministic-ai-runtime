@@ -12,15 +12,22 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Providers
         private readonly HttpClient _httpClient;
         private readonly OpenAiRuntimeAnalysisOptions _options;
         private readonly RuntimeAnalysisResultValidator _resultValidator;
+        private readonly RuntimeAnalysisReanalysisResultValidator
+            _reanalysisResultValidator;
 
         public OpenAiRuntimeAnalysisProvider(
             HttpClient httpClient,
             IOptions<OpenAiRuntimeAnalysisOptions> options,
-            RuntimeAnalysisResultValidator resultValidator)
+            RuntimeAnalysisResultValidator resultValidator,
+            RuntimeAnalysisReanalysisResultValidator reanalysisResultValidator)
         {
             _httpClient = httpClient;
             _options = options.Value;
             _resultValidator = resultValidator;
+            _reanalysisResultValidator =
+                reanalysisResultValidator
+                ?? throw new ArgumentNullException(
+                    nameof(reanalysisResultValidator));
         }
 
         public RuntimeAnalysisProviderStatus Status =>
@@ -98,6 +105,76 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Providers
             _resultValidator.Validate(
                 result,
                 request.Snapshot);
+
+            return result;
+        }
+
+        public async Task<RuntimeAnalysisReanalysisResult> ReanalyzeAsync(
+            RuntimeAnalysisReanalysisProviderRequest request,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(
+                request);
+
+            EnsureConfigured();
+
+            using var httpRequest = new HttpRequestMessage(
+                HttpMethod.Post,
+                _options.Endpoint);
+
+            httpRequest.Headers.Authorization =
+                new AuthenticationHeaderValue(
+                    "Bearer",
+                    _options.ApiKey);
+
+            var payload = new
+            {
+                model = _options.Model,
+                instructions = RuntimeAnalysisReanalysisPromptBuilder.Instructions,
+                input = RuntimeAnalysisReanalysisPromptBuilder.BuildInput(
+                    request),
+                store = false,
+                max_output_tokens = _options.MaxOutputTokens,
+                text = new
+                {
+                    format = new
+                    {
+                        type = "json_schema",
+                        name = "runtime_reanalysis_result",
+                        strict = true,
+                        schema = OpenAiRuntimeReanalysisSchema.Create()
+                    }
+                }
+            };
+
+            httpRequest.Content = new StringContent(
+                JsonSerializer.Serialize(
+                    payload),
+                Encoding.UTF8,
+                "application/json");
+
+            using var response = await _httpClient.SendAsync(
+                httpRequest,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+
+            var responseJson = await response.Content.ReadAsStringAsync(
+                cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new RuntimeAnalysisProviderException(
+                    BuildProviderErrorMessage(
+                        responseJson,
+                        (int)response.StatusCode));
+            }
+
+            var result = OpenAiRuntimeReanalysisResponseParser.Parse(
+                responseJson);
+
+            _reanalysisResultValidator.Validate(
+                result,
+                request.OriginalRequest.Snapshot);
 
             return result;
         }
