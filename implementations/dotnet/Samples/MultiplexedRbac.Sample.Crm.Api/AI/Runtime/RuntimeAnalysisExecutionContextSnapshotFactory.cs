@@ -5,7 +5,8 @@ using RbacExecutionContext =
 
 namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 {
-    public sealed class RuntimeAnalysisExecutionContextSnapshotFactory
+    public sealed class RuntimeAnalysisExecutionContextSnapshotFactory :
+        IExecutionContextSnapshotProvider
     {
         private readonly IExecutionContextAccessor _executionContextAccessor;
 
@@ -48,6 +49,11 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                 TtlSeconds = current.TtlSeconds,
                 CreatedAtUtc = current.CreatedAtUtc
             };
+        }
+
+        public ExecutionContextSnapshot MapToSnapshot()
+        {
+            return Create();
         }
 
         private static void ValidateRequiredContext(

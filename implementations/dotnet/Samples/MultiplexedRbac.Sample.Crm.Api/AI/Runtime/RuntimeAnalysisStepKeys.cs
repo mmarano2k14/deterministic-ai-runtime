@@ -14,6 +14,9 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
         public const string ExecuteApprovedScenario =
             "runtime-analysis.execute-approved-scenario";
 
+        public const string CaptureChildDagEvidence =
+            "runtime-analysis.capture-child-dag-evidence";
+
         public const string VerifyScenarioOutcome =
             "runtime-analysis.verify-scenario-outcome";
     }
@@ -31,6 +34,9 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 
         public const string ScenarioExecutionJson =
             "scenarioExecutionJson";
+
+        public const string RootExecutionId =
+            "rootExecutionId";
     }
 
     public static class RuntimeAnalysisStepConfigKeys
@@ -40,5 +46,8 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 
         public const string ScenarioPolicyDefinition =
             "scenarioPolicyValidation";
+
+        public const string ChildDagDepth =
+            "childDagDepth";
     }
 }

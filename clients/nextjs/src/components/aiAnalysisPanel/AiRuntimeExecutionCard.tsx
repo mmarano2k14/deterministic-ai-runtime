@@ -15,15 +15,21 @@ export function AiRuntimeExecutionCard(
     return null;
   }
 
+  const runtimeStatus =
+    typeof execution.runtimeStatus === "string" &&
+    execution.runtimeStatus.trim().length > 0
+      ? execution.runtimeStatus.trim()
+      : "Unknown";
+
   return (
     <section className={`${styles.section} ${styles.runtimeExecution}`}>
       <div className={styles.sectionHeader}>
         <div className={styles.sectionTitle}>Runtime DAG</div>
         <div
           className={styles.runtimeStatus}
-          data-status={execution.runtimeStatus.toLowerCase()}
+          data-status={runtimeStatus.toLowerCase()}
         >
-          {execution.runtimeStatus}
+          {runtimeStatus}
         </div>
       </div>
 

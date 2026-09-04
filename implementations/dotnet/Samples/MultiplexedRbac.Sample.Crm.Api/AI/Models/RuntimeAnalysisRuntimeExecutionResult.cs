@@ -36,6 +36,9 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Models
             init;
         } = new RuntimeAnalysisScenarioExecutionResult();
 
+        public RuntimeAnalysisChildDagResult ChildDag { get; init; } =
+            new RuntimeAnalysisChildDagResult();
+
         public RuntimeAnalysisVerificationResult Verification { get; init; } =
             new RuntimeAnalysisVerificationResult();
     }

@@ -1,11 +1,14 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.OpenApi.Models;
+using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Configuration;
 using Multiplexed.AI.DI;
 using Multiplexed.AI.DI.Persistence;
 using Multiplexed.AI.Runtime;
 using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.Discovery;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.DI;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mongo;
 using Multiplexed.Rbac.Core.ExecutionContext;
 using Multiplexed.Rbac.Core.Runtime;
 using Multiplexed.Rbac.Core.Runtime.DI;
@@ -194,8 +197,9 @@ builder.Services.AddHttpClient<
 // 5️⃣ Deterministic AI Runtime — hosted by this sample API
 // --------------------------------------------------------------------
 // OpenAI execution does NOT run from the controller.
-// The controller submits a one-step DAG to the existing runtime.
-// The custom step resolves IAiRuntimeAnalysisProvider inside the DAG.
+// The controller submits the runtime-analysis DAG to the existing runtime.
+// Custom sample steps resolve application services while native runtime
+// composition owns recursive Child DAG execution.
 
 var aiEngineOptions = new AiEngineOptions
 {
@@ -245,9 +249,17 @@ aiEngineOptions.PayloadStore.StepIndexCache.KeyPrefix =
 aiEngineOptions.PayloadStore.StepIndexCache.ExpirationSeconds = 3600;
 aiEngineOptions.PayloadStore.StepIndexCache.RefreshTtlOnRead = true;
 
-// Mongo observability is still disabled for this first one-step analysis DAG.
-// Canonical lifecycle events / realtime remain available independently.
-aiEngineOptions.Snapshots.Enabled = false;
+// Native Child DAG composition requires the runtime's durable Mongo-backed
+// execution snapshots. The demo enables the existing snapshot infrastructure;
+// no Child DAG persistence is implemented in the sample itself.
+aiEngineOptions.Snapshots.Enabled = true;
+aiEngineOptions.Snapshots.Mongo.Enabled = true;
+aiEngineOptions.Snapshots.Mongo.ConnectionString =
+    mongoConnectionString;
+aiEngineOptions.Snapshots.Mongo.DatabaseName =
+    mongoDatabaseName;
+aiEngineOptions.Snapshots.Mongo.CollectionName =
+    "ai_runtime_analysis_execution_snapshots";
 aiEngineOptions.Observability.EnableTracing = false;
 aiEngineOptions.Observability.EnableInMemoryRecording = false;
 aiEngineOptions.Observability.EnableMetrics = false;
@@ -256,6 +268,17 @@ builder.Services.AddMemoryCache();
 
 builder.Services.AddMultiplexAI(
     aiEngineOptions);
+
+builder.Services.AddAiExecutionSnapshots(
+    aiEngineOptions);
+
+builder.Services.Configure<AiChildExecutionRelationMongoOptions>(
+    options =>
+    {
+        options.CollectionName =
+            "ai_runtime_analysis_child_execution_relations";
+    });
+builder.Services.AddAiChildDagComposition();
 
 // AiDagExecutionEngineServices requires the replay metadata service even when
 // this first demo execution does not actively invoke replay.
@@ -268,6 +291,7 @@ builder.Services.AddAiRuntimeSignals();
 builder.Services.AddAiControlPlaneDiscoveryCore();
 
 builder.Services.AddAiStepsFromAssemblies(
+    typeof(AiRuntimeAssemblyMarker).Assembly,
     typeof(AnalyzeRuntimeWithAiStep).Assembly);
 
 // Application-level governance policies.
@@ -279,7 +303,9 @@ builder.Services.AddAiPoliciesFromAssemblies(
     typeof(RuntimeAnalysisScenarioLimitsPolicy).Assembly);
 
 builder.Services.AddSingleton<RuntimeAnalysisScenarioPolicyDefinitionFactory>();
+builder.Services.AddSingleton<RuntimeAnalysisChildDagDefinitionFactory>();
 builder.Services.AddSingleton<RuntimeAnalysisPipelineDefinitionFactory>();
+builder.Services.AddScoped<RuntimeAnalysisChildDagEvidenceReader>();
 builder.Services.AddScoped<RuntimeAnalysisExecutionResultReader>();
 builder.Services.AddSingleton<
     IRuntimeAnalysisHumanApprovalStore,
@@ -290,7 +316,11 @@ builder.Services.AddSingleton<
 builder.Services.AddSingleton(
     new RuntimeAnalysisRuntimeOptions());
 
-builder.Services.AddScoped<RuntimeAnalysisExecutionContextSnapshotFactory>();
+builder.Services.AddSingleton<RuntimeAnalysisExecutionContextSnapshotFactory>();
+builder.Services.AddSingleton<IExecutionContextSnapshotProvider>(
+    serviceProvider =>
+        serviceProvider.GetRequiredService<
+            RuntimeAnalysisExecutionContextSnapshotFactory>());
 builder.Services.AddScoped<
     IRuntimeAnalysisRuntimeExecutor,
     RuntimeAnalysisRuntimeExecutor>();

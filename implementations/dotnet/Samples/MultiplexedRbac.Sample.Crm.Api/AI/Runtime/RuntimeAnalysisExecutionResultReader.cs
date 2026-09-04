@@ -17,11 +17,13 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
         private readonly IAiDagExecutionStore _dagStore;
         private readonly IRuntimeAnalysisHumanApprovalStore _approvalStore;
         private readonly IRuntimeAnalysisScenarioExecutionStore _executionStore;
+        private readonly RuntimeAnalysisChildDagEvidenceReader _childDagReader;
 
         public RuntimeAnalysisExecutionResultReader(
             IAiDagExecutionStore dagStore,
             IRuntimeAnalysisHumanApprovalStore approvalStore,
-            IRuntimeAnalysisScenarioExecutionStore executionStore)
+            IRuntimeAnalysisScenarioExecutionStore executionStore,
+            RuntimeAnalysisChildDagEvidenceReader childDagReader)
         {
             _dagStore =
                 dagStore
@@ -35,6 +37,10 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                 executionStore
                 ?? throw new ArgumentNullException(
                     nameof(executionStore));
+            _childDagReader =
+                childDagReader
+                ?? throw new ArgumentNullException(
+                    nameof(childDagReader));
         }
 
         public async Task<RuntimeAnalysisRuntimeExecutionResult> ReadAsync(
@@ -78,6 +84,12 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                         cancellationToken)
                     .ConfigureAwait(false);
 
+            var childDag = await _childDagReader.ReadAsync(
+                    state,
+                    executionId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             var verification = ReadVerification(
                 state,
                 scenarioExecution);
@@ -95,6 +107,7 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                 PolicyValidation = policyValidation,
                 HumanApproval = approval,
                 ScenarioExecution = scenarioExecution,
+                ChildDag = childDag,
                 Verification = verification
             };
         }
@@ -349,6 +362,7 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                 RuntimeAnalysisPipelineDefinitionFactory.ValidateScenarioStepName,
                 RuntimeAnalysisPipelineDefinitionFactory.AwaitHumanApprovalStepName,
                 RuntimeAnalysisPipelineDefinitionFactory.ExecuteApprovedScenarioStepName,
+                RuntimeAnalysisChildDagDefinitionFactory.ChildDagStepName,
                 RuntimeAnalysisPipelineDefinitionFactory.VerifyScenarioOutcomeStepName
             };
 

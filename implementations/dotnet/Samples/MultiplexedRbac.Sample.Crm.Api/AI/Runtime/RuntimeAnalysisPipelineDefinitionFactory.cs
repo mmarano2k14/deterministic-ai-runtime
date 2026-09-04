@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Pipeline;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution;
 using MultiplexedRbac.Sample.Crm.Api.AI.Models;
 using MultiplexedRbac.Sample.Crm.Api.AI.Policies;
 
@@ -21,14 +22,21 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 
         private readonly RuntimeAnalysisScenarioPolicyDefinitionFactory
             _policyDefinitionFactory;
+        private readonly RuntimeAnalysisChildDagDefinitionFactory
+            _childDagDefinitionFactory;
 
         public RuntimeAnalysisPipelineDefinitionFactory(
-            RuntimeAnalysisScenarioPolicyDefinitionFactory policyDefinitionFactory)
+            RuntimeAnalysisScenarioPolicyDefinitionFactory policyDefinitionFactory,
+            RuntimeAnalysisChildDagDefinitionFactory childDagDefinitionFactory)
         {
             _policyDefinitionFactory =
                 policyDefinitionFactory
                 ?? throw new ArgumentNullException(
                     nameof(policyDefinitionFactory));
+            _childDagDefinitionFactory =
+                childDagDefinitionFactory
+                ?? throw new ArgumentNullException(
+                    nameof(childDagDefinitionFactory));
         }
 
         public AiPipelineDefinition Create(
@@ -43,7 +51,7 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
             return new AiPipelineDefinition
             {
                 Name = PipelineName,
-                Version = "5",
+                Version = "6",
                 ExecutionMode = AiExecutionMode.Dag,
                 Steps =
                 [
@@ -128,15 +136,17 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                             },
                         Execution = NoRetry()
                     },
+                    CreateChildDagStep(),
                     new AiPipelineStepDefinition
                     {
                         Name = VerifyScenarioOutcomeStepName,
                         StepKey =
                             RuntimeAnalysisStepKeys.VerifyScenarioOutcome,
-                        Order = 5,
+                        Order = 6,
                         DependsOn =
                         [
-                            ExecuteApprovedScenarioStepName
+                            RuntimeAnalysisChildDagDefinitionFactory
+                                .ChildDagStepName
                         ],
                         Input =
                             new Dictionary<string, object?>(
@@ -155,6 +165,46 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                         Execution = NoRetry()
                     }
                 ]
+            };
+        }
+
+        private AiPipelineStepDefinition CreateChildDagStep()
+        {
+            var childDefinition =
+                _childDagDefinitionFactory.CreateChildDefinition(
+                    PipelineName,
+                    RuntimeAnalysisChildDagDefinitionFactory.ChildDepth);
+
+            return new AiPipelineStepDefinition
+            {
+                Name =
+                    RuntimeAnalysisChildDagDefinitionFactory.ChildDagStepName,
+                StepKey = ExecuteChildDagStep.StepKey,
+                Order = 5,
+                DependsOn =
+                [
+                    ExecuteApprovedScenarioStepName
+                ],
+                Input =
+                    RuntimeAnalysisChildDagDefinitionFactory.CreateRootInputs(),
+                Config =
+                    new Dictionary<string, object?>(
+                        StringComparer.Ordinal)
+                    {
+                        [ExecuteChildDagStep.ChildDagIdConfigKey] =
+                            childDefinition.Name,
+                        [ExecuteChildDagStep.ChildDagVersionConfigKey] =
+                            childDefinition.Version,
+                        [ExecuteChildDagStep.LogicalInvocationKeyConfigKey] =
+                            RuntimeAnalysisChildDagDefinitionFactory
+                                .CreateChildLogicalInvocationKey(
+                                    PipelineName,
+                                    RuntimeAnalysisChildDagDefinitionFactory
+                                        .ChildDepth),
+                        [ExecuteChildDagStep.ChildDagDefinitionConfigKey] =
+                            childDefinition
+                    },
+                Execution = NoRetry()
             };
         }
 
