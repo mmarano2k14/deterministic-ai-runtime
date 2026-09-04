@@ -1,4 +1,7 @@
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController;
 using Microsoft.OpenApi.Models;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.Configuration;
@@ -31,6 +34,21 @@ using ExecutionContext = Multiplexed.Rbac.Core.ExecutionContext.ExecutionContext
 using Multiplexed.AI.DI.Engine;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// The embedded demo now hosts runtime-instance registration + the shared queue
+// pump for native Child DAG execution. Those control-plane components require
+// one explicit, stable logical ControlPlaneId. Keep both supported
+// configuration keys aligned so every resolver path (registration, queue,
+// recovery, Child DAG continuation) resolves the same logical boundary.
+var runtimeAnalysisControlPlaneId =
+    builder.Configuration["AiEngine:ControlPlane:ControlPlaneId"]
+    ?? builder.Configuration["AiRuntimeInstanceRegistration:ControlPlaneId"]
+    ?? "ai-demo-runtime-analysis-control-plane";
+
+builder.Configuration["AiEngine:ControlPlane:ControlPlaneId"] =
+    runtimeAnalysisControlPlaneId;
+builder.Configuration["AiRuntimeInstanceRegistration:ControlPlaneId"] =
+    runtimeAnalysisControlPlaneId;
 
 // The Deterministic AI Runtime contains context-bound and optional services
 // that are intentionally resolved only inside runtime execution scopes.
@@ -209,6 +227,13 @@ var aiEngineOptions = new AiEngineOptions
     DefaultPipelineDefinitionSource = "Runtime"
 };
 
+// Keep the engine option object aligned with the configuration keys consumed
+// by DefaultAiControlPlaneIdResolver. The resolver intentionally requires an
+// explicit logical id for runtime registration (generated host ids are not
+// accepted on that path).
+aiEngineOptions.ControlPlane.ControlPlaneId =
+    runtimeAnalysisControlPlaneId;
+
 // The runtime's durable archived-step index is Mongo-backed even when most
 // analysis payloads remain inline. Match the Enterprise Runtime host profile:
 // Mongo is the durable source of truth and Redis is the bounded hot cache.
@@ -290,6 +315,17 @@ builder.Services.AddAiExecutionReplay();
 builder.Services.AddAiRuntimeSignals();
 builder.Services.AddAiControlPlaneDiscoveryCore();
 
+// Native Child DAG dispatch goes through the runtime's existing shared
+// controller. During a background DAG step there is no active ASP.NET RBAC
+// AsyncLocal context, so the sample decorates the existing controller and
+// temporarily supplies the exact durable child execution-context snapshot
+// already carried by the native child run request.
+builder.Services.RemoveAll<IAiSharedRuntimeController>();
+builder.Services.AddSingleton<AiSharedRuntimeController>();
+builder.Services.AddSingleton<
+    IAiSharedRuntimeController,
+    RuntimeAnalysisSharedRuntimeController>();
+
 builder.Services.AddAiStepsFromAssemblies(
     typeof(AiRuntimeAssemblyMarker).Assembly,
     typeof(AnalyzeRuntimeWithAiStep).Assembly);
@@ -332,6 +368,44 @@ builder.Services.AddScoped<
     RuntimeAnalysisScenarioExecutionService>();
 
 builder.Services.AddHostedService<RuntimeAnalysisRuntimeHostedService>();
+
+// Child DAG uses the existing shared/global queue by design. Advertise the
+// already-hosted local background controller as one runtime instance, then
+// enable the existing shared queue pump so queue-first child submissions are
+// dispatched back into that same runtime instead of remaining globally queued.
+const string runtimeAnalysisRuntimeInstanceId =
+    "ai-demo-runtime-analysis";
+
+builder.Services.AddAiRuntimeInstanceRegistrationHostedService(
+    options =>
+    {
+        options.Enabled = true;
+        options.RuntimeInstanceId =
+            runtimeAnalysisRuntimeInstanceId;
+        options.ProviderName = "local";
+        options.WorkerCount = 1;
+        options.QueueCapacity = 1000;
+        options.MaxConcurrentRuns = 4;
+    });
+
+builder.Services.AddAiSharedQueueBackgroundService(
+    options =>
+    {
+        options.Enabled = true;
+        options.RuntimeInstanceId =
+            runtimeAnalysisRuntimeInstanceId;
+        options.WorkerId =
+            "ai-demo-child-dag-pump";
+        options.WaitForRuntimeReadiness = true;
+        options.RuntimeReadinessPollInterval =
+            TimeSpan.FromMilliseconds(100);
+        options.RuntimeReadinessTimeout =
+            TimeSpan.FromSeconds(15);
+        options.Source =
+            "runtime-analysis-child-dag";
+        options.RequestedBy =
+            "runtime-analysis-sample";
+    });
 
 // IMPORTANT: one realtime channel / one worker.
 //

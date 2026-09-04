@@ -216,7 +216,7 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
                 Relations = relations,
                 Summary = BuildSummary(
                     status,
-                    relations.Count,
+                    relations,
                     allCompleted,
                     allResumed,
                     allGenerationZero,
@@ -238,17 +238,51 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 
         private static string BuildSummary(
             string status,
-            int observedDepth,
+            IReadOnlyList<RuntimeAnalysisChildDagRelationResult> relations,
             bool allCompleted,
             bool allResumed,
             bool allGenerationZero,
             bool childIdsUnique)
         {
+            var observedDepth = relations.Count;
+
             if (string.Equals(
                     status,
                     RuntimeAnalysisChildDagStatuses.Completed,
                     StringComparison.Ordinal))
             {
+                var resumedCount =
+                    relations.Count(
+                        relation => string.Equals(
+                            relation.ContinuationStatus,
+                            AiChildContinuationStatus.Resumed.ToString(),
+                            StringComparison.Ordinal));
+
+                var scheduledCount =
+                    relations.Count(
+                        relation => string.Equals(
+                            relation.ContinuationStatus,
+                            AiChildContinuationStatus.Scheduled.ToString(),
+                            StringComparison.Ordinal));
+
+                var suppressedCount =
+                    relations.Count(
+                        relation => string.Equals(
+                            relation.ContinuationStatus,
+                            AiChildContinuationStatus.Suppressed.ToString(),
+                            StringComparison.Ordinal));
+
+                if (!allResumed
+                    && suppressedCount == 0
+                    && resumedCount + scheduledCount == relations.Count)
+                {
+                    return
+                        $"Recursive Child DAG depth {observedDepth} completed; "
+                        + "all child relations are terminal and continuation "
+                        + $"proof is still converging ({resumedCount}/{relations.Count} resumed, "
+                        + $"{scheduledCount} scheduled).";
+                }
+
                 return
                     $"Recursive Child DAG depth {observedDepth} completed; "
                     + $"relationsCompleted={allCompleted}, "

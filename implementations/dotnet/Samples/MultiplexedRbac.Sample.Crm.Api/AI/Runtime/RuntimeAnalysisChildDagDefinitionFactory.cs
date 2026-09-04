@@ -140,17 +140,25 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 
         private static Dictionary<string, object?> CreateEvidenceInputs()
         {
+            // Child invocation input is seeded into the child execution's
+            // structured state by the normal DAG creation path. Resolve those
+            // inherited values through state.* rather than input.*.
+            //
+            // input.* addresses the current step's declarative Input bag; using
+            // it here returns the literal path expression itself
+            // (for example "input.analysisResultJson") instead of the
+            // invocation value frozen by ExecuteChildDagStep.
             return new Dictionary<string, object?>(
                 StringComparer.Ordinal)
             {
                 [RuntimeAnalysisStepInputKeys.RootExecutionId] =
-                    $"input.{RuntimeAnalysisStepInputKeys.RootExecutionId}",
+                    $"state.{RuntimeAnalysisStepInputKeys.RootExecutionId}",
                 [RuntimeAnalysisStepInputKeys.AnalysisResultJson] =
-                    $"input.{RuntimeAnalysisStepInputKeys.AnalysisResultJson}",
+                    $"state.{RuntimeAnalysisStepInputKeys.AnalysisResultJson}",
                 [RuntimeAnalysisStepInputKeys.PolicyValidationJson] =
-                    $"input.{RuntimeAnalysisStepInputKeys.PolicyValidationJson}",
+                    $"state.{RuntimeAnalysisStepInputKeys.PolicyValidationJson}",
                 [RuntimeAnalysisStepInputKeys.ScenarioExecutionJson] =
-                    $"input.{RuntimeAnalysisStepInputKeys.ScenarioExecutionJson}"
+                    $"state.{RuntimeAnalysisStepInputKeys.ScenarioExecutionJson}"
             };
         }
 

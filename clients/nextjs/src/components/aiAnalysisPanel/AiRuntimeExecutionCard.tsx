@@ -1,5 +1,6 @@
 import { JSX } from "react";
 import type { RuntimeAnalysisRuntimeExecutionResult } from "@/lib/aiAnalysis/RuntimeAnalysisType";
+import { AiChildDagEvidenceCard } from "./AiChildDagEvidenceCard";
 import styles from "./AiAnalysisPanel.module.css";
 
 export type AiRuntimeExecutionCardProps = {
@@ -63,6 +64,11 @@ export function AiRuntimeExecutionCard(
           </div>
         ) : null}
       </div>
+
+      <AiChildDagEvidenceCard
+        childDag={execution.childDag}
+        rootExecutionId={execution.executionId}
+      />
     </section>
   );
 }

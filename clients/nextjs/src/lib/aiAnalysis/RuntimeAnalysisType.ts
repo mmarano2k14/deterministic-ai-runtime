@@ -162,6 +162,42 @@ export type RuntimeAnalysisHumanApprovalDecision =
   | "approve"
   | "reject";
 
+export type RuntimeAnalysisChildDagStatus =
+  | "NotStarted"
+  | "Running"
+  | "Completed"
+  | "Failed";
+
+export type RuntimeAnalysisChildDagRelationResult = {
+  depth: number;
+  tenantId: string;
+  parentExecutionId: string;
+  childExecutionId: string | null;
+  childInvocationKey: string;
+  childDagId: string;
+  childDagDefinitionVersion: string;
+  invocationGeneration: number;
+  relationStatus: string;
+  continuationStatus: string;
+  childResultDigest: string | null;
+  childFailureReason: string | null;
+  createdAtUtc: string;
+  completedAtUtc: string | null;
+  parentResumedAtUtc: string | null;
+};
+
+export type RuntimeAnalysisChildDagResult = {
+  status: RuntimeAnalysisChildDagStatus;
+  expectedDepth: number;
+  observedDepth: number;
+  allRelationsCompleted: boolean;
+  allContinuationsResumed: boolean;
+  allInvocationGenerationsZero: boolean;
+  childExecutionIdsUnique: boolean;
+  relations: RuntimeAnalysisChildDagRelationResult[];
+  summary: string;
+};
+
 export type RuntimeAnalysisRuntimeExecutionResult = {
   runId: string;
   continuationRunId: string | null;
@@ -173,6 +209,7 @@ export type RuntimeAnalysisRuntimeExecutionResult = {
   policyValidation: RuntimeAnalysisScenarioPolicyValidationResult;
   humanApproval: RuntimeAnalysisHumanApprovalResult;
   scenarioExecution: RuntimeAnalysisScenarioExecutionResult;
+  childDag?: RuntimeAnalysisChildDagResult;
   verification: RuntimeAnalysisVerificationResult;
 };
 

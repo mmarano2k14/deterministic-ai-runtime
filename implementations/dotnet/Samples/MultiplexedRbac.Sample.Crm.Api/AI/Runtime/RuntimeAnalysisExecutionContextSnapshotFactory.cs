@@ -8,6 +8,9 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
     public sealed class RuntimeAnalysisExecutionContextSnapshotFactory :
         IExecutionContextSnapshotProvider
     {
+        private static readonly AsyncLocal<ExecutionContextSnapshot?> AmbientSnapshot =
+            new();
+
         private readonly IExecutionContextAccessor _executionContextAccessor;
 
         public RuntimeAnalysisExecutionContextSnapshotFactory(
@@ -53,7 +56,55 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
 
         public ExecutionContextSnapshot MapToSnapshot()
         {
-            return Create();
+            var ambient = AmbientSnapshot.Value;
+
+            return ambient is not null
+                ? CloneSnapshot(ambient)
+                : Create();
+        }
+
+        public IDisposable PushSnapshot(
+            ExecutionContextSnapshot snapshot)
+        {
+            ArgumentNullException.ThrowIfNull(
+                snapshot);
+
+            var previous = AmbientSnapshot.Value;
+
+            AmbientSnapshot.Value =
+                CloneSnapshot(snapshot);
+
+            return new SnapshotScope(
+                previous);
+        }
+
+        private static ExecutionContextSnapshot CloneSnapshot(
+            ExecutionContextSnapshot source)
+        {
+            ArgumentNullException.ThrowIfNull(
+                source);
+
+            return new ExecutionContextSnapshot
+            {
+                ContextKey = source.ContextKey,
+                Project = source.Project,
+                UserId = source.UserId,
+                TenantId = source.TenantId,
+                TenantGroupId = source.TenantGroupId,
+                CurrentNamespace = source.CurrentNamespace,
+                Namespaces = source.Namespaces
+                    .Select(namespaceEntry => new NamespaceEntry
+                    {
+                        Name = namespaceEntry.Name,
+                        Trns = new HashSet<string>(
+                            namespaceEntry.Trns,
+                            StringComparer.Ordinal)
+                    })
+                    .ToList(),
+                InFlightCount = source.InFlightCount,
+                TtlSeconds = source.TtlSeconds,
+                CreatedAtUtc = source.CreatedAtUtc
+            };
         }
 
         private static void ValidateRequiredContext(
@@ -91,6 +142,32 @@ namespace MultiplexedRbac.Sample.Crm.Api.AI.Runtime
             {
                 throw new InvalidOperationException(
                     $"The RBAC execution context field '{name}' is required for durable runtime analysis execution.");
+            }
+        }
+
+        private sealed class SnapshotScope :
+            IDisposable
+        {
+            private readonly ExecutionContextSnapshot? _previous;
+            private int _disposed;
+
+            public SnapshotScope(
+                ExecutionContextSnapshot? previous)
+            {
+                _previous = previous;
+            }
+
+            public void Dispose()
+            {
+                if (Interlocked.Exchange(
+                        ref _disposed,
+                        1) == 1)
+                {
+                    return;
+                }
+
+                AmbientSnapshot.Value =
+                    _previous;
             }
         }
     }

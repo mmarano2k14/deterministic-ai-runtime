@@ -67,16 +67,13 @@ export function AiAnalysisPromptPanel(
             onScopeChange(event.target.value as AiAnalysisScope)
           }
         >
-          {AiAnalysisUxModel.scopes().map((definition) => (
-            <option
-              key={definition.key}
-              value={definition.key}
-              disabled={!definition.available}
-            >
-              {definition.label}
-              {!definition.available ? " — coming next" : ""}
-            </option>
-          ))}
+          {AiAnalysisUxModel.scopes()
+            .filter((definition) => definition.available)
+            .map((definition) => (
+              <option key={definition.key} value={definition.key}>
+                {definition.label}
+              </option>
+            ))}
         </select>
 
         <div className={styles.scopeDescription}>
