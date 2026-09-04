@@ -1,6 +1,6 @@
 "use client";
 
-import React, { JSX, useState } from "react";
+import { JSX, useState } from "react";
 
 import { LogBadge } from "./LogBadge";
 import { HttpLogHelper } from "../helpers/HttpLogHelper";
@@ -15,10 +15,10 @@ export type ContextRotationLogCardProps = {
   };
 };
 
-function shortKey(v?: string): string {
-  if (!v) return "-";
-  if (v.length <= 20) return v;
-  return `${v.slice(0, 12)}...${v.slice(-6)}`;
+function shortKey(value?: string): string {
+  if (!value) return "-";
+  if (value.length <= 20) return value;
+  return `${value.slice(0, 12)}...${value.slice(-6)}`;
 }
 
 export function ContextRotationLogCard(
@@ -28,115 +28,60 @@ export function ContextRotationLogCard(
   const [open, setOpen] = useState(false);
 
   const badges = HttpLogHelper.getBadges(l);
-  const statusColor = HttpLogHelper.getStatusColor(l.status);
+  const statusTone = HttpLogHelper.getStatusTone(l.status);
 
   return (
-    <div
-      style={{
-        border: "1px solid #eee",
-        borderRadius: 10,
-        overflow: "hidden",
-        background: "#fff",
-      }}
-    >
+    <div className="log-card">
       <div
-        onClick={() => setOpen((x) => !x)}
-        style={{
-          cursor: "pointer",
-          padding: 10,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          background: "#fafafa",
-          borderLeft: `4px solid ${statusColor}`,
-          gap: 12,
-        }}
+        className="log-card__header log-card__header--rotation"
+        data-tone={statusTone}
+        onClick={() => setOpen((current) => !current)}
       >
-        <div
-          style={{
-            display: "grid",
-            gap: 6,
-            minWidth: 0,
-            flex: 1,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-              minWidth: 0,
-              flexWrap: "wrap",
-            }}
-          >
-            <span style={{ fontSize: 12 }}>{open ? "▼" : "▶"}</span>
+        <div className="log-card__rotation-main">
+          <div className="log-card__identity">
+            <span className="log-card__toggle">
+              {open ? "▼" : "▶"}
+            </span>
 
             {badges.map((badge) => (
               <LogBadge key={badge.label} badge={badge} />
             ))}
 
-            {l.method && <b>{l.method}</b>}
+            {l.method ? <b>{l.method}</b> : null}
 
-            {l.path && (
-              <code style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                {l.path}
-              </code>
-            )}
+            {l.path ? (
+              <code className="log-card__path">{l.path}</code>
+            ) : null}
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-              flexWrap: "wrap",
-              fontSize: 12,
-            }}
-          >
-            <span style={{ opacity: 0.7 }}>Rotation</span>
+          <div className="log-card__rotation-summary">
+            <span className="log-card__muted">Rotation</span>
             <code>{shortKey(l.rotation.from)}</code>
-            <span style={{ opacity: 0.7 }}>→</span>
+            <span className="log-card__muted">→</span>
             <code>{shortKey(l.rotation.to)}</code>
           </div>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            alignItems: "center",
-            fontSize: 12,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {typeof l.status !== "undefined" && (
+        <div className="log-card__meta">
+          {typeof l.status !== "undefined" ? (
             <span
-              style={{
-                color: statusColor,
-                fontWeight: 700,
-              }}
+              className="log-card__status"
+              data-tone={statusTone}
             >
               {l.status} {l.statusText ?? ""}
             </span>
-          )}
+          ) : null}
 
-          <span style={{ opacity: 0.7 }}>{l.t}</span>
+          <span className="log-card__timestamp">{l.t}</span>
         </div>
       </div>
 
-      {open && (
-        <div style={{ padding: 12, fontSize: 13, display: "grid", gap: 10 }}>
-          <div
-            style={{
-              border: "1px solid #eee",
-              borderRadius: 10,
-              padding: 10,
-              background: "#fafafa",
-              display: "grid",
-              gap: 6,
-            }}
-          >
-            <div style={{ fontWeight: 700 }}>Rotation Summary</div>
+      {open ? (
+        <div className="log-card__details log-card__details--grid">
+          <div className="log-card__summary-card">
+            <div className="log-card__summary-title">
+              Rotation Summary
+            </div>
 
             <div>
               <b>From:</b> <code>{l.rotation.from}</code>
@@ -153,70 +98,75 @@ export function ContextRotationLogCard(
               </code>
             </div>
 
-            {typeof l.status !== "undefined" && (
+            {typeof l.status !== "undefined" ? (
               <div>
                 <b>Status:</b>{" "}
                 <code>
                   {l.status} {l.statusText ?? ""}
                 </code>{" "}
-                <span style={{ marginLeft: 8 }}>{l.ok ? "✅ ok" : "❌ not ok"}</span>
+                <span className="log-card__response-ok">
+                  {l.ok ? "✅ ok" : "❌ not ok"}
+                </span>
               </div>
-            )}
+            ) : null}
           </div>
 
           <div>
             <b>Target:</b> <code>{l.baseUrl}</code>
           </div>
 
-          {l.url && (
+          {l.url ? (
             <div>
               <b>Resolved URL:</b> <code>{l.url}</code>
             </div>
-          )}
+          ) : null}
 
           <div>
             <b>Request headers:</b>{" "}
             <code>
               {Object.entries(l.requestHeaders ?? {})
-                .map(([k, v]) => `${k}=${v}`)
+                .map(([key, value]) => `${key}=${value}`)
                 .join(" | ") || "(none)"}
             </code>
           </div>
 
-          {typeof l.requestBody !== "undefined" && (
+          {typeof l.requestBody !== "undefined" ? (
             <div>
               <b>Request body:</b>
-              <pre style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
+              <pre className="log-card__pre">
                 {JSON.stringify(l.requestBody, null, 2)}
               </pre>
             </div>
-          )}
+          ) : null}
 
-          {l.responseHeaders && Object.keys(l.responseHeaders).length > 0 && (
+          {l.responseHeaders && Object.keys(l.responseHeaders).length > 0 ? (
             <div>
               <b>Response headers:</b>{" "}
               <code>
                 {Object.entries(l.responseHeaders)
-                  .map(([k, v]) => `${k}=${v}`)
+                  .map(([key, value]) => `${key}=${value}`)
                   .join(" | ")}
               </code>
             </div>
-          )}
+          ) : null}
 
-          {l.error && (
+          {l.error ? (
             <div>
-              <b style={{ color: "crimson" }}>Error:</b> <code>{l.error}</code>
+              <b className="log-card__error-label">Error:</b>{" "}
+              <code>{l.error}</code>
             </div>
-          )}
+          ) : null}
 
-          {typeof l.responseBody === "string" && l.responseBody.length > 0 && (
+          {typeof l.responseBody === "string" && l.responseBody.length > 0 ? (
             <details>
-              <summary style={{ cursor: "pointer" }}>Response body</summary>
-              <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{l.responseBody}</pre>
+              <summary className="log-card__summary">Response body</summary>
+              <pre className="log-card__pre log-card__pre--response">
+                {l.responseBody}
+              </pre>
             </details>
-          )}
+          ) : null}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

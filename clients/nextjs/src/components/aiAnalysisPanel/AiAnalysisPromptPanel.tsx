@@ -10,7 +10,6 @@ import { AiAnalysisUxModel } from "@/lib/aiAnalysis/AiAnalysisUxModel";
 import type {
   RuntimeAnalysisInvestigationMode,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiAnalysisPromptPanelProps = {
   scope: AiAnalysisScope;
@@ -52,12 +51,12 @@ export function AiAnalysisPromptPanel(
   }
 
   return (
-    <section className={styles.section}>
-      <div className={styles.sectionHeader}>
-        <div className={styles.sectionTitle}>Analyze runtime evidence</div>
+    <section className="ai-analysis-section">
+      <div className="ai-analysis-section-header">
+        <div className="ai-analysis-section-title">Analyze runtime evidence</div>
       </div>
 
-      <div className={styles.scope}>
+      <div className="ai-analysis-scope">
         <label htmlFor="ai-analysis-scope">Scope</label>
         <select
           id="ai-analysis-scope"
@@ -76,12 +75,12 @@ export function AiAnalysisPromptPanel(
             ))}
         </select>
 
-        <div className={styles.scopeDescription}>
+        <div className="ai-analysis-scope-description">
           {AiAnalysisUxModel.scopeDescription(scope)}
         </div>
       </div>
 
-      <div className={styles.scope}>
+      <div className="ai-analysis-scope">
         <label htmlFor="ai-analysis-investigation-mode">
           Investigation mode
         </label>
@@ -103,7 +102,7 @@ export function AiAnalysisPromptPanel(
           </option>
         </select>
 
-        <div className={styles.scopeDescription}>
+        <div className="ai-analysis-scope-description">
           {investigationMode === "continue-useful-experiments"
             ? "AI actively seeks one materially different bounded follow-up after each verified child. Every follow-up still requires deterministic policy + human approval. Maximum approved depth: 5."
             : "AI may close the decision loop when deterministic evidence is conclusive. Select Continue before Ask AI when you want to exercise multiple approval-driven children."}
@@ -113,7 +112,7 @@ export function AiAnalysisPromptPanel(
         </div>
       </div>
 
-      <div className={styles.quickActions}>
+      <div className="ai-analysis-quick-actions">
         {AiAnalysisUxModel.quickActions().map((action) => {
           const isSelected = question === action.prompt;
 
@@ -121,7 +120,7 @@ export function AiAnalysisPromptPanel(
             <button
               key={action.key}
               type="button"
-              className={styles.quickActionButton}
+              className="ai-analysis-quick-action-button"
               data-selected={isSelected}
               aria-pressed={isSelected}
               disabled={isAnalyzing}
@@ -134,7 +133,7 @@ export function AiAnalysisPromptPanel(
         })}
       </div>
 
-      <div className={styles.question}>
+      <div className="ai-analysis-question">
         <label htmlFor="ai-analysis-question">Ask about this execution</label>
 
         <textarea
@@ -145,9 +144,9 @@ export function AiAnalysisPromptPanel(
           placeholder="Why did latency increase? Which events caused this failure? What scenario should validate the hypothesis?"
         />
 
-        <div className={styles.providerHint}>{providerHint}</div>
+        <div className="ai-analysis-provider-hint">{providerHint}</div>
 
-        <div className={styles.analysisActions}>
+        <div className="ai-analysis-analysis-actions">
           <Button
             variant="primary"
             loading={isAnalyzing}

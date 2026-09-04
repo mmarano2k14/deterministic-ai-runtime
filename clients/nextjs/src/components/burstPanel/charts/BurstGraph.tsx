@@ -17,8 +17,6 @@ type Props = {
   data: BurstMetricPoint[];
 };
 
-const chartFontFamily =
-  'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 
 function formatDuration(ms?: number): string {
   if (typeof ms !== "number" || Number.isNaN(ms)) return "-";
@@ -51,22 +49,17 @@ export function BurstGraph({ data }: Props): JSX.Element {
     <div className="burst-chart burst-chart--line">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
+          className="burst-recharts"
           data={data}
           margin={{ top: 8, right: 16, left: 8, bottom: 8 }}
-          style={{ fontFamily: chartFontFamily }}
         >
-          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#d1d5db" />
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--chart-grid)" />
 
           <XAxis
             dataKey="elapsedMs"
             tickFormatter={(v) => formatElapsed(v)}
             minTickGap={32}
-            tick={{
-              fontSize: 12,
-              fill: "#6b7280",
-              fontFamily: chartFontFamily,
-              fontWeight: 500,
-            }}
+            tick={{ fontSize: 12, fontWeight: 500 }}
             tickLine={false}
             axisLine={false}
           />
@@ -75,24 +68,14 @@ export function BurstGraph({ data }: Props): JSX.Element {
             yAxisId="latency"
             tickFormatter={(v) => formatDuration(v)}
             width={70}
-            tick={{
-              fontSize: 12,
-              fill: "#6b7280",
-              fontFamily: chartFontFamily,
-              fontWeight: 500,
-            }}
+            tick={{ fontSize: 12, fontWeight: 500 }}
             tickLine={false}
             axisLine={false}
             label={{
               value: "Latency",
               angle: -90,
               position: "insideLeft",
-              style: {
-                fontSize: 12,
-                fill: "#6b7280",
-                fontFamily: chartFontFamily,
-                fontWeight: 500,
-              },
+              className: "burst-recharts__axis-label",
             }}
           />
 
@@ -101,47 +84,19 @@ export function BurstGraph({ data }: Props): JSX.Element {
             orientation="right"
             tickFormatter={(v) => formatRps(v)}
             width={50}
-            tick={{
-              fontSize: 12,
-              fill: "#6b7280",
-              fontFamily: chartFontFamily,
-              fontWeight: 500,
-            }}
+            tick={{ fontSize: 12, fontWeight: 500 }}
             tickLine={false}
             axisLine={false}
             label={{
               value: "RPS",
               angle: 90,
               position: "insideRight",
-              style: {
-                fontSize: 12,
-                fill: "#6b7280",
-                fontFamily: chartFontFamily,
-                fontWeight: 500,
-              },
+              className: "burst-recharts__axis-label",
             }}
           />
 
           <Tooltip
             cursor={{ opacity: 0.08 }}
-            contentStyle={{
-              borderRadius: 10,
-              border: "1px solid #e5e7eb",
-              boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
-              fontFamily: chartFontFamily,
-              fontSize: 12,
-            }}
-            labelStyle={{
-              fontFamily: chartFontFamily,
-              fontSize: 12,
-              fontWeight: 600,
-              color: "#111827",
-            }}
-            itemStyle={{
-              fontFamily: chartFontFamily,
-              fontSize: 12,
-              color: "#111827",
-            }}
             labelFormatter={(value) => `t = ${formatElapsed(Number(value))}`}
             formatter={(value, name) => {
               if (name === "RPS") {
@@ -152,19 +107,14 @@ export function BurstGraph({ data }: Props): JSX.Element {
             }}
           />
 
-          <Legend
-            wrapperStyle={{
-              fontSize: 12,
-              fontFamily: chartFontFamily,
-            }}
-          />
+          <Legend />
 
           <Line
             yAxisId="latency"
             type="monotoneX"
             dataKey="p50"
             name="p50"
-            stroke="#00c853"
+            stroke="var(--chart-p50)"
             strokeWidth={2}
             dot={false}
             isAnimationActive={false}
@@ -175,7 +125,7 @@ export function BurstGraph({ data }: Props): JSX.Element {
             type="monotoneX"
             dataKey="p95"
             name="p95"
-            stroke="#ff1744"
+            stroke="var(--chart-p95)"
             strokeWidth={2}
             dot={false}
             isAnimationActive={false}
@@ -186,7 +136,7 @@ export function BurstGraph({ data }: Props): JSX.Element {
             type="monotoneX"
             dataKey="rps"
             name="RPS"
-            stroke="#2962ff"
+            stroke="var(--chart-rps)"
             strokeWidth={1.5}
             dot={false}
             isAnimationActive={false}

@@ -1,7 +1,6 @@
 "use client";
 
 import { JSX, useEffect, useState } from "react";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiAnalysisActivityPhase =
   | "preparing-context"
@@ -45,22 +44,22 @@ export function AiAnalysisActivityIndicator(
 
   return (
     <div
-      className={styles.aiActivity}
+      className="ai-analysis-ai-activity"
       aria-live="polite"
       aria-busy="true"
       role="status"
     >
-      <div className={styles.aiActivitySweep} aria-hidden="true" />
+      <div className="ai-analysis-ai-activity-sweep" aria-hidden="true" />
 
-      <div className={styles.aiActivityHeader}>
-        <div className={styles.aiActivityIdentity}>
-          <span className={styles.aiActivityOrb} aria-hidden="true">
+      <div className="ai-analysis-ai-activity-header">
+        <div className="ai-analysis-ai-activity-identity">
+          <span className="ai-analysis-ai-activity-orb" aria-hidden="true">
             <span />
             <span />
             <span />
           </span>
 
-          <div className={styles.aiActivityHeading}>
+          <div className="ai-analysis-ai-activity-heading">
             <strong>AI is working</strong>
             <span>
               {preparingContext
@@ -70,15 +69,15 @@ export function AiAnalysisActivityIndicator(
           </div>
         </div>
 
-        <span className={styles.aiActivityElapsed}>{elapsedSeconds}s</span>
+        <span className="ai-analysis-ai-activity-elapsed">{elapsedSeconds}s</span>
       </div>
 
-      <div className={styles.aiActivitySteps}>
+      <div className="ai-analysis-ai-activity-steps">
         <div
-          className={styles.aiActivityStep}
+          className="ai-analysis-ai-activity-step"
           data-state={preparingContext ? "active" : "done"}
         >
-          <span className={styles.aiActivityStepDot} aria-hidden="true" />
+          <span className="ai-analysis-ai-activity-step-dot" aria-hidden="true" />
           <div>
             <strong>Prepare context</strong>
             <span>
@@ -88,10 +87,10 @@ export function AiAnalysisActivityIndicator(
         </div>
 
         <div
-          className={styles.aiActivityStep}
+          className="ai-analysis-ai-activity-step"
           data-state={preparingContext ? "pending" : "active"}
         >
-          <span className={styles.aiActivityStepDot} aria-hidden="true" />
+          <span className="ai-analysis-ai-activity-step-dot" aria-hidden="true" />
           <div>
             <strong>Analyze evidence</strong>
             <span>
@@ -102,20 +101,20 @@ export function AiAnalysisActivityIndicator(
         </div>
       </div>
 
-      <div className={styles.aiActivityLog}>
-        <span className={styles.aiActivityLogLabel}>
+      <div className="ai-analysis-ai-activity-log">
+        <span className="ai-analysis-ai-activity-log-label">
           Latest runtime activity
         </span>
 
         {latestLog ? (
-          <div className={styles.aiActivityLogValue}>
+          <div className="ai-analysis-ai-activity-log-value">
             <strong>{latestLog.name}</strong>
             <span>
               {latestLog.method} {latestLog.path} · {latestLog.status}
             </span>
           </div>
         ) : (
-          <div className={styles.aiActivityLogValue}>
+          <div className="ai-analysis-ai-activity-log-value">
             <strong>Runtime analysis</strong>
             <span>Waiting for the current analysis request log…</span>
           </div>

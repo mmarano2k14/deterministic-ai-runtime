@@ -32,7 +32,6 @@ import { AiAnalysisResultCard } from "./AiAnalysisResultCard";
 import { AiRuntimeExecutionCard } from "./AiRuntimeExecutionCard";
 import { AiAnalysisSnapshotCard } from "./AiAnalysisSnapshotCard";
 import { AiAnalysisStatusBadge } from "./AiAnalysisStatusBadge";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiAnalysisPanelProps = {
   model: BurstRuntime;
@@ -593,30 +592,30 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
       : "Stop when conclusive";
 
   return (
-    <div className={styles.panel}>
+    <div className="ai-analysis-panel">
       <section
-        className={`${styles.hero} ${
-          hasDurableAnalysis ? styles.heroCompact : ""
+        className={`${"ai-analysis-hero"} ${
+          hasDurableAnalysis ? "ai-analysis-hero-compact" : ""
         }`}
       >
-        <div className={styles.heroHeader}>
-          <div className={styles.eyebrow}>Runtime intelligence</div>
+        <div className="ai-analysis-hero-header">
+          <div className="ai-analysis-eyebrow">Runtime intelligence</div>
           <AiAnalysisStatusBadge status={analysisStatus} />
         </div>
 
         {hasDurableAnalysis ? (
-          <div className={styles.heroExecutionSummary}>
+          <div className="ai-analysis-hero-execution-summary">
             <span>
               AI → Policy → Approval → Execute → Verify → Re-analyze
             </span>
-            <div className={styles.heroExecutionBadges}>
+            <div className="ai-analysis-hero-execution-badges">
               <strong>{runtimeExecution.runtimeStatus}</strong>
               <strong>Depth {currentDepth}</strong>
               <strong>{investigationModeLabel}</strong>
             </div>
           </div>
         ) : (
-          <p className={styles.text}>
+          <p className="ai-analysis-text">
             Analyze evidence, validate the AI proposal with deterministic policies,
             require human approval, execute through the existing burst runner, then
             verify and re-analyze the outcome. Every approved follow-up creates exactly
@@ -625,7 +624,7 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
         )}
       </section>
 
-      <div className={styles.contextSticky}>
+      <div className="ai-analysis-context-sticky">
         <AiAnalysisContextCard snapshot={contextSnapshot} />
       </div>
 
@@ -645,29 +644,29 @@ export function AiAnalysisPanel(props: AiAnalysisPanelProps): JSX.Element {
         />
       ) : (
         <section
-          className={`${styles.section} ${styles.analysisRequestSummary}`}
+          className={`${"ai-analysis-section"} ${"ai-analysis-analysis-request-summary"}`}
         >
-          <div className={styles.analysisRequestHeader}>
+          <div className="ai-analysis-analysis-request-header">
             <div>
-              <div className={styles.sectionTitle}>Analysis request</div>
-              <div className={styles.analysisRequestMeta}>
+              <div className="ai-analysis-section-title">Analysis request</div>
+              <div className="ai-analysis-analysis-request-meta">
                 {scopeLabel} · {investigationModeLabel}
               </div>
             </div>
 
-            <div className={styles.analysisRequestLocked}>
+            <div className="ai-analysis-analysis-request-locked">
               Durable chain
             </div>
           </div>
 
           <div
-            className={styles.analysisRequestQuestion}
+            className="ai-analysis-analysis-request-question"
             title={question}
           >
             {question}
           </div>
 
-          <div className={styles.analysisRequestFooter}>
+          <div className="ai-analysis-analysis-request-footer">
             <span>{providerHint(providerStatus)}</span>
             <span>
               A new manually-started scenario will reopen the analysis form.

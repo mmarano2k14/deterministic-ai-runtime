@@ -1,11 +1,16 @@
 import { ConsoleLogEntry } from "@/lib/infrastructure/logs/inMemoryLogType";
-import React, { JSX, useEffect, useMemo, useState } from "react";
-
+import { JSX, useEffect, useMemo, useState } from "react";
 
 export type LogsTimelineProps = {
   logs: ConsoleLogEntry[];
   windowSeconds?: number;
 };
+
+type TimelineTone =
+  | "info"
+  | "success"
+  | "warning"
+  | "danger";
 
 export function LogsTimeline(props: LogsTimelineProps): JSX.Element {
   const { logs, windowSeconds = 10 } = props;
@@ -44,53 +49,43 @@ export function LogsTimeline(props: LogsTimelineProps): JSX.Element {
       .filter(Boolean) as Array<ConsoleLogEntry & { position: number }>;
   }, [logs, now, windowSeconds]);
 
-  function getColor(log: ConsoleLogEntry): string {
+  function getTone(log: ConsoleLogEntry): TimelineTone {
     if (log.kind === "http") {
       const status = log.status ?? 0;
 
-      if (status >= 200 && status < 300) return "#0f9d58";
-      if (status >= 400 && status < 500) return "#f29900";
-      if (status >= 500) return "#d93025";
+      if (status >= 200 && status < 300) return "success";
+      if (status >= 400 && status < 500) return "warning";
+      if (status >= 500) return "danger";
 
-      return "#1a73e8";
+      return "info";
     }
 
     const level = (log.level ?? "").toLowerCase();
 
-    if (level === "error") return "#d93025";
-    if (level === "warning") return "#f29900";
+    if (level === "error") return "danger";
+    if (level === "warning") return "warning";
 
-    return "#1a73e8";
+    return "info";
   }
 
   return (
-    <div
-      style={{
-        position: "relative",
-        height: 40,
-        border: "1px solid #eee",
-        borderRadius: 10,
-        background: "#fafafa",
-        overflow: "hidden",
-        marginBottom: 12,
-      }}
-    >
-      {points.map((p) => {
-        const left = p.position * 100;
+    <div className="logs-timeline">
+      {points.map((point) => {
+        const left = point.position * 100;
 
         return (
           <div
-            key={p.id}
-            title={(p.kind === "http" ? p.name : p.eventName) ?? "event"}
+            key={point.id}
+            className="logs-timeline__point"
+            data-tone={getTone(point)}
+            title={
+              (point.kind === "http"
+                ? point.name
+                : point.eventName)
+              ?? "event"
+            }
             style={{
-              position: "absolute",
               left: `${left}%`,
-              top: "50%",
-              transform: "translate(-50%, -50%)",
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              background: getColor(p),
             }}
           />
         );

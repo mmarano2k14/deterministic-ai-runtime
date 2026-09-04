@@ -4,7 +4,6 @@ import type {
   RuntimeAnalysisHumanApprovalDecision,
   RuntimeAnalysisHumanApprovalResult,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiHumanApprovalCardProps = {
   approval: RuntimeAnalysisHumanApprovalResult;
@@ -28,34 +27,34 @@ export function AiHumanApprovalCard(
 
   return (
     <div
-      className={styles.humanApprovalCard}
+      className="ai-analysis-human-approval-card"
       data-status={approval.status}
     >
-      <div className={styles.humanApprovalHeader}>
+      <div className="ai-analysis-human-approval-header">
         <div>
-          <div className={styles.resultSubheading}>Human approval</div>
-          <div className={styles.policyPipeline}>
+          <div className="ai-analysis-result-subheading">Human approval</div>
+          <div className="ai-analysis-policy-pipeline">
             Durable external-wait boundary
           </div>
         </div>
 
-        <div className={styles.humanApprovalBadge}>
+        <div className="ai-analysis-human-approval-badge">
           {approvalLabel(approval)}
         </div>
       </div>
 
-      <div className={styles.humanApprovalMessage}>
+      <div className="ai-analysis-human-approval-message">
         {approval.message ?? defaultMessage(approval)}
       </div>
 
       {approval.decidedBy ? (
-        <div className={styles.policyRuntimeIdentity}>
+        <div className="ai-analysis-policy-runtime-identity">
           Decision by {approval.decidedBy}
         </div>
       ) : null}
 
       {pending ? (
-        <div className={styles.approvalActions}>
+        <div className="ai-analysis-approval-actions">
           <Button
             variant="neutral"
             disabled={isDeciding}
@@ -77,7 +76,7 @@ export function AiHumanApprovalCard(
       ) : null}
 
       {error ? (
-        <div className={styles.policyValidationError}>
+        <div className="ai-analysis-policy-validation-error">
           {error}
         </div>
       ) : null}

@@ -19,16 +19,16 @@ export function BurstCharts(props: BurstChartsProps): JSX.Element | null {
   }
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
+    <div className="burst-charts">
       <div>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>
+        <div className="burst-chart-section-title">
           Throughput &amp; latency
         </div>
         <BurstGraph data={metrics} />
       </div>
 
       <div>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>
+        <div className="burst-chart-section-title">
           Latency Histogram
         </div>
         <BurstHistogramChart data={histogram} />

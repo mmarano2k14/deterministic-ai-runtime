@@ -14,29 +14,6 @@ export class LogUiHelper {
   private static readonly ExecutionContextCategory =
     "http.executioncontextmiddleware";
 
-  public static getLogColor(log: ConsoleLogEntry): string {
-    if (log.kind === "http") {
-      const status = log.status ?? 0;
-
-      if (status >= 200 && status < 300) return "#0f9d58";
-      if (status >= 400 && status < 500) return "#f29900";
-      if (status >= 500) return "#d93025";
-
-      return "#1a73e8";
-    }
-
-    if (log.kind === "realtime") {
-      const level = (log.level ?? "").toLowerCase();
-
-      if (level === "error") return "#d93025";
-      if (level === "warning") return "#f29900";
-
-      return "#1a73e8";
-    }
-
-    return "#999";
-  }
-
   public static isHttpLogEntry(
     log: ConsoleLogEntry
   ): log is HttpLogEntry {

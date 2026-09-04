@@ -7,7 +7,6 @@ import type {
   RuntimeAnalysisHumanApprovalDecision,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import { AiChildReanalysisCard } from "./AiChildReanalysisCard";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiChildDagEvidenceCardProps = {
   childDag: RuntimeAnalysisChildDagResult | undefined;
@@ -92,28 +91,28 @@ export function AiChildDagEvidenceCard(
 
   return (
     <div
-      className={styles.childDagEvidence}
+      className="ai-analysis-child-dag-evidence"
       data-status={status.toLowerCase()}
     >
-      <div className={styles.childDagHeader}>
+      <div className="ai-analysis-child-dag-header">
         <div>
-          <div className={styles.childDagEyebrow}>
+          <div className="ai-analysis-child-dag-eyebrow">
             Investigation
           </div>
-          <div className={styles.childDagTitle}>
+          <div className="ai-analysis-child-dag-title">
             Approval-driven Child DAG
           </div>
         </div>
 
         <div
-          className={styles.childDagStatus}
+          className="ai-analysis-child-dag-status"
           data-status={status.toLowerCase()}
         >
           {status}
         </div>
       </div>
 
-      <div className={styles.childDagSummaryRow}>
+      <div className="ai-analysis-child-dag-summary-row">
         <div>
           <span>Current depth</span>
           <strong>{observedDepth}</strong>
@@ -124,22 +123,22 @@ export function AiChildDagEvidenceCard(
         </p>
       </div>
 
-      <div className={styles.childDagTree}>
-        <div className={styles.childDagRootNode}>
-          <div className={styles.childDagNodeTopline}>
-            <span className={styles.childDagNodeKind}>ROOT EXECUTION</span>
-            <span className={styles.childDagDepthBadge}>Depth 0</span>
+      <div className="ai-analysis-child-dag-tree">
+        <div className="ai-analysis-child-dag-root-node">
+          <div className="ai-analysis-child-dag-node-topline">
+            <span className="ai-analysis-child-dag-node-kind">ROOT EXECUTION</span>
+            <span className="ai-analysis-child-dag-depth-badge">Depth 0</span>
           </div>
           <strong title={rootExecutionId}>
             {shortId(rootExecutionId)}
           </strong>
-          <span className={styles.childDagNodeMeta}>
+          <span className="ai-analysis-child-dag-node-meta">
             runtime-analysis
           </span>
         </div>
 
         {relations.length === 0 ? (
-          <div className={styles.childDagNotStarted}>
+          <div className="ai-analysis-child-dag-not-started">
             One approved decision creates one durable child execution.
             Additional depth requires another re-analysis, policy validation,
             and human approval.
@@ -164,7 +163,7 @@ export function AiChildDagEvidenceCard(
       </div>
 
       {relations.length > 0 ? (
-        <div className={styles.childDagProofGrid}>
+        <div className="ai-analysis-child-dag-proof-grid">
           <Proof
             label="Relations completed"
             state={proofState(
@@ -250,38 +249,38 @@ function ChildDagTreeNode(props: {
 
   return (
     <div
-      className={styles.childDagRelationNode}
+      className="ai-analysis-child-dag-relation-node"
       data-depth={String(depth)}
       data-selected={selected}
       data-relation-status={normalizeToken(relation.relationStatus)}
     >
-      <div className={styles.childDagConnector} aria-hidden="true" />
+      <div className="ai-analysis-child-dag-connector" aria-hidden="true" />
 
       <button
         type="button"
-        className={styles.childDagTreeNodeButton}
+        className="ai-analysis-child-dag-tree-node-button"
         aria-pressed={selected}
         onClick={onSelect}
         title={`Show details for Child DAG depth ${relation.depth}`}
       >
-        <div className={styles.childDagNodeTopline}>
-          <span className={styles.childDagNodeToggleTitle}>
-            <span className={styles.childDagNodeKind}>
+        <div className="ai-analysis-child-dag-node-topline">
+          <span className="ai-analysis-child-dag-node-toggle-title">
+            <span className="ai-analysis-child-dag-node-kind">
               CHILD DAG
             </span>
             {latest ? (
-              <span className={styles.childDagLatestBadge}>
+              <span className="ai-analysis-child-dag-latest-badge">
                 Latest
               </span>
             ) : null}
           </span>
 
-          <span className={styles.childDagNodeToggleRight}>
-            <span className={styles.childDagDepthBadge}>
+          <span className="ai-analysis-child-dag-node-toggle-right">
+            <span className="ai-analysis-child-dag-depth-badge">
               Depth {relation.depth}
             </span>
             <span
-              className={styles.childDagTreeSelectIcon}
+              className="ai-analysis-child-dag-tree-select-icon"
               aria-hidden="true"
             >
               ›
@@ -289,7 +288,7 @@ function ChildDagTreeNode(props: {
           </span>
         </div>
 
-        <div className={styles.childDagNodeIdentity}>
+        <div className="ai-analysis-child-dag-node-identity">
           <div>
             <span>Child ExecutionId</span>
             <strong title={relation.childExecutionId ?? ""}>
@@ -306,28 +305,28 @@ function ChildDagTreeNode(props: {
           </div>
         </div>
 
-        <div className={styles.childDagNodeFacts}>
+        <div className="ai-analysis-child-dag-node-facts">
           <span
-            className={styles.childDagFact}
+            className="ai-analysis-child-dag-fact"
             data-state={statusState(relation.relationStatus)}
           >
             Relation · {relation.relationStatus || "Unknown"}
           </span>
           <span
-            className={styles.childDagFact}
+            className="ai-analysis-child-dag-fact"
             data-state={statusState(relation.continuationStatus)}
           >
             Continuation · {relation.continuationStatus || "Unknown"}
           </span>
           <span
-            className={styles.childDagFact}
+            className="ai-analysis-child-dag-fact"
             data-state={relation.invocationGeneration === 0 ? "pass" : "fail"}
           >
             Generation · {relation.invocationGeneration}
           </span>
         </div>
 
-        <div className={styles.childDagCompactOutcome}>
+        <div className="ai-analysis-child-dag-compact-outcome">
           {relation.reanalysis ? (
             <span>
               AI · {relation.reanalysis.conclusion.replaceAll("_", " ")}
@@ -343,7 +342,7 @@ function ChildDagTreeNode(props: {
           ) : null}
 
           {relation.humanApproval?.status === "Pending" ? (
-            <span className={styles.childDagNeedsAction}>
+            <span className="ai-analysis-child-dag-needs-action">
               Approval required
             </span>
           ) : null}
@@ -377,32 +376,32 @@ function SelectedChildDetails(props: {
   } = props;
 
   return (
-    <section className={styles.selectedChildPanel}>
-      <div className={styles.selectedChildHeader}>
+    <section className="ai-analysis-selected-child-panel">
+      <div className="ai-analysis-selected-child-header">
         <div>
-          <div className={styles.childDagEyebrow}>
+          <div className="ai-analysis-child-dag-eyebrow">
             Selected child
           </div>
-          <div className={styles.selectedChildTitle}>
+          <div className="ai-analysis-selected-child-title">
             Depth {relation.depth}
           </div>
         </div>
 
-        <div className={styles.selectedChildHeaderBadges}>
+        <div className="ai-analysis-selected-child-header-badges">
           {latest ? (
-            <span className={styles.childDagLatestBadge}>
+            <span className="ai-analysis-child-dag-latest-badge">
               Latest
             </span>
           ) : null}
           {relation.reanalysis ? (
-            <span className={styles.selectedChildConclusion}>
+            <span className="ai-analysis-selected-child-conclusion">
               {relation.reanalysis.conclusion.replaceAll("_", " ")}
             </span>
           ) : null}
         </div>
       </div>
 
-      <div className={styles.selectedChildIdentityGrid}>
+      <div className="ai-analysis-selected-child-identity-grid">
         <div>
           <span>Child ExecutionId</span>
           <strong title={relation.childExecutionId ?? ""}>
@@ -435,7 +434,7 @@ function SelectedChildDetails(props: {
       </div>
 
       {relation.childFailureReason ? (
-        <div className={styles.childDagFailure}>
+        <div className="ai-analysis-child-dag-failure">
           {relation.childFailureReason}
         </div>
       ) : null}
@@ -462,7 +461,7 @@ function Proof(props: {
   const { label, state } = props;
 
   return (
-    <div className={styles.childDagProof} data-state={state}>
+    <div className="ai-analysis-child-dag-proof" data-state={state}>
       <span>{label}</span>
       <strong>{proofLabel(state)}</strong>
     </div>

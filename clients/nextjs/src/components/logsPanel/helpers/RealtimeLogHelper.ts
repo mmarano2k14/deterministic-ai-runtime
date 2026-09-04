@@ -1,31 +1,38 @@
 import { RealtimeLogEntry } from "@/lib/infrastructure/logs/inMemoryLogType";
 import { LogBadge } from "../LogsPanelType";
 
+export type RealtimeLevelTone =
+  | "neutral"
+  | "info"
+  | "warning"
+  | "danger"
+  | "critical";
+
 export class RealtimeLogHelper {
-  public static getLevelColor(level?: string): string {
+  public static getLevelTone(level?: string): RealtimeLevelTone {
     if (!level) {
-      return "#777";
+      return "neutral";
     }
 
     switch (level.toLowerCase()) {
       case "debug":
-        return "#5f6368";
+        return "neutral";
 
       case "information":
       case "info":
-        return "#1a73e8";
+        return "info";
 
       case "warning":
-        return "#f29900";
+        return "warning";
 
       case "error":
-        return "#d93025";
+        return "danger";
 
       case "critical":
-        return "#8b0000";
+        return "critical";
 
       default:
-        return "#777";
+        return "neutral";
     }
   }
 
@@ -33,8 +40,7 @@ export class RealtimeLogHelper {
     const badges: LogBadge[] = [
       {
         label: "REALTIME",
-        color: "#1f1f1f",
-        background: "#efe",
+        tone: "success",
       },
     ];
 
@@ -45,8 +51,7 @@ export class RealtimeLogHelper {
     if (eventName.includes("context-rotated") || message.includes("rotated")) {
       badges.push({
         label: "CONTEXT ROTATED",
-        color: "#b06000",
-        background: "#fff4e5",
+        tone: "warning",
       });
     }
 
@@ -57,8 +62,7 @@ export class RealtimeLogHelper {
     ) {
       badges.push({
         label: "CONTEXT KEY",
-        color: "#7c3aed",
-        background: "#f3e8ff",
+        tone: "purple",
       });
     }
 
@@ -68,40 +72,35 @@ export class RealtimeLogHelper {
     ) {
       badges.push({
         label: "RUNTIME ENGINE",
-        color: "#0b57d0",
-        background: "#e8f0fe",
+        tone: "info",
       });
     }
 
     if (category.startsWith("demo.ui.ai.")) {
       badges.push({
         label: "AI",
-        color: "#4338ca",
-        background: "#eef2ff",
+        tone: "purple",
       });
     }
 
     if (eventName.includes("runtime-log")) {
       badges.push({
         label: "RUNTIME",
-        color: "#0b57d0",
-        background: "#e8f0fe",
+        tone: "info",
       });
     }
 
     if ((log.level ?? "").toLowerCase() === "warning") {
       badges.push({
         label: "WARNING",
-        color: "#b06000",
-        background: "#fff4e5",
+        tone: "warning",
       });
     }
 
     if ((log.level ?? "").toLowerCase() === "error") {
       badges.push({
         label: "ERROR",
-        color: "#d93025",
-        background: "#fce8e6",
+        tone: "danger",
       });
     }
 

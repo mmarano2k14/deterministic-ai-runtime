@@ -599,9 +599,9 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
           <div className="log-empty">No logs for current filter.</div>
         ) : (
           <div
+            className="log-virtual-space"
             style={{
               height: `${rowVirtualizer.getTotalSize()}px`,
-              position: "relative",
             }}
           >
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
@@ -616,12 +616,8 @@ export function LogsPanel(props: LogsPanelProps): JSX.Element {
                   key={log.id}
                   ref={rowVirtualizer.measureElement}
                   data-index={virtualRow.index}
-                  className="log-row"
+                  className="log-row log-row--virtual"
                   style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: "100%",
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
                 >

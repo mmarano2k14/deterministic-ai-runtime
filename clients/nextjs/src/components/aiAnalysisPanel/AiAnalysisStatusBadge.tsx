@@ -1,7 +1,6 @@
 import { JSX } from "react";
 import type { AiAnalysisStatus } from "@/lib/aiAnalysis/AiAnalysisType";
 import { AiAnalysisUxModel } from "@/lib/aiAnalysis/AiAnalysisUxModel";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiAnalysisStatusBadgeProps = {
   status: AiAnalysisStatus;
@@ -14,11 +13,11 @@ export function AiAnalysisStatusBadge(
 
   return (
     <div
-      className={styles.analysisStatus}
+      className="ai-analysis-analysis-status"
       data-status={definition.key}
       title={definition.description}
     >
-      <span className={styles.analysisStatusDot} />
+      <span className="ai-analysis-analysis-status-dot" />
       {definition.label}
     </div>
   );

@@ -2,22 +2,6 @@ import React from "react";
 
 export class UiHelpers {
 
-  public static Spinner({ size = 18 }: { size?: number }) {
-    return (
-      <span
-        style={{
-          display: "inline-block",
-          width: size,
-          height: size,
-          borderRadius: "50%",
-          border: "2px solid rgba(0,0,0,0.2)",
-          borderTopColor: "rgba(0,0,0,0.7)",
-          animation: "spin 0.8s linear infinite",
-        }}
-      />
-    );
-  }
-
   public static Stat({
     label,
     value,
@@ -41,19 +25,15 @@ export class UiHelpers {
 
     return (
       <div
-        className="burst-progress-track"
-        role="progressbar"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={pct}
+        className={`burst-progress-native-wrap ${
+          isActive ? "is-active" : ""
+        }`}
       >
-        <div
-          className={`burst-progress-fill ${
-            isActive ? "is-active" : ""
-          }`}
-          style={{
-            width: `${pct}%`,
-          }}
+        <progress
+          className="burst-progress-native"
+          max={100}
+          value={pct}
+          aria-label={`Burst progress ${pct}%`}
         />
       </div>
     );
@@ -100,13 +80,4 @@ export class UiHelpers {
     return `${this.formatMs(safeFirst)} / ${this.formatMs(safeSecond)}`;
   }
 
-  public static StyleOnce() {
-    return (
-      <style>
-        {`
-          @keyframes spin { to { transform: rotate(360deg); } }
-        `}
-      </style>
-    );
-  }
 }

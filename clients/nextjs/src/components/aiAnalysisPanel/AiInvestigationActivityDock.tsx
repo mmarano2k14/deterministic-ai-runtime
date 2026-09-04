@@ -1,7 +1,6 @@
 "use client";
 
 import { JSX, useEffect, useState } from "react";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiOnlyActivity = {
   key: string;
@@ -52,19 +51,19 @@ export function AiInvestigationActivityDock(
 
   return (
     <section
-      className={styles.aiOnlyActivityDock}
+      className="ai-analysis-ai-only-activity-dock"
       aria-live="polite"
       aria-busy="true"
       role="status"
     >
       <div
-        className={styles.aiOnlyActivitySweep}
+        className="ai-analysis-ai-only-activity-sweep"
         aria-hidden="true"
       />
 
-      <div className={styles.aiOnlyActivityMain}>
+      <div className="ai-analysis-ai-only-activity-main">
         <span
-          className={styles.aiOnlyActivityOrb}
+          className="ai-analysis-ai-only-activity-orb"
           aria-hidden="true"
         >
           <span />
@@ -72,10 +71,10 @@ export function AiInvestigationActivityDock(
           <span />
         </span>
 
-        <div className={styles.aiOnlyActivityCopy}>
-          <div className={styles.aiOnlyActivityTitleRow}>
+        <div className="ai-analysis-ai-only-activity-copy">
+          <div className="ai-analysis-ai-only-activity-title-row">
             <strong>{activity.title}</strong>
-            <span className={styles.aiOnlyActivityContext}>
+            <span className="ai-analysis-ai-only-activity-context">
               {activity.context}
             </span>
           </div>
@@ -83,17 +82,17 @@ export function AiInvestigationActivityDock(
           <span>{activity.detail}</span>
         </div>
 
-        <div className={styles.aiOnlyActivityElapsed}>
+        <div className="ai-analysis-ai-only-activity-elapsed">
           {elapsedSeconds}s
         </div>
       </div>
 
-      <div className={styles.aiOnlyActivityRuntime}>
-        <span className={styles.aiOnlyActivityRuntimeLabel}>
+      <div className="ai-analysis-ai-only-activity-runtime">
+        <span className="ai-analysis-ai-only-activity-runtime-label">
           Live AI provider
         </span>
 
-        <span className={styles.aiOnlyActivityRuntimeValue}>
+        <span className="ai-analysis-ai-only-activity-runtime-value">
           <strong>
             {activity.provider ?? "AI"}
           </strong>

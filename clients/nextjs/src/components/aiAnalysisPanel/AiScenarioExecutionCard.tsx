@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/Button";
 import type {
   RuntimeAnalysisScenarioExecutionResult,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiScenarioExecutionCardProps = {
   execution: RuntimeAnalysisScenarioExecutionResult;
@@ -27,30 +26,30 @@ export function AiScenarioExecutionCard(
 
   return (
     <div
-      className={styles.scenarioExecutionCard}
+      className="ai-analysis-scenario-execution-card"
       data-status={execution.status}
     >
-      <div className={styles.humanApprovalHeader}>
+      <div className="ai-analysis-human-approval-header">
         <div>
-          <div className={styles.resultSubheading}>
+          <div className="ai-analysis-result-subheading">
             Approved scenario execution
           </div>
-          <div className={styles.policyPipeline}>
+          <div className="ai-analysis-policy-pipeline">
             Existing Next.js BurstController · durable external wait
           </div>
         </div>
 
-        <div className={styles.humanApprovalBadge}>
+        <div className="ai-analysis-human-approval-badge">
           {isExecuting && pending ? "CLIENT RUNNING" : execution.status.toUpperCase()}
         </div>
       </div>
 
-      <div className={styles.humanApprovalMessage}>
+      <div className="ai-analysis-human-approval-message">
         {execution.message ?? defaultMessage(execution.status)}
       </div>
 
       {execution.observation ? (
-        <div className={styles.scenarioExecutionMetrics}>
+        <div className="ai-analysis-scenario-execution-metrics">
           <div>
             <span>Completed</span>
             <strong>{execution.observation.completed}</strong>
@@ -89,7 +88,7 @@ export function AiScenarioExecutionCard(
       ) : null}
 
       {error ? (
-        <div className={styles.policyValidationError}>
+        <div className="ai-analysis-policy-validation-error">
           {error}
         </div>
       ) : null}

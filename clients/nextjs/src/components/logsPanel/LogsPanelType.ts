@@ -1,7 +1,14 @@
+export type LogBadgeTone =
+  | "neutral"
+  | "info"
+  | "success"
+  | "warning"
+  | "danger"
+  | "purple";
+
 export type LogBadge = {
   label: string;
-  color: string;
-  background: string;
+  tone: LogBadgeTone;
 };
 
 export type LogFilterKind =

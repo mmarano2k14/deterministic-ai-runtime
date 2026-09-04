@@ -11,7 +11,6 @@ import { AiAnalysisObservations } from "./AiAnalysisObservations";
 import { AiSuggestedScenarioCard } from "./AiSuggestedScenarioCard";
 import { AiScenarioExecutionCard } from "./AiScenarioExecutionCard";
 import { AiVerificationCard } from "./AiVerificationCard";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiAnalysisResultCardProps = {
   result: RuntimeAnalysisResult | null;
@@ -50,18 +49,18 @@ export function AiAnalysisResultCard(
 
   if (error) {
     return (
-      <section className={`${styles.placeholder} ${styles.snapshotError}`}>
-        <div className={styles.placeholderTitle}>AI analysis error</div>
-        <p className={styles.placeholderText}>{error}</p>
+      <section className={`${"ai-analysis-placeholder"} ${"ai-analysis-snapshot-error"}`}>
+        <div className="ai-analysis-placeholder-title">AI analysis error</div>
+        <p className="ai-analysis-placeholder-text">{error}</p>
       </section>
     );
   }
 
   if (!result || !policyValidation || !humanApproval) {
     return (
-      <section className={styles.placeholder}>
-        <div className={styles.placeholderTitle}>AI analysis output</div>
-        <p className={styles.placeholderText}>
+      <section className="ai-analysis-placeholder">
+        <div className="ai-analysis-placeholder-title">AI analysis output</div>
+        <p className="ai-analysis-placeholder-text">
           Prepare the context, ask a runtime question, then request a structured
           AI analysis.
         </p>
@@ -81,26 +80,26 @@ export function AiAnalysisResultCard(
     scenarioExecutionStarted;
 
   return (
-    <section className={`${styles.section} ${styles.resultSection}`}>
-      <div className={styles.resultHeader}>
+    <section className={`${"ai-analysis-section"} ${"ai-analysis-result-section"}`}>
+      <div className="ai-analysis-result-header">
         <div>
-          <div className={styles.sectionTitle}>AI finding</div>
-          <div className={styles.confidence}>
+          <div className="ai-analysis-section-title">AI finding</div>
+          <div className="ai-analysis-confidence">
             Confidence {Math.round(result.confidence * 100)}%
           </div>
         </div>
 
         <div
-          className={styles.severity}
+          className="ai-analysis-severity"
           data-severity={result.severity}
         >
           {result.severity}
         </div>
       </div>
 
-      <div className={styles.answer}>{result.answer}</div>
+      <div className="ai-analysis-answer">{result.answer}</div>
 
-      <div className={styles.summary}>{result.summary}</div>
+      <div className="ai-analysis-summary">{result.summary}</div>
 
       <AiAnalysisObservations observations={result.observations} />
 

@@ -9,7 +9,6 @@ import { AiChildReanalysisResultModal } from "./AiChildReanalysisResultModal";
 import { AiScenarioExecutionCard } from "./AiScenarioExecutionCard";
 import { AiSuggestedScenarioCard } from "./AiSuggestedScenarioCard";
 import { AiVerificationCard } from "./AiVerificationCard";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiChildReanalysisCardProps = {
   relation: RuntimeAnalysisChildDagRelationResult;
@@ -47,10 +46,10 @@ export function AiChildReanalysisCard(
 
   if (!reanalysis) {
     return (
-      <div className={styles.childReanalysisPending}>
+      <div className="ai-analysis-child-reanalysis-pending">
         <div>
-          <div className={styles.childReanalysisWorking}>
-            <span className={styles.childReanalysisSpinner} aria-hidden="true">
+          <div className="ai-analysis-child-reanalysis-working">
+            <span className="ai-analysis-child-reanalysis-spinner" aria-hidden="true">
               <span />
               <span />
               <span />
@@ -72,31 +71,31 @@ export function AiChildReanalysisCard(
   const verification = relation.verification;
 
   return (
-    <div className={styles.childReanalysisBlock}>
-      <div className={styles.childReanalysisHeader}>
+    <div className="ai-analysis-child-reanalysis-block">
+      <div className="ai-analysis-child-reanalysis-header">
         <div>
-          <div className={styles.childReanalysisEyebrow}>
+          <div className="ai-analysis-child-reanalysis-eyebrow">
             AI re-analysis · Depth {relation.depth}
           </div>
-          <div className={styles.childReanalysisSummary}>
+          <div className="ai-analysis-child-reanalysis-summary">
             {reanalysis.summary}
           </div>
         </div>
 
         <div
-          className={styles.childReanalysisConclusion}
+          className="ai-analysis-child-reanalysis-conclusion"
           data-conclusion={reanalysis.conclusion.toLowerCase()}
         >
           {reanalysis.conclusion.replaceAll("_", " ")}
         </div>
       </div>
 
-      <div className={styles.childReanalysisMeta}>
+      <div className="ai-analysis-child-reanalysis-meta">
         <span>
           Confidence {Math.round(reanalysis.confidence * 100)}%
         </span>
         <span
-          className={styles.childReanalysisMode}
+          className="ai-analysis-child-reanalysis-mode"
           data-mode={continueMode ? "continue" : "stop"}
         >
           {continueMode
@@ -110,10 +109,10 @@ export function AiChildReanalysisCard(
         </strong>
       </div>
 
-      <div className={styles.childReanalysisResultAction}>
+      <div className="ai-analysis-child-reanalysis-result-action">
         <button
           type="button"
-          className={styles.childReanalysisViewResultButton}
+          className="ai-analysis-child-reanalysis-view-result-button"
           onClick={() => setIsResultModalOpen(true)}
         >
           View result
@@ -121,7 +120,7 @@ export function AiChildReanalysisCard(
       </div>
 
       {!reanalysis.shouldContinue ? (
-        <div className={styles.childReanalysisStop}>
+        <div className="ai-analysis-child-reanalysis-stop">
           <strong>
             {continueMode
               ? "Continue mode stopped safely"
@@ -143,7 +142,7 @@ export function AiChildReanalysisCard(
           onApprovalDecision={onApprovalDecision}
         />
       ) : (
-        <div className={styles.childReanalysisPending}>
+        <div className="ai-analysis-child-reanalysis-pending">
           <div>
             <strong>Deterministic policy</strong>
             <span>evaluating</span>

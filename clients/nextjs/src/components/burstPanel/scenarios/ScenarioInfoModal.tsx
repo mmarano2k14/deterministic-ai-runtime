@@ -17,26 +17,14 @@ function Section(props: {
   const { title, children } = props;
 
   return (
-    <section
-      style={{
-        display: "grid",
-        gap: 10,
-        padding: 14,
-        border: "1px solid #eee",
-        borderRadius: 12,
-        background: "#fafafa",
-      }}
-    >
-      <div
-        style={{
-          fontWeight: 700,
-          fontSize: 15,
-        }}
-      >
+    <section className="scenario-info-section">
+      <div className="scenario-info-section__title">
         {title}
       </div>
 
-      <div style={{ fontSize: 14, lineHeight: 1.55 }}>{children}</div>
+      <div className="scenario-info-section__content">
+        {children}
+      </div>
     </section>
   );
 }
@@ -52,70 +40,29 @@ export function ScenarioInfoModal(
 
   return (
     <div
+      className="scenario-info-modal-overlay"
       onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0, 0, 0, 0.35)",
-        display: "grid",
-        placeItems: "center",
-        zIndex: 2000,
-        padding: 20,
-      }}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(920px, 100%)",
-          maxHeight: "90vh",
-          overflowY: "auto",
-          background: "#fff",
-          borderRadius: 16,
-          border: "1px solid #ddd",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
-          display: "grid",
-          gap: 18,
-          padding: 20,
-        }}
+        className="scenario-info-modal"
+        onClick={(event) => event.stopPropagation()}
       >
-        {/* Header */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 16,
-            alignItems: "start",
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 24, fontWeight: 800 }}>
+        <div className="scenario-info-modal__header">
+          <div className="scenario-info-modal__heading">
+            <div className="scenario-info-modal__title">
               {scenario.title}
             </div>
 
-            <div
-              style={{
-                fontSize: 13,
-                opacity: 0.7,
-              }}
-            >
+            <div className="scenario-info-modal__subtitle">
               Scenario preset
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 10 }}>
+          <div className="scenario-info-modal__actions">
             <button
               type="button"
               onClick={() => onLaunch(scenario)}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "1px solid #111",
-                background: "#111",
-                color: "#fff",
-                cursor: "pointer",
-                fontWeight: 700,
-              }}
+              className="scenario-info-modal__launch"
             >
               Launch
             </button>
@@ -123,38 +70,27 @@ export function ScenarioInfoModal(
             <button
               type="button"
               onClick={onClose}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "1px solid #ddd",
-                background: "#fff",
-                cursor: "pointer",
-                fontWeight: 600,
-              }}
+              className="scenario-info-modal__close"
             >
               Close
             </button>
           </div>
         </div>
 
-        {/* Idea */}
         <Section title="Idea">
           <div>{scenario.idea}</div>
         </Section>
 
-        {/* Parameters */}
         <Section title="Recommended parameters">
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "220px 1fr",
-              gap: 10,
-              alignItems: "start",
-            }}
-          >
+          <div className="scenario-info-parameters">
             {scenario.recommendedParameters.map((parameter) => (
-              <div key={parameter.label} style={{ display: "contents" }}>
-                <div style={{ fontWeight: 700 }}>{parameter.label}</div>
+              <div
+                key={parameter.label}
+                className="scenario-info-parameters__row"
+              >
+                <div className="scenario-info-parameters__label">
+                  {parameter.label}
+                </div>
                 <div>
                   <code>{String(parameter.value)}</code>
                 </div>
@@ -163,39 +99,22 @@ export function ScenarioInfoModal(
           </div>
         </Section>
 
-        {/* What it tests */}
         <Section title="What it tests">
-          <ul
-            style={{
-              margin: 0,
-              paddingLeft: 20,
-              display: "grid",
-              gap: 6,
-            }}
-          >
+          <ul className="scenario-info-list">
             {scenario.whatItTests.map((item) => (
               <li key={item}>{item}</li>
             ))}
           </ul>
         </Section>
 
-        {/* Expected reading */}
         <Section title="Expected reading">
-          <ul
-            style={{
-              margin: 0,
-              paddingLeft: 20,
-              display: "grid",
-              gap: 6,
-            }}
-          >
+          <ul className="scenario-info-list">
             {scenario.expectedReading.map((item) => (
               <li key={item}>{item}</li>
             ))}
           </ul>
         </Section>
 
-        {/* Simple explanation */}
         <Section title="Simple explanation">
           <div>{scenario.simpleExplanation}</div>
         </Section>

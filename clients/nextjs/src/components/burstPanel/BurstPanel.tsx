@@ -114,16 +114,7 @@ export function BurstPanel(props: BurstPanelProps): JSX.Element {
 
       {/* Error */}
       {report?.error && (
-        <div
-          style={{
-            padding: 12,
-            borderRadius: 10,
-            border: "1px solid #f2c2c2",
-            background: "#fff5f5",
-            color: "#7a1f1f",
-            fontSize: 13,
-          }}
-        >
+        <div className="burst-error">
           <b>Error:</b> {report.error}
         </div>
       )}

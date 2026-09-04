@@ -192,11 +192,21 @@ export function ContextRotationTimeline(
           const next = segments[index + 1];
           const overlapsNext = !!next && s.visualEnd > next.start;
 
-          const barClassName = s.isActive
-            ? "context-rotation-timeline__segment-bar context-rotation-timeline__segment-bar--active"
+          const barToneClassName = s.isActive
+            ? "context-rotation-timeline__segment-bar--active"
             : overlapsNext
-            ? "context-rotation-timeline__segment-bar context-rotation-timeline__segment-bar--overlap"
-            : "context-rotation-timeline__segment-bar context-rotation-timeline__segment-bar--normal";
+            ? "context-rotation-timeline__segment-bar--overlap"
+            : "context-rotation-timeline__segment-bar--normal";
+
+          const barClassName = [
+            "context-rotation-timeline__segment-bar",
+            barToneClassName,
+            showRequests
+              ? "context-rotation-timeline__segment-bar--with-requests"
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
 
           return (
             <div
@@ -235,7 +245,6 @@ export function ContextRotationTimeline(
                   style={{
                     left: `${left}%`,
                     width: `${Math.max(width, 2)}%`,
-                    top: showRequests ? 4 : 0,
                   }}
                 />
 

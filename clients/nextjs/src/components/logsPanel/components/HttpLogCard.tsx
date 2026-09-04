@@ -1,8 +1,7 @@
-import React, { JSX, useState } from "react";
+import { JSX, useState } from "react";
 import { LogBadge } from "./LogBadge";
 import { HttpLogHelper } from "../helpers/HttpLogHelper";
 import { HttpLogEntry } from "@/lib/infrastructure/logs/inMemoryLogType";
-
 
 export type HttpLogCardProps = {
   log: HttpLogEntry;
@@ -13,136 +12,119 @@ export function HttpLogCard(props: HttpLogCardProps): JSX.Element {
   const [open, setOpen] = useState(false);
 
   const badges = HttpLogHelper.getBadges(l);
-  const statusColor = HttpLogHelper.getStatusColor(l.status);
+  const statusTone = HttpLogHelper.getStatusTone(l.status);
 
   return (
-    <div
-      style={{
-        border: "1px solid #eee",
-        borderRadius: 10,
-        overflow: "hidden",
-        background: "#fff",
-      }}
-    >
+    <div className="log-card">
       <div
-        onClick={() => setOpen((x) => !x)}
-        style={{
-          cursor: "pointer",
-          padding: 10,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          background: "#fafafa",
-          borderLeft: `4px solid ${statusColor}`,
-        }}
+        className="log-card__header"
+        data-tone={statusTone}
+        onClick={() => setOpen((current) => !current)}
       >
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            alignItems: "center",
-            minWidth: 0,
-            flexWrap: "wrap",
-          }}
-        >
-          <span style={{ fontSize: 12 }}>{open ? "▼" : "▶"}</span>
+        <div className="log-card__identity">
+          <span className="log-card__toggle">
+            {open ? "▼" : "▶"}
+          </span>
 
           {badges.map((badge) => (
             <LogBadge key={badge.label} badge={badge} />
           ))}
 
           <b>{l.method}</b>
-          <code style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{l.path}</code>
+          <code className="log-card__path">{l.path}</code>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12 }}>
-          {typeof l.status !== "undefined" && (
+        <div className="log-card__meta">
+          {typeof l.status !== "undefined" ? (
             <span
-              style={{
-                color: statusColor,
-                fontWeight: 700,
-                whiteSpace: "nowrap",
-              }}
+              className="log-card__status"
+              data-tone={statusTone}
             >
               {l.status} {l.statusText ?? ""}
             </span>
-          )}
+          ) : null}
 
-          <span style={{ opacity: 0.7, whiteSpace: "nowrap" }}>{l.t}</span>
+          <span className="log-card__timestamp">{l.t}</span>
         </div>
       </div>
 
-      {open && (
-        <div style={{ padding: 12, fontSize: 13 }}>
+      {open ? (
+        <div className="log-card__details">
           <div>
             <b>Target:</b> <code>{l.baseUrl}</code>
           </div>
 
-          {l.url && (
+          {l.url ? (
             <div>
               <b>Resolved URL:</b> <code>{l.url}</code>
             </div>
-          )}
+          ) : null}
 
-          <div style={{ marginTop: 6 }}>
+          <div className="log-card__detail-spaced">
             <b>Request headers:</b>{" "}
             <code>
               {Object.entries(l.requestHeaders ?? {})
-                .map(([k, v]) => `${k}=${v}`)
+                .map(([key, value]) => `${key}=${value}`)
                 .join(" | ") || "(none)"}
             </code>
           </div>
 
-          {typeof l.requestBody !== "undefined" && (
-            <div style={{ marginTop: 6 }}>
+          {typeof l.requestBody !== "undefined" ? (
+            <div className="log-card__detail-spaced">
               <b>Request body:</b>
-              <pre style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
+              <pre className="log-card__pre">
                 {JSON.stringify(l.requestBody, null, 2)}
               </pre>
             </div>
-          )}
+          ) : null}
 
-          {l.error && (
-            <div style={{ marginTop: 8 }}>
-              <b style={{ color: "crimson" }}>Error:</b> <code>{l.error}</code>
+          {l.error ? (
+            <div className="log-card__detail-section">
+              <b className="log-card__error-label">Error:</b>{" "}
+              <code>{l.error}</code>
             </div>
-          )}
+          ) : null}
 
-          {typeof l.status !== "undefined" && (
-            <div style={{ marginTop: 8 }}>
+          {typeof l.status !== "undefined" ? (
+            <div className="log-card__detail-section">
               <b>Response:</b>{" "}
               <code>
                 {l.status} {l.statusText ?? ""}
               </code>{" "}
-              <span style={{ marginLeft: 8 }}>{l.ok ? "✅ ok" : "❌ not ok"}</span>
+              <span className="log-card__response-ok">
+                {l.ok ? "✅ ok" : "❌ not ok"}
+              </span>
             </div>
-          )}
+          ) : null}
 
-          {l.rotation && (
-            <div style={{ marginTop: 6 }}>
-              <b>Rotation:</b> <code>{l.rotation.from}</code> → <code>{l.rotation.to}</code>
+          {l.rotation ? (
+            <div className="log-card__detail-spaced">
+              <b>Rotation:</b>{" "}
+              <code>{l.rotation.from}</code> → <code>{l.rotation.to}</code>
             </div>
-          )}
+          ) : null}
 
-          {l.responseHeaders && Object.keys(l.responseHeaders).length > 0 && (
-            <div style={{ marginTop: 6 }}>
+          {l.responseHeaders && Object.keys(l.responseHeaders).length > 0 ? (
+            <div className="log-card__detail-spaced">
               <b>Response headers:</b>{" "}
               <code>
                 {Object.entries(l.responseHeaders)
-                  .map(([k, v]) => `${k}=${v}`)
+                  .map(([key, value]) => `${key}=${value}`)
                   .join(" | ")}
               </code>
             </div>
-          )}
+          ) : null}
 
-          {typeof l.responseBody === "string" && l.responseBody.length > 0 && (
-            <details style={{ marginTop: 8 }}>
-              <summary style={{ cursor: "pointer" }}>Response body</summary>
-              <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{l.responseBody}</pre>
+          {typeof l.responseBody === "string" && l.responseBody.length > 0 ? (
+            <details className="log-card__details-block">
+              <summary className="log-card__summary">Response body</summary>
+              <pre className="log-card__pre log-card__pre--response">
+                {l.responseBody}
+              </pre>
             </details>
-          )}
+          ) : null}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

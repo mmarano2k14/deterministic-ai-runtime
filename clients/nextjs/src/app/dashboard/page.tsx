@@ -16,6 +16,7 @@ import { BottomDrawer } from "@/components/ui/BottomDrawer";
 import { ConsoleSidePanel } from "@/components/ui/ConsoleSidePanel";
 import { ControlSidebarTabs } from "@/components/ui/ControlSidebarTabs";
 import { ConsoleStatusBar } from "@/components/ui/status/ConsoleStatusBar";
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { BurstScenarioDefinition } from "@/lib/console/burst/scenarios/BurstScenarioPresetType";
 import { RuntimeAnalysisApprovedScenarioMapper } from "@/lib/aiAnalysis/RuntimeAnalysisApprovedScenarioMapper";
 import type { RuntimeAnalysisSuggestedScenario } from "@/lib/aiAnalysis/RuntimeAnalysisType";
@@ -26,7 +27,6 @@ import {
   ConsoleControlTabKey,
   ConsoleSidebarsLayout,
 } from "@/lib/console/layout/ConsoleSidebarsLayout";
-import layoutStyles from "./DashboardLayout.module.css";
 
 const LOGS_COLLAPSED_HEIGHT = 56;
 const WORKSPACE_GAP = 12;
@@ -116,9 +116,9 @@ export default function Page(): JSX.Element {
 
   const consoleBodyClassName = [
     "console-body",
-    layoutStyles.consoleBody,
-    sidebars.controlsCollapsed ? layoutStyles.controlsCollapsed : "",
-    isAiOpen ? layoutStyles.aiOpen : "",
+    "dashboard-console-body",
+    sidebars.controlsCollapsed ? "dashboard-controls-collapsed" : "",
+    isAiOpen ? "dashboard-ai-open" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -131,7 +131,7 @@ export default function Page(): JSX.Element {
 
   const logsDrawerClassName = [
     "bottom-drawer--logs",
-    isAiOpen ? layoutStyles.logsDrawerAiOpen : "",
+    isAiOpen ? "dashboard-logs-drawer-ai-open" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -186,6 +186,8 @@ export default function Page(): JSX.Element {
             onStop={burst.actions.stop}
             onReset={burst.actions.reset}
           />
+
+          <ThemeToggle />
         </div>
       </header>
 

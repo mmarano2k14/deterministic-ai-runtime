@@ -22,13 +22,13 @@ export function BurstFooter(props: BurstFooterProps): JSX.Element {
 
   return (
     <>
-      <div style={{ fontSize: 12, opacity: 0.7 }}>
+      <div className="burst-footer__tip">
         Tip: use Single burst for brute contention,
         Maintained concurrency for sustained load,
         and Wave batches for fixed-size packet testing.
       </div>
 
-      <div style={{ fontSize: 12, opacity: 0.8 }}>
+      <div className="burst-footer__metrics">
         min latency: <b>{min}</b> ms {" | "}
         max latency: <b>{max}</b> ms {" | "}
         metric points: <b>{metricPoints}</b>

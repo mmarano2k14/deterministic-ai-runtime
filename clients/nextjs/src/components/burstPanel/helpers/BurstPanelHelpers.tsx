@@ -18,36 +18,6 @@ import { WaveBatchesStaggeredFields } from "../modes/WaveBatchesStaggeredFields"
  */
 export class BurstPanelHelpers {
   /**
-   * Shared grid layout used by the main panel container.
-   */
-  public static readonly panelStyle: React.CSSProperties = {
-    display: "grid",
-    gap: 14,
-    border: "1px solid #ddd",
-    borderRadius: 12,
-    padding: 12,
-    marginTop: 12,
-  };
-
-  /**
-   * Shared layout for rows of form controls.
-   */
-  public static readonly controlsGridStyle: React.CSSProperties = {
-    display: "grid",
-    gap: 10,
-    gridTemplateColumns: "1fr 1fr 1fr",
-  };
-
-  /**
-   * Shared layout for stat cards.
-   */
-  public static readonly statsGridStyle: React.CSSProperties = {
-    display: "grid",
-    gap: 10,
-    gridTemplateColumns: "repeat(7, 1fr)",
-  };
-
-  /**
    * Safe UI fallback.
    * Keeps the old default behavior: maintained concurrency.
    */

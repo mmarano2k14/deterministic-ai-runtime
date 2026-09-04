@@ -1,4 +1,4 @@
-import React, { JSX } from "react";
+import { JSX } from "react";
 import { LogBadge as LogBadgeModel } from "../LogsPanelType";
 
 export type LogBadgeProps = {
@@ -10,15 +10,8 @@ export function LogBadge(props: LogBadgeProps): JSX.Element {
 
   return (
     <span
-      style={{
-        fontSize: 11,
-        padding: "2px 6px",
-        borderRadius: 999,
-        background: badge.background,
-        color: badge.color,
-        fontWeight: 700,
-        whiteSpace: "nowrap",
-      }}
+      className="log-badge"
+      data-tone={badge.tone}
     >
       {badge.label}
     </span>

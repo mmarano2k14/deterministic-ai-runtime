@@ -19,7 +19,7 @@ export function BurstActions(props: BurstActionsProps): JSX.Element {
   const { disabled, isRunning, onStart, onStop, onReset } = props;
 
   return (
-    <div style={{ display: "flex", gap: 10 }} className="burst-action">
+    <div className="burst-action">
       <Button disabled={disabled || isRunning} onClick={() => onStart()}>
         Start Burst
       </Button>

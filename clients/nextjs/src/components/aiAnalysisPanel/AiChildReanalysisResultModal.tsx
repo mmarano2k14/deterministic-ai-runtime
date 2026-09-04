@@ -4,7 +4,6 @@ import { JSX } from "react";
 import type {
   RuntimeAnalysisChildDagRelationResult,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiChildReanalysisResultModalProps = {
   relation: RuntimeAnalysisChildDagRelationResult;
@@ -32,35 +31,35 @@ export function AiChildReanalysisResultModal(
 
   return (
     <div
-      className={styles.aiResultModalOverlay}
+      className="ai-analysis-ai-result-modal-overlay"
       onClick={onClose}
     >
       <div
-        className={styles.aiResultModal}
+        className="ai-analysis-ai-result-modal"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="ai-child-result-modal-title"
       >
-        <div className={styles.aiResultModalHeader}>
-          <div className={styles.aiResultModalHeading}>
+        <div className="ai-analysis-ai-result-modal-header">
+          <div className="ai-analysis-ai-result-modal-heading">
             <div
               id="ai-child-result-modal-title"
-              className={styles.aiResultModalTitle}
+              className="ai-analysis-ai-result-modal-title"
             >
               AI re-analysis result
             </div>
 
-            <div className={styles.aiResultModalSubtitle}>
+            <div className="ai-analysis-ai-result-modal-subtitle">
               Depth {relation.depth}
               {" · "}
               Confidence {Math.round(reanalysis.confidence * 100)}%
             </div>
           </div>
 
-          <div className={styles.aiResultModalHeaderActions}>
+          <div className="ai-analysis-ai-result-modal-header-actions">
             <span
-              className={styles.aiResultModalConclusion}
+              className="ai-analysis-ai-result-modal-conclusion"
               data-conclusion={reanalysis.conclusion.toLowerCase()}
             >
               {reanalysis.conclusion.replaceAll("_", " ")}
@@ -68,7 +67,7 @@ export function AiChildReanalysisResultModal(
 
             <button
               type="button"
-              className={styles.aiResultModalCloseButton}
+              className="ai-analysis-ai-result-modal-close-button"
               onClick={onClose}
             >
               Close
@@ -76,31 +75,31 @@ export function AiChildReanalysisResultModal(
           </div>
         </div>
 
-        <section className={styles.aiResultModalSection}>
-          <div className={styles.aiResultModalSectionTitle}>
+        <section className="ai-analysis-ai-result-modal-section">
+          <div className="ai-analysis-ai-result-modal-section-title">
             Summary
           </div>
-          <div className={styles.aiResultModalSummary}>
+          <div className="ai-analysis-ai-result-modal-summary">
             {reanalysis.summary}
           </div>
         </section>
 
-        <section className={styles.aiResultModalSection}>
-          <div className={styles.aiResultModalSectionTitle}>
+        <section className="ai-analysis-ai-result-modal-section">
+          <div className="ai-analysis-ai-result-modal-section-title">
             Result
           </div>
-          <div className={styles.aiResultModalAnswer}>
+          <div className="ai-analysis-ai-result-modal-answer">
             {reanalysis.answer}
           </div>
         </section>
 
         {reanalysis.reasons.length > 0 ? (
-          <section className={styles.aiResultModalSection}>
-            <div className={styles.aiResultModalSectionTitle}>
+          <section className="ai-analysis-ai-result-modal-section">
+            <div className="ai-analysis-ai-result-modal-section-title">
               Why
             </div>
 
-            <ul className={styles.aiResultModalReasons}>
+            <ul className="ai-analysis-ai-result-modal-reasons">
               {reanalysis.reasons.map((reason, index) => (
                 <li key={`${relation.depth}:${index}`}>
                   {reason}
@@ -110,12 +109,12 @@ export function AiChildReanalysisResultModal(
           </section>
         ) : null}
 
-        <section className={styles.aiResultModalSection}>
-          <div className={styles.aiResultModalSectionTitle}>
+        <section className="ai-analysis-ai-result-modal-section">
+          <div className="ai-analysis-ai-result-modal-section-title">
             Decision
           </div>
 
-          <div className={styles.aiResultModalDecisionGrid}>
+          <div className="ai-analysis-ai-result-modal-decision-grid">
             <div>
               <span>Investigation mode</span>
               <strong>

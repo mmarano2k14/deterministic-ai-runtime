@@ -1,6 +1,5 @@
 import { JSX } from "react";
 import type { AiAnalysisContextSnapshot } from "@/lib/aiAnalysis/AiAnalysisType";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiAnalysisContextCardProps = {
   snapshot: AiAnalysisContextSnapshot;
@@ -12,25 +11,25 @@ export function AiAnalysisContextCard(
   const { snapshot } = props;
 
   return (
-    <section className={`${styles.section} ${styles.contextSection}`}>
-      <div className={styles.sectionHeader}>
-        <div className={styles.sectionTitle}>Observed context</div>
-        <div className={styles.status}>
-          <span className={styles.statusDot} />
+    <section className={`${"ai-analysis-section"} ${"ai-analysis-context-section"}`}>
+      <div className="ai-analysis-section-header">
+        <div className="ai-analysis-section-title">Observed context</div>
+        <div className="ai-analysis-status">
+          <span className="ai-analysis-status-dot" />
           Live
         </div>
       </div>
 
       <div>
-        <div className={styles.contextTitle}>{snapshot.title}</div>
-        <div className={styles.contextSubtitle}>{snapshot.subtitle}</div>
+        <div className="ai-analysis-context-title">{snapshot.title}</div>
+        <div className="ai-analysis-context-subtitle">{snapshot.subtitle}</div>
       </div>
 
-      <div className={styles.metricGrid}>
+      <div className="ai-analysis-metric-grid">
         {snapshot.metrics.map((metric) => (
-          <div className={styles.metric} key={metric.label}>
-            <div className={styles.metricLabel}>{metric.label}</div>
-            <div className={styles.metricValue}>{metric.value}</div>
+          <div className="ai-analysis-metric" key={metric.label}>
+            <div className="ai-analysis-metric-label">{metric.label}</div>
+            <div className="ai-analysis-metric-value">{metric.value}</div>
           </div>
         ))}
       </div>

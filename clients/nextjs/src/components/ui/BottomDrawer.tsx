@@ -52,8 +52,9 @@ export function BottomDrawer(props: BottomDrawerProps): JSX.Element {
 
     const handlePointerUp = (): void => {
       dragStateRef.current = null;
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
+      document.body.classList.remove(
+        "is-resizing-bottom-drawer"
+      );
     };
 
     window.addEventListener("pointermove", handlePointerMove);
@@ -77,8 +78,9 @@ export function BottomDrawer(props: BottomDrawerProps): JSX.Element {
       startHeight: height,
     };
 
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "ns-resize";
+    document.body.classList.add(
+      "is-resizing-bottom-drawer"
+    );
   }
 
   const rootClassName = [

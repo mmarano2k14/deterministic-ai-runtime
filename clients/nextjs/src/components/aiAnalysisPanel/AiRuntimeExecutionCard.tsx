@@ -5,7 +5,6 @@ import type {
   RuntimeAnalysisRuntimeExecutionResult,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import { AiChildDagEvidenceCard } from "./AiChildDagEvidenceCard";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiRuntimeExecutionCardProps = {
   execution: RuntimeAnalysisRuntimeExecutionResult | null;
@@ -46,18 +45,18 @@ export function AiRuntimeExecutionCard(
       : "Unknown";
 
   return (
-    <section className={`${styles.section} ${styles.runtimeExecution}`}>
-      <div className={styles.sectionHeader}>
-        <div className={styles.sectionTitle}>Runtime DAG</div>
+    <section className={`${"ai-analysis-section"} ${"ai-analysis-runtime-execution"}`}>
+      <div className="ai-analysis-section-header">
+        <div className="ai-analysis-section-title">Runtime DAG</div>
         <div
-          className={styles.runtimeStatus}
+          className="ai-analysis-runtime-status"
           data-status={runtimeStatus.toLowerCase()}
         >
           {runtimeStatus}
         </div>
       </div>
 
-      <div className={styles.runtimeIdentityGrid}>
+      <div className="ai-analysis-runtime-identity-grid">
         <div>
           <span>Pipeline</span>
           <strong>{execution.pipelineName}</strong>

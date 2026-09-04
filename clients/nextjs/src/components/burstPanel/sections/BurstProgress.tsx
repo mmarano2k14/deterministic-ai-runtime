@@ -31,17 +31,10 @@ export function BurstProgress(props: BurstProgressProps): JSX.Element {
       : "0";
 
   return (
-    <div style={{ display: "grid", gap: 8 }}>
+    <div className="burst-progress">
       <UiHelpers.ProgressBar value={ratio} />
 
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          fontSize: 12,
-          opacity: 0.7,
-        }}
-      >
+      <div className="burst-progress__meta">
         <span>
           started: <b>{started}</b> 
           — completed: <b>{completed}</b> 

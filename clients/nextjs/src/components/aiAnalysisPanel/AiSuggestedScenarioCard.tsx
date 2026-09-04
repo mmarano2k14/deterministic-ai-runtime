@@ -7,7 +7,6 @@ import type {
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
 import { AiHumanApprovalCard } from "./AiHumanApprovalCard";
 import { AiScenarioPolicyValidationCard } from "./AiScenarioPolicyValidationCard";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiSuggestedScenarioCardProps = {
   scenario: RuntimeAnalysisSuggestedScenario;
@@ -33,15 +32,15 @@ export function AiSuggestedScenarioCard(
   } = props;
 
   return (
-    <div className={styles.suggestedScenario}>
-      <div className={styles.resultSubheading}>Suggested scenario</div>
+    <div className="ai-analysis-suggested-scenario">
+      <div className="ai-analysis-result-subheading">Suggested scenario</div>
 
-      <div className={styles.scenarioName}>{scenario.name}</div>
-      <div className={styles.scenarioRationale}>
+      <div className="ai-analysis-scenario-name">{scenario.name}</div>
+      <div className="ai-analysis-scenario-rationale">
         {scenario.rationale}
       </div>
 
-      <div className={styles.scenarioGrid}>
+      <div className="ai-analysis-scenario-grid">
         <div>
           <span>Type</span>
           <strong>{scenario.scenarioType}</strong>

@@ -1,6 +1,5 @@
 import { JSX } from "react";
 import type { RuntimeAnalysisObservation } from "@/lib/aiAnalysis/RuntimeAnalysisType";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiAnalysisObservationsProps = {
   observations: readonly RuntimeAnalysisObservation[];
@@ -14,24 +13,24 @@ export function AiAnalysisObservations(
   }
 
   return (
-    <div className={styles.observations}>
-      <div className={styles.resultSubheading}>Observations</div>
+    <div className="ai-analysis-observations">
+      <div className="ai-analysis-result-subheading">Observations</div>
 
       {props.observations.map((observation, index) => (
         <div
-          className={styles.observation}
+          className="ai-analysis-observation"
           key={`${observation.title}-${index}`}
         >
-          <div className={styles.observationTitle}>
+          <div className="ai-analysis-observation-title">
             {observation.title}
           </div>
 
-          <div className={styles.observationDetail}>
+          <div className="ai-analysis-observation-detail">
             {observation.detail}
           </div>
 
           {observation.evidenceIndexes.length > 0 && (
-            <div className={styles.evidenceReferences}>
+            <div className="ai-analysis-evidence-references">
               Evidence{" "}
               {observation.evidenceIndexes
                 .map((evidenceIndex) => `#${evidenceIndex}`)

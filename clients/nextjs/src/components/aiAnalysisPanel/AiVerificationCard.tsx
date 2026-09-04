@@ -2,7 +2,6 @@ import { JSX } from "react";
 import type {
   RuntimeAnalysisVerificationResult,
 } from "@/lib/aiAnalysis/RuntimeAnalysisType";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiVerificationCardProps = {
   verification: RuntimeAnalysisVerificationResult;
@@ -15,30 +14,30 @@ export function AiVerificationCard(
 
   return (
     <div
-      className={styles.verificationCard}
+      className="ai-analysis-verification-card"
       data-status={verification.status}
     >
-      <div className={styles.humanApprovalHeader}>
+      <div className="ai-analysis-human-approval-header">
         <div>
-          <div className={styles.resultSubheading}>
+          <div className="ai-analysis-result-subheading">
             Deterministic verification
           </div>
-          <div className={styles.policyPipeline}>
+          <div className="ai-analysis-policy-pipeline">
             Prediction context vs observed execution
           </div>
         </div>
 
-        <div className={styles.humanApprovalBadge}>
+        <div className="ai-analysis-human-approval-badge">
           {verification.status.toUpperCase()}
         </div>
       </div>
 
-      <div className={styles.humanApprovalMessage}>
+      <div className="ai-analysis-human-approval-message">
         {verification.summary}
       </div>
 
       {verification.executed ? (
-        <div className={styles.verificationGrid}>
+        <div className="ai-analysis-verification-grid">
           <VerificationItem
             label="Plan completed"
             value={verification.completedMatchesPlan}

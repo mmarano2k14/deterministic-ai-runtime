@@ -1,6 +1,5 @@
 import { JSX } from "react";
 import type { RuntimeAnalysisSnapshot } from "@/lib/aiAnalysis/RuntimeAnalysisType";
-import styles from "./AiAnalysisPanel.module.css";
 
 export type AiAnalysisSnapshotCardProps = {
   snapshot: RuntimeAnalysisSnapshot | null;
@@ -14,9 +13,9 @@ export function AiAnalysisSnapshotCard(
 
   if (error) {
     return (
-      <section className={`${styles.placeholder} ${styles.snapshotError}`}>
-        <div className={styles.placeholderTitle}>Analysis context error</div>
-        <p className={styles.placeholderText}>{error}</p>
+      <section className={`${"ai-analysis-placeholder"} ${"ai-analysis-snapshot-error"}`}>
+        <div className="ai-analysis-placeholder-title">Analysis context error</div>
+        <p className="ai-analysis-placeholder-text">{error}</p>
       </section>
     );
   }
@@ -27,15 +26,15 @@ export function AiAnalysisSnapshotCard(
 
   return (
     <details
-      className={`${styles.section} ${styles.snapshotCompact}`}
+      className={`${"ai-analysis-section"} ${"ai-analysis-snapshot-compact"}`}
     >
-      <summary className={styles.snapshotCompactSummary}>
-        <div className={styles.snapshotCompactTitle}>
-          <div className={styles.sectionTitle}>Analysis context</div>
-          <div className={styles.snapshotReady}>Ready</div>
+      <summary className="ai-analysis-snapshot-compact-summary">
+        <div className="ai-analysis-snapshot-compact-title">
+          <div className="ai-analysis-section-title">Analysis context</div>
+          <div className="ai-analysis-snapshot-ready">Ready</div>
         </div>
 
-        <div className={styles.snapshotCompactFacts}>
+        <div className="ai-analysis-snapshot-compact-facts">
           <span>
             Evidence {snapshot.evidence.length}/{snapshot.evidenceReceivedCount}
           </span>
@@ -45,38 +44,38 @@ export function AiAnalysisSnapshotCard(
           <span>
             {snapshot.evidenceTruncated ? "Truncated" : "Not truncated"}
           </span>
-          <span className={styles.snapshotCompactTime}>
+          <span className="ai-analysis-snapshot-compact-time">
             {new Date(snapshot.capturedAtUtc).toLocaleTimeString()}
           </span>
         </div>
       </summary>
 
-      <div className={styles.snapshotCompactDetails}>
-        <div className={styles.metricGrid}>
-          <div className={styles.metric}>
-            <div className={styles.metricLabel}>DAG related</div>
-            <div className={styles.metricValue}>
+      <div className="ai-analysis-snapshot-compact-details">
+        <div className="ai-analysis-metric-grid">
+          <div className="ai-analysis-metric">
+            <div className="ai-analysis-metric-label">DAG related</div>
+            <div className="ai-analysis-metric-value">
               {snapshot.evidenceSummary.dagRelatedCount}
             </div>
           </div>
 
-          <div className={styles.metric}>
-            <div className={styles.metricLabel}>Policy related</div>
-            <div className={styles.metricValue}>
+          <div className="ai-analysis-metric">
+            <div className="ai-analysis-metric-label">Policy related</div>
+            <div className="ai-analysis-metric-value">
               {snapshot.evidenceSummary.policyRelatedCount}
             </div>
           </div>
 
-          <div className={styles.metric}>
-            <div className={styles.metricLabel}>Recovery / replay</div>
-            <div className={styles.metricValue}>
+          <div className="ai-analysis-metric">
+            <div className="ai-analysis-metric-label">Recovery / replay</div>
+            <div className="ai-analysis-metric-value">
               {snapshot.evidenceSummary.recoveryRelatedCount}
             </div>
           </div>
 
-          <div className={styles.metric}>
-            <div className={styles.metricLabel}>Captured</div>
-            <div className={styles.metricValue}>
+          <div className="ai-analysis-metric">
+            <div className="ai-analysis-metric-label">Captured</div>
+            <div className="ai-analysis-metric-value">
               {new Date(snapshot.capturedAtUtc).toLocaleTimeString()}
             </div>
           </div>
