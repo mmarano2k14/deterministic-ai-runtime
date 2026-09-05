@@ -9,18 +9,31 @@ Most AI tooling starts at prompts, agents, and RAG. This runtime starts one laye
 It provides durable DAG execution, Redis-backed coordination, provider-based dispatch, bounded reusable capacity, crash recovery, deterministic replay, tenant isolation, and canonical event observation behind one shared control plane. The engine does not judge the answer; it guarantees the lifecycle of the execution that produced it — an LLM call, a RAG step, an MCP tool, a database command, a human approval, or any HTTP/gRPC workload.
 
 [![Version](https://img.shields.io/badge/Version-0.0.8.5-blue)](./CHANGELOG.md)
+
 [![Changelog](https://img.shields.io/badge/Changelog-view-lightgrey)](./CHANGELOG.md)
+
 ![AI Runtime](https://img.shields.io/badge/AI-Deterministic%20Execution-purple)
+
 ![Runtime](https://img.shields.io/badge/Runtime-distributed-brightgreen)
+
 ![Child DAG](https://img.shields.io/badge/Child%20DAG-Validated-brightgreen)
+
 ![Matrix](https://img.shields.io/badge/Adversarial%20Matrix-36%2F36-brightgreen)
+
 ![Observation](https://img.shields.io/badge/Observation-EventDriven-brightgreen)
+
 ![Redis](https://img.shields.io/badge/Redis-required-red?logo=redis)
+
 ![MongoDB](https://img.shields.io/badge/MongoDB-required-green?logo=mongodb)
+
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-supported-326CE5?logo=kubernetes&logoColor=white)
+
 ![HTTP](https://img.shields.io/badge/Transport-HTTP-0A66C2)
+
 ![gRPC](https://img.shields.io/badge/Transport-gRPC-244C5A)
+
 ![Status](https://img.shields.io/badge/Status-active%20development-orange)
+
 ![License](https://img.shields.io/badge/License-BSL%201.1-lightgrey)
 
 📄 **Validation methodology and evidence:** [Adversarial Runtime Validation Matrix](docs/ai/adversarial-runtime-validation-matrix.md) — how correctness here is validated as an invariant, not a single green run, with the full 36-row evidence archive.
@@ -28,6 +41,7 @@ It provides durable DAG execution, Redis-backed coordination, provider-based dis
 ## Start here
 
 - **Complete documentation:** [docs/index.md](docs/index.md)
+- **Interactive AI Runtime Analysis Demo:** [demo/rbac-aiAnalysis/nextjs/README.md](demo/rbac-aiAnalysis/nextjs/README.md)
 - **Installation / local Kubernetes:** [Kubernetes / Minikube installation and recovery guide](docs/ai/kubernetes-local-environment.md)
 - **Architecture:** [Architecture overview](docs/ai/architecture-overview.md)
 - **Runtime Pools:** [Runtime Pool architecture](docs/ai/runtime-pool-architecture.md)
@@ -68,12 +82,12 @@ Four provider/transport combinations × nine deterministic failure schedules —
 Rows: `Baseline`, `CrashEarly`, `ChildInvocationBoundary`, `ContinuationConsume`, `Depth2RuntimeFailure`, `Depth3RuntimeFailure`, `SeedA`, `SeedB`, `SeedC`.
 
 ```text
-72 execution cycles          1,296 / 1,296 parent runs completed
-66,096 parent logical steps  196,992 recursive child logical steps
-0 missing child steps         0 unexpected duplicate child steps
+72 execution cycles          1,296 / 1,296 parent runs completed
+66,096 parent logical steps  196,992 recursive child logical steps
+0 missing child steps         0 unexpected duplicate child steps
 0 ownership-transition violations
 1,296 / 1,296 parent replay proofs
-288 recovered SharedRuns      72 / 72 process-kill identity-continuity proofs
+288 recovered SharedRuns      72 / 72 process-kill identity-continuity proofs
 ```
 
 Raw xUnit artifacts — one per row, each with a distinct SHA-256 — are archived at `docs/files/adversarial-runtime-validation-logs.zip`:
@@ -88,11 +102,11 @@ Every number above is **independently recomputable** from that archive: each row
 
 ```text
 36 parents · 108 recursive child executions · 5,472 child logical steps · depth 3
-Root-parent step exactness      VERIFIED
-Nested child-step exactness     VERIFIED
-Nested Child DAG terminality    VERIFIED
-Parent replay                   VERIFIED
-Dedicated recursive-child replay  NOT_EVALUATED
+Root-parent step exactness      VERIFIED
+Nested child-step exactness     VERIFIED
+Nested Child DAG terminality    VERIFIED
+Parent replay                   VERIFIED
+Dedicated recursive-child replay  NOT_EVALUATED
 ```
 
 **Historical P35 stress campaign:** both HTTP and gRPC completed 35 / 35 — 105 tenants, 315 real DAG executions, 70 real process kills, 210 recovered jobs per transport (HTTP batch: ~4.19M datastore ops, 18.29 GiB). P35 is the experimental edge of the tested machine, not a universal throughput guarantee.
@@ -105,8 +119,8 @@ Dedicated recursive-child replay  NOT_EVALUATED
 
 ```powershell
 dotnet build implementations/dotnet/Multiplexed.sln
-dotnet test  implementations/dotnet/Tests/Multiplexed.AI.Tests/Multiplexed.AI.Tests.csproj
-dotnet test  implementations/dotnet/Tests/Multiplexed.AI.McpServer.Tests.Integration/Multiplexed.AI.McpServer.Tests.Integration.csproj
+dotnet test  implementations/dotnet/Tests/Multiplexed.AI.Tests/Multiplexed.AI.Tests.csproj
+dotnet test  implementations/dotnet/Tests/Multiplexed.AI.McpServer.Tests.Integration/Multiplexed.AI.McpServer.Tests.Integration.csproj
 ```
 
 Long-running ProcessHostPool and KubernetesPool proofs run with targeted filters and reachable Redis/MongoDB/Kubernetes. The local Kubernetes image, namespace, and pull-policy contract are defined in `KubernetesSdkScenarioConstants.cs` (the source of truth). Full bootstrap: **[Kubernetes / Minikube guide](docs/ai/kubernetes-local-environment.md)**.
@@ -118,59 +132,60 @@ Long-running ProcessHostPool and KubernetesPool proofs run with targeted filters
 The architecture, identity model, recovery semantics, replay, observability, and full capability matrix are below — collapsed so this page stays scannable. Expand what you need; each section mirrors a dedicated document under [`docs/`](docs/index.md).
 
 <details>
+
 <summary><b>Architecture at a glance &amp; identity model</b></summary>
 
 ## Architecture at a glance
 
 ```text
 Client / API / MCP
-        ↓
+        ↓
 RBAC ExecutionContext
-        ↓
+        ↓
 Durable ExecutionContextSnapshot
-        ↓
+        ↓
 Shared Runtime Controller
-        ↓
+        ↓
 Shared Run Store / Shared Queue
-        ↓
+        ↓
 Tenant-Aware Admission
-        ↓
+        ↓
 Registry / Capacity / Reservations
-        ↓
+        ↓
 Provider Selection
-        ↓
+        ↓
 Local / HTTP / gRPC Provider
-        ↓
+        ↓
 Runtime Host Manager
-        │
-        ├── Local
-        ├── Process
-        ├── Kubernetes
-        ├── ProcessHostPool
-        └── KubernetesPool
-                ↓
-        exact RuntimeInstanceId
-                ↓
+        │
+        ├── Local
+        ├── Process
+        ├── Kubernetes
+        ├── ProcessHostPool
+        └── KubernetesPool
+                ↓
+        exact RuntimeInstanceId
+                ↓
 DAG Execution Engine
-        ↓
+        ↓
 Redis Hot State + Lua Coordination
-        ↓
+        ↓
 Step Executors / Plugins
-        ↓
+        ↓
 MongoDB Payloads / Snapshots / History
-        ↓
+        ↓
 Canonical Engine Event
-        ↓
+        ↓
 Existing Event Manager
-        ↓
+        ↓
 Central Projection Catalog
-        ├── Decision Ledger
-        ├── Recovery Forensics
-        ├── Runtime Lifecycle Journal
-        ├── Metrics
-        ├── Logging
-        └── Realtime
-                ↓
+        ├── Decision Ledger
+        ├── Recovery Forensics
+        ├── Runtime Lifecycle Journal
+        ├── Metrics
+        ├── Logging
+        └── Realtime
+                ↓
 Replay / Trace / Deterministic Lifecycle Observation
 ```
 
@@ -226,10 +241,10 @@ A physical execution attempt may be replaced while the logical execution remains
 
 ---
 
-
 </details>
 
 <details>
+
 <summary><b>Deterministic DAG execution &amp; durable Child DAG composition</b></summary>
 
 ## Deterministic DAG execution
@@ -266,23 +281,23 @@ A parent DAG can delegate to another durable DAG execution, release runtime capa
 
 ```text
 Parent ExecutionId
-        ↓
+        ↓
 ExecuteChildDag
-        ↓
+        ↓
 durable child relation
-        ↓
+        ↓
 Child ExecutionId
-        ↓
+        ↓
 parent step = WaitingForExternal
-        ↓
+        ↓
 parent runtime capacity released
-        ↓
+        ↓
 child executes / retries / recovers
-        ↓
+        ↓
 child terminal result frozen
-        ↓
+        ↓
 deterministic continuation scheduled
-        ↓
+        ↓
 same parent ExecutionId resumes
 ```
 
@@ -294,15 +309,15 @@ It does not introduce a second orchestration engine, Child-DAG-specific queue, s
 
 ```text
 ParentExecutionId
-        ↓
+        ↓
 ParentCallSiteId
-        ↓
+        ↓
 ChildInvocationKey
-        ↓
+        ↓
 ChildExecutionId
-        ↓
+        ↓
 ContinuationId
-        ↓
+        ↓
 Continuation SharedRunId
 ```
 
@@ -336,10 +351,10 @@ See [Durable Child DAG composition](docs/ai/child-dag-composition.md).
 
 ---
 
-
 </details>
 
 <details>
+
 <summary><b>Runtime hosting models, ProcessHostPool, KubernetesPool &amp; exact routing</b></summary>
 
 ## Runtime hosting models
@@ -364,21 +379,20 @@ ProcessHostPool provides bounded reusable capacity across real external parent p
 
 ```text
 Logical ProcessHostPool
-
-    ├── ProcessHost A
-    │      ├── Runtime A1
-    │      ├── Runtime A2
-    │      └── Runtime A3
-    │
-    ├── ProcessHost B
-    │      ├── Runtime B1
-    │      ├── Runtime B2
-    │      └── Runtime B3
-    │
-    └── ProcessHost C
-           ├── Runtime C1
-           ├── Runtime C2
-           └── Runtime C3
+    ├── ProcessHost A
+    │      ├── Runtime A1
+    │      ├── Runtime A2
+    │      └── Runtime A3
+    │
+    ├── ProcessHost B
+    │      ├── Runtime B1
+    │      ├── Runtime B2
+    │      └── Runtime B3
+    │
+    └── ProcessHost C
+           ├── Runtime C1
+           ├── Runtime C2
+           └── Runtime C3
 ```
 
 Each child runtime has its own `RuntimeInstanceId`.
@@ -389,15 +403,15 @@ The parent ProcessHost is a hosting and failure boundary, not an execution ident
 
 ```text
 Runtime A2 dies
-        ↓
+        ↓
 ProcessHost A survives
-        ↓
+        ↓
 A1 and A3 remain valid
-        ↓
+        ↓
 exact failed runtime becomes unsafe
-        ↓
+        ↓
 affected work recovered
-        ↓
+        ↓
 replacement runtime restores membership
 ```
 
@@ -407,19 +421,19 @@ Healthy siblings are preserved.
 
 ```text
 ProcessHost B dies
-        ↓
+        ↓
 B1 / B2 / B3 disappear
-        ↓
+        ↓
 exact failed membership identified
-        ↓
+        ↓
 durable failure recorded
-        ↓
+        ↓
 recovery candidates claimed
-        ↓
+        ↓
 replacement ProcessHost created
-        ↓
+        ↓
 replacement runtimes registered
-        ↓
+        ↓
 affected SharedRuns recovered
 ```
 
@@ -427,7 +441,7 @@ This creates a genuinely hierarchical failure model:
 
 ```text
 child runtime failure
-    ≠
+    ≠
 full parent-boundary failure
 ```
 
@@ -443,14 +457,14 @@ KubernetesPool applies the same reusable Runtime Pool model inside a real Kubern
 
 ```text
 Kubernetes Node
-        ↓
+        ↓
 Pod = infrastructure failure boundary
-        ↓
+        ↓
 in-Pod Runtime Pool
-        ├── Runtime A1
-        ├── Runtime A2
-        ├── Runtime A3
-        └── ...
+        ├── Runtime A1
+        ├── Runtime A2
+        ├── Runtime A3
+        └── ...
 ```
 
 The Pod does not become the execution identity.
@@ -483,13 +497,13 @@ The control plane selects one exact `RuntimeInstanceId`.
 
 ```text
 Control Plane
-        ↓
+        ↓
 selected RuntimeInstanceId
-        ↓
+        ↓
 provider
-        ↓
+        ↓
 exact transport route
-        ↓
+        ↓
 exact runtime
 ```
 
@@ -505,10 +519,10 @@ See:
 
 ---
 
-
 </details>
 
 <details>
+
 <summary><b>Deterministic recovery, durable failure authority &amp; warm capacity reuse</b></summary>
 
 ## Deterministic recovery
@@ -520,15 +534,15 @@ SharedRunId
 LocalRunId
 ExecutionId
 RuntimeInstanceId
-        ↓
+        ↓
 physical runtime dies
-        ↓
+        ↓
 durable failure authority
-        ↓
+        ↓
 exact candidate inventory
-        ↓
+        ↓
 recovery claim
-        ↓
+        ↓
 replacement RuntimeInstanceId
 replacement LocalRunId
 same ExecutionId
@@ -550,12 +564,11 @@ A dead local queue is not durable recovery authority.
 
 ```text
 dead process-local queue
-    ≠ durable truth
-
+    ≠ durable truth
 SharedRunId
-    ↓
+    ↓
 shared durable state
-    ↓
+    ↓
 redispatch
 ```
 
@@ -590,17 +603,17 @@ Physical failure becomes a durable first-class fact.
 
 ```text
 physical failure
-        ↓
+        ↓
 FailureId
-        ↓
+        ↓
 Runtime Pool Failure Journal
-        ↓
+        ↓
 exact failed membership
-        ↓
+        ↓
 candidate inventory
-        ↓
+        ↓
 recovery claim
-        ↓
+        ↓
 resume / redispatch
 ```
 
@@ -616,19 +629,18 @@ Healthy Runtime Pool capacity is reused between execution cycles.
 
 ```text
 cycle 1
-    ↓
+    ↓
 create bounded pool
-    ↓
+    ↓
 execute + recover
-    ↓
+    ↓
 keep healthy converged capacity
-
 cycle 2
-    ↓
+    ↓
 reuse warm pool
-    ↓
+    ↓
 execute + recover
-    ↓
+    ↓
 final deterministic cleanup
 ```
 
@@ -636,10 +648,10 @@ Replacement capacity is introduced because of actual failure, not merely because
 
 ---
 
-
 </details>
 
 <details>
+
 <summary><b>Replay, evidence, ledger/forensics &amp; event-driven lifecycle observation</b></summary>
 
 ## Replay, audit, and durable evidence
@@ -648,21 +660,21 @@ The runtime persists enough evidence to reconstruct and validate execution after
 
 ```text
 terminal snapshot
-    +
+    +
 deterministic fingerprint
-    +
+    +
 DAG / step state
-    +
+    +
 payload references
-    +
+    +
 Decision Ledger
-    +
+    +
 Runtime Lifecycle Journal
-    +
+    +
 trace
-    +
+    +
 Recovery Forensics
-        ↓
+        ↓
 post-execution reconstruction and validation
 ```
 
@@ -680,7 +692,7 @@ Replay foundations include:
 Current proof boundary:
 
 ```text
-Parent replay                     VERIFIED
+Parent replay                     VERIFIED
 Dedicated recursive-child replay NOT_EVALUATED
 ```
 
@@ -694,22 +706,17 @@ Observability is intentionally split by responsibility.
 
 ```text
 Decision Ledger
-    → durable execution and decision evidence
-
+    → durable execution and decision evidence
 Runtime Lifecycle Journal
-    → append-only host / Pod / runtime / placement history
-
+    → append-only host / Pod / runtime / placement history
 Recovery Forensics
-    → work-item-level recovery timeline
-
+    → work-item-level recovery timeline
 Metrics
-    → quantitative operational projection
-
+    → quantitative operational projection
 Logging
-    → operational diagnostics
-
+    → operational diagnostics
 Realtime
-    → live event delivery
+    → live event delivery
 ```
 
 These surfaces are correlated through first-class identities but remain independent responsibilities.
@@ -730,18 +737,18 @@ No parallel event bus is introduced.
 
 ```text
 Engine semantic fact
-        ↓
+        ↓
 Canonical Event Namespace
-        ↓
+        ↓
 Existing Event Manager
-        ↓
+        ↓
 Central Projection Catalog
-        ├── Decision Ledger
-        ├── Recovery Forensics
-        ├── Runtime Lifecycle Journal
-        ├── Metrics
-        ├── Logging
-        └── Realtime
+        ├── Decision Ledger
+        ├── Recovery Forensics
+        ├── Runtime Lifecycle Journal
+        ├── Metrics
+        ├── Logging
+        └── Realtime
 ```
 
 Architectural rule:
@@ -777,13 +784,13 @@ Reference synchronization:
 
 ```text
 durable evidence check
-        ↓
+        ↓
 subscribe to realtime canonical events
-        ↓
+        ↓
 durable evidence re-check
-        ↓
+        ↓
 await canonical event if still needed
-        ↓
+        ↓
 verify final durable state
 ```
 
@@ -799,10 +806,10 @@ See [Testing strategy](docs/ai/testing-strategy.md).
 
 ---
 
-
 </details>
 
 <details>
+
 <summary><b>Configuration, policy, queue-first coordination &amp; RBAC security context</b></summary>
 
 ## Configuration-driven runtime
@@ -829,13 +836,11 @@ The architectural separation is:
 
 ```text
 Configuration
-    defines runtime structure and operating parameters.
-
+    defines runtime structure and operating parameters.
 Policy
-    decides what should happen for this execution.
-
+    decides what should happen for this execution.
 Plugin
-    performs domain work.
+    performs domain work.
 ```
 
 See [Configuration-driven runtime](docs/ai/config-driven-runtime.md).
@@ -871,17 +876,17 @@ Submissions can enter durable shared state before runtime capacity becomes avail
 
 ```text
 Client
-    ↓
+    ↓
 Shared Runtime Controller
-    ↓
+    ↓
 SharedRun
-    ↓
+    ↓
 Shared Queue
-    ↓
+    ↓
 Tenant-aware admission
-    ↓
+    ↓
 Runtime capacity
-    ↓
+    ↓
 dispatch
 ```
 
@@ -931,19 +936,19 @@ Authorization context is captured before asynchronous execution leaves the origi
 
 ```text
 API / MCP
-        ↓
+        ↓
 RBAC ExecutionContext
-        ↓
+        ↓
 durable ExecutionContextSnapshot
-        ↓
+        ↓
 SharedRun
-        ↓
+        ↓
 Shared Queue
-        ↓
+        ↓
 runtime dispatch
-        ↓
+        ↓
 background continuation / recovery
-        ↓
+        ↓
 RBAC context restored
 ```
 
@@ -961,10 +966,10 @@ See [Multi-tenant control-plane isolation](docs/ai/multi-tenant-control-plane-is
 
 ---
 
-
 </details>
 
 <details>
+
 <summary><b>Multi-tenant isolation &amp; pluggable execution</b></summary>
 
 ## Multi-tenant isolation
@@ -1027,10 +1032,10 @@ See [Step plugins](docs/ai/step-plugins.md).
 
 ---
 
-
 </details>
 
 <details>
+
 <summary><b>Full capability matrix</b></summary>
 
 ## Core capabilities
@@ -1085,7 +1090,6 @@ See [Step plugins](docs/ai/step-plugins.md).
 
 ---
 
-
 </details>
 
 ---
@@ -1097,6 +1101,102 @@ Compared with Temporal, Dapr, Dagster, Prefect, and LangGraph, this is an **exec
 ## Current boundaries
 
 Under active development, not a finished commercial platform. Explicitly outside current proof: dedicated recursive-child replay (`NOT_EVALUATED`), recursion beyond depth 3, and recovery-of-recovery. On ownership: the 36-row matrix proves ownership-**transition** correctness (0 violations). Mutation exclusivity relies on the runtime's atomic claim-token and compare-and-set coordination primitives; continuous ownership-**interval** exclusivity is not independently proven by this matrix. Also further hardening: Redis Cluster failover, durable multi-control-plane claim arbitration, and multi-node Kubernetes scale. See the [roadmap](docs/roadmap.md) and the [full documentation index](docs/index.md).
+
+## Interactive AI Runtime Analysis Demo
+
+A focused interactive demo application is included in this repository to show how the runtime can be **consumed and extended through public extension points without modifying its core**.
+
+> **The demo is not the Deterministic AI Runtime itself.**  
+> It is a small application built on top of the runtime and uses its real execution primitives.
+
+The demo exercises:
+
+- RBAC and atomic `ContextKey` rotation under in-flight traffic;
+- Redis/Lua-backed atomic coordination;
+- realtime metrics, logs, and runtime evidence;
+- AI-assisted analysis of bounded execution evidence;
+- pluggable steps and deterministic policies;
+- AI-generated proposals;
+- deterministic policy eligibility decisions;
+- explicit human approval or rejection;
+- durable Child DAG execution;
+- recovery-aware execution and deterministic verification.
+
+Its decision boundary is explicit:
+
+```text
+AI analyzes and proposes
+        ↓
+deterministic policy gates
+        ↓
+human approves / rejects
+        ↓
+runtime executes durably
+        ↓
+evidence verifies
+```
+
+After verification, the investigation follows one of two modes:
+
+- **Stop when conclusion is strong** — stop when the available evidence is conclusive.
+- **Continue with another useful experiment** — the AI must propose a materially different follow-up that passes policy and explicit human approval again before the next durable Child DAG is created.
+
+The demo therefore demonstrates both application-level extensibility and the runtime boundary:
+
+```text
+Demo application
+  ├── Next.js UI / traffic scenarios
+  ├── AI analysis
+  ├── pluggable steps
+  ├── pluggable policies
+  └── human approval UX
+            │
+            ▼
+Deterministic AI Runtime
+  ├── durable execution
+  ├── lifecycle
+  ├── DAG / Child DAG semantics
+  ├── recovery
+  ├── Redis coordination
+  ├── MongoDB durable persistence
+  └── verification
+```
+
+### Demo locations
+
+```text
+demo/
+└── rbac-aiAnalysis/
+    ├── Multiplexed.Sample.Demo.Rbac.AiAnalysis.csproj
+    └── nextjs/
+        ├── package.json
+        └── README.md
+```
+
+- Demo root: [`demo/rbac-aiAnalysis`](demo/rbac-aiAnalysis)
+- Demo API: [`Multiplexed.Sample.Demo.Rbac.AiAnalysis`](demo/rbac-aiAnalysis/Multiplexed.Sample.Demo.Rbac.AiAnalysis.csproj)
+- Next.js UI: [`demo/rbac-aiAnalysis/nextjs`](demo/rbac-aiAnalysis/nextjs)
+- Demo README: [`demo/rbac-aiAnalysis/nextjs/README.md`](demo/rbac-aiAnalysis/nextjs/README.md)
+
+### Run the demo
+
+From the repository root, start the backend:
+
+```powershell
+dotnet run --project .\demo/rbac-aiAnalysis/Multiplexed.Sample.Demo.Rbac.AiAnalysis.csproj.csproj
+```
+
+In a second terminal, start the Next.js UI:
+
+```powershell
+cd .\demo\rbac-aiAnalysis\nextjs
+npm install
+npm run dev
+```
+
+Redis and MongoDB must be reachable according to the runtime/demo configuration. AI analysis additionally requires the provider configuration expected by the demo API.
+
+---
 
 ## License
 
@@ -1111,5 +1211,7 @@ See the repository `LICENSE` file for the complete and authoritative terms.
 ---
 
 > **The runtime does not need to understand the answer. It needs to guarantee what happens to the execution that produced it.**
+
 >
+
 > Models may be probabilistic. Execution identity, ownership, recovery, replay, audit, and failure accounting are not.
