@@ -1161,7 +1161,7 @@ demo/
 ```
 
 - Demo root: [`demo/rbac-aiAnalysis`](demo/rbac-aiAnalysis)
-- Demo API: [`Multiplexed.Sample.Demo.Rbac.AiAnalysis`](demo/rbac-aiAnalysis/Multiplexed.Sample.Demo.Rbac.AiAnalysis.csproj)
+- Demo API: [`Multiplexed.Sample.Demo.Rbac.AiAnalysis`](/demo/rbac-aiAnalysis/Multiplexed.Sample.Demo.Rbac.AiAnalysis)
 - Next.js UI: [`demo/rbac-aiAnalysis/nextjs`](demo/rbac-aiAnalysis/nextjs)
 - Demo README: [`demo/rbac-aiAnalysis/nextjs/README.md`](demo/rbac-aiAnalysis/nextjs/README.md)
 
