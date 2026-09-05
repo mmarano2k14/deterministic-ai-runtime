@@ -9,31 +9,18 @@ Most AI tooling starts at prompts, agents, and RAG. This runtime starts one laye
 It provides durable DAG execution, Redis-backed coordination, provider-based dispatch, bounded reusable capacity, crash recovery, deterministic replay, tenant isolation, and canonical event observation behind one shared control plane. The engine does not judge the answer; it guarantees the lifecycle of the execution that produced it — an LLM call, a RAG step, an MCP tool, a database command, a human approval, or any HTTP/gRPC workload.
 
 [![Version](https://img.shields.io/badge/Version-0.0.8.5-blue)](./CHANGELOG.md)
-
 [![Changelog](https://img.shields.io/badge/Changelog-view-lightgrey)](./CHANGELOG.md)
-
 ![AI Runtime](https://img.shields.io/badge/AI-Deterministic%20Execution-purple)
-
 ![Runtime](https://img.shields.io/badge/Runtime-distributed-brightgreen)
-
 ![Child DAG](https://img.shields.io/badge/Child%20DAG-Validated-brightgreen)
-
 ![Matrix](https://img.shields.io/badge/Adversarial%20Matrix-36%2F36-brightgreen)
-
 ![Observation](https://img.shields.io/badge/Observation-EventDriven-brightgreen)
-
 ![Redis](https://img.shields.io/badge/Redis-required-red?logo=redis)
-
 ![MongoDB](https://img.shields.io/badge/MongoDB-required-green?logo=mongodb)
-
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-supported-326CE5?logo=kubernetes&logoColor=white)
-
 ![HTTP](https://img.shields.io/badge/Transport-HTTP-0A66C2)
-
 ![gRPC](https://img.shields.io/badge/Transport-gRPC-244C5A)
-
 ![Status](https://img.shields.io/badge/Status-active%20development-orange)
-
 ![License](https://img.shields.io/badge/License-BSL%201.1-lightgrey)
 
 📄 **Validation methodology and evidence:** [Adversarial Runtime Validation Matrix](docs/ai/adversarial-runtime-validation-matrix.md) — how correctness here is validated as an invariant, not a single green run, with the full 36-row evidence archive.
