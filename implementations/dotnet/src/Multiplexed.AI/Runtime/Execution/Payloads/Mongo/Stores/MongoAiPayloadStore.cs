@@ -6,6 +6,7 @@ using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Documents;
 using Multiplexed.AI.Runtime.Metrics;
 using Multiplexed.AI.Runtime.Execution.Payloads;
+using Multiplexed.AI.Runtime.Observability.Performance;
 
 namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
 {
@@ -72,7 +73,9 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
                     "Mongo payload store collection name is required.");
             }
 
-            var client = new MongoClient(mongo.ConnectionString);
+            var client = AiMongoAttributionDiagnostics.CreateMongoClient(
+                mongo.ConnectionString,
+                AiMongoAttributionClientRoles.PayloadStore);
             var database = client.GetDatabase(mongo.DatabaseName);
             _collection = database.GetCollection<MongoAiPayloadDocument>(mongo.CollectionName);
         }
@@ -114,11 +117,18 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
                 UpdatedAtUtc = now
             };
 
+            var saveMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.PayloadSave,
+                AiMongoAttributionCommands.Insert,
+                requestedDocuments: 1,
+                requestPayloadBytes: document.SizeBytes);
+
             try
             {
                 await _collection.InsertOneAsync(
                     document,
                     cancellationToken: cancellationToken);
+                saveMeasurement.Succeed();
 
                 _runtimeMetrics?.Storage.RecordPayloadStored(
                     AiPayloadIdentifiers.UnknownExecutionId,
@@ -128,8 +138,19 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
 
                 return id;
             }
+            catch (OperationCanceledException ex)
+            {
+                saveMeasurement.Cancel();
+                _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
+                    AiPayloadIdentifiers.UnknownExecutionId,
+                    id,
+                    MongoStorageKind,
+                    ex);
+                throw;
+            }
             catch (Exception ex)
             {
+                saveMeasurement.Fail();
                 _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
                     AiPayloadIdentifiers.UnknownExecutionId,
                     id,
@@ -164,11 +185,18 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
                 UpdatedAtUtc = now
             };
 
+            var immutableSaveMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.PayloadSave,
+                AiMongoAttributionCommands.Insert,
+                requestedDocuments: 1,
+                requestPayloadBytes: document.SizeBytes);
+
             try
             {
                 await _collection.InsertOneAsync(
                     document,
                     cancellationToken: cancellationToken);
+                immutableSaveMeasurement.Succeed();
 
                 _runtimeMetrics?.Storage.RecordPayloadStored(
                     metadata.ExecutionId ?? AiPayloadIdentifiers.UnknownExecutionId,
@@ -180,9 +208,29 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
             }
             catch (MongoException exception) when (IsDuplicateKey(exception))
             {
-                var existing = await _collection
-                    .Find(item => item.Id == key)
-                    .FirstOrDefaultAsync(cancellationToken);
+                immutableSaveMeasurement.Fail();
+
+                var verifyMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                    AiMongoAttributionOperations.PayloadLoad,
+                    AiMongoAttributionCommands.Find);
+                MongoAiPayloadDocument? existing;
+                try
+                {
+                    existing = await _collection
+                        .Find(item => item.Id == key)
+                        .FirstOrDefaultAsync(cancellationToken);
+                    verifyMeasurement.Succeed(existing is null ? 0 : 1);
+                }
+                catch (OperationCanceledException)
+                {
+                    verifyMeasurement.Cancel();
+                    throw;
+                }
+                catch
+                {
+                    verifyMeasurement.Fail();
+                    throw;
+                }
 
                 if (existing is not null &&
                     string.Equals(existing.Content, content, StringComparison.Ordinal))
@@ -194,8 +242,19 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
                     $"Immutable payload key '{key}' already exists with different content.",
                     exception);
             }
+            catch (OperationCanceledException ex)
+            {
+                immutableSaveMeasurement.Cancel();
+                _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
+                    metadata.ExecutionId ?? AiPayloadIdentifiers.UnknownExecutionId,
+                    key,
+                    MongoStorageKind,
+                    ex);
+                throw;
+            }
             catch (Exception ex)
             {
+                immutableSaveMeasurement.Fail();
                 _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
                     metadata.ExecutionId ?? AiPayloadIdentifiers.UnknownExecutionId,
                     key,
@@ -236,11 +295,16 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(key);
 
+            var loadMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.PayloadLoad,
+                AiMongoAttributionCommands.Find);
+
             try
             {
                 var document = await _collection
                     .Find(x => x.Id == key)
                     .FirstOrDefaultAsync(cancellationToken);
+                loadMeasurement.Succeed(document is null ? 0 : 1, document?.SizeBytes ?? 0);
 
                 if (document is null)
                 {
@@ -259,8 +323,19 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
 
                 return document.Content;
             }
+            catch (OperationCanceledException ex)
+            {
+                loadMeasurement.Cancel();
+                _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
+                    AiPayloadIdentifiers.UnknownExecutionId,
+                    key,
+                    MongoStorageKind,
+                    ex);
+                throw;
+            }
             catch (Exception ex)
             {
+                loadMeasurement.Fail();
                 _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
                     AiPayloadIdentifiers.UnknownExecutionId,
                     key,
@@ -280,14 +355,31 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(key);
 
+            var deleteMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.PayloadDelete,
+                AiMongoAttributionCommands.Delete,
+                requestedDocuments: 1);
+
             try
             {
                 await _collection.DeleteOneAsync(
                     x => x.Id == key,
                     cancellationToken);
+                deleteMeasurement.Succeed();
+            }
+            catch (OperationCanceledException ex)
+            {
+                deleteMeasurement.Cancel();
+                _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
+                    AiPayloadIdentifiers.UnknownExecutionId,
+                    key,
+                    MongoStorageKind,
+                    ex);
+                throw;
             }
             catch (Exception ex)
             {
+                deleteMeasurement.Fail();
                 _runtimeMetrics?.Storage.RecordPayloadStoreFailure(
                     AiPayloadIdentifiers.UnknownExecutionId,
                     key,

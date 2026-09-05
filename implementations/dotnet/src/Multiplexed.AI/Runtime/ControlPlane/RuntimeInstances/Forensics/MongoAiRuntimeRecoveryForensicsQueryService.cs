@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
+using Multiplexed.AI.Runtime.Observability.Performance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Stores.Mongo;
 using Multiplexed.Abstractions.AI.Observability.Events;
@@ -50,17 +51,23 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 document => document.Id,
                 forensicsId);
 
-            var document = await MongoRuntimeResilience.ExecuteInfrastructureAsync(
-                    token => _collection
-                        .Find(filter)
-                        .FirstOrDefaultAsync(token),
-                    "runtime-recovery-forensics-query-get-by-forensics-id",
-                    cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
-
-            return document is null
-                ? null
-                : ToReadModel(document.Record);
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.RecoveryForensicsQuery,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var document = await MongoRuntimeResilience.ExecuteInfrastructureAsync(
+                        token => _collection
+                            .Find(filter)
+                            .FirstOrDefaultAsync(token),
+                        "runtime-recovery-forensics-query-get-by-forensics-id",
+                        cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+                measurement.Succeed(document is null ? 0 : 1);
+                return document is null ? null : ToReadModel(document.Record);
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         /// <inheritdoc />
@@ -73,15 +80,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             var safeLimit = Math.Clamp(query.Limit, 1, 500);
             var filter = BuildFilter(query);
 
-            var documents = await MongoRuntimeResilience.ExecuteInfrastructureAsync(
-                    token => _collection
-                        .Find(filter)
-                        .SortByDescending(document => document.Record.CreatedAtUtc)
-                        .Limit(safeLimit)
-                        .ToListAsync(token),
-                    "runtime-recovery-forensics-query-search",
-                    cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.RecoveryForensicsQuery,
+                AiMongoAttributionCommands.Find);
+            IReadOnlyList<MongoAiRuntimeRecoveryForensicsDocument> documents;
+            try
+            {
+                documents = await MongoRuntimeResilience.ExecuteInfrastructureAsync(
+                        token => _collection
+                            .Find(filter)
+                            .SortByDescending(document => document.Record.CreatedAtUtc)
+                            .Limit(safeLimit)
+                            .ToListAsync(token),
+                        "runtime-recovery-forensics-query-search",
+                        cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+                measurement.Succeed(documents.Count);
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
 
             return new AiRuntimeRecoveryForensicsQueryResult
             {

@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
+using Multiplexed.AI.Runtime.Observability.Performance;
 using Multiplexed.Abstractions.AI.Execution.Persistence.Snapshot;
 using Multiplexed.AI.Configuration;
 
@@ -87,6 +88,11 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
                 $"ExecutionId='{snapshot.ExecutionId}', " +
                 $"Status='{snapshot.Status}'.");
 
+            var upsertMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.SnapshotUpsert,
+                AiMongoAttributionCommands.Update,
+                requestedDocuments: 1);
+
             try
             {
                 var result = await _collection.UpdateOneAsync(
@@ -95,6 +101,7 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
                         new UpdateOptions { IsUpsert = true },
                         cancellationToken)
                     .ConfigureAwait(false);
+                upsertMeasurement.Succeed();
 
                 Console.WriteLine(
                     $"[MONGO SNAPSHOT STORE UPSERT RESULT] " +
@@ -107,8 +114,18 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
                     "AI execution snapshot upserted for execution {ExecutionId}.",
                     snapshot.ExecutionId);
             }
+            catch (OperationCanceledException ex)
+            {
+                upsertMeasurement.Cancel();
+                _logger.LogError(
+                    ex,
+                    "Failed to upsert AI execution snapshot for execution {ExecutionId}.",
+                    snapshot.ExecutionId);
+                throw;
+            }
             catch (Exception ex)
             {
+                upsertMeasurement.Fail();
                 _logger.LogError(
                     ex,
                     "Failed to upsert AI execution snapshot for execution {ExecutionId}.",
@@ -144,12 +161,17 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
                 $"ExecutionId='{executionId}', " +
                 $"ContextType='{typeof(TContextSnapshot).FullName}'.");
 
+            var loadMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.SnapshotLoad,
+                AiMongoAttributionCommands.Find);
+
             try
             {
                 var snapshot = await _collection
                     .Find(filter)
                     .FirstOrDefaultAsync(cancellationToken)
                     .ConfigureAwait(false);
+                loadMeasurement.Succeed(snapshot is null ? 0 : 1);
 
                 Console.WriteLine(
                     $"[MONGO SNAPSHOT STORE GET RESULT] " +
@@ -162,8 +184,18 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
 
                 return snapshot;
             }
+            catch (OperationCanceledException ex)
+            {
+                loadMeasurement.Cancel();
+                _logger.LogError(
+                    ex,
+                    "Failed to load AI execution snapshot for execution {ExecutionId}.",
+                    executionId);
+                throw;
+            }
             catch (Exception ex)
             {
+                loadMeasurement.Fail();
                 _logger.LogError(
                     ex,
                     "Failed to load AI execution snapshot for execution {ExecutionId}.",
@@ -191,18 +223,34 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
                 .Filter
                 .Eq(x => x.ExecutionId, executionId);
 
+            var deleteMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.SnapshotDelete,
+                AiMongoAttributionCommands.Delete,
+                requestedDocuments: 1);
+
             try
             {
                 await _collection
                     .DeleteOneAsync(filter, cancellationToken)
                     .ConfigureAwait(false);
+                deleteMeasurement.Succeed();
 
                 _logger.LogDebug(
                     "AI execution snapshot deleted for execution {ExecutionId}.",
                     executionId);
             }
+            catch (OperationCanceledException ex)
+            {
+                deleteMeasurement.Cancel();
+                _logger.LogError(
+                    ex,
+                    "Failed to delete AI execution snapshot for execution {ExecutionId}.",
+                    executionId);
+                throw;
+            }
             catch (Exception ex)
             {
+                deleteMeasurement.Fail();
                 _logger.LogError(
                     ex,
                     "Failed to delete AI execution snapshot for execution {ExecutionId}.",

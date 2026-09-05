@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
+using Multiplexed.AI.Runtime.Observability.Performance;
 using Multiplexed.AI.Stores.Mongo;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Failure
@@ -43,6 +44,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
 
+            var appendMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.PoolFailureJournalAppend,
+                AiMongoAttributionCommands.Insert,
+                requestedDocuments: 1);
+
             try
             {
                 await this.collection
@@ -50,11 +56,13 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                         MongoAiRuntimePoolFailureDocument.FromObservation(normalized),
                         cancellationToken: cancellationToken)
                     .ConfigureAwait(false);
+                appendMeasurement.Succeed();
 
                 return normalized;
             }
             catch (MongoException exception) when (IsDuplicateKey(exception))
             {
+                appendMeasurement.Fail();
                 var existing =
                     await GetByFailureIdCoreAsync(
                             normalized.FailureId,
@@ -71,6 +79,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
                 throw new AiRuntimePoolFailureConflictException(
                     normalized.FailureId);
+            }
+            catch (OperationCanceledException)
+            {
+                appendMeasurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                appendMeasurement.Fail();
+                throw;
             }
         }
 
@@ -118,16 +136,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             string failureId,
             CancellationToken cancellationToken)
         {
-            var document =
-                await this.collection
-                    .Find(
-                        Builders<MongoAiRuntimePoolFailureDocument>.Filter.Eq(
-                            item => item.Id,
-                            failureId))
-                    .FirstOrDefaultAsync(cancellationToken)
-                    .ConfigureAwait(false);
-
-            return document?.Observation;
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.PoolFailureJournalQuery,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var document =
+                    await this.collection
+                        .Find(
+                            Builders<MongoAiRuntimePoolFailureDocument>.Filter.Eq(
+                                item => item.Id,
+                                failureId))
+                        .FirstOrDefaultAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                measurement.Succeed(document is null ? 0 : 1);
+                return document?.Observation;
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         private async Task<IReadOnlyList<AiRuntimePoolFailureObservation>> QueryAsync(
@@ -141,16 +167,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                     .Ascending(document => document.Observation.ObservedAtUtc)
                     .Ascending(document => document.Id);
 
-            var documents =
-                await this.collection
-                    .Find(filter)
-                    .Sort(sort)
-                    .ToListAsync(cancellationToken)
-                    .ConfigureAwait(false);
-
-            return documents
-                .Select(document => document.Observation)
-                .ToArray();
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.PoolFailureJournalQuery,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var documents =
+                    await this.collection
+                        .Find(filter)
+                        .Sort(sort)
+                        .ToListAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                measurement.Succeed(documents.Count);
+                return documents.Select(document => document.Observation).ToArray();
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         private async Task EnsureIndexesAsync(CancellationToken cancellationToken)

@@ -5,6 +5,7 @@ using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.Observability.Performance;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle
 {
@@ -71,7 +72,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle
                 configureMongo?.Invoke(options);
             });
 
-            services.TryAddSingleton<IMongoClient>(_ => new MongoClient(connectionString));
+            services.TryAddSingleton<IMongoClient>(
+                _ => AiMongoAttributionDiagnostics.CreateMongoClient(
+                    connectionString,
+                    AiMongoAttributionClientRoles.RuntimeLifecycle));
             services.TryAddSingleton(provider =>
             {
                 var client = provider.GetRequiredService<IMongoClient>();

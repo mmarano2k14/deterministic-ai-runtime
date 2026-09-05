@@ -330,6 +330,7 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
             RedisValue value)
         {
             ArgumentNullException.ThrowIfNull(database);
+            AiMongoAttributionDiagnostics.RegisterRedisPublisher(database);
             TryRecord(operation, command, Measure(value), database);
         }
 
@@ -343,6 +344,7 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
             IReadOnlyCollection<RedisValue> values)
         {
             ArgumentNullException.ThrowIfNull(database);
+            AiMongoAttributionDiagnostics.RegisterRedisPublisher(database);
             TryRecord(operation, command, Measure(values), database);
         }
 
@@ -356,6 +358,7 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
             IReadOnlyCollection<HashEntry> entries)
         {
             ArgumentNullException.ThrowIfNull(database);
+            AiMongoAttributionDiagnostics.RegisterRedisPublisher(database);
             TryRecord(operation, command, Measure(entries), database);
         }
 
@@ -375,6 +378,7 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
             string operation)
         {
             ArgumentNullException.ThrowIfNull(database);
+            AiMongoAttributionDiagnostics.RegisterRedisPublisher(database);
             TryRecord(operation, "LUA", responsePayloadBytes: 0L, database);
         }
 

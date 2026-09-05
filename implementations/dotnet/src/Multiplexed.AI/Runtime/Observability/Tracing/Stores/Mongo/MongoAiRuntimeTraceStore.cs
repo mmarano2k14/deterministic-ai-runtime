@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
 using Multiplexed.Abstractions.AI.Observability.Tracing.Store;
 using Multiplexed.AI.Stores.Mongo;
+using Multiplexed.AI.Runtime.Observability.Performance;
 
 namespace Multiplexed.AI.Runtime.Observability.Tracing.Stores.Mongo
 {
@@ -82,10 +83,29 @@ namespace Multiplexed.AI.Runtime.Observability.Tracing.Stores.Mongo
 
             await _ensureIndexesTask.Value.ConfigureAwait(false);
 
-            await _collection.InsertOneAsync(
-                    record,
-                    cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
+            var appendMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.TraceAppend,
+                AiMongoAttributionCommands.Insert,
+                requestedDocuments: 1);
+
+            try
+            {
+                await _collection.InsertOneAsync(
+                        record,
+                        cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+                appendMeasurement.Succeed();
+            }
+            catch (OperationCanceledException)
+            {
+                appendMeasurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                appendMeasurement.Fail();
+                throw;
+            }
         }
 
         /// <inheritdoc />
@@ -113,11 +133,30 @@ namespace Multiplexed.AI.Runtime.Observability.Tracing.Stores.Mongo
                     "Correlation.Runtime.CorrelationId",
                     executionId));
 
-            return await _collection
-                .Find(filter)
-                .SortBy(record => record.StartedAtUtc)
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
+            var loadMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.TraceExecutionLoad,
+                AiMongoAttributionCommands.Find);
+
+            try
+            {
+                var records = await _collection
+                    .Find(filter)
+                    .SortBy(record => record.StartedAtUtc)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                loadMeasurement.Succeed(records.Count);
+                return records;
+            }
+            catch (OperationCanceledException)
+            {
+                loadMeasurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                loadMeasurement.Fail();
+                throw;
+            }
         }
 
         /// <summary>

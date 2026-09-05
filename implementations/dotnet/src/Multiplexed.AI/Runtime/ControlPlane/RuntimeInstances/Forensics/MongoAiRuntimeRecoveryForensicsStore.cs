@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Multiplexed.Abstractions.AI.Execution;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
+using Multiplexed.AI.Runtime.Observability.Performance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Stores.Mongo;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Isolation;
@@ -70,10 +71,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                     x => x.Id,
                     normalized.Identity.ForensicsId);
 
-                var existing = await _collection
-                    .Find(idFilter)
-                    .FirstOrDefaultAsync(cancellationToken)
-                    .ConfigureAwait(false);
+                var loadMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                    AiMongoAttributionOperations.RecoveryForensicsLoad,
+                    AiMongoAttributionCommands.Find);
+                MongoAiRuntimeRecoveryForensicsDocument? existing;
+                try
+                {
+                    existing = await _collection
+                        .Find(idFilter)
+                        .FirstOrDefaultAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    loadMeasurement.Succeed(existing is null ? 0 : 1);
+                }
+                catch (OperationCanceledException) { loadMeasurement.Cancel(); throw; }
+                catch { loadMeasurement.Fail(); throw; }
 
                 if (existing is null)
                 {
@@ -83,6 +94,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                         Version = 1
                     };
 
+                    var appendMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                        AiMongoAttributionOperations.RecoveryForensicsAppend,
+                        AiMongoAttributionCommands.Insert,
+                        requestedDocuments: 1);
                     try
                     {
                         await _collection
@@ -90,14 +105,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                                 insertedDocument,
                                 cancellationToken: cancellationToken)
                             .ConfigureAwait(false);
+                        appendMeasurement.Succeed();
 
                         return;
                     }
                     catch (MongoWriteException exception) when (IsDuplicateKey(exception))
                     {
+                        appendMeasurement.Fail();
                         // Another writer created this forensics record after our read.
                         // Re-read and merge rather than replacing that writer's events.
                         continue;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        appendMeasurement.Cancel();
+                        throw;
+                    }
+                    catch
+                    {
+                        appendMeasurement.Fail();
+                        throw;
                     }
                 }
 
@@ -119,13 +146,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                     Version = existing.Version + 1
                 };
 
-                var replaceResult = await _collection
-                    .ReplaceOneAsync(
-                        CreateVersionedDocumentFilter(existing),
-                        replacementDocument,
-                        new ReplaceOptions { IsUpsert = false },
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                var replaceMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                    AiMongoAttributionOperations.RecoveryForensicsReplace,
+                    AiMongoAttributionCommands.Update,
+                    requestedDocuments: 1);
+                ReplaceOneResult replaceResult;
+                try
+                {
+                    replaceResult = await _collection
+                        .ReplaceOneAsync(
+                            CreateVersionedDocumentFilter(existing),
+                            replacementDocument,
+                            new ReplaceOptions { IsUpsert = false },
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    replaceMeasurement.Succeed();
+                }
+                catch (OperationCanceledException) { replaceMeasurement.Cancel(); throw; }
+                catch { replaceMeasurement.Fail(); throw; }
 
                 if (replaceResult.MatchedCount == 1)
                 {
@@ -166,10 +204,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                     x => x.Id,
                     forensicsId);
 
-                var existing = await _collection
-                    .Find(idFilter)
-                    .FirstOrDefaultAsync(cancellationToken)
-                    .ConfigureAwait(false);
+                var loadMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                    AiMongoAttributionOperations.RecoveryForensicsLoad,
+                    AiMongoAttributionCommands.Find);
+                MongoAiRuntimeRecoveryForensicsDocument? existing;
+                try
+                {
+                    existing = await _collection
+                        .Find(idFilter)
+                        .FirstOrDefaultAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    loadMeasurement.Succeed(existing is null ? 0 : 1);
+                }
+                catch (OperationCanceledException) { loadMeasurement.Cancel(); throw; }
+                catch { loadMeasurement.Fail(); throw; }
 
                 if (existing is null)
                 {
@@ -187,6 +235,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                         Version = 1
                     };
 
+                    var appendMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                        AiMongoAttributionOperations.RecoveryForensicsAppend,
+                        AiMongoAttributionCommands.Insert,
+                        requestedDocuments: 1);
                     try
                     {
                         await _collection
@@ -194,14 +246,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                                 insertedDocument,
                                 cancellationToken: cancellationToken)
                             .ConfigureAwait(false);
+                        appendMeasurement.Succeed();
 
                         return;
                     }
                     catch (MongoWriteException exception) when (IsDuplicateKey(exception))
                     {
+                        appendMeasurement.Fail();
                         // Another writer created the record concurrently. Re-read it so
                         // this event is merged with the durable event timeline.
                         continue;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        appendMeasurement.Cancel();
+                        throw;
+                    }
+                    catch
+                    {
+                        appendMeasurement.Fail();
+                        throw;
                     }
                 }
 
@@ -221,13 +285,24 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                     Version = existing.Version + 1
                 };
 
-                var replaceResult = await _collection
-                    .ReplaceOneAsync(
-                        CreateVersionedDocumentFilter(existing),
-                        replacementDocument,
-                        new ReplaceOptions { IsUpsert = false },
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                var replaceMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                    AiMongoAttributionOperations.RecoveryForensicsReplace,
+                    AiMongoAttributionCommands.Update,
+                    requestedDocuments: 1);
+                ReplaceOneResult replaceResult;
+                try
+                {
+                    replaceResult = await _collection
+                        .ReplaceOneAsync(
+                            CreateVersionedDocumentFilter(existing),
+                            replacementDocument,
+                            new ReplaceOptions { IsUpsert = false },
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    replaceMeasurement.Succeed();
+                }
+                catch (OperationCanceledException) { replaceMeasurement.Cancel(); throw; }
+                catch { replaceMeasurement.Fail(); throw; }
 
                 if (replaceResult.MatchedCount == 1)
                 {
@@ -252,12 +327,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 x => x.Id,
                 forensicsId);
 
-            var document = await _collection
-                .Find(filter)
-                .FirstOrDefaultAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            return document?.Record;
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.RecoveryForensicsLoad,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var document = await _collection
+                    .Find(filter)
+                    .FirstOrDefaultAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                measurement.Succeed(document is null ? 0 : 1);
+                return document?.Record;
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         /// <inheritdoc />
@@ -273,13 +356,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 x => x.Record.Identity.ExecutionId,
                 executionId);
 
-            var documents = await _collection
-                .Find(filter)
-                .SortByDescending(x => x.Record.CreatedAtUtc)
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            return documents.Select(x => x.Record).ToList();
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.RecoveryForensicsQuery,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var documents = await _collection
+                    .Find(filter)
+                    .SortByDescending(x => x.Record.CreatedAtUtc)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                measurement.Succeed(documents.Count);
+                return documents.Select(x => x.Record).ToList();
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         /// <inheritdoc />
@@ -295,13 +386,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 x => x.Record.Identity.SharedRunId,
                 sharedRunId);
 
-            var documents = await _collection
-                .Find(filter)
-                .SortByDescending(x => x.Record.CreatedAtUtc)
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            return documents.Select(x => x.Record).ToList();
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.RecoveryForensicsQuery,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var documents = await _collection
+                    .Find(filter)
+                    .SortByDescending(x => x.Record.CreatedAtUtc)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                measurement.Succeed(documents.Count);
+                return documents.Select(x => x.Record).ToList();
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         /// <inheritdoc />
@@ -317,13 +416,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(x => x.Record.Failure!.FailedRuntimeInstanceId, runtimeInstanceId),
                 Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Eq(x => x.Record.Replacement!.ReplacementRuntimeInstanceId, runtimeInstanceId));
 
-            var documents = await _collection
-                .Find(filter)
-                .SortByDescending(x => x.Record.CreatedAtUtc)
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            return documents.Select(x => x.Record).ToList();
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.RecoveryForensicsQuery,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var documents = await _collection
+                    .Find(filter)
+                    .SortByDescending(x => x.Record.CreatedAtUtc)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                measurement.Succeed(documents.Count);
+                return documents.Select(x => x.Record).ToList();
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         /// <inheritdoc />
@@ -339,13 +446,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 x => x.Record.Failure!.RuntimeFailureIncidentId,
                 runtimeFailureIncidentId);
 
-            var documents = await _collection
-                .Find(filter)
-                .SortByDescending(x => x.Record.CreatedAtUtc)
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            return documents.Select(x => x.Record).ToList();
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.RecoveryForensicsQuery,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var documents = await _collection
+                    .Find(filter)
+                    .SortByDescending(x => x.Record.CreatedAtUtc)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                measurement.Succeed(documents.Count);
+                return documents.Select(x => x.Record).ToList();
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         /// <inheritdoc />
@@ -357,14 +472,22 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 
             var safeLimit = Math.Max(1, limit);
 
-            var documents = await _collection
-                .Find(Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Empty)
-                .SortByDescending(x => x.Record.CreatedAtUtc)
-                .Limit(safeLimit)
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            return documents.Select(x => x.Record).ToList();
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.RecoveryForensicsQuery,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var documents = await _collection
+                    .Find(Builders<MongoAiRuntimeRecoveryForensicsDocument>.Filter.Empty)
+                    .SortByDescending(x => x.Record.CreatedAtUtc)
+                    .Limit(safeLimit)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                measurement.Succeed(documents.Count);
+                return documents.Select(x => x.Record).ToList();
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         /// <summary>

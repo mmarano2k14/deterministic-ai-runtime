@@ -1,5 +1,6 @@
 ﻿using MongoDB.Bson;
 using MongoDB.Driver;
+using Multiplexed.AI.Runtime.Observability.Performance;
 using StackExchange.Redis;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -42,6 +43,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
         private readonly string? redisStartError;
         private readonly string? mongoStartError;
         private readonly string? redisAttributionScope;
+        private readonly string? mongoAttributionScope;
         private readonly Stopwatch stopwatch;
         private int completionState;
 
@@ -54,6 +56,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             string? redisStartError,
             string? mongoStartError,
             string? redisAttributionScope,
+            string? mongoAttributionScope,
             Stopwatch stopwatch)
         {
             this.output = output;
@@ -64,6 +67,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             this.redisStartError = redisStartError;
             this.mongoStartError = mongoStartError;
             this.redisAttributionScope = redisAttributionScope;
+            this.mongoAttributionScope = mongoAttributionScope;
             this.stopwatch = stopwatch;
         }
 
@@ -89,8 +93,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 StandardMongoConnectionStringEnvironmentVariable,
                 DefaultMongoConnectionString);
 
-            var redisAttributionScope =
-                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.BeginScope();
+            var redisAttributionScope = AiRedisReadAttributionDiagnostics.BeginScope();
+            var mongoAttributionScope = AiMongoAttributionDiagnostics.BeginScope();
 
             ConnectionMultiplexer? redisConnection = null;
             RedisTrafficSnapshot? redisStartSnapshot = null;
@@ -158,8 +162,10 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             output.WriteLine($"Mongo.Error='{Escape(mongoStartError)}'");
             output.WriteLine($"RedisAttribution.Enabled='{(!string.IsNullOrWhiteSpace(redisAttributionScope)).ToString().ToLowerInvariant()}'");
             output.WriteLine($"RedisAttribution.Scope='{Escape(redisAttributionScope)}'");
+            output.WriteLine($"MongoAttribution.Enabled='{(!string.IsNullOrWhiteSpace(mongoAttributionScope)).ToString().ToLowerInvariant()}'");
+            output.WriteLine($"MongoAttribution.Scope='{Escape(mongoAttributionScope)}'");
             output.WriteLine("Scope='Server-wide counters for every process sharing the observed Redis and MongoDB instances.'");
-            output.WriteLine("ObserverOverhead='The final delta includes approximately two Redis INFO commands and one MongoDB serverStatus command. When PERF1 Redis attribution is enabled, periodic/final attribution HSET publications plus the final attribution HGETALL collection are also included in the raw Redis deltas.'");
+            output.WriteLine("ObserverOverhead='The final delta includes approximately two Redis INFO commands and two MongoDB serverStatus commands. PERF1/PERF2 cross-process attribution uses bounded Redis HSET snapshots plus final HGETALL collection; PERF2 does not write attribution data to MongoDB.'");
             output.WriteLine("[DATA STORE TRAFFIC OBSERVER START END]");
 
             return new ProductionDataStoreTrafficObserver(
@@ -171,6 +177,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 redisStartError,
                 mongoStartError,
                 redisAttributionScope,
+                mongoAttributionScope,
                 stopwatch);
         }
 
@@ -214,6 +221,33 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 catch (Exception exception)
                 {
                     redisAttributionError = FormatException(exception);
+                }
+            }
+
+            AiMongoAttributionAggregate? mongoAttribution = null;
+            string? mongoAttributionError = null;
+
+            if (redisConnection is not null &&
+                !string.IsNullOrWhiteSpace(mongoAttributionScope))
+            {
+                try
+                {
+                    await AiMongoAttributionDiagnostics
+                        .FlushCurrentProcessAsync(
+                            redisConnection.GetDatabase(),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    mongoAttribution = await AiMongoAttributionDiagnostics
+                        .CollectAsync(
+                            redisConnection,
+                            mongoAttributionScope,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    mongoAttributionError = FormatException(exception);
                 }
             }
 
@@ -269,6 +303,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                     redisEndSnapshot,
                     redisAttribution,
                     redisAttributionError);
+
+                WriteMongoAttributionSummary(
+                    mongoStartSnapshot,
+                    mongoEndSnapshot,
+                    mongoAttribution,
+                    mongoAttributionError);
             }
             catch (Exception exception)
             {
@@ -280,7 +320,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             }
             finally
             {
-                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.EndScope(redisAttributionScope);
+                AiMongoAttributionDiagnostics.EndScope(mongoAttributionScope);
+                AiRedisReadAttributionDiagnostics.EndScope(redisAttributionScope);
             }
         }
 
@@ -319,7 +360,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             output.WriteLine($"CompletedAtUtc='{DateTimeOffset.UtcNow:O}'");
             output.WriteLine($"Duration='{duration}'");
             output.WriteLine("Scope='Server-wide deltas; concurrent external users of the same stores are included.'");
-            output.WriteLine("ObserverOverhead='Approximately two Redis INFO commands and one MongoDB serverStatus command are included in the raw deltas. When PERF1 attribution is enabled, periodic/final HSET publications and the final attribution HGETALL collection are also included before the Redis end snapshot.'");
+            output.WriteLine("ObserverOverhead='Approximately two Redis INFO snapshots and two MongoDB serverStatus snapshots bracket the run. PERF1/PERF2 Redis HSET publications and final HGETALL collection are included in raw Redis deltas; PERF2 attribution itself performs no MongoDB writes.'");
 
             WriteRedisSummary(duration, redisStart, redisEnd, redisError);
             WriteMongoSummary(duration, mongoStart, mongoEnd, mongoError);
@@ -615,6 +656,128 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             output.WriteLine("[PERF1 SHARED RUN PROCESS SPLIT END]");
         }
 
+        private void WriteMongoAttributionSummary(
+            MongoTrafficSnapshot? start,
+            MongoTrafficSnapshot? end,
+            AiMongoAttributionAggregate? aggregate,
+            string? error)
+        {
+            output.WriteLine(string.Empty);
+            output.WriteLine("[PERF2 MONGO ATTRIBUTION]");
+            output.WriteLine($"Enabled='{(!string.IsNullOrWhiteSpace(mongoAttributionScope)).ToString().ToLowerInvariant()}'");
+            output.WriteLine($"Scope='{Escape(mongoAttributionScope)}'");
+            output.WriteLine($"FlushInterval='{AiMongoAttributionDiagnostics.FlushInterval}'");
+            output.WriteLine("SemanticDefinition='Bounded application-level MongoDB store families measured immediately around driver calls. Tenant, execution, runtime, payload, collection, key, and query values are never labels.'");
+            output.WriteLine("DriverDefinition='Bounded MongoDB driver command and pool events grouped only by command name and client role. Unknown commands are normalized to OTHER.'");
+            output.WriteLine("CoverageNote='Semantic command coverage compares attributed application calls with serverStatus metrics.commands deltas. Driver retries, observer serverStatus, index initialization, uninstrumented framework calls, and the final partial interval of a hard-killed process can remain residual.'");
+            output.WriteLine("CrossProcessPublication='Absolute process snapshots are published through the existing Redis diagnostic path; PERF2 writes no measurement record to MongoDB.'");
+
+            if (string.IsNullOrWhiteSpace(mongoAttributionScope))
+            {
+                output.WriteLine("Available='false'");
+                output.WriteLine("Reason='MULTIPLEXED_PERF2_MONGO_ATTRIBUTION is not enabled.'");
+                output.WriteLine("[PERF2 MONGO ATTRIBUTION END]");
+                return;
+            }
+
+            if (start is null || end is null || aggregate is null)
+            {
+                output.WriteLine("Available='false'");
+                output.WriteLine($"Error='{Escape(error)}'");
+                output.WriteLine("[PERF2 MONGO ATTRIBUTION END]");
+                return;
+            }
+
+            output.WriteLine("Available='true'");
+            output.WriteLine($"ProcessSnapshotCount='{aggregate.ProcessSnapshotCount}'");
+            output.WriteLine($"PublicationSequenceTotal='{aggregate.PublicationSequenceTotal}'");
+
+            var serverCommandDeltas = CreateDictionaryDelta(start.CommandCalls, end.CommandCalls);
+            var attributedByCommand = aggregate.Operations
+                .GroupBy(item => item.Command, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Sum(item => item.Calls),
+                    StringComparer.OrdinalIgnoreCase);
+
+            var trackedCommands = new[]
+            {
+                (Semantic: AiMongoAttributionCommands.Insert, Server: "insert"),
+                (Semantic: AiMongoAttributionCommands.FindAndModify, Server: "findAndModify"),
+                (Semantic: AiMongoAttributionCommands.Find, Server: "find")
+            };
+
+            foreach (var command in trackedCommands)
+            {
+                var serverCalls = serverCommandDeltas.GetValueOrDefault(command.Server);
+                var attributedCalls = attributedByCommand.GetValueOrDefault(command.Semantic);
+                var residualCalls = serverCalls - attributedCalls;
+                var coveragePercent = serverCalls <= 0
+                    ? 0d
+                    : (attributedCalls * 100d) / serverCalls;
+
+                output.WriteLine($"Command.{command.Semantic}.ServerCalls='{serverCalls}'");
+                output.WriteLine($"Command.{command.Semantic}.AttributedCalls='{attributedCalls}'");
+                output.WriteLine($"Command.{command.Semantic}.ResidualCalls='{residualCalls}'");
+                output.WriteLine($"Command.{command.Semantic}.CoveragePercent='{coveragePercent.ToString("F2", CultureInfo.InvariantCulture)}'");
+            }
+
+            foreach (var operation in aggregate.Operations)
+            {
+                var aggregateDurationMs = operation.AggregateDurationTicks / (double)TimeSpan.TicksPerMillisecond;
+                output.WriteLine(
+                    $"Operation='{Escape(operation.Operation)}', " +
+                    $"Command='{Escape(operation.Command)}', " +
+                    $"Calls='{operation.Calls}', " +
+                    $"RequestedDocuments='{operation.RequestedDocuments}', " +
+                    $"ReturnedDocuments='{operation.ReturnedDocuments}', " +
+                    $"RequestPayloadBytes='{operation.RequestPayloadBytes}', " +
+                    $"ResponsePayloadBytes='{operation.ResponsePayloadBytes}', " +
+                    $"Successes='{operation.Successes}', " +
+                    $"Failures='{operation.Failures}', " +
+                    $"Cancellations='{operation.Cancellations}', " +
+                    $"DuplicateKeyRetries='{operation.DuplicateKeyRetries}', " +
+                    $"AggregateDurationMs='{aggregateDurationMs.ToString("F3", CultureInfo.InvariantCulture)}', " +
+                    $"LatencyLe1Ms='{operation.LatencyLe1Ms}', " +
+                    $"LatencyLe2Ms='{operation.LatencyLe2Ms}', " +
+                    $"LatencyLe5Ms='{operation.LatencyLe5Ms}', " +
+                    $"LatencyLe10Ms='{operation.LatencyLe10Ms}', " +
+                    $"LatencyLe25Ms='{operation.LatencyLe25Ms}', " +
+                    $"LatencyLe50Ms='{operation.LatencyLe50Ms}', " +
+                    $"LatencyLe100Ms='{operation.LatencyLe100Ms}', " +
+                    $"LatencyLe250Ms='{operation.LatencyLe250Ms}', " +
+                    $"LatencyGt250Ms='{operation.LatencyGt250Ms}'.");
+            }
+
+            foreach (var command in aggregate.DriverCommands)
+            {
+                var aggregateDurationMs = command.AggregateDurationTicks / (double)TimeSpan.TicksPerMillisecond;
+                output.WriteLine(
+                    $"DriverCommand.Role='{Escape(command.ClientRole)}', " +
+                    $"Command='{Escape(command.Command)}', " +
+                    $"Started='{command.Started}', " +
+                    $"Succeeded='{command.Succeeded}', " +
+                    $"Failed='{command.Failed}', " +
+                    $"AggregateDurationMs='{aggregateDurationMs.ToString("F3", CultureInfo.InvariantCulture)}'.");
+            }
+
+            foreach (var pool in aggregate.DriverPools)
+            {
+                output.WriteLine(
+                    $"DriverPool.Role='{Escape(pool.ClientRole)}', " +
+                    $"ClientInstancesObserved='{pool.ClientInstancesObserved}', " +
+                    $"PoolsOpened='{pool.PoolsOpened}', " +
+                    $"PoolsClosed='{pool.PoolsClosed}', " +
+                    $"ConnectionsOpened='{pool.ConnectionsOpened}', " +
+                    $"ConnectionsClosed='{pool.ConnectionsClosed}', " +
+                    $"ConnectionOpenFailures='{pool.ConnectionOpenFailures}', " +
+                    $"Checkouts='{pool.Checkouts}', " +
+                    $"CheckoutFailures='{pool.CheckoutFailures}'.");
+            }
+
+            output.WriteLine("[PERF2 MONGO ATTRIBUTION END]");
+        }
+
         private void WriteMongoSummary(
             TimeSpan duration,
             MongoTrafficSnapshot? start,
@@ -656,6 +819,20 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             output.WriteLine($"Mongo.NetworkOutputBytes='{Delta(start.NetworkBytesOut, end.NetworkBytesOut)}'");
             output.WriteLine($"Mongo.NewConnections='{Delta(start.ConnectionsCreated, end.ConnectionsCreated)}'");
             output.WriteLine($"Mongo.RejectedConnections='{Delta(start.ConnectionsRejected, end.ConnectionsRejected)}'");
+            output.WriteLine($"Mongo.ConnectionsCurrent.Start='{start.ConnectionsCurrent}'");
+            output.WriteLine($"Mongo.ConnectionsCurrent.End='{end.ConnectionsCurrent}'");
+            output.WriteLine($"Mongo.ConnectionsAvailable.Start='{start.ConnectionsAvailable}'");
+            output.WriteLine($"Mongo.ConnectionsAvailable.End='{end.ConnectionsAvailable}'");
+            output.WriteLine($"Mongo.ConnectionsActive.Start='{start.ConnectionsActive}'");
+            output.WriteLine($"Mongo.ConnectionsActive.End='{end.ConnectionsActive}'");
+            output.WriteLine($"Mongo.QueryExecutor.ScannedKeys='{Delta(start.QueryExecutorScanned, end.QueryExecutorScanned)}'");
+            output.WriteLine($"Mongo.QueryExecutor.ScannedDocuments='{Delta(start.QueryExecutorScannedObjects, end.QueryExecutorScannedObjects)}'");
+            output.WriteLine($"Mongo.CursorsOpen.Start='{start.CursorsOpen}'");
+            output.WriteLine($"Mongo.CursorsOpen.End='{end.CursorsOpen}'");
+            output.WriteLine($"Mongo.CursorsTimedOut='{Delta(start.CursorsTimedOut, end.CursorsTimedOut)}'");
+            output.WriteLine($"Mongo.WiredTiger.CacheBytesReadIntoCache='{Delta(start.WiredTigerCacheBytesReadIntoCache, end.WiredTigerCacheBytesReadIntoCache)}'");
+            output.WriteLine($"Mongo.WiredTiger.CacheBytesWrittenFromCache='{Delta(start.WiredTigerCacheBytesWrittenFromCache, end.WiredTigerCacheBytesWrittenFromCache)}'");
+            output.WriteLine($"Mongo.WriteConflicts='{Delta(start.WriteConflicts, end.WriteConflicts)}'");
             output.WriteLine($"Mongo.DocumentsInserted='{Delta(start.DocumentsInserted, end.DocumentsInserted)}'");
             output.WriteLine($"Mongo.DocumentsReturned='{Delta(start.DocumentsReturned, end.DocumentsReturned)}'");
             output.WriteLine($"Mongo.DocumentsUpdated='{Delta(start.DocumentsUpdated, end.DocumentsUpdated)}'");
@@ -816,6 +993,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
                 ReadLong(status, "opLatencies", "commands", "latency"),
                 ReadLong(status, "opLatencies", "transactions", "ops"),
                 ReadLong(status, "opLatencies", "transactions", "latency"),
+                ReadLong(status, "connections", "current"),
+                ReadLong(status, "connections", "available"),
+                ReadLong(status, "connections", "active"),
+                ReadLong(status, "metrics", "queryExecutor", "scanned"),
+                ReadLong(status, "metrics", "queryExecutor", "scannedObjects"),
+                ReadLong(status, "metrics", "cursor", "open", "total"),
+                ReadLong(status, "metrics", "cursor", "timedOut"),
+                ReadLong(status, "wiredTiger", "cache", "bytes read into cache"),
+                ReadLong(status, "wiredTiger", "cache", "bytes written from cache"),
+                ReadLong(status, "metrics", "operation", "writeConflicts"),
                 new ReadOnlyDictionary<string, long>(ReadMongoCommandCalls(status)));
         }
 
@@ -1079,6 +1266,16 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helper
             long CommandLatencyMicros,
             long TransactionOperations,
             long TransactionLatencyMicros,
+            long ConnectionsCurrent,
+            long ConnectionsAvailable,
+            long ConnectionsActive,
+            long QueryExecutorScanned,
+            long QueryExecutorScannedObjects,
+            long CursorsOpen,
+            long CursorsTimedOut,
+            long WiredTigerCacheBytesReadIntoCache,
+            long WiredTigerCacheBytesWrittenFromCache,
+            long WriteConflicts,
             IReadOnlyDictionary<string, long> CommandCalls);
     }
 }

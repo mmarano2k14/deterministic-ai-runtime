@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Stores;
 using Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Documents;
+using Multiplexed.AI.Runtime.Observability.Performance;
 
 namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
 {
@@ -57,7 +58,9 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
 
             var collectionName = $"{mongo.CollectionName}_step_index";
 
-            var client = new MongoClient(mongo.ConnectionString);
+            var client = AiMongoAttributionDiagnostics.CreateMongoClient(
+                mongo.ConnectionString,
+                AiMongoAttributionClientRoles.StepPayloadIndexStore);
             var database = client.GetDatabase(mongo.DatabaseName);
             _collection = database.GetCollection<MongoAiStepPayloadIndexDocument>(collectionName);
         }
@@ -91,12 +94,23 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
                     : entry.Reason
             };
 
-            await _collection.ReplaceOneAsync(
-                    x => x.Id == id,
-                    document,
-                    new ReplaceOptions { IsUpsert = true },
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var upsertMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.StepPayloadIndexUpsert,
+                AiMongoAttributionCommands.Update,
+                requestedDocuments: 1);
+
+            try
+            {
+                await _collection.ReplaceOneAsync(
+                        x => x.Id == id,
+                        document,
+                        new ReplaceOptions { IsUpsert = true },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                upsertMeasurement.Succeed();
+            }
+            catch (OperationCanceledException) { upsertMeasurement.Cancel(); throw; }
+            catch { upsertMeasurement.Fail(); throw; }
         }
 
         /// <inheritdoc />
@@ -112,12 +126,20 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
                 executionId,
                 stepName);
 
-            var document = await _collection
-                .Find(x => x.Id == id)
-                .FirstOrDefaultAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            return document is null ? null : ToModel(document);
+            var loadMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.StepPayloadIndexLoad,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var document = await _collection
+                    .Find(x => x.Id == id)
+                    .FirstOrDefaultAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                loadMeasurement.Succeed(document is null ? 0 : 1);
+                return document is null ? null : ToModel(document);
+            }
+            catch (OperationCanceledException) { loadMeasurement.Cancel(); throw; }
+            catch { loadMeasurement.Fail(); throw; }
         }
 
         /// <inheritdoc />
@@ -127,15 +149,21 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
 
-            var documents = await _collection
-                .Find(x => x.ExecutionId == executionId)
-                .SortBy(x => x.ArchivedAtUtc)
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            return documents
-                .Select(ToModel)
-                .ToList();
+            var loadMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.StepPayloadIndexExecutionLoad,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var documents = await _collection
+                    .Find(x => x.ExecutionId == executionId)
+                    .SortBy(x => x.ArchivedAtUtc)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                loadMeasurement.Succeed(documents.Count);
+                return documents.Select(ToModel).ToList();
+            }
+            catch (OperationCanceledException) { loadMeasurement.Cancel(); throw; }
+            catch { loadMeasurement.Fail(); throw; }
         }
 
         /// <inheritdoc />
@@ -151,10 +179,20 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
                 executionId,
                 stepName);
 
-            await _collection.DeleteOneAsync(
-                    x => x.Id == id,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var deleteMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.StepPayloadIndexDelete,
+                AiMongoAttributionCommands.Delete,
+                requestedDocuments: 1);
+            try
+            {
+                await _collection.DeleteOneAsync(
+                        x => x.Id == id,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                deleteMeasurement.Succeed();
+            }
+            catch (OperationCanceledException) { deleteMeasurement.Cancel(); throw; }
+            catch { deleteMeasurement.Fail(); throw; }
         }
 
         public async Task<IReadOnlyDictionary<string, AiArchivedStepPayloadIndex>> GetManyAsync(
@@ -175,14 +213,20 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
                 return new Dictionary<string, AiArchivedStepPayloadIndex>(StringComparer.Ordinal);
             }
 
-            var documents = await _collection
-                .Find(x => x.ExecutionId == executionId && names.Contains(x.StepName))
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            return documents
-                .Select(ToModel)
-                .ToDictionary(x => x.StepName, StringComparer.Ordinal);
+            var loadManyMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.StepPayloadIndexLoadMany,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var documents = await _collection
+                    .Find(x => x.ExecutionId == executionId && names.Contains(x.StepName))
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                loadManyMeasurement.Succeed(documents.Count);
+                return documents.Select(ToModel).ToDictionary(x => x.StepName, StringComparer.Ordinal);
+            }
+            catch (OperationCanceledException) { loadManyMeasurement.Cancel(); throw; }
+            catch { loadManyMeasurement.Fail(); throw; }
         }
 
         private static AiArchivedStepPayloadIndex ToModel(

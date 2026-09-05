@@ -1,0 +1,219 @@
+{
+  "pipelines": [
+    {
+      "name": "enterprise-runtime-demo",
+      "version": "1.0.0",
+      "executionMode": "Dag",
+      "config": {
+        "concurrency": {
+          "enabled": true,
+          "maxDegreeOfParallelism": 6,
+          "maxProviderConcurrency": 2,
+          "leaseSeconds": 60,
+          "defaultRetryAfterMs": 25,
+          "jitter": false,
+          "policies": [
+            {
+              "name": "concurrency.throttle",
+              "config": {
+                "scope": "provider",
+                "target": "demo-provider",
+                "limit": 2,
+                "leaseSeconds": 60,
+                "defaultRetryAfterMs": 25
+              }
+            }
+          ]
+        },
+        "retention": {
+          "enabled": true,
+          "policies": [
+            {
+              "name": "retention.compact.terminal"
+            },
+            {
+              "name": "retention.evict.terminal"
+            }
+          ],
+          "archiveReason": "enterprise-runtime-demo-retention",
+          "trigger": {
+            "enabled": true,
+            "maxStepsInState": 6,
+            "maxCompletedStepsInState": 6,
+            "maxInlinePayloadBytes": 1024
+          }
+        }
+      },
+      "steps": [
+        {
+          "name": "start",
+          "stepKey": "demo.pass",
+          "order": 1,
+          "dependsOn": [],
+          "config": {
+            "message": "Enterprise runtime demo started."
+          }
+        },
+        {
+          "name": "load-context",
+          "stepKey": "demo.delay",
+          "order": 2,
+          "dependsOn": [
+            "start"
+          ],
+          "config": {
+            "delayMs": 250,
+            "message": "Execution context loaded."
+          }
+        },
+        {
+          "name": "retrieve-policy",
+          "stepKey": "demo.throttled",
+          "order": 3,
+          "dependsOn": [
+            "load-context"
+          ],
+          "config": {
+            "provider": "demo-provider",
+            "model": "demo-model",
+            "operation": "policy.lookup",
+            "delayMs": 500,
+            "concurrency": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "name": "retrieve-customer-data",
+          "stepKey": "demo.throttled",
+          "order": 4,
+          "dependsOn": [
+            "load-context"
+          ],
+          "config": {
+            "provider": "demo-provider",
+            "model": "demo-model",
+            "operation": "customer.lookup",
+            "delayMs": 500,
+            "concurrency": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "name": "retrieve-risk-data",
+          "stepKey": "demo.throttled",
+          "order": 5,
+          "dependsOn": [
+            "load-context"
+          ],
+          "config": {
+            "provider": "demo-provider",
+            "model": "demo-model",
+            "operation": "risk.lookup",
+            "delayMs": 500,
+            "concurrency": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "name": "transient-provider-call",
+          "stepKey": "demo.flaky",
+          "order": 6,
+          "dependsOn": [
+            "retrieve-policy"
+          ],
+          "config": {
+            "attemptKey": "enterprise-runtime-demo:transient-provider-call",
+            "failAttempts": 1,
+            "delayMs": 250,
+            "retry": {
+              "policies": [
+                {
+                  "name": "retry.transient.default"
+                }
+              ],
+              "maxRetries": 2,
+              "strategy": "Fixed",
+              "baseDelayMs": 100,
+              "maxDelayMs": 500,
+              "jitter": false
+            }
+          }
+        },
+        {
+          "name": "generate-large-context",
+          "stepKey": "demo.large-payload",
+          "order": 7,
+          "dependsOn": [
+            "retrieve-customer-data"
+          ],
+          "config": {
+            "payloadSizeKb": 128,
+            "chunkText": "enterprise-runtime-demo-context"
+          }
+        },
+        {
+          "name": "compose-result",
+          "stepKey": "demo.delay",
+          "order": 8,
+          "dependsOn": [
+            "transient-provider-call",
+            "retrieve-risk-data",
+            "generate-large-context"
+          ],
+          "config": {
+            "delayMs": 300,
+            "message": "Result composed after distributed dependencies completed."
+          }
+        },
+        {
+          "name": "audit-result",
+          "stepKey": "demo.pass",
+          "order": 9,
+          "dependsOn": [
+            "compose-result"
+          ],
+          "config": {
+            "message": "Audit record produced."
+          }
+        },
+        {
+          "name": "persist-summary",
+          "stepKey": "demo.large-payload",
+          "order": 10,
+          "dependsOn": [
+            "audit-result"
+          ],
+          "config": {
+            "payloadSizeKb": 64,
+            "chunkText": "enterprise-runtime-demo-summary"
+          }
+        },
+        {
+          "name": "final-validation",
+          "stepKey": "demo.pass",
+          "order": 11,
+          "dependsOn": [
+            "persist-summary"
+          ],
+          "config": {
+            "message": "Final validation completed."
+          }
+        },
+        {
+          "name": "finalize",
+          "stepKey": "demo.pass",
+          "order": 12,
+          "dependsOn": [
+            "final-validation"
+          ],
+          "config": {
+            "message": "Enterprise runtime demo completed deterministically."
+          }
+        }
+      ]
+    }
+  ]
+}

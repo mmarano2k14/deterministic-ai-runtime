@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Forensics;
 using Multiplexed.AI.Runtime.ControlPlane.Observability;
+using Multiplexed.AI.Runtime.Observability.Performance;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
 {
@@ -122,7 +123,10 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
                 configureMongo?.Invoke(options);
             });
 
-            services.TryAddSingleton<IMongoClient>(_ => new MongoClient(connectionString));
+            services.TryAddSingleton<IMongoClient>(
+                _ => AiMongoAttributionDiagnostics.CreateMongoClient(
+                    connectionString,
+                    AiMongoAttributionClientRoles.RecoveryForensics));
             services.TryAddSingleton(provider =>
             {
                 var client = provider.GetRequiredService<IMongoClient>();

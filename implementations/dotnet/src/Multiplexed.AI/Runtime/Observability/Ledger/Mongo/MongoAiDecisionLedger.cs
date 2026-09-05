@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.AI.Observability.Ledger;
+using Multiplexed.AI.Runtime.Observability.Performance;
 
 namespace Multiplexed.AI.Runtime.Observability.Ledger.Mongo
 {
@@ -92,9 +93,28 @@ namespace Multiplexed.AI.Runtime.Observability.Ledger.Mongo
 
             var document = MongoAiDecisionLedgerEntryDocument.FromEntry(entry, sequence);
 
-            await _entries.InsertOneAsync(
-                document,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+            var appendMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.LedgerEntryAppend,
+                AiMongoAttributionCommands.Insert,
+                requestedDocuments: 1);
+
+            try
+            {
+                await _entries.InsertOneAsync(
+                    document,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                appendMeasurement.Succeed();
+            }
+            catch (OperationCanceledException)
+            {
+                appendMeasurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                appendMeasurement.Fail();
+                throw;
+            }
         }
 
         /// <inheritdoc />
@@ -110,14 +130,32 @@ namespace Multiplexed.AI.Runtime.Observability.Ledger.Mongo
                 document => document.ExecutionId,
                 executionId);
 
-            var documents = await _entries
-                .Find(filter)
-                .SortBy(document => document.Sequence)
-                .ThenBy(document => document.TimestampUtc)
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
+            var loadMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.LedgerExecutionLoad,
+                AiMongoAttributionCommands.Find);
 
-            return documents.ConvertAll(document => document.ToEntry());
+            try
+            {
+                var documents = await _entries
+                    .Find(filter)
+                    .SortBy(document => document.Sequence)
+                    .ThenBy(document => document.TimestampUtc)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                loadMeasurement.Succeed(documents.Count);
+
+                return documents.ConvertAll(document => document.ToEntry());
+            }
+            catch (OperationCanceledException)
+            {
+                loadMeasurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                loadMeasurement.Fail();
+                throw;
+            }
         }
 
         /// <inheritdoc />
@@ -142,11 +180,29 @@ namespace Multiplexed.AI.Runtime.Observability.Ledger.Mongo
                 find = find.Limit(query.Limit.Value);
             }
 
-            var documents = await find
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
+            var queryMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.LedgerQuery,
+                AiMongoAttributionCommands.Find);
 
-            return documents.ConvertAll(document => document.ToEntry());
+            try
+            {
+                var documents = await find
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                queryMeasurement.Succeed(documents.Count);
+
+                return documents.ConvertAll(document => document.ToEntry());
+            }
+            catch (OperationCanceledException)
+            {
+                queryMeasurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                queryMeasurement.Fail();
+                throw;
+            }
         }
 
         private async Task EnsureIndexesAsync(
@@ -182,6 +238,11 @@ namespace Multiplexed.AI.Runtime.Observability.Ledger.Mongo
                 ReturnDocument = ReturnDocument.After
             };
 
+            var sequenceMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.LedgerSequenceNext,
+                AiMongoAttributionCommands.FindAndModify,
+                requestedDocuments: 1);
+
             try
             {
                 var sequence = await _sequences
@@ -191,11 +252,19 @@ namespace Multiplexed.AI.Runtime.Observability.Ledger.Mongo
                         options,
                         cancellationToken)
                     .ConfigureAwait(false);
+                sequenceMeasurement.Succeed(sequence is null ? 0 : 1);
 
                 return sequence.CurrentSequence;
             }
+            catch (OperationCanceledException)
+            {
+                sequenceMeasurement.Cancel();
+                throw;
+            }
             catch (MongoException exception) when (IsDuplicateKey(exception))
             {
+                sequenceMeasurement.Fail(duplicateKeyRetry: true);
+
                 // Concurrent upsert race:
                 // another worker inserted the sequence document between our find and insert.
                 // Retry the same atomic increment now that the document exists.
@@ -205,26 +274,50 @@ namespace Multiplexed.AI.Runtime.Observability.Ledger.Mongo
                     ReturnDocument = ReturnDocument.After
                 };
 
-                var sequence = await _sequences
-                    .FindOneAndUpdateAsync(
-                        filter,
-                        update,
-                        retryOptions,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                var retryMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                    AiMongoAttributionOperations.LedgerSequenceNext,
+                    AiMongoAttributionCommands.FindAndModify,
+                    requestedDocuments: 1);
 
-                if (sequence is null)
+                try
                 {
-                    // Extremely defensive fallback:
-                    // if the document disappeared between duplicate-key and retry,
-                    // restart the safe path.
-                    return await GetNextSequenceAsync(
-                            executionId,
+                    var sequence = await _sequences
+                        .FindOneAndUpdateAsync(
+                            filter,
+                            update,
+                            retryOptions,
                             cancellationToken)
                         .ConfigureAwait(false);
-                }
+                    retryMeasurement.Succeed(sequence is null ? 0 : 1);
 
-                return sequence.CurrentSequence;
+                    if (sequence is null)
+                    {
+                        // Extremely defensive fallback:
+                        // if the document disappeared between duplicate-key and retry,
+                        // restart the safe path.
+                        return await GetNextSequenceAsync(
+                                executionId,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+
+                    return sequence.CurrentSequence;
+                }
+                catch (OperationCanceledException)
+                {
+                    retryMeasurement.Cancel();
+                    throw;
+                }
+                catch
+                {
+                    retryMeasurement.Fail();
+                    throw;
+                }
+            }
+            catch
+            {
+                sequenceMeasurement.Fail();
+                throw;
             }
         }
 

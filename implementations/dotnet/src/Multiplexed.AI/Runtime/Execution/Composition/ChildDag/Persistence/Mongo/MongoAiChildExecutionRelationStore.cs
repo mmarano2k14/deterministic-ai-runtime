@@ -8,6 +8,7 @@ using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Identity;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mongo.Documents;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots;
 using Multiplexed.AI.Runtime.Execution.Payloads.Serialization;
+using Multiplexed.AI.Runtime.Observability.Performance;
 
 namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mongo
 {
@@ -51,12 +52,29 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             ValidateIdentity(identity);
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
 
-            var document = await this.collection
-                .Find(BuildIdentityFilter(identity))
-                .FirstOrDefaultAsync(cancellationToken)
-                .ConfigureAwait(false);
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.ChildRelationIdentityLoad,
+                AiMongoAttributionCommands.Find);
 
-            return document?.Relation;
+            try
+            {
+                var document = await this.collection
+                    .Find(BuildIdentityFilter(identity))
+                    .FirstOrDefaultAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                measurement.Succeed(document is null ? 0 : 1);
+                return document?.Relation;
+            }
+            catch (OperationCanceledException)
+            {
+                measurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                measurement.Fail();
+                throw;
+            }
         }
 
         /// <inheritdoc />
@@ -67,12 +85,29 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             ArgumentException.ThrowIfNullOrWhiteSpace(childExecutionId);
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
 
-            var document = await this.collection
-                .Find(item => item.Relation.ChildExecutionId == childExecutionId)
-                .FirstOrDefaultAsync(cancellationToken)
-                .ConfigureAwait(false);
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.ChildRelationChildExecutionLoad,
+                AiMongoAttributionCommands.Find);
 
-            return document?.Relation;
+            try
+            {
+                var document = await this.collection
+                    .Find(item => item.Relation.ChildExecutionId == childExecutionId)
+                    .FirstOrDefaultAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                measurement.Succeed(document is null ? 0 : 1);
+                return document?.Relation;
+            }
+            catch (OperationCanceledException)
+            {
+                measurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                measurement.Fail();
+                throw;
+            }
         }
 
         /// <inheritdoc />
@@ -102,7 +137,13 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                     filters.Eq(item => item.Relation.ControlPlaneId, controlPlaneId));
             }
 
-            var documents = await this.collection
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.ChildRelationQuery,
+                AiMongoAttributionCommands.Find);
+
+            try
+            {
+                var documents = await this.collection
                 .Find(filter)
                 .SortBy(item => item.Relation.ChildAllocatedAtUtc)
                 .ThenBy(item => item.Relation.CreatedAtUtc)
@@ -110,7 +151,19 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
 
-            return documents.Select(item => item.Relation).ToArray();
+                measurement.Succeed(documents.Count);
+                return documents.Select(item => item.Relation).ToArray();
+            }
+            catch (OperationCanceledException)
+            {
+                measurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                measurement.Fail();
+                throw;
+            }
         }
 
         /// <inheritdoc />
@@ -140,7 +193,13 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                     filters.Eq(item => item.Relation.ControlPlaneId, controlPlaneId));
             }
 
-            var documents = await this.collection
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.ChildRelationQuery,
+                AiMongoAttributionCommands.Find);
+
+            try
+            {
+                var documents = await this.collection
                 .Find(filter)
                 .SortBy(item => item.Relation.CompletedAtUtc)
                 .ThenBy(item => item.Relation.CreatedAtUtc)
@@ -148,7 +207,19 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
 
-            return documents.Select(item => item.Relation).ToArray();
+                measurement.Succeed(documents.Count);
+                return documents.Select(item => item.Relation).ToArray();
+            }
+            catch (OperationCanceledException)
+            {
+                measurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                measurement.Fail();
+                throw;
+            }
         }
 
         /// <inheritdoc />
@@ -180,7 +251,13 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                     filters.Eq(item => item.Relation.ControlPlaneId, controlPlaneId));
             }
 
-            var documents = await this.collection
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.ChildRelationQuery,
+                AiMongoAttributionCommands.Find);
+
+            try
+            {
+                var documents = await this.collection
                 .Find(filter)
                 .SortBy(item => item.Relation.ChildAllocatedAtUtc)
                 .ThenBy(item => item.Relation.CreatedAtUtc)
@@ -188,7 +265,19 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
 
-            return documents.Select(item => item.Relation).ToArray();
+                measurement.Succeed(documents.Count);
+                return documents.Select(item => item.Relation).ToArray();
+            }
+            catch (OperationCanceledException)
+            {
+                measurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                measurement.Fail();
+                throw;
+            }
         }
 
         /// <inheritdoc />
@@ -200,6 +289,11 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             ValidateInitialRelation(relation);
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
 
+            var appendMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.ChildRelationAppend,
+                AiMongoAttributionCommands.Insert,
+                requestedDocuments: 1);
+
             try
             {
                 await this.collection
@@ -210,15 +304,36 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                         },
                         cancellationToken: cancellationToken)
                     .ConfigureAwait(false);
+                appendMeasurement.Succeed();
 
                 return relation;
             }
             catch (MongoException exception) when (IsDuplicateKey(exception))
             {
-                var existingDocument = await this.collection
-                    .Find(BuildIdentityFilter(relation.ToInvocationIdentity()))
-                    .FirstOrDefaultAsync(cancellationToken)
-                    .ConfigureAwait(false);
+                appendMeasurement.Fail();
+
+                var loadMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                    AiMongoAttributionOperations.ChildRelationIdentityLoad,
+                    AiMongoAttributionCommands.Find);
+                MongoAiChildExecutionRelationDocument? existingDocument;
+                try
+                {
+                    existingDocument = await this.collection
+                        .Find(BuildIdentityFilter(relation.ToInvocationIdentity()))
+                        .FirstOrDefaultAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    loadMeasurement.Succeed(existingDocument is null ? 0 : 1);
+                }
+                catch (OperationCanceledException)
+                {
+                    loadMeasurement.Cancel();
+                    throw;
+                }
+                catch
+                {
+                    loadMeasurement.Fail();
+                    throw;
+                }
 
                 var existing = existingDocument?.Relation;
                 if (existing is not null && AreCreationEquivalent(existing, relation))
@@ -229,6 +344,16 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                 throw new InvalidOperationException(
                     $"Child execution relation for invocation '{relation.ChildInvocationKey}' conflicts with already committed durable creation data.",
                     exception);
+            }
+            catch (OperationCanceledException)
+            {
+                appendMeasurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                appendMeasurement.Fail();
+                throw;
             }
         }
 
@@ -259,7 +384,14 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             var update = Builders<MongoAiChildExecutionRelationDocument>.Update
                 .Set(item => item.Relation, relation);
 
-            var result = await this.collection
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.ChildRelationTransition,
+                AiMongoAttributionCommands.Update,
+                requestedDocuments: 1);
+
+            try
+            {
+                var result = await this.collection
                 .UpdateOneAsync(
                     filter,
                     update,
@@ -267,7 +399,19 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            return result.ModifiedCount == 1;
+                measurement.Succeed();
+                return result.ModifiedCount == 1;
+            }
+            catch (OperationCanceledException)
+            {
+                measurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                measurement.Fail();
+                throw;
+            }
         }
 
         /// <inheritdoc />
@@ -304,7 +448,14 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             var update = Builders<MongoAiChildExecutionRelationDocument>.Update
                 .Set(item => item.Relation, relation);
 
-            var result = await this.collection
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.ChildRelationTransition,
+                AiMongoAttributionCommands.Update,
+                requestedDocuments: 1);
+
+            try
+            {
+                var result = await this.collection
                 .UpdateOneAsync(
                     filter,
                     update,
@@ -312,7 +463,19 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            return result.ModifiedCount == 1;
+                measurement.Succeed();
+                return result.ModifiedCount == 1;
+            }
+            catch (OperationCanceledException)
+            {
+                measurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                measurement.Fail();
+                throw;
+            }
         }
 
         /// <inheritdoc />
@@ -342,7 +505,14 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
             var update = Builders<MongoAiChildExecutionRelationDocument>.Update
                 .Set(item => item.Relation, relation);
 
-            var result = await this.collection
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.ChildRelationTransition,
+                AiMongoAttributionCommands.Update,
+                requestedDocuments: 1);
+
+            try
+            {
+                var result = await this.collection
                 .UpdateOneAsync(
                     filter,
                     update,
@@ -350,7 +520,19 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Persistence.Mong
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            return result.ModifiedCount == 1;
+                measurement.Succeed();
+                return result.ModifiedCount == 1;
+            }
+            catch (OperationCanceledException)
+            {
+                measurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                measurement.Fail();
+                throw;
+            }
         }
 
         /// <summary>

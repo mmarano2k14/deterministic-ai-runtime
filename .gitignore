@@ -426,4 +426,18 @@ build/
 
 tmp/
 temp/
-/demo/enterprise-runtime/
+
+# Enterprise runtime demo stays local by default
+/demo/enterprise-runtime/*
+
+# Keep the folders required by build references
+!/demo/enterprise-runtime/pipelines/
+!/demo/enterprise-runtime/config/
+
+# Ignore everything inside those folders...
+/demo/enterprise-runtime/pipelines/*
+/demo/enterprise-runtime/config/*
+
+# ...except the two build-required files
+!/demo/enterprise-runtime/pipelines/enterprise-demo-pipeline.json
+!/demo/enterprise-runtime/config/enterprise-runtime-settings.json

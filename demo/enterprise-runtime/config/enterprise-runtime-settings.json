@@ -1,0 +1,27 @@
+{
+  "version": "1.0",
+  "infrastructure": {
+    "dockerComposeFile": "demo/enterprise-runtime/deploy/docker/docker-compose.yml",
+    "projectName": "deterministic-ai-runtime-demo"
+  },
+  "redis": {
+    "host": "localhost",
+    "port": 6380,
+    "connectionString": "localhost:6380",
+    "database": 0,
+    "containerName": "deterministic-ai-runtime-demo-redis"
+  },
+  "mongo": {
+    "host": "localhost",
+    "port": 27018,
+    "connectionString": "mongodb://localhost:27018",
+    "databaseName": "deterministic_ai_runtime_demo",
+    "containerName": "deterministic-ai-runtime-demo-mongo"
+  },
+  "runner": {
+    "defaultScenario": "json",
+    "defaultVerbose": false,
+    "defaultVerboseRaw": false,
+    "defaultVerboseNoise": false
+  }
+}

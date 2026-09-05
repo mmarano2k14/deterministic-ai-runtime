@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
+using Multiplexed.AI.Runtime.Observability.Performance;
 using Multiplexed.Abstractions.AI.ControlPlane.RuntimeInstances.Lifecycle;
 using Multiplexed.AI.Stores.Mongo;
 
@@ -46,6 +47,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle
 
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
 
+            var appendMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.RuntimeLifecycleAppend,
+                AiMongoAttributionCommands.Insert,
+                requestedDocuments: 1);
+
             try
             {
                 await _collection
@@ -53,9 +59,11 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle
                         MongoAiRuntimeLifecycleEventDocument.FromEvent(normalized),
                         cancellationToken: cancellationToken)
                     .ConfigureAwait(false);
+                appendMeasurement.Succeed();
             }
             catch (MongoException exception) when (IsDuplicateKey(exception))
             {
+                appendMeasurement.Fail();
                 var existing = await GetByEventIdCoreAsync(
                         normalized.EventId,
                         cancellationToken)
@@ -70,6 +78,16 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle
                 throw new InvalidOperationException(
                     $"Runtime lifecycle event '{normalized.EventId}' already exists with a different immutable payload.",
                     exception);
+            }
+            catch (OperationCanceledException)
+            {
+                appendMeasurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                appendMeasurement.Fail();
+                throw;
             }
         }
 
@@ -225,12 +243,20 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle
                 document => document.Id,
                 eventId);
 
-            var document = await _collection
-                .Find(filter)
-                .FirstOrDefaultAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            return document?.Event;
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.RuntimeLifecycleQuery,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var document = await _collection
+                    .Find(filter)
+                    .FirstOrDefaultAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                measurement.Succeed(document is null ? 0 : 1);
+                return document?.Event;
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         private async Task<IReadOnlyList<AiRuntimeLifecycleEvent>> QueryAsync(
@@ -243,13 +269,21 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle
                 .Ascending(document => document.Event.TimestampUtc)
                 .Ascending(document => document.Id);
 
-            var documents = await _collection
-                .Find(filter)
-                .Sort(sort)
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            return documents.Select(document => document.Event).ToList();
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.RuntimeLifecycleQuery,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var documents = await _collection
+                    .Find(filter)
+                    .Sort(sort)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                measurement.Succeed(documents.Count);
+                return documents.Select(document => document.Event).ToList();
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         private async Task EnsureIndexesAsync(CancellationToken cancellationToken)

@@ -1,5 +1,6 @@
 ﻿using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
+using Multiplexed.AI.Runtime.Observability.Performance;
 using Multiplexed.Abstractions.AI.Execution.Persistence.Replay.Metadata;
 
 namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata
@@ -60,13 +61,31 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata
                     .Filter
                     .Eq(document => document.Id, executionId);
 
-            var document =
-                await this.collection
-                    .Find(filter)
-                    .FirstOrDefaultAsync(cancellationToken)
-                    .ConfigureAwait(false);
+            var loadMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.ReplayMetadataLoad,
+                AiMongoAttributionCommands.Find);
 
-            return document?.Metadata;
+            try
+            {
+                var document =
+                    await this.collection
+                        .Find(filter)
+                        .FirstOrDefaultAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                loadMeasurement.Succeed(document is null ? 0 : 1);
+
+                return document?.Metadata;
+            }
+            catch (OperationCanceledException)
+            {
+                loadMeasurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                loadMeasurement.Fail();
+                throw;
+            }
         }
 
         public async Task SaveAsync(
@@ -95,16 +114,35 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata
                     .Filter
                     .Eq(existing => existing.Id, metadata.ExecutionId);
 
-            await this.collection
-                .ReplaceOneAsync(
-                    filter,
-                    document,
-                    new ReplaceOptions
-                    {
-                        IsUpsert = true
-                    },
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var upsertMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.ReplayMetadataUpsert,
+                AiMongoAttributionCommands.Update,
+                requestedDocuments: 1);
+
+            try
+            {
+                await this.collection
+                    .ReplaceOneAsync(
+                        filter,
+                        document,
+                        new ReplaceOptions
+                        {
+                            IsUpsert = true
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                upsertMeasurement.Succeed();
+            }
+            catch (OperationCanceledException)
+            {
+                upsertMeasurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                upsertMeasurement.Fail();
+                throw;
+            }
         }
 
         private sealed class MongoAiExecutionReplayMetadataDocument

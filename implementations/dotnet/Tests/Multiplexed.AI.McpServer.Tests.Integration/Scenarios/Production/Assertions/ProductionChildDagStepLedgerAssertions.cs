@@ -5,6 +5,7 @@ using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Helpers;
 using Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Providers.Base.Runners;
 using Xunit;
 
+using Multiplexed.AI.Runtime.Observability.Performance;
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions
 {
     /// <summary>
@@ -90,6 +91,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assert
             ArgumentNullException.ThrowIfNull(queryExecutionLedgerAsync);
             ArgumentNullException.ThrowIfNull(recoveredExecutionIds);
             ArgumentException.ThrowIfNullOrWhiteSpace(proofName);
+
+            using var perf2MongoAuditAttribution =
+                AiMongoAttributionDiagnostics.OverrideForTestHarnessAudit();
 
             if (relationTimeout <= TimeSpan.Zero)
             {

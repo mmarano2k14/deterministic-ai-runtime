@@ -7,6 +7,7 @@ using Multiplexed.Abstractions.AI.Execution.Persistence.Snapshot;
 using Multiplexed.AI.Configuration;
 using Multiplexed.AI.Runtime.Execution.Persistence.Snapshot;
 using Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo;
+using Multiplexed.AI.Runtime.Observability.Performance;
 
 namespace Multiplexed.AI.DI.Persistence.Mongo
 {
@@ -55,7 +56,9 @@ namespace Multiplexed.AI.DI.Persistence.Mongo
             services.TryAddSingleton(options);
 
             services.TryAddSingleton<IMongoClient>(
-                _ => new MongoClient(options.ConnectionString));
+                _ => AiMongoAttributionDiagnostics.CreateMongoClient(
+                    options.ConnectionString,
+                    AiMongoAttributionClientRoles.Snapshot));
 
             services.TryAddSingleton<IMongoDatabase>(sp =>
             {
@@ -116,7 +119,9 @@ namespace Multiplexed.AI.DI.Persistence.Mongo
                 ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
                 ArgumentException.ThrowIfNullOrWhiteSpace(databaseName);
 
-                this.client = new MongoClient(connectionString);
+                this.client = AiMongoAttributionDiagnostics.CreateMongoClient(
+                    connectionString,
+                    AiMongoAttributionClientRoles.Snapshot);
                 this.databaseName = databaseName;
             }
 

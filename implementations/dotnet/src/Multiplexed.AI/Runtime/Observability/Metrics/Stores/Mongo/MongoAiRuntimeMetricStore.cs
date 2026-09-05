@@ -2,6 +2,7 @@
 using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Metrics.Store;
+using Multiplexed.AI.Runtime.Observability.Performance;
 
 namespace Multiplexed.AI.Runtime.Observability.Metrics.Stores.Mongo
 {
@@ -32,7 +33,9 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Stores.Mongo
         {
             var value = options?.Value ?? throw new ArgumentNullException(nameof(options));
 
-            var client = new MongoClient(value.MongoConnectionString);
+            var client = AiMongoAttributionDiagnostics.CreateMongoClient(
+                value.MongoConnectionString,
+                AiMongoAttributionClientRoles.MetricStore);
             var database = client.GetDatabase(value.MongoDatabaseName);
 
             _collection = database.GetCollection<AiRuntimeMetricRecord>(
@@ -46,10 +49,29 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Stores.Mongo
         {
             ArgumentNullException.ThrowIfNull(record);
 
-            await _collection.InsertOneAsync(
-                    record,
-                    cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
+            var appendMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.MetricAppend,
+                AiMongoAttributionCommands.Insert,
+                requestedDocuments: 1);
+
+            try
+            {
+                await _collection.InsertOneAsync(
+                        record,
+                        cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+                appendMeasurement.Succeed();
+            }
+            catch (OperationCanceledException)
+            {
+                appendMeasurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                appendMeasurement.Fail();
+                throw;
+            }
         }
     }
 }

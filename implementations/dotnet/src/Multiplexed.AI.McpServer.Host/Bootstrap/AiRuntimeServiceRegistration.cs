@@ -24,6 +24,7 @@ using Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata;
 using Multiplexed.AI.Runtime.Execution.Retention.Policies;
 using Multiplexed.AI.Runtime.Observability.Ledger.DI;
 using Multiplexed.AI.Runtime.Observability.Ledger.Mongo;
+using Multiplexed.AI.Runtime.Observability.Performance;
 using Multiplexed.AI.Runtime.Pipeline.Steps.Test;
 using Multiplexed.Rbac.Core.ExecutionContext;
 using Multiplexed.Rbac.Core.Runtime.DI;
@@ -274,7 +275,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 ?? "multiplexed-ai";
 
             services.TryAddSingleton<IMongoClient>(
-                _ => new MongoClient(connectionString));
+                _ => AiMongoAttributionDiagnostics.CreateMongoClient(
+                    connectionString,
+                    AiMongoAttributionClientRoles.SharedRuntime));
 
             services.AddMongoAiDecisionLedger(options =>
             {
@@ -338,7 +341,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             services.RemoveAll<IAiExecutionReplayMetadataStore>();
 
             services.TryAddSingleton<IMongoClient>(
-                _ => new MongoClient(connectionString));
+                _ => AiMongoAttributionDiagnostics.CreateMongoClient(
+                    connectionString,
+                    AiMongoAttributionClientRoles.SharedRuntime));
 
             services.AddSingleton<IAiExecutionReplayMetadataStore>(
                 serviceProvider =>
@@ -433,7 +438,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 ?? "ai_runtime_recovery_forensics";
 
             services.TryAddSingleton<IMongoClient>(
-                _ => new MongoClient(connectionString));
+                _ => AiMongoAttributionDiagnostics.CreateMongoClient(
+                    connectionString,
+                    AiMongoAttributionClientRoles.SharedRuntime));
 
             services.AddMongoAiRuntimeRecoveryForensics(
                 configureMongo: options =>

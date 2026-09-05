@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using Xunit.Abstractions;
 using Multiplexed.Abstractions.AI.Observability.Events;
 
+using Multiplexed.AI.Runtime.Observability.Performance;
 namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assertions
 {
     /// <summary>
@@ -45,6 +46,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Assert
             ArgumentException.ThrowIfNullOrWhiteSpace(controlPlaneId);
             ArgumentException.ThrowIfNullOrWhiteSpace(pipelineName);
             ArgumentNullException.ThrowIfNull(output);
+
+            using var perf2MongoAuditAttribution =
+                AiMongoAttributionDiagnostics.OverrideForTestHarnessAudit();
 
             var expectedTimeline =
                 new[]
