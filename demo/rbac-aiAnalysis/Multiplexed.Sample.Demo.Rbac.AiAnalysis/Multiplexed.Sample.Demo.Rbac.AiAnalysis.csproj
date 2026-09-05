@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.4" />
+		<PackageReference Include="NServiceBus" Version="9.2.9" />
+		<PackageReference Include="NServiceBus.RabbitMQ" Version="9.2.2" />
+		<PackageReference Include="Swashbuckle.AspNetCore" Version="9.0.6" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\..\implementations\dotnet\Samples\MultiplexedRbac.Sample.Crm.Contracts\MultiplexedRbac.Sample.Crm.Contracts.csproj" />
+		<ProjectReference Include="..\..\..\implementations\dotnet\Samples\MultiplexedRbac.Sample.Crm.Services\MultiplexedRbac.Sample.Crm.Services.csproj" />
+		<ProjectReference Include="..\..\..\implementations\dotnet\src\Multiplexed.Abstractions\Multiplexed.Abstractions.csproj" />
+		<ProjectReference Include="..\..\..\implementations\dotnet\src\Multiplexed.AI\Multiplexed.AI.csproj" />
+		<ProjectReference Include="..\..\..\implementations\dotnet\src\Multiplexed.Rbac.Core\Multiplexed.Rbac.Core.csproj" />
+		<ProjectReference Include="..\..\..\implementations\dotnet\src\Multiplexed.Realtime\Multiplexed.Realtime.csproj" />
+	</ItemGroup>
+
+</Project>
