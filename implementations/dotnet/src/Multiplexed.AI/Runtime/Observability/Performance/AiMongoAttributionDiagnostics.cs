@@ -1,4 +1,4 @@
-using MongoDB.Driver;
+﻿using MongoDB.Driver;
 using MongoDB.Driver.Core.Events;
 using StackExchange.Redis;
 using System;
@@ -102,6 +102,7 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
     public static class AiMongoAttributionClientRoles
     {
         public const string SharedRuntime = "SharedRuntime";
+        public const string SharedEquivalentClient = "SharedEquivalentClient";
         public const string SharedDriverCluster = "SharedDriverCluster";
         public const string Snapshot = "Snapshot";
         public const string MetricStore = "MetricStore";
@@ -360,6 +361,7 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
             new[]
             {
                 AiMongoAttributionClientRoles.SharedRuntime,
+                AiMongoAttributionClientRoles.SharedEquivalentClient,
                 AiMongoAttributionClientRoles.SharedDriverCluster,
                 AiMongoAttributionClientRoles.Snapshot,
                 AiMongoAttributionClientRoles.MetricStore,

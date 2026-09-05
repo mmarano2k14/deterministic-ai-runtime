@@ -3,7 +3,7 @@ using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.Execution.Persistence.Snapshot;
 using Multiplexed.AI.Configuration;
 using Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo;
-using Multiplexed.AI.Runtime.Observability.Performance;
+using Multiplexed.AI.Stores.Mongo;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -50,9 +50,8 @@ namespace Multiplexed.AI.DI.Persistence.Mongo
                     "AI execution snapshot Mongo collection name cannot be null or empty.");
             }
 
-            var client = AiMongoAttributionDiagnostics.CreateMongoClient(
-                options.ConnectionString,
-                AiMongoAttributionClientRoles.Snapshot);
+            var client = AiMongoClientFactory.GetOrCreate(
+                options.ConnectionString);
             var database = client.GetDatabase(options.DatabaseName);
 
             var collection = database.GetCollection<AiExecutionSnapshotDocument<TContextSnapshot>>(
