@@ -194,6 +194,33 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Performance
         }
 
         [Fact]
+        public void Enabled_EquivalentClientsAcrossRoles_Should_Preserve_SharedDriverCluster()
+        {
+            using var scope = EnableScope();
+            var connectionString =
+                $"mongodb://localhost:27017/?appName=perf2-cluster-integrity-{Guid.NewGuid():N}";
+
+            using var first = AiMongoAttributionDiagnostics.CreateMongoClient(
+                connectionString,
+                AiMongoAttributionClientRoles.Snapshot);
+            using var second = AiMongoAttributionDiagnostics.CreateMongoClient(
+                connectionString,
+                AiMongoAttributionClientRoles.PayloadStore);
+
+            Assert.Same(first.Cluster, second.Cluster);
+
+            var pools = AiMongoAttributionDiagnostics.SnapshotCurrentProcessDriverPools();
+            Assert.Contains(
+                pools,
+                item => item.ClientRole == AiMongoAttributionClientRoles.Snapshot &&
+                        item.ClientInstancesObserved == 1L);
+            Assert.Contains(
+                pools,
+                item => item.ClientRole == AiMongoAttributionClientRoles.PayloadStore &&
+                        item.ClientInstancesObserved == 1L);
+        }
+
+        [Fact]
         public void Aggregate_Should_Preserve_Process_Snapshots()
         {
             var operation = new AiMongoAttributionOperationSnapshot(

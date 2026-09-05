@@ -698,6 +698,38 @@ You need:
 
 To use `Ask AI` and Child re-analysis, configure the AI provider expected by the demo API.
 
+### OpenAI API key
+
+The demo backend reads the OpenAI credential from the server-side environment variable:
+
+```text
+OPENAI_API_KEY
+```
+
+PowerShell:
+
+```powershell
+$env:OPENAI_API_KEY="your-openai-api-key"
+```
+
+Bash / zsh:
+
+```bash
+export OPENAI_API_KEY="your-openai-api-key"
+```
+
+Set the variable in the terminal or process environment that starts:
+
+```text
+Multiplexed.Sample.Demo.Rbac.AiAnalysis
+```
+
+Then start the demo API from that same environment.
+
+> **Security:** keep the API key server-side. Do not place it in the Next.js client, do not expose it through a `NEXT_PUBLIC_*` variable, and do not commit the key to the repository.
+
+The current demo provider uses the OpenAI Responses API. Provider settings such as model and endpoint remain backend configuration; only the secret API key is required through `OPENAI_API_KEY` for the default OpenAI setup.
+
 ---
 
 ## 1. Start Redis
@@ -751,8 +783,18 @@ demo/rbac-aiAnalysis
 
 From the repository root:
 
-```bash
+```powershell
+$env:OPENAI_API_KEY="your-openai-api-key"
+
 dotnet run --project .\demo\rbac-aiAnalysis\Multiplexed.Sample.Demo.Rbac.AiAnalysis.csproj
+```
+
+On Bash / zsh:
+
+```bash
+export OPENAI_API_KEY="your-openai-api-key"
+
+dotnet run --project ./demo/rbac-aiAnalysis/Multiplexed.Sample.Demo.Rbac.AiAnalysis.csproj
 ```
 
 The `Multiplexed.Sample.Demo.Rbac.AiAnalysis` API exposes the demo endpoints used by the Next.js client, including login, scenario execution, runtime analysis, approval, verification, Child DAG investigation, and realtime events.
