@@ -6,6 +6,53 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 0.0.8.6 - 2026-09-02  — PERF2 MongoDB Runtime Improvements
+
+## MongoDB persistence and runtime efficiency
+
+- Consolidated equivalent MongoDB client instances so runtime components reuse the same client for identical connection configurations while preserving configuration isolation.
+- Added bounded batching for best-effort runtime trace persistence, reducing physical MongoDB write commands without weakening execution, replay, lifecycle, or recovery guarantees.
+- Centralized durable Child DAG reconciliation on control-plane-capable hosts, removing redundant global reconciliation scans from runtime-only worker processes.
+- Reduced repeated Child DAG relation reads while preserving durable relation state, compare-and-set transitions, ownership checks, continuation handling, and recovery behavior.
+- Removed duplicated persisted step projections from execution snapshots. The authoritative step state remains stored once and the existing snapshot API is reconstructed on read.
+- Preserved the existing distributed decision-ledger sequence contract after validating that range allocation could weaken global ordering guarantees across independent writers.
+- Kept MongoDB index initialization unchanged after measurement showed its remaining cost was not material enough to justify additional runtime complexity.
+- Improved MongoDB connection reuse and substantially reduced connection churn under multi-process runtime workloads.
+- Reduced MongoDB read amplification and network traffic in the production recovery scenario while preserving the same durable execution workload.
+- Preserved full recovery, replay, ledger, trace, lifecycle, forensics, recursive Child DAG, and runtime ownership proofs throughout the changes.
+
+### Validation
+
+The production validation scenario continues to prove:
+
+- 36 of 36 parent executions completed.
+- 108 recursive child executions completed.
+- 144 durable executions completed in total.
+- 7,308 logical steps completed exactly.
+- 8 recovery operations completed.
+- No recursive child steps were missing.
+- No unexpected duplicate logical steps were observed.
+- No runtime ownership transition violations were observed.
+- Parent replay validation completed for all 36 executions.
+- Process-kill execution identity continuity remained valid.
+- Runtime trace, lifecycle, ledger, and recovery-forensics evidence remained available.
+
+### Observed datastore impact
+
+For the same production-like durable workload, the final runtime showed substantially lower MongoDB resource usage compared with the earlier reference run, including:
+
+- approximately 19% fewer MongoDB operations;
+- approximately 28% fewer MongoDB network requests;
+- approximately 38% less MongoDB network output;
+- approximately 85% fewer new MongoDB connections;
+- approximately 86% fewer MongoDB read operations;
+- approximately 87% fewer MongoDB `FIND` commands;
+- approximately 26% fewer MongoDB `INSERT` commands.
+
+These changes are reported as datastore-efficiency improvements. No deterministic end-to-end execution-time improvement is claimed from the current single-run comparison.
+
+---
+
 ## 0.0.8.6 - 2026-09-02  —  PERF1 Redis Performance
 
 **Canonical scenario:** gRPC + ProcessHostPool + ContinuationConsume  

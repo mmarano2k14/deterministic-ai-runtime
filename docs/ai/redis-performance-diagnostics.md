@@ -225,6 +225,7 @@ These boundaries prioritize deterministic recovery and ownership correctness ove
 
 ## Related Documentation
 
+- [MongoDB Performance Diagnostics](mongodb-performance-diagnostics.md)
 - [Observability](observability.md)
 - [Runtime Metrics](runtime-metrics.md)
 - [Distributed Execution](distributed-execution.md)

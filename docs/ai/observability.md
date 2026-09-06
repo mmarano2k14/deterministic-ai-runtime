@@ -7,6 +7,8 @@ This document summarizes the focused observability documents:
 - [Execution-Correlated Decision Ledger](execution-correlated-ledger.md)
 - [Observability, Metrics, and Tracing](observability-tracing.md)
 - [Runtime Metrics](runtime-metrics.md)
+- [Redis Performance Diagnostics](redis-performance-diagnostics.md)
+- [MongoDB Performance Diagnostics](mongodb-performance-diagnostics.md)
 - [Runtime Recovery Forensics](runtime-recovery-forensics.md)
 - [Control-Plane Ledger Causal Chain](control-plane-ledger-causal-chain.md)
 - [Recovery Replay Ledger Trace Proof](recovery-replay-ledger-trace-proof.md)
@@ -818,6 +820,7 @@ The Deterministic AI Runtime observability foundation now includes:
 - control-plane causal chain ledger for scale-out and recovery
 - tenant-scoped observability isolation
 - recovery proof across replay, ledger, trace, and forensics
+- opt-in Redis and MongoDB performance attribution for bounded distributed datastore investigations
 
 This makes the runtime observable not only as a workflow executor, but as a distributed AI execution system.
 

@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Mongo;
@@ -114,6 +115,23 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution
             Assert.NotNull(snapshot.Record);
             Assert.NotNull(snapshot.State);
             Assert.NotEmpty(snapshot.Steps);
+            Assert.Equal(snapshot.State.Steps.Count, snapshot.Steps.Count);
+
+            // PERF2-2E contract: State.Steps is the single durable Mongo representation.
+            // The public top-level Steps view is rehydrated by the store on read.
+            var mongoClient = new MongoClient(ConnectionString);
+            var rawCollection = mongoClient
+                .GetDatabase(DatabaseName)
+                .GetCollection<BsonDocument>(CollectionName);
+
+            var rawSnapshot = await rawCollection
+                .Find(Builders<BsonDocument>.Filter.Eq("ExecutionId", result.ExecutionId))
+                .FirstOrDefaultAsync();
+
+            Assert.NotNull(rawSnapshot);
+            Assert.False(rawSnapshot!.Contains("Steps"));
+            Assert.True(rawSnapshot.Contains("State"));
+            Assert.True(rawSnapshot["State"].AsBsonDocument.Contains("Steps"));
         }
 
         [Fact]

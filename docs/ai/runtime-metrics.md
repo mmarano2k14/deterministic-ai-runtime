@@ -1102,6 +1102,8 @@ Together they support:
 - [Runtime Queue Control](runtime-queue-control.md)
 - [Execution-Correlated Ledger](execution-correlated-ledger.md)
 - [Observability and Tracing](observability-tracing.md)
+- [Redis Performance Diagnostics](redis-performance-diagnostics.md)
+- [MongoDB Performance Diagnostics](mongodb-performance-diagnostics.md)
 - [Retention and Compaction](retention-and-compaction.md)
 - [Retry and Recovery](retry-and-recovery.md)
 - [Policy-Driven Execution](policy-driven-execution.md)
