@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Scheduling;
 using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Runtime.Execution.Engine.Models;
@@ -198,13 +198,33 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
         /// <param name="error">The failure message to persist.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns><c>true</c> when the failure transition was accepted; otherwise <c>false</c>.</returns>
-        public async Task<bool> TryFailStepAsync(
+        public Task<bool> TryFailStepAsync(
             string executionId,
             string stepName,
             string claimToken,
             string? error,
+            CancellationToken cancellationToken = default) =>
+            TryFailCoreAsync(executionId, stepName, claimToken, error, string.Empty, cancellationToken);
+
+        /// <summary>Preserves custom failure data and receipt without changing claim or retry semantics.</summary>
+        public Task<bool> TryFailStepWithResultAsync(
+            string executionId, string stepName, string claimToken, AiStepResult result,
             CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(result);
+            if (result.Success || result.EffectiveOutcome != AiStepExecutionOutcome.Fail ||
+                result.InvocationReceipt is null || string.IsNullOrWhiteSpace(result.Error) ||
+                string.IsNullOrWhiteSpace(result.InvocationReceipt.OperationId) ||
+                string.IsNullOrWhiteSpace(result.InvocationReceipt.ResultSha256))
+                throw new InvalidOperationException("The failure-result transition requires a failed result with its server receipt.");
+            return TryFailCoreAsync(executionId, stepName, claimToken, result.Error,
+                JsonSerializer.Serialize(result, _services.JsonOptions), cancellationToken);
+        }
+
+        private async Task<bool> TryFailCoreAsync(string executionId, string stepName, string claimToken,
+            string? error, string resultJson, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             if (string.IsNullOrWhiteSpace(executionId))
                 throw new ArgumentException("Execution id cannot be null or empty.", nameof(executionId));
 
@@ -223,7 +243,8 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                     stepKey,
                     claimToken,
                     nowUnix,
-                    error ?? string.Empty);
+                    error ?? string.Empty,
+                    resultJson);
             }
             catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
             {
@@ -233,7 +254,8 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                     stepKey,
                     claimToken,
                     nowUnix,
-                    error ?? string.Empty);
+                    error ?? string.Empty,
+                    resultJson);
             }
         }
 
@@ -538,7 +560,8 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             string stepKey,
             string claimToken,
             long nowUnix,
-            string error)
+            string error,
+            string resultJson)
         {
             var result = await _failScript.EvaluateAsync(
                 _services.Database,
@@ -547,7 +570,8 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                     stepKey = (RedisKey)stepKey,
                     claimToken = (RedisValue)claimToken,
                     nowUnix = (RedisValue)nowUnix,
-                    error = (RedisValue)error
+                    error = (RedisValue)error,
+                    resultJson = (RedisValue)resultJson
                 });
             Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
                 _services.Database,

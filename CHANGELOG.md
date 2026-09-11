@@ -6,11 +6,26 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
-## 0.0.8.6 - 2026-09-11 — Multilanguage SDK Server Foundations
+## Unreleased
 
 Runtime-side contracts, binding, policy evaluation, MCP integration, and durable invocation persistence for an external multilanguage SDK. The public SDK library is not included; its API and models must remain independent of runtime DLLs and internal CLR contracts.
 
 ### Added
+
+#### Durable custom invocation and DAG continuation
+
+- Added opt-in `AiDurableInvocationStepAdapterFactory` registrations for Python, TypeScript, and .NET bindings. Factory creation remains free of worker startup, tenant state, and I/O.
+- Added `AiDurableInvocationDagBinding` to reload and hash-verify the existing execution-bound pipeline definition. Reject missing snapshots, incompatible call sites, changed pipeline versions, and mismatched implementation or language bindings.
+- Added `IAiDurableInvocationTargetResolver` as a trusted server extension for exact authorized publication material. No default resolver, artifact publication service, or worker transport is installed.
+- Prepare the logical generation-zero operation before returning `Park`. Re-entry reads frozen inputs and target references from the journal instead of reevaluating current inputs or resolving a newer publication.
+- Map authoritative success/failure payloads to `AiStepResult.Value`. Worker JSON cannot select runtime outcomes, grant permissions, provide engine payload references, or forge the server application receipt.
+- Added `AiDurableInvocationApplicationReceipt` to correlate the logical operation and authoritative result digest with the persisted call-site result.
+- Added tenant/group/control-plane-scoped continuation coordination through the existing shared controller, `QueueFirst` submission, and normal external-wait request. Stable continuation identities do not create new executions or request infrastructure recovery.
+- Keep early results `Pending` until a durable wait or exact terminal application is observed. Keep `Scheduled` candidates retryable after queue acceptance, duplicate notifications, and interrupted dispatch.
+- Acknowledge application only after an exact terminal call-site receipt and a terminal parent are observed. A terminal parent without matching application evidence suppresses further continuation. A terminal call site alone retains the convergence obligation.
+- Use the full step resolver for archived call-site results. Missing records or archived payloads retain continuation intent instead of being treated as successful application.
+- Added bounded reconciliation and an explicitly configured hosted poller. Trusted scopes are mandatory; independent dependency-injection scopes restore the existing execution context for each tenant pass.
+- Added `DeferContinuationAsync` to rotate retained or failed candidates behind unvisited records without changing results, assignment fences, or continuation disposition.
 
 #### Durable invocation journal
 
@@ -77,12 +92,21 @@ Runtime-side contracts, binding, policy evaluation, MCP integration, and durable
 
 ### Changed
 
+- Extend the existing DAG failure transition with optional atomic result/receipt persistence. Local execution stores custom failure evidence in its normal state write; batch and distributed execution select `TryFailStepWithResultAsync` only for receipt-bearing results.
+- Add a fail-closed default interface implementation for DAG stores that do not support atomic failure-result persistence. The built-in Redis store implements the boundary; native error-only calls retain their original path.
+- Extend the existing Redis failure script with an optional serialized result parameter. Claim-token checks, retry budget, lease clearing, and status decisions are unchanged.
+- Permit journal `Pending -> Pending` revision updates for reconciliation deferral. `Scheduled -> Pending` and all mutations of acknowledged continuations remain forbidden.
 - Pass the effective `ConcurrencyAdmissionDefinition` to the concurrency engine, matching the definition used by the admission gate instead of rereading only local step configuration.
 - Read policy declarations for binding without applying policy defaults or adding throttling rules. Existing full concurrency-resolution paths retain their behavior.
 - Preserve declaration metadata through definition copies and snapshot rereading. Rebuild compiled bindings during resolution rather than introducing a separate binding-storage format.
 - Keep executable implementation resolution outside admission; the existing DAG executor continues to call the implementation already stored in the resolved plan.
 
 ### Fixed
+
+#### Complete result preservation during memory-store cloning
+
+- Preserve `Outcome`, `Value`, primary payload, data-payload references, and the invocation receipt when cloning `AiStepResult` in `MemoryAiExecutionStore`.
+- Continue to clone mutable result/data containers. Native results omit the nullable receipt during JSON serialization.
 
 #### Contextual policy adapter discovery
 
@@ -116,7 +140,7 @@ Runtime-side contracts, binding, policy evaluation, MCP integration, and durable
 - Native policy registry behavior and native governance policies remain in place; custom policy declarations do not replace native guards.
 - Existing RBAC, TRN authorization, and key rotation remain authoritative. No parallel role system is introduced.
 - Existing shared `MongoClient` lifetime fixes are preserved.
-- Runner ownership of finalization and capacity release, Redis claim scripts, existing retry mechanisms, recovery orchestration, and infrastructure-harness assertions remain unchanged.
+- Runner ownership of finalization and capacity release, Redis claim algorithms, retry decisions, recovery orchestration, and infrastructure-harness assertions are preserved. Failure persistence is extended specifically to retain custom result evidence; orchestration is not replaced.
 - Policy and MCP adapters add no retry loop. Existing runner retry behavior remains separate from adapter behavior.
 
 ### Tests
@@ -133,7 +157,9 @@ Source-declared inventory under `Tests/Multiplexed.AI.Tests/Runtime/Invocation`:
 | MCP binding, RBAC, input/result mapping, failures, and startup | 107 |
 | Durable invocation unit and BSON-contract tests | 93 |
 | Opt-in MongoDB invocation integration tests | 8 |
-| **Total** | **446** |
+| Durable invocation DAG binding, continuation, reconciliation, local execution, and persistence | 72 |
+| Opt-in Redis failure-transition tests | 4 |
+| **Total** | **522** |
 
 - Cover language inheritance, local overrides, scope isolation, legacy serialization, snapshot rereading, and retry-setting compatibility.
 - Cover adapter selection, admission without execution, typed policy outcomes, invalid responses, tenant isolation, deadlines, cancellation, and native guards.
@@ -141,7 +167,7 @@ Source-declared inventory under `Tests/Multiplexed.AI.Tests/Runtime/Invocation`:
 - Exercise the existing RBAC engine, authorization ordering, declared-input projection, response correlation, late responses, and tool/transport failure separation.
 - Cover durable preparation conflicts, JSON validation, stable identities, lease renewal/replacement, stale authority rejection, terminal-result deduplication, continuation transitions, BSON contracts, and MongoDB persistence behavior.
 
-**Validation boundary:** Counts are a static source inventory, not passing-test totals. The JSON assertion correction changes no test count. A full durable-invocation regression result after that correction is pending; MongoDB integration execution is not verified. Missing MongoDB configuration produces an explicit skip, not a passing integration test. Snapshot tests with substituted stores do not establish distributed recovery guarantees.
+**Validation boundary:** Counts are a static source inventory, not passing-test totals. Baseline durable-invocation regression was reported passing before DAG integration; MongoDB integration execution is not independently verified. The 72 new non-infrastructure cases and 4 opt-in Redis cases require .NET execution. No .NET build or tests, real Redis/MongoDB tests, or hosted workers were executed for this change. Isolated Lua checks compiled ten scripts and exercised nine failure-transition cases with substituted Redis/JSON functions; these are not Redis or C# integration results. Missing infrastructure configuration produces explicit skips, not passing integration tests. In-memory tests and serialized-store restoration do not establish multi-process recovery guarantees.
 
 ### Limitations
 
@@ -149,12 +175,12 @@ Source-declared inventory under `Tests/Multiplexed.AI.Tests/Runtime/Invocation`:
 - **Hosted execution:** No hosted Python, TypeScript, or .NET worker, worker isolation, or live worker transport is included. Adapter tests use local transport doubles.
 - **Policy coverage:** Custom evaluation covers `Concurrency` only. Other policy families and enforcement of side-effect-free execution remain outside the implementation.
 - **MCP transport:** No real outbound MCP network client is installed or enabled automatically. The current adapter validates normalized internal responses.
-- **Durable integration:** The journal is not connected to a custom execution adapter, live dispatch, DAG `Park`, result application, or continuation reconciliation. Its acknowledgement contract requires trusted runtime integration.
-- **Publication:** Reference format and per-operation immutability checks do not verify artifact existence or downloaded content. Complete source/dependency publication and run-wide version pinning remain separate integration requirements.
+- **Durable integration:** The opt-in adapter and continuation bridge use existing DAG paths, but production hosts do not enable them automatically. Live worker dispatch is not implemented. The bridge currently supports logical generation zero; journal support for additional generations is not an automatic retry/reexecution policy. Third-party distributed stores must implement atomic failure-result persistence before using this capability.
+- **Publication:** The existing pinned pipeline-definition hash is verified, but artifact existence, package bytes, dependencies, and complete run-wide publication binding still require the publication service. The trusted target resolver must resolve the exact definition-scoped material and perform existing authorization checks; it must never select latest.
 - **External effects:** Stable operation identities and stored results do not guarantee external-effect deduplication. MCP `RequestId` correlates an attempt, not a business operation. A timeout does not establish whether a remote side effect occurred; provider idempotency and reconciliation remain necessary.
 - **Input projection:** Excluding automatic context export is not secret detection; explicitly declared input data remains eligible for transmission.
 - **Observation:** Failures before policy evaluation starts are not guaranteed to emit `policy.failed`.
-- **Recovery and replay:** Existing runtime recovery, replay, and Child DAG capabilities are unchanged. End-to-end failure recovery and audit replay for the new invocation modes are not established by binding or snapshot tests.
+- **Recovery and replay:** Existing runtime recovery, replay, and Child DAG orchestration remain in place. Test coverage includes local DAG transitions and simulated interruptions; production multi-process recovery, Redis/MongoDB combinations, and audit replay with real workers remain unverified. Retention must preserve the journal and complete parent evidence until continuation acknowledgement; no new cleanup policy is installed.
 
 ### Implementation References
 
@@ -169,6 +195,8 @@ Paths are relative to `implementations/dotnet`.
 | Concurrency admission and policy evaluation | `src/Multiplexed.AI/Runtime/AI/Concurrency/`, `src/Multiplexed.AI/Runtime/AI/Policies/`, `src/Multiplexed.AI/Runtime/Execution/Engine/Steps/` |
 | MCP adapter and transport contracts | `src/Multiplexed.AI/Runtime/Invocation/Mcp/`, `src/Multiplexed.Abstractions/AI/Invocation/Mcp/` |
 | Durable journal, MongoDB store, and registration | `src/Multiplexed.AI/Runtime/Invocation/Durable/` |
+| Durable custom DAG bridge and explicit reconciliation | `src/Multiplexed.AI/Runtime/Invocation/Durable/Dag/`, `src/Multiplexed.AI/Runtime/Invocation/Durable/DI/` |
+| Atomic failure-result persistence | `src/Multiplexed.AI/Stores/IAiDagExecutionStore.cs`, `src/Multiplexed.AI/Stores/Cache/Redis/Dag/RedisDagStoreTransitionService.cs`, `src/Multiplexed.AI/Stores/Cache/Redis/Lua/RedisDagLuaScripts.cs` |
 | Durable invocation contracts | `src/Multiplexed.Abstractions/AI/Invocation/Durable/` |
 | Invocation regression tests | `Tests/Multiplexed.AI.Tests/Runtime/Invocation/` |
 

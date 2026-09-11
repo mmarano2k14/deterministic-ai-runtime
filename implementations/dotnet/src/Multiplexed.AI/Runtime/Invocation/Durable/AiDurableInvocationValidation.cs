@@ -143,7 +143,9 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable
                 Require(before.ContinuationStatus is AiDurableInvocationContinuationStatus.Pending or AiDurableInvocationContinuationStatus.Scheduled,
                     "Acknowledged continuation is immutable.");
                 Require(after.ContinuationStatus is AiDurableInvocationContinuationStatus.Scheduled or
-                    AiDurableInvocationContinuationStatus.Applied or AiDurableInvocationContinuationStatus.Suppressed,
+                    AiDurableInvocationContinuationStatus.Applied or AiDurableInvocationContinuationStatus.Suppressed ||
+                    before.ContinuationStatus == AiDurableInvocationContinuationStatus.Pending &&
+                    after.ContinuationStatus == AiDurableInvocationContinuationStatus.Pending,
                     "Invalid continuation transition.");
                 return;
             }

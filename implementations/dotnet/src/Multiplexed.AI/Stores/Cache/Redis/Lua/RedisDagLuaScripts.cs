@@ -1,4 +1,4 @@
-﻿using StackExchange.Redis;
+using StackExchange.Redis;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -472,6 +472,12 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
 
             if retryDelayMs < 0 then
                 retryDelayMs = 0
+            end
+
+            -- Native calls pass an empty string and preserve their historical result shape.
+            -- Custom failure evidence is stored atomically with the same claim-fenced transition.
+            if @resultJson ~= '' then
+                step.Result = cjson.decode(@resultJson)
             end
 
             step.Error = @error

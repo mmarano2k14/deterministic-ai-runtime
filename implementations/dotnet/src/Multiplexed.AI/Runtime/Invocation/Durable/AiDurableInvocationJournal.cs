@@ -155,6 +155,21 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable
             }, cancellationToken);
 
         /// <summary>
+        /// Rotates a retained candidate after a bounded reconciliation pass. This changes
+        /// neither the result nor continuation disposition and is not queue acknowledgement.
+        /// A monotonic millisecond avoids starvation when several passes share a clock tick.
+        /// </summary>
+        public Task<AiDurableInvocationRecord?> DeferContinuationAsync(
+            AiDurableInvocationScope scope, AiDurableInvocationIdentity identity,
+            CancellationToken cancellationToken = default) =>
+            ChangeAsync(scope, identity, (record, now) =>
+            {
+                if (!AiDurableInvocationValidation.Terminal(record) || record.ContinuationStatus is
+                    AiDurableInvocationContinuationStatus.Applied or AiDurableInvocationContinuationStatus.Suppressed) return null;
+                return Next(record, now > record.UpdatedAtUtc ? now : record.UpdatedAtUtc.AddMilliseconds(1));
+            }, cancellationToken);
+
+        /// <summary>
         /// Accepts correlated evidence from trusted continuation code, not from a worker.
         /// This journal does not inspect the DAG: the caller must have observed actual
         /// result application or an authoritative reason that the parent cannot resume.
