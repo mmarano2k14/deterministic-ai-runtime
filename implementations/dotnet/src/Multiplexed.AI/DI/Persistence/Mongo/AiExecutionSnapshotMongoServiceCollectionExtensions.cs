@@ -56,7 +56,7 @@ namespace Multiplexed.AI.DI.Persistence.Mongo
             services.TryAddSingleton(options);
 
             services.TryAddSingleton<IMongoClient>(
-                _ => AiMongoClientFactory.GetOrCreate(
+                AiMongoClientFactory.GetOrCreate(
                     options.ConnectionString));
 
             services.TryAddSingleton<IMongoDatabase>(sp =>

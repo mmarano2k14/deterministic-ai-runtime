@@ -73,7 +73,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Lifecycle
             });
 
             services.TryAddSingleton<IMongoClient>(
-                _ => AiMongoClientFactory.GetOrCreate(
+                AiMongoClientFactory.GetOrCreate(
                     connectionString));
             services.TryAddSingleton(provider =>
             {

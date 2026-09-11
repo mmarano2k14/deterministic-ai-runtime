@@ -124,7 +124,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.Forensics
             });
 
             services.TryAddSingleton<IMongoClient>(
-                _ => AiMongoClientFactory.GetOrCreate(
+                AiMongoClientFactory.GetOrCreate(
                     connectionString));
             services.TryAddSingleton(provider =>
             {

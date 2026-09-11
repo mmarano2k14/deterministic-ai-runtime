@@ -275,7 +275,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 ?? "multiplexed-ai";
 
             services.TryAddSingleton<IMongoClient>(
-                _ => AiMongoClientFactory.GetOrCreate(
+                AiMongoClientFactory.GetOrCreate(
                     connectionString));
 
             services.AddMongoAiDecisionLedger(options =>
@@ -340,7 +340,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             services.RemoveAll<IAiExecutionReplayMetadataStore>();
 
             services.TryAddSingleton<IMongoClient>(
-                _ => AiMongoClientFactory.GetOrCreate(
+                AiMongoClientFactory.GetOrCreate(
                     connectionString));
 
             services.AddSingleton<IAiExecutionReplayMetadataStore>(
@@ -436,7 +436,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 ?? "ai_runtime_recovery_forensics";
 
             services.TryAddSingleton<IMongoClient>(
-                _ => AiMongoClientFactory.GetOrCreate(
+                AiMongoClientFactory.GetOrCreate(
                     connectionString));
 
             services.AddMongoAiRuntimeRecoveryForensics(
