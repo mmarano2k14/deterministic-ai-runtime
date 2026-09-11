@@ -1775,6 +1775,8 @@ The full reference is:
 - [Concurrency Hardening and Adversarial Validation](concurrency-hardening-and-adversarial-validation.md)
 - [Replay and Audit](replay-and-audit.md)
 - [Observability](observability.md)
+- [Redis Performance Diagnostics](redis-performance-diagnostics.md)
+- [MongoDB Performance Diagnostics](mongodb-performance-diagnostics.md)
 - [Config-Driven Runtime](config-driven-runtime.md)
 - [Policy-Driven Execution](policy-driven-execution.md)
 - [Step Plugins](step-plugins.md)

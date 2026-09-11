@@ -24,7 +24,7 @@ using Multiplexed.AI.Runtime.Execution.Persistence.Replay.Metadata;
 using Multiplexed.AI.Runtime.Execution.Retention.Policies;
 using Multiplexed.AI.Runtime.Observability.Ledger.DI;
 using Multiplexed.AI.Runtime.Observability.Ledger.Mongo;
-using Multiplexed.AI.Runtime.Observability.Performance;
+using Multiplexed.AI.Stores.Mongo;
 using Multiplexed.AI.Runtime.Pipeline.Steps.Test;
 using Multiplexed.Rbac.Core.ExecutionContext;
 using Multiplexed.Rbac.Core.Runtime.DI;
@@ -275,9 +275,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 ?? "multiplexed-ai";
 
             services.TryAddSingleton<IMongoClient>(
-                _ => AiMongoAttributionDiagnostics.CreateMongoClient(
-                    connectionString,
-                    AiMongoAttributionClientRoles.SharedRuntime));
+                AiMongoClientFactory.GetOrCreate(
+                    connectionString));
 
             services.AddMongoAiDecisionLedger(options =>
             {
@@ -341,9 +340,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             services.RemoveAll<IAiExecutionReplayMetadataStore>();
 
             services.TryAddSingleton<IMongoClient>(
-                _ => AiMongoAttributionDiagnostics.CreateMongoClient(
-                    connectionString,
-                    AiMongoAttributionClientRoles.SharedRuntime));
+                AiMongoClientFactory.GetOrCreate(
+                    connectionString));
 
             services.AddSingleton<IAiExecutionReplayMetadataStore>(
                 serviceProvider =>
@@ -438,9 +436,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 ?? "ai_runtime_recovery_forensics";
 
             services.TryAddSingleton<IMongoClient>(
-                _ => AiMongoAttributionDiagnostics.CreateMongoClient(
-                    connectionString,
-                    AiMongoAttributionClientRoles.SharedRuntime));
+                AiMongoClientFactory.GetOrCreate(
+                    connectionString));
 
             services.AddMongoAiRuntimeRecoveryForensics(
                 configureMongo: options =>

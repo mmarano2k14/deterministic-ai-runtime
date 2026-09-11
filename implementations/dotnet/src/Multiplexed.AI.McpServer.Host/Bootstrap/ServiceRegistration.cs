@@ -22,6 +22,7 @@ using Multiplexed.AI.Runtime.ControlPlane.DI;
 using Multiplexed.AI.Runtime.ControlPlane.Discovery;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Dispatch;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Reconciliation;
 using Multiplexed.AI.Runtime.Execution.Instance.Worker;
 using Multiplexed.Sample.External.Plugins.Steps.Steps;
 using StackExchange.Redis;
@@ -575,6 +576,15 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             Console.WriteLine(
                 "[RUNTIME INSTANCE ONLY] ConfigureRuntimeInstanceOnly executed.");
+
+            // Child continuation reconciliation is a control-plane-wide durable liveness fallback.
+            // RuntimeInstanceOnly processes share the same Mongo relation store and control-plane id, so
+            // running the global reconciliation scan in every runtime process multiplies identical reads
+            // without adding durable authority. The control-plane capable host retains the reconciler.
+            services.Configure<AiChildContinuationReconciliationOptions>(options =>
+            {
+                options.Enabled = false;
+            });
 
             LogPoolConfiguration(
                 configuration,

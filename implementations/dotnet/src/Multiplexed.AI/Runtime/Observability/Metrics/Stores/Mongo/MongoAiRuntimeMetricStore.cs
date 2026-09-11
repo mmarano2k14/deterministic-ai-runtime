@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.Observability.Metrics;
 using Multiplexed.Abstractions.AI.Observability.Metrics.Store;
 using Multiplexed.AI.Runtime.Observability.Performance;
+using Multiplexed.AI.Stores.Mongo;
 
 namespace Multiplexed.AI.Runtime.Observability.Metrics.Stores.Mongo
 {
@@ -33,9 +34,8 @@ namespace Multiplexed.AI.Runtime.Observability.Metrics.Stores.Mongo
         {
             var value = options?.Value ?? throw new ArgumentNullException(nameof(options));
 
-            var client = AiMongoAttributionDiagnostics.CreateMongoClient(
-                value.MongoConnectionString,
-                AiMongoAttributionClientRoles.MetricStore);
+            var client = AiMongoClientFactory.GetOrCreate(
+                value.MongoConnectionString);
             var database = client.GetDatabase(value.MongoDatabaseName);
 
             _collection = database.GetCollection<AiRuntimeMetricRecord>(

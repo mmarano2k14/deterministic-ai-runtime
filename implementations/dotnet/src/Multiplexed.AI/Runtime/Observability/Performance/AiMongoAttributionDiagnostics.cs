@@ -1,4 +1,4 @@
-using MongoDB.Driver;
+﻿using MongoDB.Driver;
 using MongoDB.Driver.Core.Events;
 using StackExchange.Redis;
 using System;
@@ -102,6 +102,8 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
     public static class AiMongoAttributionClientRoles
     {
         public const string SharedRuntime = "SharedRuntime";
+        public const string SharedEquivalentClient = "SharedEquivalentClient";
+        public const string SharedDriverCluster = "SharedDriverCluster";
         public const string Snapshot = "Snapshot";
         public const string MetricStore = "MetricStore";
         public const string PayloadStore = "PayloadStore";
@@ -359,6 +361,8 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
             new[]
             {
                 AiMongoAttributionClientRoles.SharedRuntime,
+                AiMongoAttributionClientRoles.SharedEquivalentClient,
+                AiMongoAttributionClientRoles.SharedDriverCluster,
                 AiMongoAttributionClientRoles.Snapshot,
                 AiMongoAttributionClientRoles.MetricStore,
                 AiMongoAttributionClientRoles.PayloadStore,
@@ -374,6 +378,8 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
         private static readonly ConcurrentDictionary<DriverCommandMetricKey, DriverCommandCounter> DriverCommandCounters = new();
         private static readonly ConcurrentDictionary<string, DriverPoolCounter> DriverPoolCounters = new(StringComparer.Ordinal);
         private static readonly ConcurrentDictionary<ObservedClientKey, byte> ObservedClients = new();
+        private static readonly Action<MongoDB.Driver.Core.Configuration.ClusterBuilder> SharedDriverClusterConfigurator =
+            ConfigureSharedDriverClusterAttribution;
         private static readonly AsyncLocal<OperationOverrideState?> OperationOverride = new();
         private static readonly object StateGate = new();
         private static readonly SemaphoreSlim FlushGate = new(1, 1);
@@ -456,36 +462,85 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
             var normalizedRole = NormalizeClientRole(clientRole);
             var clientIdentity = Guid.NewGuid().ToString("N");
             var settings = MongoClientSettings.FromConnectionString(connectionString);
-            var existingConfigurator = settings.ClusterConfigurator;
 
-            settings.ClusterConfigurator = clusterBuilder =>
+            // MongoDB.Driver includes ClusterConfigurator in the ClusterKey. A new closure per
+            // MongoClient therefore forces a distinct cluster/pool and would make PERF2
+            // instrumentation change the behavior it is supposed to measure. Use one shared
+            // configurator delegate for all PERF2 clients instead. Equivalent client settings
+            // can then continue to share the driver's normal process-local cluster/pools.
+            if (settings.ClusterConfigurator is null)
             {
-                existingConfigurator?.Invoke(clusterBuilder);
+                settings.ClusterConfigurator = SharedDriverClusterConfigurator;
+            }
 
-                clusterBuilder.Subscribe<CommandStartedEvent>(
-                    evt => RecordDriverCommandStarted(clientIdentity, normalizedRole, evt.CommandName));
-                clusterBuilder.Subscribe<CommandSucceededEvent>(
-                    evt => RecordDriverCommandSucceeded(clientIdentity, normalizedRole, evt.CommandName, evt.Duration));
-                clusterBuilder.Subscribe<CommandFailedEvent>(
-                    evt => RecordDriverCommandFailed(clientIdentity, normalizedRole, evt.CommandName, evt.Duration));
+            var client = new MongoClient(settings);
+            RecordClientConstructed(clientIdentity, normalizedRole);
+            return client;
+        }
 
-                clusterBuilder.Subscribe<ConnectionPoolOpenedEvent>(
-                    _ => RecordDriverPoolEvent(clientIdentity, normalizedRole, DriverPoolEvent.PoolOpened));
-                clusterBuilder.Subscribe<ConnectionPoolClosedEvent>(
-                    _ => RecordDriverPoolEvent(clientIdentity, normalizedRole, DriverPoolEvent.PoolClosed));
-                clusterBuilder.Subscribe<ConnectionOpenedEvent>(
-                    _ => RecordDriverPoolEvent(clientIdentity, normalizedRole, DriverPoolEvent.ConnectionOpened));
-                clusterBuilder.Subscribe<ConnectionClosedEvent>(
-                    _ => RecordDriverPoolEvent(clientIdentity, normalizedRole, DriverPoolEvent.ConnectionClosed));
-                clusterBuilder.Subscribe<ConnectionOpeningFailedEvent>(
-                    _ => RecordDriverPoolEvent(clientIdentity, normalizedRole, DriverPoolEvent.ConnectionOpenFailed));
-                clusterBuilder.Subscribe<ConnectionPoolCheckedOutConnectionEvent>(
-                    _ => RecordDriverPoolEvent(clientIdentity, normalizedRole, DriverPoolEvent.Checkout));
-                clusterBuilder.Subscribe<ConnectionPoolCheckingOutConnectionFailedEvent>(
-                    _ => RecordDriverPoolEvent(clientIdentity, normalizedRole, DriverPoolEvent.CheckoutFailed));
-            };
+        private static void ConfigureSharedDriverClusterAttribution(
+            MongoDB.Driver.Core.Configuration.ClusterBuilder clusterBuilder)
+        {
+            const string role = AiMongoAttributionClientRoles.SharedDriverCluster;
 
-            return new MongoClient(settings);
+            clusterBuilder.Subscribe<CommandStartedEvent>(
+                evt => RecordDriverCommandStarted(
+                    BuildDriverClusterIdentity(evt.ConnectionId.ServerId.ClusterId),
+                    role,
+                    evt.CommandName));
+            clusterBuilder.Subscribe<CommandSucceededEvent>(
+                evt => RecordDriverCommandSucceeded(
+                    BuildDriverClusterIdentity(evt.ConnectionId.ServerId.ClusterId),
+                    role,
+                    evt.CommandName,
+                    evt.Duration));
+            clusterBuilder.Subscribe<CommandFailedEvent>(
+                evt => RecordDriverCommandFailed(
+                    BuildDriverClusterIdentity(evt.ConnectionId.ServerId.ClusterId),
+                    role,
+                    evt.CommandName,
+                    evt.Duration));
+
+            clusterBuilder.Subscribe<ConnectionPoolOpenedEvent>(
+                evt => RecordDriverPoolEvent(
+                    BuildDriverClusterIdentity(evt.ClusterId),
+                    role,
+                    DriverPoolEvent.PoolOpened));
+            clusterBuilder.Subscribe<ConnectionPoolClosedEvent>(
+                evt => RecordDriverPoolEvent(
+                    BuildDriverClusterIdentity(evt.ClusterId),
+                    role,
+                    DriverPoolEvent.PoolClosed));
+            clusterBuilder.Subscribe<ConnectionOpenedEvent>(
+                evt => RecordDriverPoolEvent(
+                    BuildDriverClusterIdentity(evt.ClusterId),
+                    role,
+                    DriverPoolEvent.ConnectionOpened));
+            clusterBuilder.Subscribe<ConnectionClosedEvent>(
+                evt => RecordDriverPoolEvent(
+                    BuildDriverClusterIdentity(evt.ClusterId),
+                    role,
+                    DriverPoolEvent.ConnectionClosed));
+            clusterBuilder.Subscribe<ConnectionOpeningFailedEvent>(
+                evt => RecordDriverPoolEvent(
+                    BuildDriverClusterIdentity(evt.ClusterId),
+                    role,
+                    DriverPoolEvent.ConnectionOpenFailed));
+            clusterBuilder.Subscribe<ConnectionPoolCheckedOutConnectionEvent>(
+                evt => RecordDriverPoolEvent(
+                    BuildDriverClusterIdentity(evt.ClusterId),
+                    role,
+                    DriverPoolEvent.Checkout));
+            clusterBuilder.Subscribe<ConnectionPoolCheckingOutConnectionFailedEvent>(
+                evt => RecordDriverPoolEvent(
+                    BuildDriverClusterIdentity(evt.ClusterId),
+                    role,
+                    DriverPoolEvent.CheckoutFailed));
+        }
+
+        private static string BuildDriverClusterIdentity(object clusterId)
+        {
+            return $"cluster:{clusterId}";
         }
 
         public static AiMongoAttributionMeasurement StartOperation(
@@ -981,6 +1036,25 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
                 Interlocked.Read(ref counter.LatencyLe100Ms),
                 Interlocked.Read(ref counter.LatencyLe250Ms),
                 Interlocked.Read(ref counter.LatencyGt250Ms));
+        }
+
+        private static void RecordClientConstructed(
+            string clientIdentity,
+            string clientRole)
+        {
+            try
+            {
+                if (!TryResolveScope(out var scope))
+                {
+                    return;
+                }
+
+                EnsureScope(scope);
+                ObserveClient(clientIdentity, clientRole);
+            }
+            catch
+            {
+            }
         }
 
         private static void RecordDriverCommandStarted(

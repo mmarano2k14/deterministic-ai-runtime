@@ -2,7 +2,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
-using Multiplexed.AI.Runtime.Observability.Performance;
+using Multiplexed.AI.Stores.Mongo;
 
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Failure
 {
@@ -74,9 +74,8 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
              * of unrelated Mongo registrations.
              */
             var authoritativeDatabase =
-                AiMongoAttributionDiagnostics.CreateMongoClient(
-                    connectionString.Trim(),
-                    AiMongoAttributionClientRoles.PoolFailureJournal)
+                AiMongoClientFactory.GetOrCreate(
+                    connectionString.Trim())
                     .GetDatabase(databaseName.Trim());
 
             services.AddSingleton<IAiRuntimePoolFailureJournal>(

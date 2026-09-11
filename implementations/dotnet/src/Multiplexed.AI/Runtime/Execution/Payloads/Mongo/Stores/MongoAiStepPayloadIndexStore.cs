@@ -4,6 +4,7 @@ using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Stores;
 using Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Documents;
 using Multiplexed.AI.Runtime.Observability.Performance;
+using Multiplexed.AI.Stores.Mongo;
 
 namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
 {
@@ -58,9 +59,8 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
 
             var collectionName = $"{mongo.CollectionName}_step_index";
 
-            var client = AiMongoAttributionDiagnostics.CreateMongoClient(
-                mongo.ConnectionString,
-                AiMongoAttributionClientRoles.StepPayloadIndexStore);
+            var client = AiMongoClientFactory.GetOrCreate(
+                mongo.ConnectionString);
             var database = client.GetDatabase(mongo.DatabaseName);
             _collection = database.GetCollection<MongoAiStepPayloadIndexDocument>(collectionName);
         }

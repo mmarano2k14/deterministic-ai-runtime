@@ -7,6 +7,7 @@ using Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Documents;
 using Multiplexed.AI.Runtime.Metrics;
 using Multiplexed.AI.Runtime.Execution.Payloads;
 using Multiplexed.AI.Runtime.Observability.Performance;
+using Multiplexed.AI.Stores.Mongo;
 
 namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
 {
@@ -73,9 +74,8 @@ namespace Multiplexed.AI.Runtime.Execution.Payloads.Mongo.Stores
                     "Mongo payload store collection name is required.");
             }
 
-            var client = AiMongoAttributionDiagnostics.CreateMongoClient(
-                mongo.ConnectionString,
-                AiMongoAttributionClientRoles.PayloadStore);
+            var client = AiMongoClientFactory.GetOrCreate(
+                mongo.ConnectionString);
             var database = client.GetDatabase(mongo.DatabaseName);
             _collection = database.GetCollection<MongoAiPayloadDocument>(mongo.CollectionName);
         }

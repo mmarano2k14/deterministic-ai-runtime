@@ -2,8 +2,8 @@
 using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
 using Multiplexed.Abstractions.AI.Observability.Tracing.Store;
-using Multiplexed.AI.Stores.Mongo;
 using Multiplexed.AI.Runtime.Observability.Performance;
+using Multiplexed.AI.Stores.Mongo;
 
 namespace Multiplexed.AI.Runtime.Observability.Tracing.Stores.Mongo
 {
@@ -15,22 +15,33 @@ namespace Multiplexed.AI.Runtime.Observability.Tracing.Stores.Mongo
     /// This store persists completed runtime trace records to MongoDB for durable
     /// diagnostics, replay support, and post-execution inspection.
     /// </para>
-    ///
     /// <para>
-    /// Trace storage is observational only. It must not mutate DAG state, retry state,
-    /// retention state, or concurrency leases.
+    /// Trace storage is observational and best-effort. MongoDB writes are therefore
+    /// buffered in a bounded process-local queue and emitted through bounded batches.
+    /// Queue pressure never blocks runtime execution indefinitely.
     /// </para>
-    ///
+    /// <para>
+    /// Execution reads establish a local flush barrier before querying MongoDB so
+    /// records already accepted by this process are not hidden behind the batch window.
+    /// Physical process termination may still lose records pending in the bounded
+    /// best-effort queue, which is consistent with the existing trace contract.
+    /// </para>
     /// <para>
     /// MongoDB index creation is treated as an idempotent infrastructure operation
     /// and is executed through Mongo runtime resilience helpers to tolerate transient
     /// Docker/local socket failures.
     /// </para>
     /// </remarks>
-    public sealed class MongoAiRuntimeTraceStore : IAiRuntimeTraceStore
+    public sealed class MongoAiRuntimeTraceStore : IAiRuntimeTraceStore, IDisposable, IAsyncDisposable
     {
+        private const int BatchQueueCapacity = 1024;
+        private const int MaximumBatchSize = 64;
+        private static readonly TimeSpan MaximumFlushInterval = TimeSpan.FromMilliseconds(10);
+        private static readonly TimeSpan GracefulShutdownTimeout = TimeSpan.FromSeconds(5);
+
         private readonly IMongoCollection<AiTraceRecord> _collection;
         private readonly Lazy<Task> _ensureIndexesTask;
+        private readonly AiMongoBestEffortBatchWriter<AiTraceRecord> _batchWriter;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="MongoAiRuntimeTraceStore"/> class.
@@ -70,42 +81,27 @@ namespace Multiplexed.AI.Runtime.Observability.Tracing.Stores.Mongo
             _ensureIndexesTask = new Lazy<Task>(
                 () => EnsureIndexesAsync(CancellationToken.None),
                 LazyThreadSafetyMode.ExecutionAndPublication);
+
+            _batchWriter = new AiMongoBestEffortBatchWriter<AiTraceRecord>(
+                storeName: "trace",
+                capacity: BatchQueueCapacity,
+                maxBatchSize: MaximumBatchSize,
+                maxFlushInterval: MaximumFlushInterval,
+                flushAsync: FlushBatchAsync,
+                shutdownTimeout: GracefulShutdownTimeout);
         }
 
         /// <inheritdoc />
-        public async Task AppendAsync(
+        public Task AppendAsync(
             AiTraceRecord record,
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(record);
-
             cancellationToken.ThrowIfCancellationRequested();
 
-            await _ensureIndexesTask.Value.ConfigureAwait(false);
+            _ = _batchWriter.TryEnqueue(record);
 
-            var appendMeasurement = AiMongoAttributionDiagnostics.StartOperation(
-                AiMongoAttributionOperations.TraceAppend,
-                AiMongoAttributionCommands.Insert,
-                requestedDocuments: 1);
-
-            try
-            {
-                await _collection.InsertOneAsync(
-                        record,
-                        cancellationToken: cancellationToken)
-                    .ConfigureAwait(false);
-                appendMeasurement.Succeed();
-            }
-            catch (OperationCanceledException)
-            {
-                appendMeasurement.Cancel();
-                throw;
-            }
-            catch
-            {
-                appendMeasurement.Fail();
-                throw;
-            }
+            return Task.CompletedTask;
         }
 
         /// <inheritdoc />
@@ -114,8 +110,11 @@ namespace Multiplexed.AI.Runtime.Observability.Tracing.Stores.Mongo
             CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
-
             cancellationToken.ThrowIfCancellationRequested();
+
+            await _batchWriter
+                .FlushAsync(cancellationToken)
+                .ConfigureAwait(false);
 
             await _ensureIndexesTask.Value.ConfigureAwait(false);
 
@@ -155,6 +154,55 @@ namespace Multiplexed.AI.Runtime.Observability.Tracing.Stores.Mongo
             catch
             {
                 loadMeasurement.Fail();
+                throw;
+            }
+        }
+
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            _batchWriter.Dispose();
+        }
+
+        /// <inheritdoc />
+        public ValueTask DisposeAsync()
+        {
+            return _batchWriter.DisposeAsync();
+        }
+
+        private async Task FlushBatchAsync(
+            IReadOnlyList<AiTraceRecord> records,
+            CancellationToken cancellationToken)
+        {
+            if (records.Count == 0)
+            {
+                return;
+            }
+
+            await _ensureIndexesTask.Value.ConfigureAwait(false);
+
+            var appendMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.TraceAppend,
+                AiMongoAttributionCommands.Insert,
+                requestedDocuments: records.Count);
+
+            try
+            {
+                await _collection
+                    .InsertManyAsync(
+                        records,
+                        cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+                appendMeasurement.Succeed();
+            }
+            catch (OperationCanceledException)
+            {
+                appendMeasurement.Cancel();
+                throw;
+            }
+            catch
+            {
+                appendMeasurement.Fail();
                 throw;
             }
         }

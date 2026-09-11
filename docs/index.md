@@ -53,6 +53,7 @@ Focused AI runtime documentation is organized under:
 | [`ai/observability-tracing.md`](ai/observability-tracing.md) | Runtime tracing, trace timelines, correlation, trace storage modes, Mongo trace persistence, MemoryAndMongo mode, and tracing improvements. |
 | [`ai/runtime-metrics.md`](ai/runtime-metrics.md) | Runtime metric domains, metric storage modes, worker/retention/storage/resolver/hot-state/policy metrics, and metrics improvements. |
 | [`ai/redis-performance-diagnostics.md`](ai/redis-performance-diagnostics.md) | Activation, cross-process collection, result interpretation, safety boundaries, and measured gains for Redis performance diagnostics. |
+| [`ai/mongodb-performance-diagnostics.md`](ai/mongodb-performance-diagnostics.md) | MongoDB semantic attribution, driver/server corroboration, validated optimization boundaries, measured datastore reductions, and stop-rule decisions. |
 | [`ai/replay-and-audit.md`](ai/replay-and-audit.md) | Deterministic Replay Engine V1, snapshot restore, fingerprint validation, replay metadata, ledger/timeline diagnostics, and replay improvements. |
 | [`comparison-existing-tools.md`](comparison-existing-tools.md) | Ecosystem positioning against agent frameworks, workflow engines, orchestration tools, observability platforms, and distributed infrastructure. |
 | [`roadmap.md`](roadmap.md) | Project roadmap organized by phases. |
@@ -108,8 +109,10 @@ Start with:
 29. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
 30. [`ai/observability-tracing.md`](ai/observability-tracing.md)
 31. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-32. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-33. [`runtime-internals.md`](runtime-internals.md)
+32. [`ai/redis-performance-diagnostics.md`](ai/redis-performance-diagnostics.md)
+33. [`ai/mongodb-performance-diagnostics.md`](ai/mongodb-performance-diagnostics.md)
+34. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+35. [`runtime-internals.md`](runtime-internals.md)
 
 This path gives both the strategic positioning and the complete technical depth.
 
@@ -149,10 +152,12 @@ Start with:
 30. [`ai/execution-correlated-ledger.md`](ai/execution-correlated-ledger.md)
 31. [`ai/observability-tracing.md`](ai/observability-tracing.md)
 32. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
-33. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-34. [`ai/testing-strategy.md`](ai/testing-strategy.md)
-35. [`runtime-internals.md`](runtime-internals.md)
-36. [`roadmap.md`](roadmap.md)
+33. [`ai/redis-performance-diagnostics.md`](ai/redis-performance-diagnostics.md)
+34. [`ai/mongodb-performance-diagnostics.md`](ai/mongodb-performance-diagnostics.md)
+35. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+36. [`ai/testing-strategy.md`](ai/testing-strategy.md)
+37. [`runtime-internals.md`](runtime-internals.md)
+38. [`roadmap.md`](roadmap.md)
 
 This path gives the current architecture, configuration model, RBAC/context propagation model, tenant isolation model, control-plane/runtime split, extension model, technical reference, and next planned improvements.
 
@@ -355,6 +360,22 @@ This document explains:
 - topology-aware `MGET` batching for DAG state and runtime-registry reads
 - measured command reductions and the limits of wall-clock comparisons
 - correctness and Redis Cluster safety boundaries
+
+### [`ai/mongodb-performance-diagnostics.md`](ai/mongodb-performance-diagnostics.md)
+
+MongoDB performance diagnostics and optimization reference.
+
+This document explains:
+
+- how to enable and disable cross-process MongoDB semantic attribution
+- how semantic operation families are corroborated with driver and server counters
+- why logical `MongoClient` construction must be separated from physical pool ownership
+- bounded best-effort trace batching
+- control-plane ownership for global Child DAG reconciliation
+- snapshot physical-shape alignment
+- why decision-ledger range allocation and speculative index changes were rejected
+- final production-like datastore reductions and the limits of wall-clock claims
+- correctness, replay, recovery, and evidence-preservation boundaries
 
 ### [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md)
 

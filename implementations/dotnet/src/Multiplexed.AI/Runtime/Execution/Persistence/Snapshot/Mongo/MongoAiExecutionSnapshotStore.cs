@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -78,7 +79,10 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
                 .Set(x => x.CompletedAtUtc, snapshot.CompletedAtUtc)
                 .Set(x => x.Record, snapshot.Record)
                 .Set(x => x.State, snapshot.State)
-                .Set(x => x.Steps, snapshot.Steps)
+                // PERF2-2E: State.Steps is the authoritative durable step state.
+                // Do not persist the denormalized top-level Steps copy a second time.
+                // Unset also removes the duplicate field from legacy documents when they are refreshed.
+                .Unset(x => x.Steps)
                 .Set(x => x.Events, snapshot.Events);
 
             Console.WriteLine(
@@ -171,6 +175,8 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
                     .Find(filter)
                     .FirstOrDefaultAsync(cancellationToken)
                     .ConfigureAwait(false);
+
+                RehydrateDenormalizedSteps(snapshot);
                 loadMeasurement.Succeed(snapshot is null ? 0 : 1);
 
                 Console.WriteLine(
@@ -210,6 +216,22 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Mongo
 
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Rehydrates the public denormalized step list from the authoritative durable state.
+        /// PERF2-2E stores the step graph only once in MongoDB while preserving the existing
+        /// IAiExecutionSnapshotStore read contract for inspection, replay, and tests.
+        /// </summary>
+        private static void RehydrateDenormalizedSteps(
+            AiExecutionSnapshotDocument<TContextSnapshot>? snapshot)
+        {
+            if (snapshot is null)
+            {
+                return;
+            }
+
+            snapshot.Steps = snapshot.State?.Steps?.Values.ToList() ?? new();
         }
 
         /// <inheritdoc />
