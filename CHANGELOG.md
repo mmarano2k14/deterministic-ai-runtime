@@ -8,6 +8,174 @@ This project follows a deterministic runtime and observability model designed fo
 
 ## 0.0.8.6 - 2026-09-11 — Multilanguage SDK Server Foundations
 
+Runtime-side contracts, binding, policy evaluation, MCP integration, and durable invocation persistence for an external multilanguage SDK. The public SDK library is not included; its API and models must remain independent of runtime DLLs and internal CLR contracts.
+
+### Added
+
+#### Durable invocation journal
+
+- Added `AiDurableInvocationJournal` and internal contracts for immutable preparation, worker assignment, terminal results, and continuation intent.
+- Defined logical invocation identity as tenant, durable execution, logical call site, and explicit generation. Operation identity and the effect-idempotency-key base remain stable across worker replacement.
+- Separated logical identity from worker authority: worker identity, lease expiration, assignment epoch, and token identify the current assignment.
+- Added lease acquisition, renewal, and expired-assignment replacement. Replacement increments the epoch; renewal preserves the assignment fence and cannot shorten or revive an expired lease.
+- Freeze publication, implementation, and environment references and digests, effective custom language, and resolved inputs during preparation. Equivalent preparation returns the existing record; conflicting preparation under the same identity is rejected. Preparation cannot reset a terminal record.
+- Added bounded JSON normalization for inputs and results. Duplicate object members are rejected; object member order is normalized; array order and number spellings remain significant.
+- Persist one authoritative terminal result and its `Pending` continuation in the same atomic replacement. Identical callbacks from the accepted assignment are idempotent; conflicting results and results from superseded assignments are rejected.
+- Keep both `Pending` and `Scheduled` continuations eligible for reconciliation. Scheduling is distinct from acknowledgement of result application.
+- Require continuation acknowledgement to correlate the operation and result digest, with separate outcomes for application and suppression for a terminal parent. The journal does not inspect or resume the parent DAG.
+- Bound compare-and-swap retries to persistence decisions. Ambiguous storage acknowledgements propagate for reconciliation using the same logical identity.
+
+#### MongoDB invocation persistence
+
+- Added `MongoAiDurableInvocationStore`, BSON encoding, storage options, and explicit dependency-injection registration.
+- Enforce uniqueness using the complete typed invocation identity.
+- Apply expected-revision and snapshot checks to conditional replacements.
+- Use primary reads with majority read concern and majority journaled writes.
+- Include the MongoDB server clock in lease-sensitive replacement predicates rather than relying exclusively on the caller's clock.
+- Reuse the existing `IMongoDatabase`; production registration does not create a new `MongoClient`.
+- Keep registration opt-in. It installs no hosted service, worker, native policy, native step, or executable adapter factory, and is not automatically enabled in existing hosts.
+
+#### MCP invocation binding
+
+- Added `AiMcpStepAdapterFactory` and `AiMcpStepAdapter` for the existing implementation binder and DAG executor. Plan resolution creates the binding without invoking a tool.
+- Added `IAiMcpToolResolver` and `IAiMcpToolTransport`, with explicit request, binding, and response contracts. The response envelope is an internal adapter contract, not a replacement MCP protocol.
+- Validate execution-snapshot identity against the restored RBAC context. Resolve the tenant-specific connection, tool, target revision, and required capability on the server.
+- Authorize with the existing `IAuthorizationEngine.IsAllowed(resource, feature, action)` before resolving input arguments or invoking the tool. Use a separate dependency-injection scope to isolate authorization caches between invocations.
+- Reuse the existing input helper for declared inline, path-based, and payload-backed inputs. Do not automatically export runtime internals or permission snapshots.
+- Map success and tool-level business errors explicitly to `AiStepResult`, including `Value`, `Output`, and `Data`. Preserve technical failures as errors and leave payload compaction to the runtime.
+- Validate response correlation, shape, deadline, and cancellation. Reject late responses and remote attempts to request `Park` or select internal storage references.
+- Exclude the contextual adapter from native step discovery by omitting `AiStepAttribute`.
+
+#### Custom concurrency policy evaluation
+
+- Added contextual `AiConcurrencyPolicyAdapterFactory` and `AiConcurrencyPolicyAdapter` implementations for the existing `Concurrency` admission checkpoint.
+- Select `IAiConcurrencyPolicyTransport` using the resolved language, without a mutable global tenant-policy registry or a second policy engine.
+- Project tenant and tenant-group identity, execution, pipeline, step, policy configuration, implementation reference, correlation, and deadline into the transport request. Do not export `IServiceProvider`, stores, complete runtime state, or the full RBAC snapshot.
+- Build identity metadata without additional Redis or MongoDB reads.
+- Validate response schema, correlation, policy family, and decision before mapping to `AiConcurrencyPolicyOutcome`. Invalid responses cannot produce implicit authorization.
+- Represent business denial as a typed `Block`, including its reason and applicable delay. Preserve timeout, transport failure, malformed response, and cancellation as technical failures rather than business denial.
+- Reuse existing policy events and retain the declared identity of custom policies in observations. Preserve historical native-policy identities.
+
+#### Adapter selection and admission context
+
+- Added `AiStepImplementationBinder` to select explicitly installed adapter factories by invocation kind and effective language. Native implementations continue to resolve through the existing registry.
+- Reject missing, duplicate, or inconsistent capabilities. Require explicit DAG mode for custom and MCP invocations; do not convert sequential pipelines implicitly.
+- Added `AiConcurrencyPolicyBindingResolver` to preserve declaration scope, order, repeated policy names, and owning-step identity.
+- Preserve concurrency list selection: a nonempty local policy list replaces the pipeline list; an absent or empty local list retains the pipeline list.
+- Added `AiStepAdmissionContextFactory` to pass resolved bindings into admission without copying the executable step implementation or starting a worker.
+- Prefer exact step-name matches before the historical case-insensitive fallback.
+
+#### Invocation declarations and language resolution
+
+- Added nullable `ExecutionLanguage` declarations to pipeline, step, and policy definitions, with invocation descriptors distinguishing `Native`, `Custom`, and `Mcp` independently of orchestration mode.
+- Added pure effective-binding resolution with language provenance and policy declaration scope.
+- Support `dotnet`, `python`, and `typescript` language identifiers. Distinguish an absent declaration from an explicitly empty or unknown value.
+- Resolve custom-step language from the local override, then the pipeline default.
+- Resolve custom-policy language from its own override, then its owning custom step when applicable, then the pipeline default. Pipeline-scoped policies retain their declaration scope and do not inherit the evaluating step's override.
+- Keep native and MCP invocations independent of the pipeline's language default. Reject contradictory local language declarations and custom invocations without an effective language.
+- Extend the policy JSON converter and affected definition projections to retain invocation and language metadata.
+
+### Changed
+
+- Pass the effective `ConcurrencyAdmissionDefinition` to the concurrency engine, matching the definition used by the admission gate instead of rereading only local step configuration.
+- Read policy declarations for binding without applying policy defaults or adding throttling rules. Existing full concurrency-resolution paths retain their behavior.
+- Preserve declaration metadata through definition copies and snapshot rereading. Rebuild compiled bindings during resolution rather than introducing a separate binding-storage format.
+- Keep executable implementation resolution outside admission; the existing DAG executor continues to call the implementation already stored in the resolved plan.
+
+### Fixed
+
+#### Contextual policy adapter discovery
+
+- Added `AiPolicyDiscoveryIgnoreAttribute` and applied it to `AiConcurrencyPolicyAdapter`.
+- Updated `AddAiPoliciesFromAssemblies` to honor explicit discovery exclusion, including inherited exclusion, while preserving native-policy discovery.
+- Prevent contextual adapters from being registered as native singletons and activated without an invocation-specific transport and context.
+- Restore host startup without registering a dummy transport or weakening dependency-injection validation.
+
+#### Blank policy-name compatibility test
+
+- Use a directly typed `AiConcurrencyDefinition` in `Legacy_Native_Blank_Entries_Are_Skipped_But_Custom_Blanks_Are_Refused` so the test exercises binding rather than an intermediate JSON round trip.
+- Preserve the assertions: unnamed native entries are skipped on the direct CLR path; unnamed custom entries are rejected.
+- Retain rejection of empty and whitespace-only names in dictionary and JSON representations for both native and custom policies. No production converter validation was relaxed.
+
+#### MCP test helper qualification
+
+- Qualify affected calls as `McpStepTestSupport.Pipeline(...)` in `AiMcpStepBindingTests.cs` to avoid collision with the `Multiplexed.AI.Tests.Runtime.Pipeline` namespace.
+- Keep other static helper imports unchanged. No production behavior is modified.
+
+#### Invalid JSON exception assertion
+
+- Replace `Assert.ThrowsAsync<JsonException>` with `Assert.ThrowsAnyAsync<JsonException>` in `AiDurableInvocationPreparationTests.Invalid_Json_Is_Not_Treated_As_Empty_Input`.
+- Accept JSON parsing exceptions derived from `JsonException`, including the observed `JsonReaderException`, while retaining failure for accepted malformed input or an unrelated exception type.
+- Preserve strict input parsing in `AiDurableInvocationJson.Normalize` and `AiDurableInvocationValidation.Freeze`. No production exception wrapping or input fallback is added.
+
+### Compatibility
+
+- Legacy definitions without an invocation descriptor remain native. Historical policy string formats, aliases, and omission of null optional fields remain supported.
+- Language declarations do not instantiate or modify the existing `Execution` retry-settings block.
+- Missing custom capabilities cannot fall back to native implementations with the same name.
+- Native policy registry behavior and native governance policies remain in place; custom policy declarations do not replace native guards.
+- Existing RBAC, TRN authorization, and key rotation remain authoritative. No parallel role system is introduced.
+- Existing shared `MongoClient` lifetime fixes are preserved.
+- Runner ownership of finalization and capacity release, Redis claim scripts, existing retry mechanisms, recovery orchestration, and infrastructure-harness assertions remain unchanged.
+- Policy and MCP adapters add no retry loop. Existing runner retry behavior remains separate from adapter behavior.
+
+### Tests
+
+Source-declared inventory under `Tests/Multiplexed.AI.Tests/Runtime/Invocation`:
+
+| Coverage | Cases |
+|---|---:|
+| Invocation declarations, resolution, and compatibility | 86 |
+| Adapter factories, policy scopes, and admission | 53 |
+| Dictionary/JSON blank-name rejection | 8 |
+| Custom concurrency policy evaluation | 80 |
+| Policy discovery and host startup | 11 |
+| MCP binding, RBAC, input/result mapping, failures, and startup | 107 |
+| Durable invocation unit and BSON-contract tests | 93 |
+| Opt-in MongoDB invocation integration tests | 8 |
+| **Total** | **446** |
+
+- Cover language inheritance, local overrides, scope isolation, legacy serialization, snapshot rereading, and retry-setting compatibility.
+- Cover adapter selection, admission without execution, typed policy outcomes, invalid responses, tenant isolation, deadlines, cancellation, and native guards.
+- Exercise the real policy and step scanners, native registry, and minimal host startup without optional transports.
+- Exercise the existing RBAC engine, authorization ordering, declared-input projection, response correlation, late responses, and tool/transport failure separation.
+- Cover durable preparation conflicts, JSON validation, stable identities, lease renewal/replacement, stale authority rejection, terminal-result deduplication, continuation transitions, BSON contracts, and MongoDB persistence behavior.
+
+**Validation boundary:** Counts are a static source inventory, not passing-test totals. The JSON assertion correction changes no test count. A full durable-invocation regression result after that correction is pending; MongoDB integration execution is not verified. Missing MongoDB configuration produces an explicit skip, not a passing integration test. Snapshot tests with substituted stores do not establish distributed recovery guarantees.
+
+### Limitations
+
+- **External SDK:** Public builders, independent serializable models, publication APIs, and the client-library workflow are not implemented in this scope. Server adapter interfaces are not client dependencies.
+- **Hosted execution:** No hosted Python, TypeScript, or .NET worker, worker isolation, or live worker transport is included. Adapter tests use local transport doubles.
+- **Policy coverage:** Custom evaluation covers `Concurrency` only. Other policy families and enforcement of side-effect-free execution remain outside the implementation.
+- **MCP transport:** No real outbound MCP network client is installed or enabled automatically. The current adapter validates normalized internal responses.
+- **Durable integration:** The journal is not connected to a custom execution adapter, live dispatch, DAG `Park`, result application, or continuation reconciliation. Its acknowledgement contract requires trusted runtime integration.
+- **Publication:** Reference format and per-operation immutability checks do not verify artifact existence or downloaded content. Complete source/dependency publication and run-wide version pinning remain separate integration requirements.
+- **External effects:** Stable operation identities and stored results do not guarantee external-effect deduplication. MCP `RequestId` correlates an attempt, not a business operation. A timeout does not establish whether a remote side effect occurred; provider idempotency and reconciliation remain necessary.
+- **Input projection:** Excluding automatic context export is not secret detection; explicitly declared input data remains eligible for transmission.
+- **Observation:** Failures before policy evaluation starts are not guaranteed to emit `policy.failed`.
+- **Recovery and replay:** Existing runtime recovery, replay, and Child DAG capabilities are unchanged. End-to-end failure recovery and audit replay for the new invocation modes are not established by binding or snapshot tests.
+
+### Implementation References
+
+Paths are relative to `implementations/dotnet`.
+
+| Area | Source location |
+|---|---|
+| Pipeline declarations and resolved models | `src/Multiplexed.Abstractions/AI/Pipeline/` |
+| Policy declarations, JSON conversion, discovery exclusion | `src/Multiplexed.Abstractions/AI/Policies/` |
+| Invocation contracts | `src/Multiplexed.Abstractions/AI/Invocation/` |
+| Binding, adapters, and invocation context | `src/Multiplexed.AI/Runtime/Invocation/` |
+| Concurrency admission and policy evaluation | `src/Multiplexed.AI/Runtime/AI/Concurrency/`, `src/Multiplexed.AI/Runtime/AI/Policies/`, `src/Multiplexed.AI/Runtime/Execution/Engine/Steps/` |
+| MCP adapter and transport contracts | `src/Multiplexed.AI/Runtime/Invocation/Mcp/`, `src/Multiplexed.Abstractions/AI/Invocation/Mcp/` |
+| Durable journal, MongoDB store, and registration | `src/Multiplexed.AI/Runtime/Invocation/Durable/` |
+| Durable invocation contracts | `src/Multiplexed.Abstractions/AI/Invocation/Durable/` |
+| Invocation regression tests | `Tests/Multiplexed.AI.Tests/Runtime/Invocation/` |
+
+---
+
+## 0.0.8.6 - 2026-09-11 — Multilanguage SDK Server Foundations
+
 > The developments recorded here prepare the runtime to accept declarations from an external SDK. They do not yet constitute the public SDK library. The target SDK remains independent of the engine's DLLs and internal CLR contracts, with no direct or transitive dependency on them. [^target]
 
 ## Current State
