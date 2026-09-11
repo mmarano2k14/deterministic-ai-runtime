@@ -38,7 +38,8 @@ namespace Multiplexed.AI.Runtime.Pipeline
         /// </summary>
         private const int DefaultRetryDelayMs = 500;
 
-        private readonly IAiStepRegistry _stepRegistry;
+        private readonly AiStepImplementationBinder _implementationBinder;
+        private static readonly AiConcurrencyPolicyBindingResolver PolicyBindingResolver = new();
         private static readonly AiInvocationBindingResolver InvocationResolver = new();
 
         /// <summary>
@@ -48,9 +49,19 @@ namespace Multiplexed.AI.Runtime.Pipeline
         /// Registry used to resolve runtime step implementations.
         /// </param>
         public AiPipelineResolver(IAiStepRegistry stepRegistry)
+            : this(stepRegistry, Array.Empty<IAiStepInvocationAdapterFactory>())
         {
-            ArgumentNullException.ThrowIfNull(stepRegistry);
-            _stepRegistry = stepRegistry;
+        }
+
+        /// <summary>
+        /// Uses trusted server factories when explicitly installed. The default DI
+        /// container supplies an empty enumerable, preserving native-only operation.
+        /// </summary>
+        public AiPipelineResolver(
+            IAiStepRegistry stepRegistry,
+            IEnumerable<IAiStepInvocationAdapterFactory> adapterFactories)
+        {
+            _implementationBinder = new AiStepImplementationBinder(stepRegistry, adapterFactories);
         }
 
         /// <summary>
@@ -80,23 +91,19 @@ namespace Multiplexed.AI.Runtime.Pipeline
             ValidateAcyclicGraph(definition);
             InvocationResolver.ValidatePipelineLanguage(definition);
 
-            // Preflight all declarations before touching the native registry. ML1-A
-            // intentionally has no custom/MCP adapter installed. Never resolve their
-            // StepKey as a native implementation, even when that key happens to exist.
+            // Resolve every declaration and check all capabilities before creating any
+            // implementation. An unavailable custom/MCP step cannot fall back to native.
+            var adapterContexts = new Dictionary<string, AiStepInvocationAdapterContext>(StringComparer.Ordinal);
+            var policyBindings = new Dictionary<string, IReadOnlyList<AiPolicyInvocationBinding>>(StringComparer.Ordinal);
             foreach (var stepDefinition in definition.Steps)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (stepDefinition.Invocation is null && stepDefinition.ExecutionLanguage is null)
-                {
-                    continue;
-                }
                 var binding = InvocationResolver.ResolveStep(definition, stepDefinition);
-                if (binding.Kind != AiInvocationKind.Native)
-                {
-                    throw new NotSupportedException(
-                        $"Step '{stepDefinition.Name}' requires a '{binding.Kind}' invocation adapter. " +
-                        "No such adapter is installed by ML1-A; native fallback is forbidden.");
-                }
+                var adapterContext = new AiStepInvocationAdapterContext(
+                    definition.Name, definition.Version, stepDefinition.Name, stepDefinition.StepKey, binding);
+                _implementationBinder.EnsureSupported(adapterContext, definition.ExecutionMode);
+                adapterContexts.Add(stepDefinition.Name, adapterContext);
+                policyBindings.Add(stepDefinition.Name, PolicyBindingResolver.Resolve(definition, stepDefinition));
             }
 
             // --- RESOLUTION PHASE ---
@@ -106,7 +113,8 @@ namespace Multiplexed.AI.Runtime.Pipeline
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var step = _stepRegistry.Resolve(stepDefinition.StepKey);
+                var adapterContext = adapterContexts[stepDefinition.Name];
+                var step = _implementationBinder.Bind(adapterContext, definition.ExecutionMode);
 
                 // Apply runtime defaults here, not in the definition model.
                 // Execution policy is now defined through the dedicated Execution section.
@@ -120,8 +128,9 @@ namespace Multiplexed.AI.Runtime.Pipeline
                     ExecutionLanguage = stepDefinition.ExecutionLanguage,
                     Invocation = stepDefinition.Invocation,
                     InvocationBinding = stepDefinition.Invocation is not null
-                        ? AiInvocationBinding.Native
+                        ? adapterContext.Binding
                         : null,
+                    ConcurrencyPolicyBindings = policyBindings[stepDefinition.Name],
                     Step = step,
                     Order = stepDefinition.Order,
                     DependsOn = stepDefinition.DependsOn,

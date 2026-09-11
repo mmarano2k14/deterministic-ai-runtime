@@ -137,8 +137,8 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var definition = DefinitionResolver.Resolve(
-                StepContext.StepState);
+            var definition = StepContext.ConcurrencyAdmissionDefinition
+                ?? DefinitionResolver.Resolve(StepContext.StepState);
 
             return Task.FromResult(definition ?? DefaultConcurrencyDefinition);
         }

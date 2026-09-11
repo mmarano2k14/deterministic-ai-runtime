@@ -43,6 +43,14 @@ namespace Multiplexed.Abstractions.AI.Pipeline
         public AiInvocationBinding? InvocationBinding { get; init; }
 
         /// <summary>
+        /// Ordered concurrency-policy bindings with their original declaration scope.
+        /// Recompiled from the pinned definition, never from a merged admission config.
+        /// </summary>
+        [JsonIgnore]
+        public IReadOnlyList<AiPolicyInvocationBinding> ConcurrencyPolicyBindings { get; init; }
+            = Array.Empty<AiPolicyInvocationBinding>();
+
+        /// <summary>
         /// Gets or sets the resolved runtime step instance.
         /// </summary>
         public IAiStep Step { get; init; } = default!;

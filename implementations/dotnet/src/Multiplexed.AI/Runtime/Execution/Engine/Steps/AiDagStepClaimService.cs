@@ -11,6 +11,7 @@ using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Execution.Engine.Helpers;
 using Multiplexed.AI.Runtime.Observability.Helpers;
 using Multiplexed.Abstractions.AI.Observability.Events;
+using Multiplexed.AI.Runtime.Invocation;
 namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 {
     /// <summary>
@@ -312,6 +313,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 var concurrencyContext = concurrencyAdmission.Context;
                 var concurrencyDefinition = concurrencyAdmission.Definition;
                 var gateDecision = await TryAcquireConcurrencyLeaseAsync(
+                        pipeline,
                         concurrencyContext,
                         concurrencyDefinition,
                         state,
@@ -728,6 +730,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 var concurrencyContext = concurrencyAdmission.Context;
                 var concurrencyDefinition = concurrencyAdmission.Definition;
                 var gateDecision = await TryAcquireConcurrencyLeaseAsync(
+                        pipeline,
                         concurrencyContext,
                         concurrencyDefinition,
                         state,
@@ -1021,6 +1024,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
         /// </para>
         /// </remarks>
         private async Task<AiConcurrencyDecision> TryAcquireConcurrencyLeaseAsync(
+            ResolvedAiPipeline pipeline,
             AiConcurrencyContext context,
             AiConcurrencyDefinition definition,
             AiExecutionState state,
@@ -1047,6 +1051,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         trace.SetTag("concurrency.operation", context.Operation ?? string.Empty);
                         trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, _services.ObservabilityService?.Correlation?.Current?.WorkerId ?? context.RuntimeInstanceId);
                         var policyDecision = await EvaluateConfiguredConcurrencyPoliciesAsync(
+                                pipeline,
                                 context,
                                 definition,
                                 state,
@@ -1117,6 +1122,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
         /// </para>
         /// </remarks>
         private async Task<AiConcurrencyDecision> EvaluateConfiguredConcurrencyPoliciesAsync(
+            ResolvedAiPipeline pipeline,
             AiConcurrencyContext context,
             AiConcurrencyDefinition definition,
             AiExecutionState state,
@@ -1130,6 +1136,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 return AiConcurrencyDecision.Allow();
             }
             var stepContext = CreateStepExecutionContext(
+                pipeline,
+                definition,
                 context.ExecutionId,
                 state,
                 stepState,
@@ -1187,6 +1195,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
         /// </para>
         /// </remarks>
         private AiStepExecutionContext CreateStepExecutionContext(
+            ResolvedAiPipeline pipeline,
+            AiConcurrencyDefinition effectiveDefinition,
             string executionId,
             AiExecutionState state,
             AiStepState stepState,
@@ -1207,6 +1217,20 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 _services.StateReader,
                 _services.StateWriter,
                 cancellationToken);
+            var plannedStep = FindResolvedPipelineStep(pipeline, stepName);
+            if (plannedStep is not null)
+            {
+                return AiStepAdmissionContextFactory.Create(executionContext, plannedStep, effectiveDefinition);
+            }
+
+            // Preserve the historical native fallback for a missing plan entry. Custom
+            // metadata is never reconstructed from this synthetic concurrency definition.
+            if (stepDefinition.Invocation?.Kind is Multiplexed.Abstractions.AI.Invocation.AiInvocationKind.Custom
+                or Multiplexed.Abstractions.AI.Invocation.AiInvocationKind.Mcp)
+            {
+                throw new InvalidOperationException($"No resolved invocation metadata exists for step '{stepName}'.");
+            }
+
             var resolvedStep = new ResolvedAiPipelineStep
             {
                 Name = stepName,
@@ -1223,7 +1247,10 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
 
             return new AiStepExecutionContext(
                 executionContext,
-                resolvedStep);
+                resolvedStep)
+            {
+                ConcurrencyAdmissionDefinition = effectiveDefinition
+            };
         }
         /// <summary>
         /// Finds the pipeline step definition for a ready step.
@@ -1242,8 +1269,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
             ResolvedAiPipeline pipeline,
             string stepName)
         {
-            var step = pipeline.Steps.FirstOrDefault(x =>
-                string.Equals(x.Name, stepName, StringComparison.OrdinalIgnoreCase));
+            var step = FindResolvedPipelineStep(pipeline, stepName);
             if (step is not null)
             {
                 return new AiPipelineStepDefinition
@@ -1264,6 +1290,16 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 DependsOn = Array.Empty<string>()
             };
         }
+        /// <summary>
+        /// Prefers the exact logical identity used by the DAG executor, while retaining
+        /// the historical case-insensitive fallback when no exact plan entry exists.
+        /// </summary>
+        private static ResolvedAiPipelineStep? FindResolvedPipelineStep(ResolvedAiPipeline pipeline, string stepName)
+        {
+            return pipeline.Steps.FirstOrDefault(x => string.Equals(x.Name, stepName, StringComparison.Ordinal))
+                ?? pipeline.Steps.FirstOrDefault(x => string.Equals(x.Name, stepName, StringComparison.OrdinalIgnoreCase));
+        }
+
         /// <summary>
         /// Attempts to atomically claim a specific ready step through the distributed DAG store.
         /// </summary>
