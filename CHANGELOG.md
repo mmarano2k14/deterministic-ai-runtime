@@ -6,6 +6,201 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 0.0.8.6 - 2026-09-11 — Multilanguage SDK Server Foundations
+
+> The developments recorded here prepare the runtime to accept declarations from an external SDK. They do not yet constitute the public SDK library. The target SDK remains independent of the engine's DLLs and internal CLR contracts, with no direct or transitive dependency on them. [^target]
+
+## Current State
+
+The runtime now has invocation and language declarations, effective binding resolution, adapter selection, an enriched admission context, a custom concurrency policy evaluation path, and an MCP adapter that uses the existing RBAC engine.
+
+Custom capabilities remain optional and must be explicitly installed on the server. The transports used in the tests are local test doubles. No hosted multilanguage worker or real MCP network client is delivered within this scope.
+
+Marco has confirmed that the latest patch is working after the MCP test compilation fix. This is a user-reported local validation; no detailed test execution report accompanied that confirmation. The static test inventory below must not be interpreted as a verified count of passing tests. [^compilation]
+
+Entries are presented in the order the changes were delivered, from oldest to newest. Future entries can be appended while retaining the corrections and limitations already documented.
+
+## Change History
+
+### Invocation Declarations and Language Resolution
+
+**Added**
+
+- An optional execution language on the pipeline and a local override on each custom step.
+- A descriptor distinguishing `Native`, `Custom`, and `Mcp` invocations, independently of the orchestration mode.
+- A pure resolver that produces the effective binding, language provenance, and policy declaration scope.
+- Reading and writing of the new fields in the policy JSON converter, with preservation through the identified definition projections.
+
+A custom step uses its local language override, then the pipeline default. A custom policy uses its own override, then the language of the custom step on which it is declared, then the pipeline default. A pipeline-scoped policy retains that scope: the language of the step evaluating it does not replace the language associated with its declaration.
+
+The recognized values are `dotnet`, `python`, and `typescript`. An absent value remains distinct from an explicitly empty or unknown value. Native and MCP steps remain independent of the pipeline's language default; contradictory local language declarations are rejected.
+
+**Compatibility preserved**
+
+Declaring a language does not create or modify the `Execution` block containing the existing retry settings. Legacy definitions without an invocation descriptor remain native. Historical policy formats, aliases, and omission of null values for the new properties remain supported.
+
+A missing custom capability cannot silently fall back to a native implementation with the same name. At the time of this initial delivery, metadata could be resolved, but custom and MCP invocations were still rejected because their adapters had not yet been installed.
+
+**Tests added:** 86 cases covering inheritance, scopes, serialization, snapshots, retries, and rejection before native fallback. Snapshot tests do not constitute proof of distributed recovery. [^resolution]
+
+### Alignment with the Latest Source Archive
+
+The resolution delivery was compared with `dotnet(2).zip` before being reissued.
+
+The 15 existing files to be replaced were identical in both source archives. The 12 new files introduced no collisions. No additional C# merge was required; the contents of the 27 delivered C# files were preserved.
+
+The five differences in the newer archive concerned the shared `MongoClient` lifetime and its tests. Those changes were preserved rather than presented as new SDK changes.
+
+This comparison established compatibility with the received files, not a successful compilation result. [^baseline]
+
+### Adapter Factories and Admission Context Propagation
+
+**Added**
+
+`AiStepImplementationBinder` selects an explicitly installed factory according to invocation kind and effective language. Native invocations continue to use the existing registry.
+
+Missing, duplicate, or inconsistent capabilities are rejected. Creating an adapter prepares the server-side implementation; it does not start a worker, invoke a tool, or execute business logic. The custom and MCP paths require an explicit DAG mode and do not silently convert a sequential pipeline into a DAG.
+
+`AiConcurrencyPolicyBindingResolver` compiles concurrency policy scopes while preserving order, repeated names, and any owning step. It follows the existing list-selection rules: a nonempty local list replaces the pipeline list; an absent or empty local list leaves the pipeline list in effect.
+
+`AiStepAdmissionContextFactory` passes the already-resolved bindings into admission without copying the step's executable implementation. Admission therefore does not become a second execution point. Lookup prefers an exact step-name match before using the historical case-insensitive fallback.
+
+**Fixed**
+
+The concurrency engine now receives the same effective `ConcurrencyAdmissionDefinition` as the admission gate. Previously, it could reread only the local configuration and miss a policy declared on the pipeline.
+
+The read path used to compile declarations does not apply policy defaults or add throttling rules. Existing resolution paths retain their behavior.
+
+**Preserved**
+
+The DAG executor still calls the implementation already present in the resolved plan. Compiled bindings do not introduce a new storage format: declarations remain in the definition, and bindings are rebuilt when that definition is resolved.
+
+**Tests added:** 53 cases covering factories, admission, scopes, execution through the existing DAG path, and snapshot rereading. [^admission]
+
+### Unnamed Policy Test Correction
+
+**Fixed**
+
+The test for unnamed native entries used a dictionary that caused a JSON round trip. The converter consequently rejected the empty name before the intended binding behavior could be tested.
+
+The test setup now directly uses an `AiConcurrencyDefinition` object. Its assertions are preserved: an unnamed native entry is skipped on this direct CLR path, while an unnamed custom entry is still rejected.
+
+The production converter was not relaxed. Empty or whitespace-only names remain invalid in dictionary and JSON representations, for both native and custom policies.
+
+**Tests added:** Eight regression cases for these representations. The affected test class now contains 21 expected cases. No production file was changed for this correction. [^blank-policies]
+
+### Custom Concurrency Policy Evaluation
+
+**Added**
+
+A contextual factory and an `IAiPolicy` adapter allow a custom policy to be evaluated at the existing DAG admission checkpoint, for the `Concurrency` family only.
+
+The transport is selected using the already-resolved language. The binding, scope, implementation reference, order, and configuration of each policy remain controlled. No mutable global tenant-policy registry or second policy engine is introduced.
+
+The request carries an explicit projection: tenant and group identity, execution, pipeline, step, policy configuration, implementation reference, correlation, and deadline. It does not export `IServiceProvider`, stores, the complete runtime state, or the full RBAC snapshot. Projecting the identity adds no MongoDB or Redis read.
+
+**Results and errors**
+
+Response JSON is validated before mapping to `AiConcurrencyPolicyOutcome`. The schema, correlation, family, and decision must match the expected contract. An invalid response never becomes implicit authorization.
+
+A business denial produces a typed `Block`, including its reason and any applicable delay. Transport failures, invalid responses, and expiration remain technical errors. Cancellation does not become a business denial. The adapter adds no retry.
+
+Existing events are reused. The declared identity of custom policies is preserved in observations; the historical identity of native policies remains unchanged. An error occurring before evaluation starts does not necessarily emit `policy.failed`.
+
+**Limitations**
+
+This delivery does not extend custom evaluation to the other policy families. Transports remain test doubles; the expectation that a policy has no external side effects is not enforced by a worker sandbox.
+
+**Tests added:** 80 cases covering typed decisions, invalid responses, scopes, tenant identities, deadlines, and native guards. [^concurrency]
+
+### Policy Discovery Startup Fix
+
+**Regression identified**
+
+The `IAiPolicy` implementation scanner also registered `AiConcurrencyPolicyAdapter` as a native singleton. Dependency injection then attempted to construct this contextual adapter without a transport or invocation context, causing the host to exit before readiness.
+
+The observed error concerned Process Host startup, not a demonstrated failure of the Child DAG continuation algorithm.
+
+**Fixed**
+
+`AiPolicyDiscoveryIgnoreAttribute` explicitly excludes the adapter from automatic discovery. The scanner respects the exclusion, including through inheritance, without changing the historical discovery rules for native policies.
+
+The adapter continues to be created by its factory for a specific invocation. No dummy transport, fabricated tenant, or relaxation of dependency injection validation was added to hide the problem.
+
+**Tests added:** 11 cases using the real scanner, the native registry, and startup of a minimal host without a custom transport. Marco subsequently confirmed that the problem was fixed. No detailed rerun log accompanied that confirmation. [^startup]
+
+### MCP Binding and Existing RBAC Integration
+
+**Added**
+
+`AiMcpStepAdapterFactory` and `AiMcpStepAdapter` prepare and execute an MCP invocation through the existing binder and DAG executor. Resolving the plan does not invoke the tool.
+
+The adapter checks that the execution snapshot identity matches the restored RBAC context. A server-side resolver provides the tenant, connection, and tool target, its revision, and the capability to check. Resolving the target does not itself authorize the invocation.
+
+Authorization uses the existing engine:
+
+```csharp
+IAuthorizationEngine.IsAllowed(resource, feature, action)
+```
+
+A separate dependency injection scope is used for the check to avoid reusing caches from a previous invocation. No second role system, change to the TRN engine, or change to key rotation is introduced.
+
+**Arguments and results**
+
+Authorization precedes reading arguments and calling the tool. Declared inputs are resolved through the existing helper, including paths and payloads. Internal context and permissions are not automatically exported. Data explicitly placed in inputs remains transmissible, however: this projection is not a secret-detection mechanism.
+
+The transport returns a normalized internal envelope, not a new MCP protocol. Mapping to `AiStepResult` distinguishes success, a business error returned by the tool, and a technical failure. `Value`, `Output`, and `Data` are populated explicitly; compaction remains the runtime's responsibility.
+
+Correlation, response shape, deadline, and cancellation are checked. A remote result cannot order `Park` or select internal storage references. Late results are not accepted after expiration.
+
+**Protections and limitations**
+
+The adapter does not carry `AiStepAttribute` and must not be discovered as a native step. A startup test uses the real step scanner without an installed MCP transport.
+
+The delivery adds 15 C# files without replacing existing files. It does not install an MCP network client or enable the capability in production hosts.
+
+The adapter adds no retry, but the existing runner's retries remain possible. `RequestId` correlates an attempt; it is not a business idempotency key. A timeout does not prove that an external side effect did not occur.
+
+**Tests added:** 107 cases covering binding, the real RBAC engine, inputs, results, failures, cancellation, and startup. Marco has confirmed that the latest patch is working after the compilation correction below; a detailed passing-test count was not provided with that confirmation. [^mcp] [^compilation]
+
+### Available Validation Reports
+
+| Scope | Reported status |
+|---|---|
+| Initial declarations and resolution | Marco reported that everything was green on his machine. |
+| Factories and admission context | Work continued after the unnamed-policy test correction; no separate detailed report was supplied. |
+| Custom concurrency policies | Marco reported a green result; a separate host startup regression was subsequently detected. |
+| Policy discovery | Marco confirmed the startup problem was fixed after the corrective delivery. |
+| MCP binding and helper correction | Marco confirmed that the latest patch is working after the helper qualification fix. No detailed test execution report accompanied this confirmation. |
+
+User confirmations are distinct from the checks performed during preparation. The delivery reports state that no .NET build or test had been executed in the preparation environment. Preparing and updating this changelog did not add a .NET execution.
+
+### Cumulative Static Inventory
+
+| Change | Added cases | Cumulative cases |
+|---|---:|---:|
+| Declarations, resolution, and compatibility | 86 | 86 |
+| Factories, scopes, and admission | 53 | 139 |
+| Dictionary/JSON blank-name regression coverage | 8 | 147 |
+| Custom concurrency policies | 80 | 227 |
+| Policy discovery and startup | 11 | 238 |
+| MCP binding, RBAC, inputs, results, and errors | 107 | 345 |
+
+**345 expected cases across 18 test classes in `Runtime/Invocation`.** The documented total was counted from `Fact` and `InlineData` attributes in the delivered sources, accounting for replaced files. It is neither an xUnit discovery result nor a verified number of passing tests. Qualifying the helper adds no test case. [^inventory]
+
+## Preserved Boundaries and Undelivered Functionality
+
+The public SDK remains an external library to be implemented. Its builders and serializable models must be independent of the server's internal classes; its connection will use the existing MCP/Gateway. The adapter interfaces documented here are server-side integration points, not dependencies to impose on client applications.
+
+The deliveries do not rewrite claim Lua scripts or the durable state machine. Changes to the affected DAG paths concern projections and admission context. The existing RBAC, received MongoClient fixes, and runner responsibilities are preserved. No relaxation of infrastructure-harness assertions is recorded.
+
+The following remain outside the delivered scope: complete source and dependency publication, worker hosting and isolation, MCP network transport, the durable remote-invocation contract, idempotency and reconciliation of external side effects, and validation of those capabilities after failures or during audit replay.
+
+Existing recovery, replay, and Child DAG capabilities are not presented as newly implemented here. Binding and snapshot tests alone do not establish those guarantees for the new invocation modes.
+
+
+---
+
 ## 0.0.8.6 - 2026-09-02  — PERF2 MongoDB Runtime Improvements
 
 ## MongoDB persistence and runtime efficiency
