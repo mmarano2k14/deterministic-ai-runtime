@@ -74,6 +74,9 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Delegation
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                // Name-only resolution is native-only until the family's contextual adapter exists.
+                Multiplexed.AI.Runtime.Invocation.AiInvocationBindingResolver.EnsureNativePolicy(configuredPolicy);
+
                 if (string.IsNullOrWhiteSpace(configuredPolicy.Name))
                 {
                     throw new InvalidOperationException(

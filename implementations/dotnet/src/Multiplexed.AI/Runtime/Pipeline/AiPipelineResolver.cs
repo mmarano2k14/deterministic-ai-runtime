@@ -1,4 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.Pipeline;
+using Multiplexed.Abstractions.AI.Invocation;
+using Multiplexed.AI.Runtime.Invocation;
 
 namespace Multiplexed.AI.Runtime.Pipeline
 {
@@ -37,6 +39,7 @@ namespace Multiplexed.AI.Runtime.Pipeline
         private const int DefaultRetryDelayMs = 500;
 
         private readonly IAiStepRegistry _stepRegistry;
+        private static readonly AiInvocationBindingResolver InvocationResolver = new();
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AiPipelineResolver"/> class.
@@ -75,6 +78,26 @@ namespace Multiplexed.AI.Runtime.Pipeline
             // --- VALIDATION PHASE ---
             ValidateStepDefinitions(definition);
             ValidateAcyclicGraph(definition);
+            InvocationResolver.ValidatePipelineLanguage(definition);
+
+            // Preflight all declarations before touching the native registry. ML1-A
+            // intentionally has no custom/MCP adapter installed. Never resolve their
+            // StepKey as a native implementation, even when that key happens to exist.
+            foreach (var stepDefinition in definition.Steps)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (stepDefinition.Invocation is null && stepDefinition.ExecutionLanguage is null)
+                {
+                    continue;
+                }
+                var binding = InvocationResolver.ResolveStep(definition, stepDefinition);
+                if (binding.Kind != AiInvocationKind.Native)
+                {
+                    throw new NotSupportedException(
+                        $"Step '{stepDefinition.Name}' requires a '{binding.Kind}' invocation adapter. " +
+                        "No such adapter is installed by ML1-A; native fallback is forbidden.");
+                }
+            }
 
             // --- RESOLUTION PHASE ---
             var resolvedSteps = new List<ResolvedAiPipelineStep>();
@@ -94,6 +117,11 @@ namespace Multiplexed.AI.Runtime.Pipeline
                 {
                     Name = stepDefinition.Name,
                     StepKey = stepDefinition.StepKey,
+                    ExecutionLanguage = stepDefinition.ExecutionLanguage,
+                    Invocation = stepDefinition.Invocation,
+                    InvocationBinding = stepDefinition.Invocation is not null
+                        ? AiInvocationBinding.Native
+                        : null,
                     Step = step,
                     Order = stepDefinition.Order,
                     DependsOn = stepDefinition.DependsOn,
@@ -108,6 +136,7 @@ namespace Multiplexed.AI.Runtime.Pipeline
             {
                 Name = definition.Name,
                 Version = definition.Version,
+                ExecutionLanguage = definition.ExecutionLanguage,
                 ExecutionMode = definition.ExecutionMode,
                 Config = definition.Config,
                 Steps = resolvedSteps.OrderBy(x => x.Order).ToArray()

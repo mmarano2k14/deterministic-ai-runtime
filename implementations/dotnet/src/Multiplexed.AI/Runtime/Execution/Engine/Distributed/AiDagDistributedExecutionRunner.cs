@@ -948,6 +948,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
             {
                 Name = stepDefinition.Name,
                 StepKey = stepDefinition.StepKey,
+                ExecutionLanguage = stepDefinition.ExecutionLanguage,
+                Invocation = stepDefinition.Invocation,
                 Config = stepDefinition.Config ?? new Dictionary<string, object?>(),
                 DependsOn = stepDefinition.DependsOn ?? Array.Empty<string>()
             };

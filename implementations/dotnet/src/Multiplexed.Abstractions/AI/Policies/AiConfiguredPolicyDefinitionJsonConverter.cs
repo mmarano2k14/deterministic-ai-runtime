@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using Multiplexed.Abstractions.AI.Invocation;
 using System.Text.Json.Serialization;
 
 namespace Multiplexed.Abstractions.AI.Policies
@@ -101,6 +102,21 @@ namespace Multiplexed.Abstractions.AI.Policies
                 result.Kind = legacyTypeElement.GetString();
             }
 
+            if (root.TryGetProperty("executionLanguage", out var languageElement))
+            {
+                if (languageElement.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+                {
+                    throw new JsonException("Policy executionLanguage must be a string or null.");
+                }
+                result.ExecutionLanguage = languageElement.GetString();
+            }
+
+            if (root.TryGetProperty("invocation", out var invocationElement))
+            {
+                result.Invocation = JsonSerializer.Deserialize<AiInvocationDefinition>(
+                    invocationElement.GetRawText(), options);
+            }
+
             if (root.TryGetProperty("config", out var configElement))
             {
                 result.Config =
@@ -139,6 +155,17 @@ namespace Multiplexed.Abstractions.AI.Policies
                 writer.WriteString(
                     "kind",
                     value.Kind);
+            }
+
+            if (value.ExecutionLanguage is not null)
+            {
+                writer.WriteString("executionLanguage", value.ExecutionLanguage);
+            }
+
+            if (value.Invocation is not null)
+            {
+                writer.WritePropertyName("invocation");
+                JsonSerializer.Serialize(writer, value.Invocation, options);
             }
 
             writer.WritePropertyName("config");

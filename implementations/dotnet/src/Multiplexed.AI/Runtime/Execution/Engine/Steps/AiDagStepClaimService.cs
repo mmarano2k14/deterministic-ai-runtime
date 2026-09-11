@@ -1213,6 +1213,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 StepKey = string.IsNullOrWhiteSpace(stepDefinition.StepKey)
                     ? stepName
                     : stepDefinition.StepKey,
+                ExecutionLanguage = stepDefinition.ExecutionLanguage,
+                Invocation = stepDefinition.Invocation,
+                InvocationBinding = stepDefinition.Invocation?.Kind == Multiplexed.Abstractions.AI.Invocation.AiInvocationKind.Native
+                    ? Multiplexed.Abstractions.AI.Invocation.AiInvocationBinding.Native
+                    : null,
                 Config = stepDefinition.Config ?? stepState.Config ?? new Dictionary<string, object?>()
             };
 
@@ -1245,6 +1250,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                 {
                     Name = step.Name,
                     StepKey = step.StepKey,
+                    ExecutionLanguage = step.ExecutionLanguage,
+                    Invocation = step.Invocation,
                     Config = step.Config ?? new Dictionary<string, object?>(),
                     DependsOn = step.DependsOn ?? Array.Empty<string>()
                 };

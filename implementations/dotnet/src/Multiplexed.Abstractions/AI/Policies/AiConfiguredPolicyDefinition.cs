@@ -1,4 +1,5 @@
 ﻿using System.Text.Json.Serialization;
+using Multiplexed.Abstractions.AI.Invocation;
 
 namespace Multiplexed.Abstractions.AI.Policies
 {
@@ -21,6 +22,12 @@ namespace Multiplexed.Abstractions.AI.Policies
         /// <c>Timeout</c>, <c>Validation</c>, and <c>Routing</c>.
         /// </remarks>
         public string? Kind { get; set; }
+
+        /// <summary>Optional policy language override; independent of the policy family.</summary>
+        public string? ExecutionLanguage { get; set; }
+
+        /// <summary>Native/custom implementation descriptor. MCP is never a policy kind.</summary>
+        public AiInvocationDefinition? Invocation { get; set; }
 
 
         /// <summary>

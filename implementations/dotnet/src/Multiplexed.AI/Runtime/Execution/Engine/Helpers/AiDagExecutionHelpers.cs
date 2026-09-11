@@ -577,6 +577,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Helpers
                 {
                     Name = step.Name,
                     StepKey = step.StepKey,
+                    ExecutionLanguage = step.ExecutionLanguage,
+                    Invocation = step.Invocation,
                     Config = step.Config ?? new Dictionary<string, object?>(),
                     DependsOn = step.DependsOn ?? Array.Empty<string>()
                 };
