@@ -58,8 +58,7 @@ namespace Multiplexed.AI.Runtime.Publication
                 AiPublicationJson.Text(function.EnvironmentRef, "EnvironmentRef");
                 AiPublicationJson.Path(function.EntryPointPath);
                 AiPublicationJson.Text(function.EntryPointSymbol, "EntryPointSymbol");
-                if (function.EntryPointSymbol.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('_' or '.' or '$')))
-                    throw new InvalidOperationException("Invalid portable entry-point symbol.");
+                ValidateEntryPointSymbol(function.EntryPointSymbol);
                 var sources = CopyFiles(function.Sources);
                 if (!sources.Any(f => f.Path == function.EntryPointPath)) throw new InvalidOperationException("Entry-point file is missing from sources.");
                 ArgumentNullException.ThrowIfNull(function.Dependencies);
@@ -229,6 +228,35 @@ namespace Multiplexed.AI.Runtime.Publication
                 ValidateEmbeddedChildren(child, depth + 1);
             }
         }
+
+        // Preserve the historical simple-symbol grammar while also allowing the explicit
+        // CLR TypeName::MethodName form used by the hosted .NET worker. Colons are never
+        // accepted outside that exact form, so publication still rejects ambiguous symbols.
+        private static void ValidateEntryPointSymbol(string symbol)
+        {
+            if (symbol.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('_' or '.' or '$' or ':')))
+                throw new InvalidOperationException("Invalid portable entry-point symbol.");
+
+            if (!symbol.Contains(':', StringComparison.Ordinal)) return;
+
+            var separator = symbol.IndexOf("::", StringComparison.Ordinal);
+            if (separator <= 0 || separator != symbol.LastIndexOf("::", StringComparison.Ordinal) ||
+                separator + 2 >= symbol.Length || symbol.Count(c => c == ':') != 2 ||
+                !IsQualifiedIdentifier(symbol[..separator]) || !IsIdentifier(symbol[(separator + 2)..]))
+                throw new InvalidOperationException("Invalid portable entry-point symbol.");
+        }
+
+        private static bool IsQualifiedIdentifier(string value) =>
+            value.Split('.').All(IsIdentifier);
+
+        private static bool IsIdentifier(string value)
+        {
+            if (value.Length == 0 || !IsIdentifierStart(value[0])) return false;
+            return value.Skip(1).All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '$');
+        }
+
+        private static bool IsIdentifierStart(char value) =>
+            char.IsAsciiLetter(value) || value is '_' or '$';
 
         internal static void ValidateSite(AiPublicationCallSite site)
         {

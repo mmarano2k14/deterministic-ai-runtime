@@ -67,6 +67,40 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
             Assert.Equal(before.PublicationRef, (await fixture.ReadAsync(before.PublicationRef)).PublicationRef);
         }
 
+        [Theory]
+        [InlineData("Example.Functions::Run")]
+        [InlineData("Example_1.Functions2::Run_2")]
+        public async Task DotNet_Qualified_Entry_Point_Symbol_Is_Preserved(string symbol)
+        {
+            using var fixture = new PublicationTestSupport.Fixture();
+            var upload = PublicationTestSupport.Upload(language: "dotnet", secondLanguage: null);
+            var functions = upload.Functions.Select(function => function with { EntryPointSymbol = symbol }).ToArray();
+
+            var publication = await fixture.PublishAsync(upload with { Functions = functions });
+
+            Assert.StartsWith("pub-", publication.PublicationRef);
+            Assert.Contains(fixture.MemoryPayloads.Documents.Values, json => json.Contains(symbol, StringComparison.Ordinal));
+            await fixture.ReadAsync(publication.PublicationRef);
+        }
+
+        [Theory]
+        [InlineData("Example.Functions:Run")]
+        [InlineData("Example.Functions:::Run")]
+        [InlineData("::Run")]
+        [InlineData("Example.Functions::")]
+        [InlineData("Example..Functions::Run")]
+        [InlineData("Example.Functions::Run::Again")]
+        public async Task Malformed_Clr_Style_Entry_Point_Symbol_Is_Rejected_Before_Persistence(string symbol)
+        {
+            using var fixture = new PublicationTestSupport.Fixture();
+            var upload = PublicationTestSupport.Upload(language: "dotnet", secondLanguage: null);
+            var functions = upload.Functions.Select(function => function with { EntryPointSymbol = symbol }).ToArray();
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.PublishAsync(upload with { Functions = functions }));
+
+            Assert.Empty(fixture.MemoryPayloads.Writes);
+        }
+
         [Fact]
         public async Task Caller_Mutations_After_The_First_Storage_Write_Cannot_Change_Frozen_Bytes()
         {

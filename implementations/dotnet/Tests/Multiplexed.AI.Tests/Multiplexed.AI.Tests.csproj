@@ -57,4 +57,33 @@
            Text="The worker protocol probe did not return its required launch files." />
     <Copy SourceFiles="@(_WorkerProtocolProbeFiles)" DestinationFolder="$(TargetDir)worker-probe" SkipUnchangedFiles="true" />
   </Target>
+
+  <!-- Build deployment/test-only .NET worker artifacts without loading them into the test assembly. -->
+  <Target Name="CopyHostedDotNetWorkerFixture" AfterTargets="Build"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <_HostedDotNetFixtureFiles Remove="@(_HostedDotNetFixtureFiles)" />
+    </ItemGroup>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\workers\Multiplexed.AI.HostedInvocation.DotNetWorker\Multiplexed.AI.HostedInvocation.DotNetWorker.csproj"
+             Targets="Restore;BuildAndGetHostedDotNetWorkerFiles"
+             Properties="Configuration=$(Configuration);TargetFramework=net10.0"
+             RebaseOutputs="true" StopOnFirstFailure="true">
+      <Output TaskParameter="TargetOutputs" ItemName="_HostedDotNetFixtureFiles" />
+    </MSBuild>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Multiplexed.AI.HostedInvocation.TestDependency\Multiplexed.AI.HostedInvocation.TestDependency.csproj"
+             Targets="Restore;BuildAndGetHostedDotNetTestDependency"
+             Properties="Configuration=$(Configuration);TargetFramework=net10.0"
+             RebaseOutputs="true" StopOnFirstFailure="true">
+      <Output TaskParameter="TargetOutputs" ItemName="_HostedDotNetFixtureFiles" />
+    </MSBuild>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Multiplexed.AI.HostedInvocation.TestFunctions\Multiplexed.AI.HostedInvocation.TestFunctions.csproj"
+             Targets="Restore;BuildAndGetHostedDotNetTestFunctions"
+             Properties="Configuration=$(Configuration);TargetFramework=net10.0"
+             RebaseOutputs="true" StopOnFirstFailure="true">
+      <Output TaskParameter="TargetOutputs" ItemName="_HostedDotNetFixtureFiles" />
+    </MSBuild>
+    <Error Condition="'@(_HostedDotNetFixtureFiles)' == ''"
+           Text="Hosted .NET worker fixture did not return its required build outputs." />
+    <Copy SourceFiles="@(_HostedDotNetFixtureFiles)" DestinationFolder="$(TargetDir)dotnet-worker-fixture" SkipUnchangedFiles="true" />
+  </Target>
 </Project>
