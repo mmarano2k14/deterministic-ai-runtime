@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.Observability;
+﻿using Multiplexed.Abstractions.AI.Invocation;
+using Multiplexed.Abstractions.AI.ControlPlane.Observability;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Area;
 using Multiplexed.Abstractions.AI.ControlPlane.Observability.Events;
 using Multiplexed.Abstractions.AI.Execution;
@@ -133,7 +134,9 @@ namespace Multiplexed.AI.Runtime.AI.Policies
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var policyName = policy.GetType().Name;
+                var invocationIdentity = policy as IAiPolicyInvocationIdentity;
+                var policyName = invocationIdentity?.PolicyName ?? policy.GetType().Name;
+                var invocationMetadata = invocationIdentity?.InvocationMetadata;
 
                 var traceContext = new AiStepTraceContext
                 {
@@ -143,6 +146,10 @@ namespace Multiplexed.AI.Runtime.AI.Policies
                 };
 
                 using var scope = _obs.Tracer.StartStep(traceContext);
+                if (invocationMetadata is not null)
+                {
+                    foreach (var item in invocationMetadata) scope?.SetTag(item.Key, item.Value);
+                }
 
                 var start = DateTime.UtcNow;
 
@@ -154,7 +161,7 @@ namespace Multiplexed.AI.Runtime.AI.Policies
                         policyName,
                         AiEngineEvents.Policy.Evaluated,
                         "Policy evaluation started.",
-                        null,
+                        invocationMetadata,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -183,12 +190,12 @@ namespace Multiplexed.AI.Runtime.AI.Policies
                             policyName,
                             ResolvePolicyDecisionEventType(result),
                             result.Message ?? ResolvePolicyDecisionReason(result),
-                            new Dictionary<string, string>
+                            MergeInvocationMetadata(invocationMetadata, new Dictionary<string, string>
                             {
                                 [AiObservabilityMetadataKeys.DottedDurationMs] = duration.TotalMilliseconds.ToString("F2"),
                                 [AiPolicyMetadataKeys.ResultKind] = result.Kind.ToString(),
                                 [AiPolicyMetadataKeys.ResultSuccess] = result.IsSuccess.ToString()
-                            },
+                            }),
                             cancellationToken)
                         .ConfigureAwait(false);
                 }
@@ -207,10 +214,10 @@ namespace Multiplexed.AI.Runtime.AI.Policies
                             policyName,
                             AiEngineEvents.Policy.Failed,
                             ex.Message,
-                            new Dictionary<string, string>
+                            MergeInvocationMetadata(invocationMetadata, new Dictionary<string, string>
                             {
                                 [AiExceptionMetadataKeys.ExceptionType] = ex.GetType().Name
-                            },
+                            }),
                             cancellationToken)
                         .ConfigureAwait(false);
 
@@ -219,6 +226,17 @@ namespace Multiplexed.AI.Runtime.AI.Policies
             }
 
             return results;
+        }
+
+        /// <summary>Enriches custom facts without changing native event metadata.</summary>
+        private static IReadOnlyDictionary<string, string> MergeInvocationMetadata(
+            IReadOnlyDictionary<string, string>? invocationMetadata,
+            IReadOnlyDictionary<string, string> resultMetadata)
+        {
+            if (invocationMetadata is null) return resultMetadata;
+            var merged = new Dictionary<string, string>(invocationMetadata, StringComparer.Ordinal);
+            foreach (var pair in resultMetadata) merged[pair.Key] = pair.Value;
+            return merged;
         }
 
         /// <summary>

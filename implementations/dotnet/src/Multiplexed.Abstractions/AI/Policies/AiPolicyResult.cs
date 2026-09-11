@@ -106,6 +106,15 @@
         }
 
         /// <summary>
+        /// Creates a blocking result while preserving family-specific decision data.
+        /// Both arguments are required to preserve the historical Block&lt;T&gt;(message) overload.
+        /// </summary>
+        public static AiPolicyResultGeneric<T> Block<T>(T data, string? message)
+        {
+            return new AiPolicyResultGeneric<T>(AiPolicyResultKind.Block, data, message);
+        }
+
+        /// <summary>
         /// Creates a strongly typed policy result indicating that a retry may be performed.
         /// </summary>
         /// <typeparam name="T">The type of the retry-related data.</typeparam>
