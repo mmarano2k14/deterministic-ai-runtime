@@ -6,7 +6,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable
     /// Coordinates journal CAS operations, not DAG scheduling or worker execution.
     /// Storage faults propagate: an ambiguous write never causes a new operation ID.
     /// </summary>
-    public sealed class AiDurableInvocationJournal
+    public sealed partial class AiDurableInvocationJournal
     {
         private const int MaxCasAttempts = 16;
         private readonly IAiDurableInvocationStore _store;

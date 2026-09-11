@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFramework>net10.0</TargetFramework>
@@ -36,4 +36,25 @@
 		<Folder Include="Runtime\Retry\" />
 	</ItemGroup>
 
+
+  <ItemGroup>
+    <ProjectReference Include="..\Multiplexed.AI.WorkerProtocol.Probe\Multiplexed.AI.WorkerProtocol.Probe.csproj" ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+
+  <!-- The probe owns its launch files. Do not copy transitive content before its build. -->
+  <Target Name="CopyWorkerProtocolProbe" AfterTargets="Build"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <_WorkerProtocolProbeFiles Remove="@(_WorkerProtocolProbeFiles)" />
+    </ItemGroup>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Multiplexed.AI.WorkerProtocol.Probe\Multiplexed.AI.WorkerProtocol.Probe.csproj"
+             Targets="BuildAndGetWorkerProtocolProbeFiles"
+             Properties="Configuration=$(Configuration);TargetFramework=net10.0"
+             RebaseOutputs="true" StopOnFirstFailure="true">
+      <Output TaskParameter="TargetOutputs" ItemName="_WorkerProtocolProbeFiles" />
+    </MSBuild>
+    <Error Condition="'@(_WorkerProtocolProbeFiles)' == ''"
+           Text="The worker protocol probe did not return its required launch files." />
+    <Copy SourceFiles="@(_WorkerProtocolProbeFiles)" DestinationFolder="$(TargetDir)worker-probe" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

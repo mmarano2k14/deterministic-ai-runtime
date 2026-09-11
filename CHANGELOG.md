@@ -8,9 +8,35 @@ This project follows a deterministic runtime and observability model designed fo
 
 ## Unreleased
 
-Runtime-side contracts, binding, policy evaluation, MCP integration, durable invocation persistence, immutable code publication, and whole-run pinning for an external multilanguage SDK. The public SDK library is not included; its API and models must remain independent of runtime DLLs and internal CLR contracts.
+Runtime-side contracts, binding, policy evaluation, MCP integration, durable invocation persistence, immutable code publication, whole-run pinning, opt-in hosted worker transport, and real published Python source execution for an external multilanguage SDK. The public SDK library is not included; its API and models must remain independent of runtime DLLs and internal CLR contracts.
 
 ### Added
+
+#### Hosted Python source execution
+
+- Add a standalone, standard-library-only CPython worker behind the existing private-pipe transport. Execute the selected published module and entry function; do not substitute the protocol probe or load runtime assemblies.
+- Add `AiPythonWorkerProcessProfile` for host-controlled interpreter/loader paths, exact runtime identity, approved executable/loader digests, fixed isolated interpreter flags, and a bounded heartbeat interval. Support stable exact CPython 3.12.x and 3.13.x versions; refuse unsupported versions/languages. Profile construction performs no I/O or startup.
+- Recheck request fields, UTC deadline, runtime identity, source byte hashes, canonical base64url, UTF-8, portable paths, module layout, and size/count limits before importing any published code. Compile the complete supplied closure before top-level execution.
+- Load source and supplied pure-Python dependencies from memory through the standard import mechanism. Preserve regular-package and relative imports with explicit `__init__.py`; refuse case/module collisions, standard-library shadowing, traversal, split package ownership, and missing source entry points. Perform no extraction, package installation, registry lookup, or implicit dependency substitution.
+- Invoke a declared module-defined function with frozen JSON inputs and read-only portable invocation metadata. Await asynchronous results. Require an exact boolean `success` plus a plain JSON `payload`; reject ambiguous, nonfinite, oversized, lifecycle-controlling, or non-JSON results.
+- Emit correlated ready/heartbeat/result frames without journal tokens or runtime commands. Keep lease renewal, epoch authority, durable acceptance, retries, continuation, and DAG progression in their existing server components.
+- Redirect ordinary and raw standard-output diagnostics away from the protocol descriptor. Stop on deadline and terminate after final output without running tenant `atexit` callbacks or retaining tenant threads. This does not provide hostile-code isolation or external-effect guarantees.
+- Add independent Python contract/process tests and C# profile, real transport, and publication/journal/local-DAG integration cases. Keep all existing C#, project, fixture, RBAC, store, runner, protocol-probe build, and assertion files unchanged.
+- Add a combined validator that selects the current interpreter for opt-in .NET tests and checks fresh TRX outcomes. Missing SDKs, skipped cases, empty results, and missing live scenarios cannot produce a full-validation success.
+
+#### Hosted worker transport and supervision
+
+- Add an explicitly configured, one-assignment process transport over private newline-framed UTF-8 JSON pipes. Host-owned executable profiles are separate from trusted runtime instances, the public Gateway, and outbound MCP connections.
+- Match the complete pinned runtime identity against an immutable installed-process catalog. Verify the configured executable and selected host-file digests before launch. Clear inherited environment variables, pass only explicit host configuration, and use literal arguments without a shell.
+- Materialize the selected function and dependency bytes through the existing verified immutable publication store. Restore the persisted execution owner, apply the existing execute capability, verify the run pin and exact target, and recheck parent ownership/lifecycle after artifact reads. Do not export store keys, journal lease tokens, RBAC snapshots, or service credentials.
+- Add closed `invoke`, `ready`, `heartbeat`, and `result` envelopes. Correlate request, logical operation, worker, and epoch. Bound requests, output frames, stderr, frame count, readiness, heartbeat silence, execution, and root-process cleanup. Reject invalid UTF-8, duplicate fields, unrecognized lifecycle commands, and data after a terminal frame.
+- Add `AiWorkerInvocationSupervisor` on the existing journal. Acquire authority before publication materialization; accept business results only through `CompleteAsync`; leave the existing pending-continuation and DAG application path authoritative.
+- Add constrained worker lease admission inside every journal compare-and-swap attempt. Disable expired-assignment replay by default; require explicit host opt-in for workloads with an appropriate effect-idempotency/reconciliation contract. Apply an assignment-epoch limit without modifying the general lease API or fabricating a failed business result.
+- Renew only after validated liveness and a confirmed journal write. Preserve operation identity, effect-idempotency key, frozen inputs, and target references across permitted reassignment. Stop on lease safety expiry or uncertain renewal acknowledgement.
+- Share bounded launch capacity across scoped supervisors. Quarantine a slot when termination of its root process cannot be confirmed. Technical errors retain the invocation for reconciliation; they do not acknowledge continuation or grant immediate reexecution.
+- Add an optional keyset-page store capability and MongoDB implementation using existing filters, ordinal ordering, read concern, and collection. Poll explicit control-plane/tenant/language partitions through separate dependency-injection scopes. No new production `MongoClient`, index definition, or persisted schema is introduced.
+- Add separate core and hosted-poller registration. Existing hosts, native scanners, RBAC, key rotation, DAG runners, Redis transitions, and recovery registration remain unchanged.
+- Add an independent, package-free .NET protocol probe and test-project build/copy target. Process tests exercise real pipes and process termination, but the probe does not execute the supplied Python, TypeScript, or .NET functions. Language loaders and production confinement remain outside this delivery.
 
 #### Immutable code publication and whole-run pinning
 
@@ -119,6 +145,14 @@ Runtime-side contracts, binding, policy evaluation, MCP integration, durable inv
 
 ### Fixed
 
+#### Worker protocol probe build and launch-file copying
+
+- Keep the protocol executable as a build/restore project reference without a compiler reference. Add `Private="false"` to prevent its generated launch files from entering ordinary transitive content copying before the explicit probe build.
+- Replace output-path-only lookup with a producer-owned `BuildAndGetWorkerProtocolProbeFiles` target that depends on `Build` and returns the SDK-resolved assembly, dependency manifest, and runtime configuration paths.
+- Explicitly require dependency/runtime-configuration generation in the probe project. Reject disabled generation, empty output paths, missing required files, and an empty returned manifest instead of silently omitting launch files.
+- Copy the complete launch payload to the existing `worker-probe` output directory. Skip custom producer/copy actions during design-time builds.
+- Preserve all C# sources, package versions, runtime references, test assertions, process protocol, DAG behavior, RBAC, and journal contracts. No solution-file or installed SDK-target modification is included.
+
 #### Publication fixture correlation accessor
 
 - Replace the publication fixture's `DagTestProxy.Noop<IAiRuntimeCorrelationAccessor>()` with the existing `AsyncLocalAiRuntimeCorrelationAccessor`.
@@ -191,7 +225,18 @@ Source-declared inventory under `Tests/Multiplexed.AI.Tests/Runtime/Invocation` 
 | Publication registration and required capabilities | 11 |
 | Publication fixture correlation and unchanged RBAC requirements | 5 |
 | Opt-in existing Mongo payload-store publication integration | 4 |
-| **Total** | **651** |
+| Worker protocol, bounded framing, and correlation | 45 |
+| Worker process configuration and launch capacity | 21 |
+| Journal-backed worker supervision and uncertain outcomes | 23 |
+| Compare-and-swap worker admission and reassignment limits | 9 |
+| Worker publication materialization and existing RBAC | 17 |
+| Explicit dispatch polling and host lifecycle | 15 |
+| Real independent-process transport and existing DAG application | 24 |
+| Opt-in MongoDB worker keyset and competing-acquisition integration | 4 |
+| Python host-profile construction | 21 |
+| Opt-in real Python through the existing server process transport | 23 |
+| Opt-in real Python with immutable publication, journal, and local DAG | 4 |
+| **Total C# cases** | **857** |
 
 - Cover language inheritance, local overrides, scope isolation, legacy serialization, snapshot rereading, and retry-setting compatibility.
 - Cover adapter selection, admission without execution, typed policy outcomes, invalid responses, tenant isolation, deadlines, cancellation, and native guards.
@@ -203,16 +248,22 @@ Source-declared inventory under `Tests/Multiplexed.AI.Tests/Runtime/Invocation` 
 - Cover immutable run pins before creation, conflicting/concurrent admissions, lost acknowledgements, missing-pin refusal, tenant/namespace/owner isolation, and existing RBAC decisions.
 - Exercise the existing exact creator and local DAG runner across serialized rehydration and republication, preserving a not-yet-started call site's original implementation/environment material.
 
-**Validation boundary:** Counts are a static source inventory, not passing-test totals. The preceding durable invocation/DAG integration is the validated baseline in the target environment; separate Redis/MongoDB optional-case execution is not established by that baseline status. Publication tests exposed an unsupported correlation getter in the shared test fixture. The corrected publication scope defines 125 non-infrastructure cases and 4 opt-in MongoDB cases; a complete rerun is pending. No .NET build, .NET tests, real infrastructure tests, or hosted workers were executed during preparation of this correction. Static checks cover changed source references, preservation of production files and existing assertions, encoding, inventory, and archive integrity. Earlier isolated Lua checks are not Redis integration results. Missing infrastructure configuration produces explicit skips, not passing integration tests. In-memory tests and serialized-store restoration do not establish multi-process recovery guarantees.
+**Additional Python inventory:** 48 tests under `implementations/python/tests/hosted_invocation`, including contract subcases and real subprocess execution. Subcases are not counted separately from test methods.
+
+**Validation status:** Hosted worker transport and the protocol-probe build correction have passing target-environment validation. No execution of every optional Redis/MongoDB case is inferred. The new Python suite passed on Linux x86-64 with CPython 3.13.5. The 48 new C# cases, Windows Python execution, and CPython 3.12 execution remain unverified during preparation because those execution environments were not available. Twenty-seven of the new C# cases require explicit Python configuration; absent configuration produces visible skips. The combined validator requires the live cases and refuses incomplete or skipped results.
+
+**Evidence boundary:** Inventory counts are source-declared, not aggregate passing-test totals. Python subprocess success does not establish C# transport or DAG integration success. Static checks cover source structure, paths, encoding, package integrity, and preservation of existing files; they are not compilation. Local in-memory DAG scenarios do not establish production multi-process or infrastructure recovery guarantees.
 
 ### Limitations
 
 - **External SDK:** Public builders, independent serializable models, the public publication wire API, and the client-library workflow are not implemented in this scope. Server publication services are present but are not SDK dependencies. Server adapter interfaces are not client dependencies.
-- **Hosted execution:** No hosted Python, TypeScript, or .NET worker, worker isolation, or live worker transport is included. Adapter tests use local transport doubles.
+- **Hosted execution:** An opt-in private-pipe process transport, bounded supervisor, and real Python source loader are included. TypeScript/.NET function loaders, dependency installers, reusable warm pools, remote network transports, and production OS/container confinement are not included. The Python loader supports supplied UTF-8 `.py` modules and regular packages, not wheels, native extensions, namespace packages, filesystem-backed resources, or detached background work. The protocol-only .NET probe remains separate. Existing hosts do not activate Python automatically.
+- **Process containment:** Raw child processes are not a hostile-code sandbox. Root-process termination is bounded and checked; descendant termination, orphan cleanup after host death, CPU/memory limits, filesystem isolation, outbound-network policy, and host-wide or cluster-wide quotas are not proven. Host profiles require deployment-controlled read-only files. Digest checks do not remove filesystem time-of-check/time-of-use risk.
+- **Worker reassignment:** Expired assignments are retained by default. Explicit opt-in enables bounded reassignment of the same logical operation; it is not exactly-once effect execution. A reconciliation-required disposition and quarantined capacity have no new public remediation API. Cancellation after the final parent check remains a cross-store race governed by existing lifecycle/continuation rules.
 - **Policy coverage:** Custom evaluation covers `Concurrency` only. Other policy families and enforcement of side-effect-free execution remain outside the implementation.
 - **MCP transport:** No real outbound MCP network client is installed or enabled automatically. The current adapter validates normalized internal responses.
-- **Durable integration:** The opt-in adapter and continuation bridge use existing DAG paths, but production hosts do not enable them automatically. Live worker dispatch is not implemented. The bridge currently supports logical generation zero; journal support for additional generations is not an automatic retry/reexecution policy. Third-party distributed stores must implement atomic failure-result persistence before using this capability.
-- **Publication:** The opt-in server module verifies explicit root publication material and whole-run pins. It does not discover transitive dependencies, install packages, verify runtime binaries, implement public upload/worker retrieval, or wire shared-run submission. Native binaries and remote MCP deployments are not frozen by the code manifest. Exact inline native Child DAG definitions are retained; custom child publication/admission is explicitly unsupported here. Full closure verification is bounded but unbenchmarked; no cross-request immutable-content cache is introduced.
+- **Durable integration:** The opt-in adapter and continuation bridge use existing DAG paths, but production hosts do not enable them automatically. Live process dispatch is opt-in and separate from existing continuation polling. The bridge currently supports logical generation zero; journal support for additional generations is not an automatic retry/reexecution policy. Third-party distributed stores must implement atomic failure-result persistence before using this capability.
+- **Publication:** The opt-in server module verifies explicit root publication material and whole-run pins. It does not discover transitive dependencies, install packages, attest the complete runtime installation, implement public upload, or wire shared-run submission. Worker preparation now retrieves selected verified bytes internally; configured host executable/file digests are checked separately by the process transport. Native binaries and remote MCP deployments are not frozen by the code manifest. Exact inline native Child DAG definitions are retained; custom child publication/admission is explicitly unsupported here. Full closure verification is bounded but unbenchmarked; no cross-request immutable-content cache is introduced.
 - **External effects:** Stable operation identities and stored results do not guarantee external-effect deduplication. MCP `RequestId` correlates an attempt, not a business operation. A timeout does not establish whether a remote side effect occurred; provider idempotency and reconciliation remain necessary.
 - **Input projection:** Excluding automatic context export is not secret detection; explicitly declared input data remains eligible for transmission.
 - **Observation:** Failures before policy evaluation starts are not guaranteed to emit `policy.failed`.
@@ -238,6 +289,22 @@ Paths are relative to `implementations/dotnet`.
 | Server publication contracts and runtime catalog | `src/Multiplexed.Abstractions/AI/Publication/` |
 | Immutable publication compiler, store, authorization, run pinning, and target resolution | `src/Multiplexed.AI/Runtime/Publication/` |
 | Publication tests | `Tests/Multiplexed.AI.Tests/Runtime/Publication/` |
+| Portable internal worker envelopes and paged dispatch contract | `src/Multiplexed.Abstractions/AI/Invocation/Workers/` |
+| Process transport, bounded supervisor, launch catalog, and explicit polling | `src/Multiplexed.AI/Runtime/Invocation/Workers/` |
+| Verified worker publication materialization | `src/Multiplexed.AI/Runtime/Publication/AiWorkerPublicationPreparer.cs`, `AiImmutablePublicationStore.WorkerCode.cs` |
+| Constrained worker lease admission and MongoDB keyset pages | `src/Multiplexed.AI/Runtime/Invocation/Durable/AiDurableInvocationJournal.WorkerAdmission.cs`, `Mongo/MongoAiDurableInvocationStore.DispatchPages.cs` |
+| Worker regression and actual process tests | `Tests/Multiplexed.AI.Tests/Runtime/Invocation/Workers/` |
+| Independent protocol-only process probe | `Tests/Multiplexed.AI.WorkerProtocol.Probe/` |
+| Probe build/export and isolated launch-file copying | `Tests/Multiplexed.AI.Tests/Multiplexed.AI.Tests.csproj`, `Tests/Multiplexed.AI.WorkerProtocol.Probe/Multiplexed.AI.WorkerProtocol.Probe.csproj` |
+| Python host profile factory | `src/Multiplexed.AI/Runtime/Invocation/Workers/Python/AiPythonWorkerProcessProfile.cs` |
+| Real Python and publication/DAG integration tests | `Tests/Multiplexed.AI.Tests/Runtime/Invocation/Workers/Python/` |
+
+Additional paths relative to the repository root:
+
+| Area | Source location |
+|---|---|
+| Standalone published Python loader | `implementations/python/workers/hosted_invocation/worker.py` |
+| Python contract/process tests and combined validation | `implementations/python/tests/hosted_invocation/` |
 
 ---
 

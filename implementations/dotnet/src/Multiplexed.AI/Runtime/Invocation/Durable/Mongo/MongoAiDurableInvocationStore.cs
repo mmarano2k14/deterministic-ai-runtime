@@ -10,7 +10,8 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable.Mongo
     /// majority journaled writes and primary majority reads; no cross-store transaction,
     /// hosted service, worker dispatch, TTL deletion or implicit registration is added.
     /// </summary>
-    public sealed class MongoAiDurableInvocationStore : IAiDurableInvocationStore
+    public sealed partial class MongoAiDurableInvocationStore : IAiDurableInvocationStore,
+        Multiplexed.Abstractions.AI.Invocation.Workers.IAiDurableInvocationDispatchPageStore
     {
         private readonly IMongoCollection<BsonDocument> _collection;
         private readonly SemaphoreSlim _indexLock = new(1, 1);

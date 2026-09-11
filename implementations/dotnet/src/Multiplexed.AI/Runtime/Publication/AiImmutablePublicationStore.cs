@@ -12,7 +12,7 @@ namespace Multiplexed.AI.Runtime.Publication
     /// Reuses the configured immutable payload store. No additional MongoClient, mutable catalog,
     /// TTL, cache or storage engine. All entry points are called after server authorization.
     /// </summary>
-    public sealed class AiImmutablePublicationStore
+    public sealed partial class AiImmutablePublicationStore
     {
         private readonly IAiPayloadStoreResolver _resolver;
         private readonly IAiPublicationEnvironmentCatalog _catalog;
