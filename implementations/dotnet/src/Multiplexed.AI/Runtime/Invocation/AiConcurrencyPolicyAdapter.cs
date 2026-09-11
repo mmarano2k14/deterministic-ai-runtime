@@ -10,6 +10,7 @@ namespace Multiplexed.AI.Runtime.Invocation
     /// validation, not admission, claims, retries, durable waits or policy events.
     /// Each adapter has its own identity; the shared transport must be concurrency-safe.
     /// </summary>
+    [AiPolicyDiscoveryIgnore]
     internal sealed class AiConcurrencyPolicyAdapter : IAiPolicy, IAiPolicyInvocationIdentity
     {
         private readonly IAiConcurrencyPolicyTransport _transport;
