@@ -306,6 +306,158 @@ Additional paths relative to the repository root:
 | Standalone published Python loader | `implementations/python/workers/hosted_invocation/worker.py` |
 | Python contract/process tests and combined validation | `implementations/python/tests/hosted_invocation/` |
 
+## Hosted TypeScript Source Execution
+
+### Added
+
+- Add a host-owned TypeScript worker profile for exact pinned Node.js runtimes. Supported profiles are Node.js 22.13+ within major 22 and Node.js 24.x, with exact runtime version and executable SHA-256 retained in the existing publication environment identity.
+- Add a standalone Node.js TypeScript loader using the existing private process transport. Published `.ts` bytes are verified, bounded, materialized into a private temporary workspace, and loaded with Node.js native type stripping/transformation flags.
+- Add explicit source-only dependency aliases. Published dependencies require exact versions and `index.ts`; the loader generates `#name` import mappings without npm, npx, package-registry access, `node_modules`, or transitive dependency discovery.
+- Execute published TypeScript in a child Node.js process. The parent worker alone emits the runtime JSON-line lifecycle protocol; the child returns its terminal function result over Node.js IPC so published stdout cannot become a protocol frame.
+- Support synchronous and asynchronous two-argument exported functions with a frozen portable invocation context and explicit `{ success, payload }` result contract.
+- Add TypeScript host-profile, real process, immutable-publication, durable-journal, and existing local-DAG tests without replacing existing DAG, RBAC, journal, publication, transport, or recovery code.
+
+### Behavior
+
+- Source integrity is checked before readiness. Missing entry points, language mismatches, path traversal, corrupt hashes, unsupported files, malformed dependency closure, syntax/import failures, thrown exceptions, invalid result shapes, and non-finite JSON remain technical failures.
+- The existing supervisor retains deadline, cancellation, lease, epoch, durable-result and continuation authority. Published code cannot choose `Park`, retry, recovery, or the next DAG node.
+- A one-assignment process boundary prevents module globals from carrying into later assignments. The private materialized workspace is removed before an authoritative result is emitted.
+- Published stdout/stderr is drained outside the parent protocol channel. Function diagnostics are not promoted into durable runtime results.
+
+### Compatibility
+
+- Python hosted execution remains unchanged.
+- Existing worker transport, worker supervisor, immutable publication, whole-run pinning, durable journal, DAG continuation, RBAC and recovery paths remain unchanged.
+- No automatic host registration is introduced. Production deployment must explicitly install and register an approved Node.js runtime/loader profile.
+- No package-manager resolution is added. Existing publication hashes remain the source of truth for the exact executed source closure.
+
+### Validation
+
+- Standalone Node.js validation passed on Linux x86-64 with Node.js 22.16.0: 20 tests passed, zero failed and zero skipped.
+- The .NET source inventory adds 48 target cases: 21 profile cases, 23 real-process execution cases and 4 immutable-publication/journal/DAG cases.
+- The new .NET cases were not executed during package preparation because the .NET SDK is unavailable in the preparation environment.
+
+### Limitations
+
+- The TypeScript process is not a hostile-code sandbox. Node.js built-ins remain available; OS/container isolation, filesystem/network policy, CPU/memory quotas and descendant containment remain deployment responsibilities.
+- Only `.ts` source is supported in this delivery. `.tsx`, `.cts`, `.mts`, JavaScript bundles, npm packages, native addons and lock-file installation are not implemented.
+- Dependency imports use generated `#name` aliases and require a published `index.ts`; this is a deterministic source-closure contract, not a full Node.js package ecosystem implementation.
+
+## Hosted .NET Assembly Execution
+
+### Added
+
+- Add a host-owned .NET worker profile for exact pinned .NET 10.0.x runtimes. The deployment-owned `dotnet` host, worker assembly, dependency manifest, and runtime configuration are verified by SHA-256 through the existing process transport.
+- Add a standalone hosted .NET worker executable. Published assemblies are never loaded into the control-plane/runtime server process.
+- Execute immutable published DLLs in a one-assignment child `dotnet` process using a collectible `AssemblyLoadContext` and explicit published dependency DLLs.
+- Add the portable .NET entry-point ABI `Fully.Qualified.Type::Method` with exactly two `JsonElement` inputs and an explicit `{ success, payload }` result.
+- Support synchronous methods, `Task`, `Task<T>`, `ValueTask`, and `ValueTask<T>` without adding a language-specific retry path.
+- Add build-owned standalone test assemblies for real dependency loading and published-function execution. The test assembly does not reference those fixture outputs.
+- Add profile, real-process, immutable-publication, durable-journal, and existing-DAG coverage for the hosted .NET path.
+
+### Behavior
+
+- .NET execution uses already-compiled immutable artifacts. No Roslyn compiler service, temporary tenant SDK project, NuGet restore, package registry, or `latest` dependency lookup is introduced.
+- Published assembly/dependency bytes are hash-checked before readiness and materialized into a private per-assignment workspace.
+- Published code executes in a child process whose stdout/stderr are bounded and drained outside the parent worker protocol. Only the host-owned parent emits `ready`, `heartbeat`, and `result` frames.
+- One child process and one collectible load context are used per assignment so static state and loaded tenant assemblies do not carry into later assignments.
+- Missing dependencies, invalid symbols/signatures, reflection failures, user exceptions, malformed result shapes, corrupt digests, and child failures remain technical failures rather than manufactured business results.
+- The existing supervisor retains deadline, cancellation, lease, epoch, journal-result, and DAG-continuation authority.
+
+### Compatibility
+
+- Hosted Python and TypeScript execution remain unchanged.
+- Existing DAG, recovery, RBAC, immutable publication, whole-run pinning, durable journal, process transport, and worker supervisor paths remain unchanged.
+- No automatic production profile registration is introduced.
+- The external SDK remains independent of runtime CLR assemblies.
+
+### Validation
+
+- The source inventory adds 31 hosted-.NET target cases: 12 profile/configuration cases, 16 real-process execution/contract cases, and 3 immutable-publication/journal/DAG cases.
+- The .NET cases were not executed during package preparation because the preparation environment does not contain the .NET SDK/runtime.
+
+### Limitations
+
+- Hosted .NET execution is an assembly-artifact contract, not raw C# source compilation.
+- This is not a hostile-code sandbox. OS/container resource and network isolation remain deployment responsibilities.
+- NuGet restore, native dependency handling, package-manager resolution, ReadyToRun/native AOT-specific contracts, and transitive dependency discovery are not included.
+## Hosted .NET publication/profile contract correction
+
+### Fixed
+
+- Publication entry-point validation now accepts the explicit CLR `TypeName::MethodName` form used by hosted .NET assemblies while retaining the historical simple-symbol grammar.
+- Colon characters remain invalid outside one structurally valid `::` separator; malformed CLR-style symbols are rejected before immutable persistence.
+- Hosted .NET profile tests now validate the complete five-argument host-owned launch envelope: worker DLL, runtime reference, runtime version, runtime SHA-256, and heartbeat interval.
+
+### Compatibility
+
+- Existing simple publication symbols remain accepted.
+- Python and TypeScript worker contracts are unchanged.
+- DAG orchestration, RBAC, recovery, durable invocation state, worker leases, and publication pinning are unchanged.
+
+### Validation
+
+- Added publication coverage for valid and malformed CLR-style entry-point symbols.
+- Hosted .NET worker and publication tests require execution on a .NET 10 environment for final validation.
+
+
+## Fixed - Hosted .NET published DAG result assertion
+
+- Corrected the hosted .NET published-DAG test to validate the durable payload structurally instead of comparing serialized JSON text.
+- The published DAG input is `amount = 1`; `amount = 21` belongs only to the direct worker transport fixture and is not part of the DAG publication path.
+- The assertion now verifies `revision` and `amount` independently, removing accidental dependence on JSON property order.
+- No production runtime, DAG, RBAC, journal, publication, transport, or recovery code changed.
+
+## Validation Update — Hosted .NET Assembly Execution
+
+### Validation
+
+- The hosted .NET target suite is validated in the target .NET 10 environment after the worker-project restore/build correction, CLR entry-point grammar correction, and structural published-DAG payload assertion correction.
+- The validated path includes the host-owned worker launch profile, published DLL execution, dependency loading, immutable publication integration, durable journaling, and existing DAG application.
+- This validation does not change the previously documented isolation limits: raw child processes are not hostile-code sandboxes and package-manager/native dependency support remains outside the current contract.
+
+## Hosted Custom Concurrency Policy Execution
+
+### Added
+
+- Add `IAiConcurrencyPolicyCodePreparer` to resolve one custom concurrency policy to the exact immutable code bundle pinned to the owning execution.
+- Add `AiConcurrencyPolicyPublicationPreparer` to restore the persisted execution owner, apply the existing publication execute capability through the existing RBAC engine, load the pinned policy implementation, and recheck ownership/lifecycle after artifact I/O.
+- Extend the immutable publication store with policy-specific worker-code materialization. Selection is constrained by run pin, policy scope, policy name, effective language, and immutable implementation reference; no current/latest publication lookup is permitted.
+- Support repeated equivalent policy sites that share one content-addressed implementation while rejecting inconsistent matching implementation/environment metadata.
+- Add `AiHostedConcurrencyPolicyTransport` for `python`, `typescript`, and `dotnet`, reusing the existing host-owned `IAiWorkerInvocationTransport` and published language loaders.
+- Reuse the existing portable `AiConcurrencyPolicyRequest` as hosted function input and the existing closed `concurrency/v1` response reader for the final allow/deny mapping.
+- Add explicit `AddAiHostedConcurrencyPolicyExecution` registration. Require both hosted worker transport and complete immutable-publication registration; refuse duplicate/conflicting custom policy transport configuration.
+- Add real-process policy fixtures for hosted Python, TypeScript, and .NET without introducing a language-specific policy engine.
+
+### Behavior
+
+- Hosted concurrency policy evaluation remains a short, deadline-bounded admission operation. It does not create a durable custom-step journal record, worker lease, DAG continuation, retry grant, or scheduler authority.
+- The reused worker wire envelope provides process correlation only for policy evaluation. Its epoch/effect-correlation fields do not represent durable policy authority or exactly-once external-effect execution.
+- A hosted function result with `success = false` is a technical policy failure, not a denial. A denial is represented only by a successful function envelope containing a valid `concurrency/v1` payload with `decision = deny`.
+- Timeouts, cancellation, worker/process failures, malformed responses, missing immutable code, authorization failure, and binding substitution remain technical failures. None can become implicit authorization.
+- The policy adapter and existing concurrency engine remain the owners of response validation and admission decisions.
+
+### Compatibility
+
+- Existing native concurrency policies and governance guards remain unchanged.
+- Existing custom-policy scope/language binding and response mapping remain unchanged.
+- Existing DAG runners, claims, Redis transitions, recovery, durable custom-step journal state, worker supervisor, MCP binding, RBAC engine, and hosted language loaders are unchanged.
+- Registration remains opt-in; existing hosts do not activate hosted custom policies automatically.
+- The external SDK boundary remains unchanged: no runtime DLL or internal CLR contract is exposed as an SDK dependency.
+
+### Validation
+
+- The source inventory adds 32 target cases: 15 hosted transport cases, 9 immutable publication/ownership cases, 5 explicit-registration cases, and 3 real hosted-process cases covering Python, TypeScript, and .NET.
+- The new C# target suite was not executed during package preparation because the preparation environment does not provide the .NET SDK. Python and TypeScript live-process cases also require their existing explicit executable configuration.
+- Static verification covers source structure, immutable-selection constraints, changed-file boundaries, line endings in the package, and archive integrity. Static verification is not a passing test result.
+
+### Limitations
+
+- Hosted custom policy execution is implemented only for the existing `Concurrency` checkpoint. Other policy families require explicit family-specific result contracts and integration at their existing evaluation points.
+- The policy contract requires side-effect-free execution, but the current raw process provider is not an OS/container security sandbox. Filesystem/network/resource confinement remains a deployment responsibility for untrusted code.
+- Policy evaluation is deliberately non-durable. Process or host failure during evaluation fails admission technically rather than creating a resumable policy operation.
+- No outbound MCP network transport is introduced by this delivery.
+
 ---
 
 ## 0.0.8.6 - 2026-09-11 — Multilanguage SDK Server Foundations

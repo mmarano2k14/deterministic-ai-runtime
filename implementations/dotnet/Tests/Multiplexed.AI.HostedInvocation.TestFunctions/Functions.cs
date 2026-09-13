@@ -20,6 +20,14 @@ public static class Functions
     public static object Counter(JsonElement inputs, JsonElement context) => Result(true, Interlocked.Increment(ref _counter));
     public static object Revision1(JsonElement inputs, JsonElement context) => Result(true, new { revision = 1, amount = inputs.GetProperty("amount").GetInt32() });
     public static object Revision2(JsonElement inputs, JsonElement context) => Result(true, new { revision = 2, amount = inputs.GetProperty("amount").GetInt32() });
+    public static object PolicyAllow(JsonElement inputs, JsonElement context) => Result(true, new
+    {
+        schemaVersion = 1,
+        requestId = inputs.GetProperty("requestId").GetString(),
+        policyKind = "concurrency",
+        decision = "allow",
+        reason = (string?)null
+    });
     public static object Log(JsonElement inputs, JsonElement context)
     {
         Console.WriteLine("published console output");

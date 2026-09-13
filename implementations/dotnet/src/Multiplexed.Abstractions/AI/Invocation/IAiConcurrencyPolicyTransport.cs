@@ -4,9 +4,9 @@ namespace Multiplexed.Abstractions.AI.Invocation
 {
     /// <summary>
     /// Trusted server transport for one language's short, side-effect-free concurrency
-    /// policy evaluations. No implementation is installed by ML1-C. Test doubles are
-    /// not hosted language workers. Implementations must honour cancellation, bound
-    /// their own I/O and return a detached JSON value, not a disposed JsonDocument view.
+    /// policy evaluations. Implementations may use host-owned language workers, but the
+    /// transport never owns admission, claims, retries or DAG lifecycle. Implementations
+    /// must honour cancellation, bound their own I/O and return a detached JSON value.
     /// </summary>
     public interface IAiConcurrencyPolicyTransport
     {
