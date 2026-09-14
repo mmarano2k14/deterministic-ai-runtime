@@ -107,7 +107,8 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.TypeScript
                     throw new IOException("The installed Node.js runtime failed version inspection.");
                 version = version[1..];
                 var executableHash = WorkerTestSupport.FileHash(executable);
-                var runtime = new AiPublicationEnvironment("typescript-node-fixed", "typescript", version, executableHash);
+                var runtime = AiTypeScriptWorkerProcessProfile.CreateRuntime("typescript-node-fixed", version, executableHash,
+                    WorkerTestSupport.FileHash(script));
                 return AiTypeScriptWorkerProcessProfile.Create(runtime, executable, executableHash, script,
                     WorkerTestSupport.FileHash(script), Path.GetDirectoryName(script)!, heartbeatMilliseconds: 100, environment: environment);
             }

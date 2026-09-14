@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -9,6 +10,10 @@ import test from 'node:test';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const worker = path.resolve(here, '../../workers/hosted_invocation/worker.mjs');
 const runtimeSha = 'a'.repeat(64);
+const toolchainContract = 'multiplexed-typescript-js-v1|typescript=5.8.3|sha256=dd17428736a07e1db1a138d8a14295ddb2699ba780ee15038acdd2c6da5373a0|target=ES2020|module=ESNext|resolution=Bundler|verbatim=true|rewriteRelativeImportExtensions=true|useDefineForClassFields=true|newLine=LF|sourceMaps=false|helpers=inline';
+const loaderHash = crypto.createHash('sha256').update(fs.readFileSync(worker)).digest('hex');
+const runtimeRef = 'typescript-node-fixed@typescript-js-v1-' + crypto.createHash('sha256')
+  .update(toolchainContract + '|loader-sha256=' + loaderHash).digest('hex');
 const target = {
   pipelineName: 'pipeline', pipelineVersion: '1', definitionSha256: 'b'.repeat(64),
   publicationRef: 'pub-' + 'c'.repeat(64), publicationSha256: 'c'.repeat(64),
@@ -33,8 +38,8 @@ function request(source, { dependencies = [], inputs = { amount: 21 }, deadlineM
     executionId: 'execution-1', stepName: 'step-1', generation: 0,
     deadlineUtc: new Date(Date.now() + deadlineMs).toISOString(), traceParent: null, inputs,
     code: {
-      target,
-      runtime: { reference: 'typescript-node-fixed', executionLanguage: 'typescript', runtimeVersion: process.versions.node, runtimeSha256: runtimeSha },
+      target: { ...target },
+      runtime: { reference: runtimeRef, executionLanguage: 'typescript', runtimeVersion: process.versions.node, runtimeSha256: runtimeSha },
       entryPointPath: 'main.ts', entryPointSymbol: symbol, sources: [file('main.ts', source)], dependencies
     }
   };
@@ -44,10 +49,10 @@ function dependency(name, source, version = '1.0.0') {
   return { name, version, files: [file('index.ts', source)] };
 }
 
-async function invoke(value, timeoutMs = 20000) {
+async function invoke(value, timeoutMs = 20000, workerPath = worker) {
   const child = spawn(process.execPath, [
-    '--no-warnings', '--experimental-strip-types', '--experimental-transform-types', worker,
-    '--runtime-reference=typescript-node-fixed', `--runtime-version=${process.versions.node}`,
+    workerPath,
+    `--runtime-reference=${value.code.runtime.reference}`, `--runtime-version=${process.versions.node}`,
     `--runtime-sha256=${runtimeSha}`, '--heartbeat-ms=100'
   ], { stdio: ['pipe', 'pipe', 'pipe'], env: process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot } : {} });
   const stdout = [];
@@ -59,11 +64,13 @@ async function invoke(value, timeoutMs = 20000) {
     child.once('error', reject);
     child.once('exit', (code, signal) => resolve({ code, signal }));
   });
-  const timer = new Promise((_, reject) => setTimeout(() => {
+  let timeout;
+  const timer = new Promise((_, reject) => { timeout = setTimeout(() => {
     try { child.kill('SIGKILL'); } catch { }
     reject(new Error('worker timeout'));
-  }, timeoutMs));
-  const outcome = await Promise.race([exit, timer]);
+  }, timeoutMs); });
+  let outcome;
+  try { outcome = await Promise.race([exit, timer]); } finally { clearTimeout(timeout); }
   const lines = Buffer.concat(stdout).toString('utf8').trim().split(/\r?\n/u).filter(Boolean).map(x => JSON.parse(x));
   return { ...outcome, frames: lines, stderr: Buffer.concat(stderr).toString('utf8') };
 }
@@ -193,3 +200,122 @@ test('expired request is refused before readiness', async () => {
 });
 
 assert.ok(fs.existsSync(worker));
+
+
+for (const [name, body] of [
+  ['numeric enum', 'enum Factor { Twice = 2 }; const factor = Factor.Twice;'],
+  ['string enum', "enum Factor { Twice = 'two' }; const factor = Factor.Twice === 'two' ? 2 : 0;"],
+  ['namespace', 'namespace MathRules { export const factor = 2; }; const factor = MathRules.factor;'],
+  ['parameter property', 'class Rule { constructor(public factor: number) {} }; const factor = new Rule(2).factor;'],
+  ['const enum', 'const enum Rule { Twice = 2 }; const factor = Rule.Twice;']
+]) {
+  test(`portable emit preserves transformed syntax without Node TypeScript flags: ${name}`, async () => {
+    const source = `${body} export function run(inputs: { amount: number }, context: unknown) {
+      return { success: true, payload: inputs.amount * factor };
+    }`;
+    assert.equal(terminal(await invoke(request(source))).payload, 42);
+  });
+}
+
+test('relative .ts imports execute the emitted JavaScript closure', async () => {
+  const value = request(`import { scale } from './lib/math.ts'; export function run(inputs: any, context: unknown) {
+    return { success: true, payload: scale(inputs.amount) };
+  }`);
+  value.code.sources.push(file('lib/math.ts', 'export function scale(value: number) { return value * 2; }'));
+  assert.equal(terminal(await invoke(value)).payload, 42);
+});
+
+test('re-exports preserve relative published module bindings', async () => {
+  const value = request(`import { scale } from './exports.ts'; export function run(inputs: any, context: unknown) {
+    return { success: true, payload: scale(inputs.amount) };
+  }`);
+  value.code.sources.push(file('exports.ts', "export { scale } from './math.ts';"));
+  value.code.sources.push(file('math.ts', 'export function scale(value: number) { return value * 2; }'));
+  assert.equal(terminal(await invoke(value)).payload, 42);
+});
+
+for (const expression of ["'./math.ts'", "relativePath"]) {
+  test(`dynamic relative import is emitted without native TS: ${expression}`, async () => {
+    const value = request(`export async function run(inputs: any, context: unknown) {
+      const relativePath = './math.ts'; const rules = await import(${expression});
+      return { success: true, payload: rules.scale(inputs.amount) };
+    }`);
+    value.code.sources.push(file('math.ts', 'export function scale(value: number) { return value * 2; }'));
+    assert.equal(terminal(await invoke(value)).payload, 42);
+  });
+}
+
+test('published alias subpaths with .ts extensions bind to emitted JavaScript', async () => {
+  const dep = dependency('rules', "export { scale } from './math.ts';");
+  dep.files.push(file('math.ts', 'export function scale(value: number) { return value * 2; }'));
+  const value = request(`import { scale } from '#rules/math.ts'; export function run(inputs: any, context: unknown) {
+    return { success: true, payload: scale(inputs.amount) };
+  }`, { dependencies: [dep] });
+  assert.equal(terminal(await invoke(value)).payload, 42);
+});
+
+test('declaration-only type imports require no native TS loader', async () => {
+  const value = request(`import type { Input } from './types.d.ts';
+    export function run(inputs: Input, context: unknown) { return { success: true, payload: inputs.amount * 2 }; }`);
+  value.code.sources.push(file('types.d.ts', 'export interface Input { amount: number }'));
+  assert.equal(terminal(await invoke(value)).payload, 42);
+});
+
+test('emitted modules execute as JavaScript with no inherited Node flags', async () => {
+  const value = request(`export function run(inputs: unknown, context: unknown) {
+    return { success: true, payload: { url: import.meta.url, args: process.execArgv } };
+  }`);
+  const result = terminal(await invoke(value));
+  assert.match(result.payload.url, /main\.js\?implementation=/u);
+  assert.deepEqual(result.payload.args, []);
+});
+
+test('runtime property ordering does not alter the exact runtime identity', async () => {
+  const value = request(simple);
+  value.code.runtime = Object.fromEntries(Object.entries(value.code.runtime).reverse());
+  assert.equal(terminal(await invoke(value)).payload.value, 42);
+});
+
+test('a legacy unbound environment cannot silently select the new compiler', async () => {
+  const value = request(simple);
+  value.code.runtime.reference = 'typescript-node-fixed';
+  const result = await invoke(value);
+  assert.notEqual(result.code, 0);
+  assert.equal(result.frames.length, 0);
+});
+
+test('runtime version mismatch is rejected even without a major-version allow-list', async () => {
+  const value = request(simple);
+  value.code.runtime.runtimeVersion = '99.1.1';
+  const result = await invoke(value);
+  assert.notEqual(result.code, 0);
+  assert.equal(result.frames.length, 0);
+});
+
+for (const failure of ['missing', 'corrupt']) {
+  test(`host compiler ${failure} is refused before readiness, without a registry fallback`, async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'multiplexed-compiler-test-'));
+    try {
+      const script = path.join(root, 'worker.mjs');
+      fs.copyFileSync(worker, script);
+      if (failure === 'corrupt') {
+        fs.mkdirSync(path.join(root, 'vendor'));
+        fs.writeFileSync(path.join(root, 'vendor', 'typescript-5.8.3.cjs'), 'module.exports = {};');
+      }
+      const result = await invoke(request(simple), 20000, script);
+      assert.notEqual(result.code, 0);
+      assert.equal(result.frames.length, 0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('a declaration file cannot be an executable entry point', async () => {
+  const value = request('export declare function run(inputs: unknown, context: unknown): unknown;');
+  value.code.entryPointPath = 'main.d.ts';
+  value.code.sources[0].path = 'main.d.ts';
+  const result = await invoke(value);
+  assert.notEqual(result.code, 0);
+  assert.equal(result.frames.length, 0);
+});

@@ -1017,6 +1017,16 @@ Plugins own domain behavior.
 
 See [Step plugins](docs/ai/step-plugins.md).
 
+### Hosted multilanguage execution
+
+Published Python and TypeScript sources and precompiled .NET assemblies execute in hosted processes through immutable publications, whole-run version pinning, and a durable invocation journal. The existing DAG retains claim, retry, recovery, and continuation authority; hosted function workers do not become runtime instances.
+
+Custom `Concurrency` policies use the same language infrastructure at their existing admission checkpoint. Outbound MCP is a separate invocation mode using server-owned connections and the existing RBAC engine.
+
+**Scope:** opt-in server-side execution foundation, not the external SDK library. Process isolation is not a hostile-code sandbox, and MCP effect identity does not provide durable external-effect replay.
+
+See [Hosted Multilanguage Execution](docs/ai/hosted-multilanguage-execution.md) and [Hosted Multilanguage Validation](docs/ai/hosted-multilanguage-validation.md).
+
 ---
 
 </details>

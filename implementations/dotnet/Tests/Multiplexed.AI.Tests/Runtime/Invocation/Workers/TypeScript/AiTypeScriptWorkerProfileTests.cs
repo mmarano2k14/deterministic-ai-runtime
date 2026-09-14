@@ -8,7 +8,8 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.TypeScript
     public sealed class AiTypeScriptWorkerProfileTests
     {
         private static AiPublicationEnvironment Runtime(string version = "22.16.0", string language = "typescript") =>
-            new("typescript-node-fixed", language, version, new string('a', 64));
+            AiTypeScriptWorkerProcessProfile.CreateRuntime("typescript-node-fixed", version, new string('b', 64), new string('c', 64))
+                with { ExecutionLanguage = language };
         private static string Root => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "typescript-profile-fixture"));
         private static string Script => Path.Combine(Root, "worker.mjs");
         private static AiWorkerProcessProfile Profile(AiPublicationEnvironment? runtime = null,
@@ -18,7 +19,14 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.TypeScript
                 Script, new string('c', 64), Root, heartbeat, environment, files);
 
         [Theory]
+        [InlineData("18.20.0")]
+        [InlineData("20.19.0")]
+        [InlineData("22.12.0")]
         [InlineData("22.13.0")]
+        [InlineData("23.11.0")]
+        [InlineData("25.0.0")]
+        [InlineData("26.5.0")]
+        [InlineData("27.0.0")]
         [InlineData("22.16.0")]
         [InlineData("24.0.0")]
         [InlineData("24.9.1")]
@@ -27,21 +35,26 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.TypeScript
             var runtime = Runtime(version);
             var profile = Profile(runtime);
             Assert.Equal(runtime, profile.Runtime);
-            Assert.Equal(new[] { "--no-warnings", "--experimental-strip-types", "--experimental-transform-types", Script,
-                "--runtime-reference=typescript-node-fixed", "--runtime-version=" + version,
-                "--runtime-sha256=" + new string('a', 64), "--heartbeat-ms=1000" }, profile.Arguments);
+            Assert.Equal(new[] { Script,
+                "--runtime-reference=" + runtime.Reference, "--runtime-version=" + version,
+                "--runtime-sha256=" + new string('b', 64), "--heartbeat-ms=1000" }, profile.Arguments);
             Assert.Equal(new string('c', 64), profile.VerifiedHostFiles[Script]);
             Assert.Empty(profile.Environment);
+            Assert.Equal(AiTypeScriptWorkerProcessProfile.CompilerSha256,
+                profile.VerifiedHostFiles[Path.Combine(Root, "vendor", AiTypeScriptWorkerProcessProfile.CompilerFileName)]);
+            Assert.DoesNotContain(profile.Arguments, value => value.StartsWith("--experimental", StringComparison.Ordinal));
         }
 
         [Theory]
-        [InlineData("22.12.0")]
-        [InlineData("23.11.0")]
-        [InlineData("25.0.0")]
+        [InlineData("0.12.0")]
+        [InlineData("v26.5.0")]
+        [InlineData("26.5.0-preview")]
+        [InlineData("26.5.0+custom")]
+        [InlineData("26.05.0")]
         [InlineData("22.16")]
         [InlineData("22.16.0.0")]
         [InlineData("latest")]
-        public void Unsupported_Or_Nonexact_Runtime_Versions_Are_Refused(string version) =>
+        public void Nonexact_Or_Nonstable_Runtime_Identities_Are_Refused(string version) =>
             Assert.Throws<ArgumentException>(() => Profile(Runtime(version)));
 
         [Theory]
@@ -94,8 +107,46 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.TypeScript
         public void Profile_Construction_Performs_No_Process_Startup_Or_File_Read()
         {
             var profile = Profile();
-            Assert.Equal(Script, profile.Arguments[3]);
+            Assert.Equal(Script, profile.Arguments[0]);
             Assert.Equal(Root, profile.WorkingDirectory);
         }
+        [Fact]
+        public void Unpinned_Legacy_Runtime_Is_Not_Silently_Rebound_To_A_New_Compiler() =>
+            Assert.Throws<InvalidOperationException>(() => Profile(new AiPublicationEnvironment(
+                "typescript-node-fixed", "typescript", "26.5.0", new string('b', 64))));
+
+        [Fact]
+        public void Runtime_Reference_Changes_When_Loader_Bytes_Change()
+        {
+            var first = Runtime();
+            var changed = AiTypeScriptWorkerProcessProfile.CreateRuntime("typescript-node-fixed", "22.16.0",
+                new string('b', 64), new string('d', 64));
+            Assert.NotEqual(first.Reference, changed.Reference);
+            Assert.Equal(first.RuntimeSha256, changed.RuntimeSha256);
+            Assert.Throws<InvalidOperationException>(() => Profile(changed));
+        }
+
+        [Fact]
+        public void Node_Executable_Hash_Is_Not_Confused_With_Compiler_Hash() =>
+            Assert.Throws<InvalidOperationException>(() => Profile(Runtime() with { RuntimeSha256 = new string('e', 64) }));
+
+        [Fact]
+        public void Conflicting_Compiler_Digest_Is_Refused() => Assert.Throws<ArgumentException>(() =>
+            Profile(files: new Dictionary<string, string>
+            {
+                [Path.Combine(Root, "vendor", AiTypeScriptWorkerProcessProfile.CompilerFileName)] = new string('d', 64)
+            }));
+
+        [Theory]
+        [InlineData("NODE_OPTIONS")]
+        [InlineData("node_options")]
+        [InlineData("NODE_PATH")]
+        public void Node_Preloading_And_Ambient_Module_Search_Are_Refused(string name) =>
+            Assert.Throws<ArgumentException>(() => Profile(environment: new Dictionary<string, string> { [name] = "injected" }));
+
+        [Fact]
+        public void Runtime_Reference_Has_A_Stable_Cross_Language_Hash_Vector() =>
+            Assert.Equal("typescript-node-fixed@typescript-js-v1-772a029c8be1a0323efb2f370fa548fc79974928b9f97560bb17cffff071a660", Runtime().Reference);
+
     }
 }

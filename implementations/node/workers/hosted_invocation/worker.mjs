@@ -12,6 +12,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { fork } from 'node:child_process';
+import { createRequire } from 'node:module';
+import vm from 'node:vm';
 
 const MAX_REQUEST_BYTES = 50_331_648;
 const MAX_INLINE_BYTES = 262_144;
@@ -28,7 +30,72 @@ const TARGET_FIELDS = ['pipelineName', 'pipelineVersion', 'definitionSha256', 'p
   'implementationRef', 'implementationSha256', 'executionLanguage', 'environmentRef', 'environmentSha256'];
 const RUNTIME_FIELDS = ['reference', 'executionLanguage', 'runtimeVersion', 'runtimeSha256'];
 
+const COMPILER_SHA256 = 'dd17428736a07e1db1a138d8a14295ddb2699ba780ee15038acdd2c6da5373a0';
+const TOOLCHAIN_CONTRACT = 'multiplexed-typescript-js-v1|typescript=5.8.3|sha256=dd17428736a07e1db1a138d8a14295ddb2699ba780ee15038acdd2c6da5373a0|target=ES2020|module=ESNext|resolution=Bundler|verbatim=true|rewriteRelativeImportExtensions=true|useDefineForClassFields=true|newLine=LF|sourceMaps=false|helpers=inline';
+const REFERENCE_SUFFIX = '@typescript-js-v1-';
+const COMPILER_PATH = fileURLToPath(new URL('./vendor/typescript-5.8.3.cjs', import.meta.url));
+const MAX_EMITTED_BYTES = 67_108_864;
+
 class ContractError extends Error {}
+
+function sha256(bytes) { return crypto.createHash('sha256').update(bytes).digest('hex'); }
+
+function requireCapabilities() {
+  // Test actual APIs instead of an allow-list that excludes newer Node releases.
+  requireCondition(typeof fs.rmSync === 'function' && typeof fs.mkdtempSync === 'function' &&
+    typeof createRequire === 'function' && typeof vm.Script === 'function' && typeof fork === 'function',
+    'The installed Node.js runtime lacks required hosted-loader APIs.');
+}
+
+function toolchainSuffix() {
+  const loaderHash = sha256(fs.readFileSync(fileURLToPath(import.meta.url)));
+  return REFERENCE_SUFFIX + sha256(Buffer.from(TOOLCHAIN_CONTRACT + '|loader-sha256=' + loaderHash, 'utf8'));
+}
+
+function readCompiler() {
+  const bytes = fs.readFileSync(COMPILER_PATH);
+  requireCondition(sha256(bytes) === COMPILER_SHA256, 'The host TypeScript compiler digest differs from the pinned toolchain.');
+  return bytes;
+}
+
+function compilerFromVerifiedBytes(bytes) {
+  // Execute exactly the verified bytes; do not resolve a global/local npm installation.
+  const module = { exports: {} };
+  const wrapper = new vm.Script('(function(exports, require, module, __filename, __dirname) {' +
+    bytes.toString('utf8') + '\n})', { filename: COMPILER_PATH }).runInThisContext();
+  wrapper(module.exports, createRequire(pathToFileURL(COMPILER_PATH)), module, COMPILER_PATH, path.dirname(COMPILER_PATH));
+  requireCondition(module.exports.version === '5.8.3', 'Unexpected host TypeScript compiler version.');
+  return module.exports;
+}
+
+function compileClosure(materialized) {
+  const ts = compilerFromVerifiedBytes(readCompiler());
+  let emittedBytes = 0;
+  for (const file of materialized.files) {
+    const raw = fs.readFileSync(file.path);
+    requireCondition(sha256(raw) === file.sha256, 'Staged TypeScript source integrity mismatch.');
+    // Declaration-only material can participate in type imports but is never executed.
+    if (file.path.endsWith('.d.ts')) continue;
+    const result = ts.transpileModule(raw.toString('utf8'), {
+      fileName: file.path, reportDiagnostics: true,
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        verbatimModuleSyntax: true, rewriteRelativeImportExtensions: true,
+        useDefineForClassFields: true, newLine: ts.NewLineKind.LineFeed,
+        isolatedModules: true, sourceMap: false, inlineSourceMap: false,
+        declaration: false, importHelpers: false, noEmitHelpers: false
+      }
+    });
+    requireCondition(!(result.diagnostics ?? []).some(item => item.category === ts.DiagnosticCategory.Error),
+      'Published TypeScript has invalid source syntax or compiler options.');
+    const output = Buffer.from(result.outputText, 'utf8');
+    emittedBytes += output.length;
+    requireCondition(emittedBytes <= MAX_EMITTED_BYTES, 'Emitted JavaScript exceeds its closure bound.');
+    fs.writeFileSync(file.path.slice(0, -3) + '.js', output, { mode: 0o600, flag: 'wx' });
+  }
+}
+
 
 function requireCondition(condition, reason) {
   if (!condition) throw new ContractError(reason);
@@ -108,7 +175,7 @@ function portablePath(value) {
     const stem = part.split('.')[0].toUpperCase();
     requireCondition(!['CON', 'PRN', 'AUX', 'NUL'].includes(stem) && !/^(?:COM|LPT)[1-9]$/u.test(stem), 'Device path is forbidden.');
   }
-  requireCondition(parts.at(-1).endsWith('.ts'), 'Only .ts TypeScript source files are supported.');
+  requireCondition(parts[parts.length - 1].endsWith('.ts'), 'Only .ts TypeScript source files are supported.');
   return value;
 }
 
@@ -170,7 +237,8 @@ function materialize(bundle) {
     collect(item.files, `dependency:${name.toLowerCase()}`, files);
     requireCondition(files.has('index.ts'), 'A TypeScript dependency must publish index.ts as its explicit entry point.');
     dependencyFiles.set(name, files);
-    aliases[`#${name}`] = `./.dependencies/${name}/index.ts`;
+    aliases[`#${name}`] = `./.dependencies/${name}/index.js`;
+    aliases[`#${name}/*.ts`] = `./.dependencies/${name}/*.js`;
     aliases[`#${name}/*`] = `./.dependencies/${name}/*`;
   }
 
@@ -179,21 +247,25 @@ function materialize(bundle) {
   requireCondition(typeof bundle.entryPointSymbol === 'string' && IDENTIFIER.test(bundle.entryPointSymbol),
     'A simple TypeScript entry-point symbol is required.');
 
+  requireCondition(!entryPointPath.endsWith('.d.ts'), 'A declaration file cannot be an executable entry point.');
+  const compiledFiles = [];
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'multiplexed-ai-ts-'));
   try {
     for (const [relative, raw] of sourceFiles) {
       const target = ensureDirectory(workspace, relative);
       fs.writeFileSync(target, raw, { mode: 0o600, flag: 'wx' });
+      compiledFiles.push({ path: target, sha256: sha256(raw) });
     }
     for (const [name, files] of dependencyFiles) {
       for (const [relative, raw] of files) {
         const target = ensureDirectory(workspace, `.dependencies/${name}/${relative}`);
         fs.writeFileSync(target, raw, { mode: 0o600, flag: 'wx' });
+        compiledFiles.push({ path: target, sha256: sha256(raw) });
       }
     }
     const packageJson = JSON.stringify({ type: 'module', imports: aliases });
     fs.writeFileSync(path.join(workspace, 'package.json'), packageJson, { mode: 0o600, flag: 'wx' });
-    return { workspace, entryPath: path.join(workspace, ...entryPointPath.split('/')), entryPointSymbol: bundle.entryPointSymbol };
+    return { workspace, entryPath: path.join(workspace, ...entryPointPath.split('/')), entryPointSymbol: bundle.entryPointSymbol, files: compiledFiles };
   } catch (error) {
     fs.rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     throw error;
@@ -214,9 +286,10 @@ function parseArgs() {
   const version = text(values['runtime-version']);
   const match = /^(\d+)\.(\d+)\.(\d+)$/u.exec(version);
   requireCondition(match !== null && version === process.versions.node, 'The installed Node.js version differs from the profile.');
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  requireCondition((major === 22 && minor >= 13) || major === 24, 'Node.js 22.13+ or 24.x is required for hosted TypeScript.');
+  requireCondition(Number(match[1]) > 0, 'An exact stable Node.js runtime version is required.');
+  requireCapabilities();
+  requireCondition(reference.endsWith(toolchainSuffix()), 'The exact TypeScript loader/compiler contract is not pinned.');
+  readCompiler();
   const heartbeatMs = Number(values['heartbeat-ms']);
   integer(heartbeatMs, 50, 5000);
   return {
@@ -227,7 +300,7 @@ function parseArgs() {
 
 function readRequest() {
   const raw = fs.readFileSync(0);
-  requireCondition(raw.length <= MAX_REQUEST_BYTES + 1 && raw.at(-1) === 10, 'A bounded newline-terminated request is required.');
+  requireCondition(raw.length <= MAX_REQUEST_BYTES + 1 && raw[raw.length - 1] === 10, 'A bounded newline-terminated request is required.');
   const body = raw.subarray(0, raw.length - 1);
   requireCondition(!body.includes(10), 'Only one request is allowed per process.');
   const value = JSON.parse(body.toString('utf8'));
@@ -252,7 +325,7 @@ function validateRequest(request, runtime) {
   for (const name of TARGET_FIELDS) name.endsWith('Sha256') ? digest(target[name]) : text(target[name]);
   requireCondition(target.executionLanguage === 'typescript', 'This worker executes TypeScript only.');
   exactObject(bundle.runtime, RUNTIME_FIELDS);
-  requireCondition(JSON.stringify(bundle.runtime) === JSON.stringify(runtime), 'The exact configured Node.js runtime is required.');
+  requireCondition(RUNTIME_FIELDS.every(key => bundle.runtime[key] === runtime[key]), 'The exact configured Node.js runtime is required.');
   return { deadline, materialized: materialize(bundle) };
 }
 
@@ -301,19 +374,16 @@ function emitter(request) {
   };
 }
 
-async function execute(materialized, request) {
-  const moduleUrl = `${pathToFileURL(materialized.entryPath).href}?implementation=${request.code.target.implementationSha256}`;
-  const module = await import(moduleUrl);
-  const fn = module[materialized.entryPointSymbol];
-  requireCondition(typeof fn === 'function' && fn.length === 2, 'The entry point must be an exported two-argument function.');
-  return await fn(request.inputs, context(request));
-}
-
 async function executeInChild(materialized, request) {
+  const environment = { ...process.env };
+  for (const key of Object.keys(environment)) {
+    if (['NODE_OPTIONS', 'NODE_PATH'].includes(key.toUpperCase())) delete environment[key];
+  }
   return await new Promise((resolve, reject) => {
     const child = fork(fileURLToPath(import.meta.url), ['--published-child'], {
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      env: process.env
+      env: environment,
+      execArgv: [] // Native TypeScript flags and parent loader hooks must not reach the child.
     });
     let settled = false;
     let diagnosticBytes = 0;
@@ -356,7 +426,8 @@ async function executeInChild(materialized, request) {
       entryPointSymbol: materialized.entryPointSymbol,
       implementationSha256: request.code.target.implementationSha256,
       inputs: request.inputs,
-      context: context(request)
+      context: context(request),
+      files: materialized.files
     });
   });
 }
@@ -373,10 +444,13 @@ async function childMain() {
       process.once('message', resolve);
       process.once('disconnect', () => reject(new Error('Parent disconnected.')));
     });
-    exactObject(message, ['type', 'entryPath', 'entryPointSymbol', 'implementationSha256', 'inputs', 'context']);
+    exactObject(message, ['type', 'entryPath', 'entryPointSymbol', 'implementationSha256', 'inputs', 'context', 'files']);
     requireCondition(message.type === 'execute-published' && path.isAbsolute(message.entryPath) &&
       IDENTIFIER.test(message.entryPointSymbol) && HASH.test(message.implementationSha256), 'Invalid child execution envelope.');
-    const moduleUrl = `${pathToFileURL(message.entryPath).href}?implementation=${message.implementationSha256}`;
+    requireCondition(Array.isArray(message.files) && message.files.length > 0 && message.files.length <= MAX_FILES,
+      'Invalid private compiler closure.');
+    compileClosure(message);
+    const moduleUrl = `${pathToFileURL(message.entryPath.slice(0, -3) + '.js').href}?implementation=${message.implementationSha256}`;
     const module = await import(moduleUrl);
     const fn = module[message.entryPointSymbol];
     requireCondition(typeof fn === 'function' && fn.length === 2, 'The entry point must be an exported two-argument function.');

@@ -127,11 +127,11 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Policies
                           "maxDegreeOfParallelism": 4,
                           "policies": [
                             {
-                              "name": "concurrency.scope.default",
+                              "name": "concurrency.throttle",
                               "type": "scope",
                               "config": {
-                                "kind": "provider",
-                                "value": "openai",
+                                "scope": "provider",
+                                "target": "openai",
                                 "limit": 5
                               }
                             }

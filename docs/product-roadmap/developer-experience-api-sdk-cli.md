@@ -83,6 +83,10 @@ These include:
 - testing foundation;
 - Redis/Mongo infrastructure direction.
 
+The server-side foundation also implements immutable code publication and whole-run pinning, durable hosted-function invocation, real Python/TypeScript/.NET execution, custom `Concurrency` policies, and outbound MCP integration. These capabilities and their current limits are documented in [Hosted Multilanguage Execution](../ai/hosted-multilanguage-execution.md).
+
+This is not an external SDK release. Publication services remain server components, and creating a pinned run does not itself enqueue or start it. [Hosted Multilanguage Validation](../ai/hosted-multilanguage-validation.md) records the supplied execution evidence without treating public API productization as complete.
+
 The roadmap is not to invent developer experience from zero.
 
 The roadmap is to package, document, simplify, expose, and stabilize the developer-facing surface.
@@ -196,6 +200,16 @@ A future SDK can provide:
 The SDK should not hide the runtime model too much.
 
 It should make the important concepts easier to use.
+
+---
+
+## External SDK Boundary
+
+The SDK must be an independent library with portable wire models, not an extraction of the engine's internal CLR contracts. It must have no direct or transitive dependency on runtime DLLs. The target includes pipeline/step/policy builders, publication of code and explicit dependencies, submission, status, cancellation, and diagnostics through an authorized Gateway/MCP boundary.
+
+The platform hosts approved execution environments. The runtime retains authorization, authoritative publication validation, DAG lifecycle, retries, recovery, and result acceptance. A developer-operated worker is not required by the main target model.
+
+Language defaults and local overrides describe function execution, not the programming language used to build the SDK client. Native primitives remain native and MCP remains a distinct invocation mode. SDK conveniences must not override immutable run pins or turn uncertain external effects into automatic retries.
 
 ---
 
@@ -714,6 +728,10 @@ This project should keep that trust.
 | Retention/eviction/compaction foundation | Foundation exists |
 | Observability direction | Foundation exists |
 | Product roadmap documentation | Foundation exists |
+| Immutable publication and run pinning | Server implementation with targeted validation |
+| Hosted Python / TypeScript / .NET functions | Server implementation with real-process validation |
+| Hosted custom Concurrency policies | Implemented at the existing checkpoint; other families are not implied |
+| Outbound MCP transport and effect metadata | Implemented; durable external-effect evidence remains separate |
 | API packaging | Productization target |
 | SDK | Productization target |
 | CLI | Productization target |

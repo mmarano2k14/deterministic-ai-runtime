@@ -6363,6 +6363,14 @@ They should not introduce execution logic into the runtime.
 
 ---
 
+### Hosted Multilanguage Execution Reference
+
+The implemented server-side extension for published Python, TypeScript, and .NET functions is documented in [Hosted Multilanguage Execution](ai/hosted-multilanguage-execution.md). It covers immutable publication, whole-run pinning, durable result application, contextual custom `Concurrency` policies, execution requirements, and outgoing MCP without replacing the existing DAG, RBAC, or runtime-instance model.
+
+The external SDK remains a separate library/API deliverable with no engine-DLL dependency. The hosted process provider is not a hostile-code sandbox, and MCP effect metadata is not durable external-effect evidence. [Hosted Multilanguage Validation](ai/hosted-multilanguage-validation.md) records the supplied validation boundaries. Existing technical sections below remain the reference for native runtime behavior.
+
+---
+
 ### Client / SDK (Future Direction)
 
 Client layers are intended to provide a simplified interface to the runtime.
