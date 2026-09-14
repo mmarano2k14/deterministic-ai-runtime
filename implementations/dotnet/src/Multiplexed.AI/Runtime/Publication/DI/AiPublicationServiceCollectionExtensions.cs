@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Multiplexed.Abstractions.AI.Invocation.Durable;
+using Multiplexed.AI.Runtime.Execution.Payloads.Immutable;
 
 namespace Multiplexed.AI.Runtime.Publication.DI
 {
@@ -16,6 +17,7 @@ namespace Multiplexed.AI.Runtime.Publication.DI
                 throw new InvalidOperationException("A durable target resolver is already registered; conflicting resolution cannot be hidden.");
             services.AddSingleton(options);
             services.TryAddScoped<AiPublicationIdentity>();
+            services.TryAddScoped<AiImmutableJsonPayloadReader>();
             services.TryAddScoped<AiImmutablePublicationStore>();
             services.TryAddScoped<AiPipelinePublicationService>();
             services.TryAddScoped<AiPublishedDagRunService>();

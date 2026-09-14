@@ -2,6 +2,7 @@ using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.Abstractions.AI.Invocation.Durable;
 using Multiplexed.AI.Runtime.Invocation.Durable;
+using Multiplexed.AI.Runtime.Execution.Payloads.Immutable;
 
 namespace Multiplexed.AI.Runtime.Publication
 {
@@ -14,15 +15,18 @@ namespace Multiplexed.AI.Runtime.Publication
         private readonly AiPublicationIdentity _identity;
         private readonly AiPublicationOptions _options;
         private readonly AiImmutablePublicationStore _store;
+        private readonly AiImmutableJsonPayloadReader _payloadReader;
 
         public AiPublishedChildDagBindingCoordinator(
             AiPublicationIdentity identity,
             AiPublicationOptions options,
-            AiImmutablePublicationStore store)
+            AiImmutablePublicationStore store,
+            AiImmutableJsonPayloadReader payloadReader)
         {
             _identity = identity ?? throw new ArgumentNullException(nameof(identity));
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _store = store ?? throw new ArgumentNullException(nameof(store));
+            _payloadReader = payloadReader ?? throw new ArgumentNullException(nameof(payloadReader));
         }
 
         public async Task<bool> BindBeforeDispatchAsync(
@@ -60,6 +64,7 @@ namespace Multiplexed.AI.Runtime.Publication
                 ?? throw new InvalidOperationException("A published parent execution must retain its immutable pipeline definition snapshot.");
             if (!string.Equals(parentDefinition.ContentHash, parentBinding.DefinitionSha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Published parent execution definition differs from its immutable publication binding.");
+            await _payloadReader.LoadAndVerifyAsync(parentDefinition, cancellationToken).ConfigureAwait(false);
 
             var childPath = AiPublicationDefinitionPath.Append(parentBinding.DefinitionPath, relation.ParentCallSiteId);
             var frozen = await _store.ReadVerifiedAsync(parentBinding.PublicationRef, guard, cancellationToken).ConfigureAwait(false);
@@ -81,6 +86,11 @@ namespace Multiplexed.AI.Runtime.Publication
             if (string.IsNullOrWhiteSpace(relation.FrozenChildDagDefinition.ContentHash) ||
                 !string.Equals(relation.FrozenChildDagDefinition.ContentHash, childDefinitionSha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Frozen Child DAG definition differs from the immutable published child definition.");
+            var frozenChildDefinitionJson = await _payloadReader
+                .LoadAndVerifyAsync(relation.FrozenChildDagDefinition, cancellationToken)
+                .ConfigureAwait(false);
+            if (!string.Equals(frozenChildDefinitionJson, childDefinitionJson, StringComparison.Ordinal))
+                throw new InvalidOperationException("Frozen Child DAG definition content differs from the immutable published child definition.");
 
             var binding = new AiPublicationChildRunBinding(
                 1,
