@@ -113,7 +113,7 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
         }
 
         [Fact]
-        public async Task Custom_Child_Code_Without_Its_Own_Run_Pin_Is_Explicitly_Unsupported()
+        public async Task Custom_Child_Code_Requires_Explicit_Nested_Code_Uploads()
         {
             using var fixture = new PublicationTestSupport.Fixture();
             var child = PublicationTestSupport.Definition();
@@ -121,7 +121,8 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
                 Config = new Dictionary<string, object?> { ["childDagId"] = child.Name, ["childDagVersion"] = child.Version,
                     ["logicalInvocationKey"] = "child", ["childDagDefinition"] = child } };
             var definition = PublicationTestSupport.Copy(PublicationTestSupport.Definition(), new[] { step });
-            await Assert.ThrowsAsync<NotSupportedException>(() => fixture.PublishAsync(new(definition, Array.Empty<AiPublicationFunctionUpload>())));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.PublishAsync(new(definition, Array.Empty<AiPublicationFunctionUpload>())));
+            Assert.Empty(fixture.MemoryPayloads.Writes);
         }
 
         [Fact]

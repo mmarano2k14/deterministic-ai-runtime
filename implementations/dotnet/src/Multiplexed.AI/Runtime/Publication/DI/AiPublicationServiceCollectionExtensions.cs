@@ -19,6 +19,7 @@ namespace Multiplexed.AI.Runtime.Publication.DI
             services.TryAddScoped<AiImmutablePublicationStore>();
             services.TryAddScoped<AiPipelinePublicationService>();
             services.TryAddScoped<AiPublishedDagRunService>();
+            services.TryAddScoped<AiPublishedChildDagBindingCoordinator>();
             services.AddScoped<IAiDurableInvocationTargetResolver, AiPublicationInvocationTargetResolver>();
             return services;
         }

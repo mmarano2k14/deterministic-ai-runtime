@@ -10,21 +10,45 @@ namespace Multiplexed.AI.Runtime.Publication
         internal async Task<AiWorkerCodeBundle> ReadWorkerCodeAsync(AiDurableInvocationRecord invocation,
             AiPublicationIdentity.Guard guard, CancellationToken token)
         {
-            var definition = invocation.Definition; var expected = definition.Target;
-            var pin = await ReadPinAsync(definition.Identity.ExecutionId, guard, token).ConfigureAwait(false)
-                ?? throw new InvalidOperationException("The original run publication pin is unavailable.");
-            if (pin.PublicationRef != expected.PublicationRef || pin.PublicationSha256 != expected.PublicationSha256 ||
-                pin.DefinitionSha256 != expected.DefinitionSha256)
-                throw new InvalidOperationException("The invocation no longer matches its immutable run pin.");
-            var publication = (await ReadVerifiedAsync(pin.PublicationRef, guard, token).ConfigureAwait(false)).Publication;
+            var definition = invocation.Definition;
+            var expected = definition.Target;
+            var binding = await ReadExecutionBindingAsync(definition.Identity.ExecutionId, guard, token).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("The original execution publication binding is unavailable.");
+            if (binding.PublicationRef != expected.PublicationRef || binding.PublicationSha256 != expected.PublicationSha256 ||
+                !string.Equals(binding.DefinitionSha256, expected.DefinitionSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The invocation no longer matches its immutable publication binding.");
+
+            var frozen = await ReadVerifiedAsync(binding.PublicationRef, guard, token).ConfigureAwait(false);
+            var publication = frozen.Publication;
+            if (publication.PublicationSha256 != binding.PublicationSha256)
+                throw new InvalidOperationException("Worker materialization cannot substitute the bound publication.");
+
+            var boundDefinition = binding.DefinitionPath is null
+                ? frozen.Definition
+                : AiPublicationDefinitionPath.Resolve(frozen.Definition, binding.DefinitionPath);
+            var boundDefinitionSha256 = AiPublicationJson.Hash(AiPublicationJson.Serialize(boundDefinition));
+            if (!string.Equals(boundDefinitionSha256, binding.DefinitionSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Worker materialization resolved a definition different from the execution binding.");
+
             var function = publication.Manifest.Functions.SingleOrDefault(f =>
-                f.Site.Kind == AiPublicationFunctionKind.Step && f.Site.StepName == definition.Identity.StepName)
+                f.Site.Kind == AiPublicationFunctionKind.Step &&
+                string.Equals(f.Site.DefinitionPath, binding.DefinitionPath, StringComparison.Ordinal) &&
+                f.Site.StepName == definition.Identity.StepName)
                 ?? throw new InvalidOperationException("The published worker call site is absent.");
-            var actual = new AiDurableInvocationTarget(publication.Manifest.PipelineName, publication.Manifest.PipelineVersion,
-                publication.Manifest.Definition.Sha256, publication.PublicationRef, publication.PublicationSha256,
-                function.ImplementationRef, function.Implementation.Sha256, function.ExecutionLanguage,
-                "env-" + function.Environment.Sha256, function.Environment.Sha256);
-            if (actual != expected) throw new InvalidOperationException("Worker materialization cannot substitute code or environment versions.");
+            var actual = new AiDurableInvocationTarget(
+                boundDefinition.Name,
+                boundDefinition.Version!,
+                binding.DefinitionSha256,
+                publication.PublicationRef,
+                publication.PublicationSha256,
+                function.ImplementationRef,
+                function.Implementation.Sha256,
+                function.ExecutionLanguage,
+                "env-" + function.Environment.Sha256,
+                function.Environment.Sha256);
+            if (actual != expected)
+                throw new InvalidOperationException("Worker materialization cannot substitute code or environment versions.");
+
             var implementation = AiPublicationJson.Read<AiPublicationImplementation>(
                 await DocumentAsync(function.Implementation, "implementation", guard, token).ConfigureAwait(false));
             var environment = AiPublicationJson.Read<AiPublicationEnvironmentSnapshot>(

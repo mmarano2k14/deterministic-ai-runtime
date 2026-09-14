@@ -42,6 +42,8 @@ namespace Multiplexed.AI.Runtime.Publication
             "published-" + Hash(Serialize(new { Partition = partition, RunKey = runKey }));
         internal static string PinKey(AiPublicationPartition partition, string executionId) =>
             Key(partition, "run", Hash(executionId));
+        internal static string ChildBindingKey(AiPublicationPartition partition, string executionId) =>
+            Key(partition, "child-run", Hash(executionId));
         internal static string ReferenceHash(string reference, string prefix)
         {
             if (reference is null || !reference.StartsWith(prefix, StringComparison.Ordinal))

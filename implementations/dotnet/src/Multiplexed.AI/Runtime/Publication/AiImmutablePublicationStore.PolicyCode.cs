@@ -31,6 +31,7 @@ namespace Multiplexed.AI.Runtime.Publication
             var expectedOwner = request.Scope == "Pipeline" ? null : request.OwnerStepName;
             var matches = publication.Manifest.Functions.Where(f =>
                 f.Site.Kind == AiPublicationFunctionKind.ConcurrencyPolicy &&
+                f.Site.DefinitionPath is null &&
                 f.Site.StepName == expectedOwner &&
                 f.LogicalName == request.PolicyName &&
                 f.ExecutionLanguage == request.ExecutionLanguage &&

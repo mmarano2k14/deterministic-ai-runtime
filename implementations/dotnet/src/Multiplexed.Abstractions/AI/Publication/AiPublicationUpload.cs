@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Multiplexed.Abstractions.AI.Pipeline;
 
 namespace Multiplexed.Abstractions.AI.Publication
@@ -5,8 +6,20 @@ namespace Multiplexed.Abstractions.AI.Publication
     /// <summary>Supported declaration sites; a policy index preserves its original ordered scope.</summary>
     public enum AiPublicationFunctionKind { Step, ConcurrencyPolicy }
 
+    /// <summary>
+    /// Identifies one immutable custom declaration inside a published definition closure.
+    /// A null <see cref="DefinitionPath"/> identifies the root pipeline. A non-null value is the
+    /// canonical embedded Child DAG declaration path and is emitted only for nested declarations.
+    /// </summary>
     public sealed record AiPublicationCallSite(
-        AiPublicationFunctionKind Kind, string? StepName = null, int? PolicyIndex = null);
+        AiPublicationFunctionKind Kind, string? StepName = null, int? PolicyIndex = null)
+    {
+        /// <summary>
+        /// Canonical JSON-Pointer-style path of parent ExecuteChildDag step names. Root call sites omit it.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? DefinitionPath { get; init; }
+    }
 
     /// <summary>Raw files only. Publication never extracts archives, installs packages or executes a file.</summary>
     public sealed record AiPublicationFileUpload(string Path, byte[] Content);
