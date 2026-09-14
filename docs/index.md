@@ -20,9 +20,9 @@ Focused AI runtime documentation is organized under:
 | [`runtime-internals.md`](runtime-internals.md) | Complete technical reference preserved from the original README. |
 | [`enterprise-readiness.md`](enterprise-readiness.md) | Matrix of enterprise AI execution questions and runtime answers. |
 | [`ai/architecture-overview.md`](ai/architecture-overview.md) | High-level runtime architecture and major runtime layers, including shared control-plane orchestration, provider dispatch, Redis coordination, and multi-tenant runtime isolation. |
-| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Published Python, TypeScript and .NET functions, immutable environments, durable invocation, custom Concurrency policies, outbound MCP, and explicit SDK/security boundaries. |
+| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Published Python, TypeScript and .NET functions, immutable environments, published custom Child DAG binding, durable invocation, custom Concurrency policies, outbound MCP, and explicit SDK/security boundaries. |
 | [`ai/hosted-multilanguage-validation.md`](ai/hosted-multilanguage-validation.md) | Inspected language, durability, boundary and MongoDB/Redis results, with overlap, skipped-case and host-report limitations. |
-| [`ai/child-dag-composition.md`](ai/child-dag-composition.md) | Implemented / validated durable Child DAG composition with `WaitingForExternal`, deterministic continuation, recursive Depth3 validation, EventDriven recovery observation, warm reuse, replay, lifecycle, Ledger, trace, and Forensics evidence. |
+| [`ai/child-dag-composition.md`](ai/child-dag-composition.md) | Implemented / validated durable Child DAG composition with `WaitingForExternal`, deterministic continuation, native recursive Depth3 validation, published custom Child DAG integration, EventDriven recovery observation, warm reuse, replay, lifecycle, Ledger, trace, and Forensics evidence. |
 | [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | Multi-tenant control-plane isolation, RBAC execution-context propagation, durable `ExecutionContextSnapshot`, tenant-aware registry/capacity/admission, Shared/Dedicated/Hybrid runtime visibility, and tenant-aware scale-out. |
 | [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | End-to-end ASCII runtime flow explaining MCP/RBAC context resolution, durable `ExecutionContextSnapshot`, shared run persistence, tenant-aware admission, tenant-aware scale-out, shared queue dispatch, local runtime queue execution, DAG worker loop, execution control, finalization, and observability. |
 | [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation covering replay, execution control, runtime queues, runtime registry/capacity, discovery, admission, shared controller orchestration, scale-out lifecycle, and tenant-aware dispatch. |
@@ -227,9 +227,9 @@ This document explains:
 
 ### [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md)
 
-Server-side execution reference covering effective language selection, immutable publication and run pinning, worker lease/epoch authority, durable result application, actual Python/TypeScript/.NET execution, custom `Concurrency` policies, execution requirements, and authorized outbound MCP.
+Server-side execution reference covering effective language selection, immutable publication and run pinning, published custom Child DAG binding, worker lease/epoch authority, durable result application, actual Python/TypeScript/.NET execution, custom `Concurrency` policies, execution requirements, and authorized outbound MCP.
 
-The hosted function process is not a trusted runtime instance. The public SDK library, hostile-code sandboxing, nested custom publication, and durable MCP external-effect evidence remain separate capabilities.
+The hosted function process is not a trusted runtime instance. Published custom Child DAGs reuse the same immutable publication, durable journal, hosted worker and existing continuation authorities. The public SDK library, hostile-code sandboxing, broader dependency packaging, and durable MCP external-effect evidence remain separate capabilities.
 
 ### [`ai/hosted-multilanguage-validation.md`](ai/hosted-multilanguage-validation.md)
 

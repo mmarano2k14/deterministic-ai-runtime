@@ -14,7 +14,7 @@ The current foundation already covers several critical areas required for produc
 
 - deterministic runtime execution foundation;
 - DAG-based workflow execution;
-- **Validated durable Child DAG composition** with durable parent suspension, deterministic continuation, recursive Depth3 execution, EventDriven recovery observation, and existing recovery reuse;
+- **Validated durable Child DAG composition** with durable parent suspension, deterministic continuation, native recursive Depth3 execution, EventDriven recovery observation, immutable published custom child binding, hosted Python/TypeScript/.NET child execution, and existing recovery reuse;
 - execution state management;
 - step lifecycle and status tracking;
 - distributed worker execution model;
@@ -103,7 +103,7 @@ The DAG execution model provides the foundation for future visual pipeline build
 
 ## 2A. Durable Child DAG Composition — Implemented / Validated
 
-The platform now includes native durable Child DAG composition for nested workflow execution.
+The platform includes durable Child DAG composition for nested workflow execution. The runtime lifecycle remains native orchestration, while exact inline child definitions can also bind immutable published custom implementations to the allocated child execution.
 
 The implementation provides:
 
@@ -116,11 +116,15 @@ The implementation provides:
 - durable child completion;
 - deterministic parent continuation and redrive;
 - reuse of existing runtime/process/Pod recovery semantics;
-- replay, Ledger, trace, lifecycle, and recovery Forensics integration.
+- replay, Ledger, trace, lifecycle, and recovery Forensics integration;
+- immutable nested publication addressing through canonical `DefinitionPath`;
+- immutable `ChildExecutionId` publication binding before dispatch when the child subtree contains published custom material;
+- hosted Python, TypeScript, and .NET child execution through the existing durable invocation journal and worker path;
+- native-only child compatibility without publication binding.
 
-The recursive closure is now green through `ChildDepth = 3`, including an intermediate `3×3×3×2×Depth3` proof and larger `5×5×5×2×Depth3` high-scale validation. EventDriven lifecycle observation aligns canonical events with the existing Ledger, Runtime Lifecycle Journal, replay, trace, and Recovery Forensics surfaces.
+The native recursive closure is green through `ChildDepth = 3`, including an intermediate `3×3×3×2×Depth3` proof and larger `5×5×5×2×Depth3` high-scale validation. EventDriven lifecycle observation aligns canonical events with the existing Ledger, Runtime Lifecycle Journal, replay, trace, and Recovery Forensics surfaces. Published custom Child DAG validation is tracked separately and explicitly exercises two nested Child DAG levels (`root -> child -> grandchild`) with immutable publication propagation; it does not extend the native Depth3 claim automatically.
 
-The capability is therefore documented as **Implemented / validated**. Exact nested child-step accounting is closed for the bounded recursive Depth3 production proof through per-depth durable Ledger evidence with zero missing and zero unexpected duplicate child logical steps. Deterministic multi-seed and multi-schedule adversarial validation is also green for the canonical nine-row matrix across HTTP/gRPC × ProcessHostPool/KubernetesPool. This closes the selected bounded adversarial schedules while leaving recovery-of-recovery, dedicated recursive-child replay, multi-node Kubernetes fault domains, and multi-control-plane recovery ownership as distinct future proof domains.
+The capability is therefore documented as **Implemented / validated** within its bounded evidence. Exact native nested child-step accounting is closed for the bounded recursive Depth3 production proof through per-depth durable Ledger evidence with zero missing and zero unexpected duplicate child logical steps. Deterministic multi-seed and multi-schedule adversarial validation is also green for the canonical nine-row matrix across HTTP/gRPC × ProcessHostPool/KubernetesPool. This closes the selected bounded adversarial schedules while leaving recovery-of-recovery, dedicated recursive-child replay, multi-node Kubernetes fault domains, multi-control-plane recovery ownership, and broader published-child provider/store failure matrices as distinct future proof domains.
 
 See [Durable Child DAG Composition](../ai/child-dag-composition.md).
 
@@ -1796,7 +1800,7 @@ The project already has strong foundations in the following areas:
 |---|---|
 | Deterministic runtime execution | Foundation exists |
 | DAG-based workflow execution | Foundation exists |
-| Durable Child DAG composition | **Implemented / validated** — recursive Depth3 validation, EventDriven lifecycle observation, same-`ExecutionId` recovery, warm reuse, replay, Ledger, trace, and Forensics evidence |
+| Durable Child DAG composition | **Implemented / validated** — native recursive Depth3 validation, published custom child binding/execution with bounded nested proof, EventDriven lifecycle observation, same-`ExecutionId` recovery, warm reuse, replay, Ledger, trace, and Forensics evidence |
 | Execution state management | Foundation exists |
 | Step lifecycle tracking | Foundation exists |
 | Distributed worker model | Foundation exists |

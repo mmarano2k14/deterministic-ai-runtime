@@ -389,17 +389,18 @@ The existing Kubernetes mode remains one `RuntimeInstanceOnly` runtime per Pod/S
 
 ## Hosted Multilanguage Execution Boundary
 
-The server-side foundation now includes real Python, TypeScript, and .NET function execution, immutable publication and whole-run pinning, durable invocation results, existing-DAG continuation, hosted custom `Concurrency` policies, and authorized outbound MCP.
+The server-side foundation now includes real Python, TypeScript, and .NET function execution, immutable publication and whole-run pinning, published custom Child DAG binding, durable invocation results, existing-DAG continuation, hosted custom `Concurrency` policies, and authorized outbound MCP.
 
 | Enterprise concern | Current answer |
 |---|---|
-| Code changes during a run | Published code, explicit dependencies, and environment identity remain pinned, including unstarted call sites. |
+| Code changes during a run | Published code, explicit dependencies, and environment identity remain pinned, including unstarted root and published-child call sites. |
+| Published Child DAGs | An allocated `ChildExecutionId` is immutably bound before dispatch to the original publication and exact nested definition. Native-only child subtrees remain on the historical unbound path. |
 | Function-process replacement | Journal leases and epochs govern result authority; the existing DAG applies the accepted result. External side effects still require their own idempotency/reconciliation contract. |
 | Tenant code isolation | The process provider is for explicitly approved trusted execution. Unsupported sandbox, egress, OCI, and sealed-closure requirements are rejected rather than downgraded. |
 | MCP auditability | Stable effect and intent metadata are present; durable outbound-effect storage and reconciliation are not. |
 | SDK availability | Server foundations are implemented. An independent external SDK library and public publication/submission surface remain separate work. |
 
-Targeted results are documented in [Hosted Multilanguage Validation](ai/hosted-multilanguage-validation.md); contracts and limits are documented in [Hosted Multilanguage Execution](ai/hosted-multilanguage-execution.md). These results do not certify public hosting of hostile code, general package installation, custom publication inside nested Child DAGs, or every remote policy family.
+Targeted results are documented in [Hosted Multilanguage Validation](ai/hosted-multilanguage-validation.md); contracts and limits are documented in [Hosted Multilanguage Execution](ai/hosted-multilanguage-execution.md). Published custom Child DAG support is bounded to the exercised nested depth and trusted-process hosted-worker boundary. These results do not certify public hosting of hostile code, general package installation, unlimited published-custom nesting, operating-system host-kill or database-failover behavior for that path, or every remote policy family.
 
 ---
 

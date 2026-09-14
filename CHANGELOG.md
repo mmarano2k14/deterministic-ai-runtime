@@ -6,6 +6,190 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 0.0.8.8 - 2026-09-14 — Multilanguage - Nested Publication Identity and Compilation
+
+### Added
+
+- Add an optional `DefinitionPath` to the existing server-side `AiPublicationCallSite` contract. A null path continues to identify the root pipeline; nested paths identify the exact inline Child DAG declaration site through the ordered parent `ExecuteChildDag` step-name chain.
+- Use canonical JSON-Pointer segment escaping for nested definition paths: `~` becomes `~0` and `/` becomes `~1`. Reject non-canonical, empty, over-depth, or malformed paths before publication persistence.
+- Recursively discover custom step and existing custom `Concurrency` policy declarations inside exact inline Child DAG definitions. Each nested declaration receives its own publication call-site identity and immutable implementation reference.
+- Resolve execution language independently for each embedded definition. The child pipeline default is authoritative for that child and a child step/policy local override retains the existing precedence. No mutable parent runtime state is consulted to resolve a child language.
+- Introduce publication manifest schema 2 for publications that contain at least one nested custom declaration. Root-only publications and publications with native-only inline Child DAGs remain schema 1.
+- Add targeted publication coverage for nested custom steps, recursive Child DAG paths, duplicate local step names across parent/child definitions, child language defaults and overrides, nested custom concurrency policy declarations, canonical path validation, missing/wrong code attachments, root resolver isolation, and schema compatibility.
+
+### Behavior and Compatibility
+
+- Preserve the existing three-argument `AiPublicationCallSite` positional constructor and deconstruction shape. `DefinitionPath` is an additive init-only property and is omitted from canonical JSON when null.
+- Preserve historical root call-site JSON and schema-1 publication behavior. Existing root-only declaration sites do not acquire a path field and do not move to schema 2.
+- Require schema 1 manifests to contain no nested declaration paths and schema 2 manifests to contain at least one nested declaration path.
+- Keep root durable invocation and hosted policy materialization explicitly scoped to `DefinitionPath == null`.
+- Continue to require exact inline Child DAG definitions for publication. Name-only child lookup remains unsupported.
+- Preserve exact declaration coverage. Every nested custom declaration requires one matching code upload at its canonical call site.
+- Reuse the existing content-addressed file, dependency, environment, implementation, definition, and manifest stores.
+- No DAG scheduler, queue, child relation, recovery coordinator, RBAC path, durable invocation journal, worker supervisor/provider, result acceptance rule, or parent continuation implementation is changed.
+
+### Validation
+
+- Add 15 targeted cases in `AiPublishedCustomChildDagCompilationTests`.
+- Update the historical custom-child compatibility case to require explicit nested code uploads rather than classify all custom Child DAG publication as unsupported.
+- Target-environment validation was reported passing before the next branch delivery proceeded.
+
+### Limits
+
+- This scope adds publication/compiler support only.
+- It does not itself create a child execution publication binding, resolve nested worker material for a `ChildExecutionId`, or alter parent continuation.
+- Nested `Concurrency` policy declarations are captured only because that family is already supported by the merged foundation.
+- Dependency installation, sandbox/container enforcement, durable MCP effect evidence, public wire models, and external SDK builders remain outside this branch.
+
+---
+
+## Immutable Child Execution Binding
+
+### Added
+
+- Add an immutable server-side child execution binding keyed by `ChildExecutionId`.
+- Record the original publication reference and digest, exact nested `DefinitionPath`, nested definition digest, child pipeline identity, parent execution id, tenant partition, and original user identity.
+- Add canonical nested definition-path resolution shared by publication compilation and child execution binding.
+- Add optional `AiPublishedChildDagBindingCoordinator` integration at the existing `ChildAllocated` boundary.
+- Persist the immutable child publication binding before calling the existing child dispatcher.
+- Add a unified internal publication execution association used by root and nested executions.
+- Keep root executions on the existing `AiPublicationRunPin`; resolve nested executions through the child binding without fabricating a root run pin.
+- Extend durable custom-step target resolution and worker-code materialization to select the exact publication call site matching the child execution binding's `DefinitionPath`.
+- Add targeted coverage for binding persistence, binding-before-dispatch ordering, nested target selection, nested worker materialization, republish stability, native-only compatibility, unpublished-child authorization compatibility, frozen-definition conflict rejection, and delegated-owner rejection.
+
+### Behavior and Compatibility
+
+- Preserve the existing Child DAG relation as lifecycle authority.
+- Preserve the root run pin as the immutable publication authority for root executions.
+- A child binding references the publication already selected by its parent and cannot select a newer publication.
+- Bind before the existing child dispatcher is called.
+- Propagate publication authority recursively through an already-bound parent execution.
+- Create a child binding when the child subtree contains direct or descendant published custom material.
+- Do not create a publication binding for a subtree that is entirely native.
+- Do not add a publication RBAC requirement to historical unpublished/native Child DAG execution.
+- Preserve existing RBAC authority and execution ownership.
+- Preserve the existing durable invocation journal, assignment lease/epoch rules, result acceptance, worker supervisor/provider, shared queue, and continuation implementation.
+- Preserve root custom-step resolution and worker materialization.
+
+### Validation
+
+- Add 9 targeted cases in `AiPublishedCustomChildDagExecutionBindingTests`.
+- Exercise the real `ExecuteChildDagStep` `ChildAllocated` path and verify binding persistence before dispatch.
+- Verify exact nested target resolution when a child-local step name collides with a root-local step name.
+- Verify child worker publication preparation against the exact nested source bytes.
+- Verify republication does not replace the original publication or implementation digest of an already-bound child.
+- Verify native-only and unpublished compatibility.
+- Verify frozen-definition and delegated-owner conflicts fail explicitly.
+- Target-environment validation was reported passing before durability/recovery work proceeded.
+
+### Limits
+
+- No new worker transport, scheduler, queue, durable journal, result-acceptance rule, or parent continuation mechanism is introduced.
+- Nested hosted policy execution is not expanded.
+- Dependency packaging, sandbox/container enforcement, durable MCP effect evidence, public wire models, and external SDK libraries remain outside this branch.
+
+---
+
+## Durability and Recovery
+
+### Added
+
+- Reuse the existing immutable JSON payload reader at the published-child binding boundary so persisted parent and child definition bytes are reloaded and verified before a child publication binding can be committed.
+- Require the verified canonical frozen child definition to equal the exact nested definition resolved from the immutable publication before dispatch.
+- Register the existing immutable JSON payload reader through the publication service module with `TryAddScoped` when a host has not already registered it.
+- Add targeted durability coverage for controlled service rehydration, republication pinning, lost binding-write acknowledgement, missing binding, missing/changed publication material, corrupted snapshot bytes, tenant isolation, stale lease/result rejection, accepted-submission redrive, duplicate terminal child projection, and deterministic parent-continuation redrive.
+
+### Behavior and Compatibility
+
+- Preserve root and nested publication identity across recovery.
+- Continue to use the existing root run pin or immutable child binding; never resolve a mutable publication by name/version or `latest`.
+- Preserve exact `ChildExecutionId` reuse across dispatch redrive.
+- Preserve immutable child binding semantics under ambiguous write acknowledgement.
+- Strengthen pre-dispatch integrity by reloading durable parent and child definition bytes and verifying their canonical SHA-256 values.
+- Preserve the existing durable invocation journal for hosted child result acceptance.
+- Preserve stale assignment rejection, current-epoch result acceptance, identical duplicate acknowledgement, and conflicting terminal duplicate rejection.
+- Preserve existing Child DAG terminal projection and parent continuation ownership.
+- Preserve tenant and execution-owner isolation during restoration.
+- Missing child publication binding or missing/changed immutable publication material fails explicitly.
+- Recovery does not rebuild missing publication identity from a newer publication.
+
+### Validation
+
+- Add 12 targeted cases in `AiPublishedCustomChildDagDurabilityTests`.
+- Reconstruct publication payload documents, durable invocation journal state, and child execution state in controlled rehydration scenarios.
+- Verify a newer publication does not replace the original publication reference, operation id, or source bytes.
+- Inject lost acknowledgement after immutable binding persistence and verify retry converges on the same immutable key and bytes.
+- Verify missing binding, missing implementation document, changed implementation bytes, and corrupted snapshots fail explicitly.
+- Verify stale result rejection and authoritative duplicate-result handling through the existing durable invocation journal.
+- Inject interruption after accepted child submission and verify recovery reuses the same `ChildExecutionId` and child publication binding.
+- Verify duplicate child completion converges through the existing `AiChildExecutionCompletionCoordinator`.
+- Verify parent-continuation redrive preserves one deterministic continuation identity.
+- Correct the redrive test harness so interrupted submission and recovery re-entry execute under the trusted publication context required by published runtime operations.
+- Target-environment validation was reported passing after the trusted publication-context correction.
+
+### Limits
+
+- Controlled rehydration reconstructs serialized services and in-memory test stores; it is not an operating-system host-kill, Redis restart, MongoDB failover, or network-partition claim.
+- Parent continuation behavior remains the existing Child DAG continuation contract.
+- Dependency packaging, sandbox/container enforcement, durable MCP effect evidence, public wire models, and external SDK libraries remain outside this branch.
+
+---
+
+## Compatibility Closure
+
+### Added
+
+- Add a finite branch-closure validation suite for published custom Child DAG execution without changing production runtime code.
+- Add an explicit two-level nested Child DAG proof covering `root -> child -> grandchild` publication propagation.
+- Verify both child bindings retain the same immutable publication while their definition paths remain `/invoke-child` and `/invoke-child/invoke-grandchild`.
+- Add a native-only compatibility proof showing that a child subtree with no published custom material receives no publication binding.
+- Add real hosted-worker scenarios for Python, TypeScript, and .NET.
+- Execute a mixed child DAG containing one native step followed by one published custom step for each hosted language.
+- Carry hosted child results through the existing durable invocation journal, external-wait application, child finalization, child-result projection, and parent continuation lifecycle.
+
+### Behavior and Compatibility
+
+- Preserve the existing immutable root publication as the only publication authority across nested child execution.
+- Preserve child-local language resolution and the existing hosted worker transports for Python, TypeScript, and .NET.
+- Preserve native-only behavior when publication services are present.
+- Preserve the existing durable invocation journal as authority for operation identity, assignment leases/epochs, and accepted hosted results.
+- Preserve the existing `AiChildExecutionCompletionCoordinator` and `AiChildContinuationCoordinator` as child-result and parent-continuation authorities.
+- Preserve the deterministic continuation identity and `Pending -> Scheduled -> Resumed` lifecycle.
+- No production source, scheduler, shared queue, recovery coordinator, worker provider, RBAC contract, or persistence model is changed by the closure validation.
+
+### Validation
+
+- Add 5 targeted closure cases in `AiPublishedCustomChildDagCompatibilityClosureTests`.
+- Exercise two actual nested Child DAG levels. This is the recursive depth explicitly claimed by this branch.
+- For Python, TypeScript, and .NET, verify native-step completion, durable hosted invocation preparation, real worker dispatch, authoritative result persistence, invocation-receipt application, child terminal completion, authoritative child-result projection, continuation scheduling, and final `Resumed` convergence.
+- Python and TypeScript retain the repository's existing process-test opt-in configuration. A skipped language scenario is not closure evidence for that language.
+- Final closure requires the three hosted-language scenarios to execute rather than be skipped.
+
+### Limits
+
+- The exercised recursive depth is two Child DAG levels below the published root. No unlimited-depth or arbitrary recursive-replay claim is made.
+- Hosted language scenarios use the existing trusted-process boundary and do not claim sandbox/container isolation.
+- The closure suite does not constitute Redis/MongoDB restart, database failover, Kubernetes provider, or operating-system host-kill evidence.
+- Dependency installation, broader dependency packaging, additional policy families, durable MCP effect evidence, public wire contracts, and external SDK libraries remain outside this branch.
+
+---
+
+## Branch Architectural Invariants Preserved
+
+Across all four deliveries:
+
+- Existing DAG structure, claims, transitions, retries, recovery, and finalization remain authoritative.
+- Existing RBAC and durable execution ownership remain authoritative.
+- Immutable publication and run pinning remain authoritative for code, dependency, language, and environment selection.
+- The durable invocation journal remains authoritative for custom invocation identity, assignment epoch, and accepted result.
+- Hosted worker supervision and provider contracts remain unchanged.
+- Existing DAG persistence and application receipts remain authoritative for exact result application.
+- Existing Child DAG completion and parent continuation components remain authoritative.
+- No second scheduler, queue, recovery authority, worker authority, or publication identity model is introduced.
+
+
+---
+
 ## 0.0.8.7 - 2026-09-14 — Multilanguage SDK Server Foundations
 
 ## Unreleased

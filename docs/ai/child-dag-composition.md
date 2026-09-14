@@ -1,8 +1,8 @@
 # Durable Child DAG Composition
 
 **Status:** **Implemented / validated**  
-**Status date:** 2026-08-29  
-**Validation boundary:** native durable Child DAG composition is implemented and validated through recursive `ChildDepth = 3` production scenarios. The lifecycle-observation promotion gate is closed through the centralized Event Manager, canonical events, Runtime Lifecycle Journal, durable Ledger, Recovery Forensics, replay, and EventDriven production validation. The high-scale `5×5×5×2×Depth3` profiles validate the same recursive contract at larger bounded capacity. A separate bounded Depth3 production proof closes exact recursive child-step accounting per depth through durable `step.completed` Ledger evidence. Deterministic multi-seed and multi-schedule adversarial coverage is now also green across HTTP/gRPC × ProcessHostPool/KubernetesPool through the canonical nine-row semantic matrix.
+**Status date:** 2026-09-14  
+**Validation boundary:** native durable Child DAG composition is implemented and validated through recursive `ChildDepth = 3` production scenarios. Published custom Child DAG support is a separate bounded validation domain: immutable nested publication, `ChildExecutionId` binding, and recovery/pinning targets have their own branch evidence, while the finite closure suite explicitly exercises mixed hosted Python/TypeScript/.NET child execution. This does not extend the native Depth3 claim beyond the explicitly exercised published-custom nesting depth, and skipped hosted-language cases do not count as closure evidence. The lifecycle-observation promotion gate is closed through the centralized Event Manager, canonical events, Runtime Lifecycle Journal, durable Ledger, Recovery Forensics, replay, and EventDriven production validation. The high-scale `5×5×5×2×Depth3` profiles validate the native recursive contract at larger bounded capacity. A separate bounded Depth3 production proof closes exact recursive child-step accounting per depth through durable `step.completed` Ledger evidence. Deterministic multi-seed and multi-schedule adversarial coverage is also green across HTTP/gRPC × ProcessHostPool/KubernetesPool through the canonical nine-row semantic matrix.
 
 ---
 
@@ -34,11 +34,15 @@ The runtime remains the execution authority. Child DAG composition reuses the ex
 
 ## Published Custom Function Boundary
 
-The validated composition contract in this document concerns native durable Child DAG execution. It remains separate from publication of hosted custom code inside nested Child DAG definitions.
+Native Child DAG composition remains the lifecycle authority, but immutable publication now supports hosted custom implementations inside exact inline nested Child DAG definitions. Publication compilation assigns each nested custom declaration a canonical `DefinitionPath`, while the existing root run pin remains the publication authority for the complete execution.
 
-The current immutable publication path supports hosted custom functions and `Concurrency` policy sites in its supported root DAG scope. It preserves native child definitions but rejects unsupported nested custom publication locations. Native recursive recovery evidence does not imply that nested Python, TypeScript, or .NET publication/admission is implemented.
+Before a published child is dispatched, the allocated `ChildExecutionId` is bound immutably to the parent's original publication, exact nested definition path, definition digest, tenant partition, and durable execution owner. A deeper child derives its binding from the already-bound parent execution, so nested execution keeps one immutable publication authority rather than creating another publication-selection model. A subtree containing no published custom material remains on the historical native path and receives no publication binding.
 
-See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md) for the published-code boundary.
+Published Python, TypeScript, and .NET child functions execute through the existing durable invocation journal, hosted worker supervisor/provider, result-acceptance rules, Child DAG completion, and deterministic parent continuation. Workers still cannot select DAG transitions, recovery actions, successors, or publication versions.
+
+The validation boundaries remain distinct. Native recursive Child DAG execution is validated through `ChildDepth = 3`. Published custom Child DAG closure explicitly exercises two nested Child DAG levels (`root -> child -> grandchild`); that bounded proof does not imply unlimited published-custom recursion or inherit the broader native Depth3 claim.
+
+See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md) for publication, worker, and durable-invocation details.
 
 ---
 

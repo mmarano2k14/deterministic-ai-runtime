@@ -110,13 +110,13 @@ Details: [pool failure recovery](runtime-pool-failure-recovery.md). Durable Chil
 
 ## 6. What this does not claim
 
-Hosted execution is opt-in server integration, **not yet an external SDK or public publication API**. Native Child DAGs work; nested publication of custom code remains outside this path.
+Hosted execution is opt-in server integration, **not yet an external SDK or public publication API**. Exact inline Child DAG definitions can contain published custom Python, TypeScript, or .NET functions: the child keeps the original immutable publication through a `ChildExecutionId` binding and resumes its parent through the existing Child DAG continuation path. This does not create a second scheduler or worker authority.
 
 Process isolation is **not a hostile-code sandbox**. Unsupported isolation/network requirements are rejected rather than downgraded.
 
 Outbound MCP transport and effect metadata do **not** guarantee exactly-once actions or audit replay without re-emission. Validation uses read-only or explicitly idempotent tools.
 
-Evidence is bounded: existing adversarial tests cover selected failure schedules, not all possible interleavings. Parent replay is covered; dedicated recursive-child replay remains `NOT_EVALUATED`. See the [runtime validation matrix](adversarial-runtime-validation-matrix.md) and [hosted validation](hosted-multilanguage-validation.md).
+Evidence is bounded: existing adversarial tests cover selected failure schedules, not all possible interleavings. Native recursive Child DAG validation reaches Depth3, while published custom Child DAG closure explicitly exercises two nested Child DAG levels. Parent replay is covered; dedicated recursive-child replay remains `NOT_EVALUATED`. See the [runtime validation matrix](adversarial-runtime-validation-matrix.md) and [hosted validation](hosted-multilanguage-validation.md).
 
 ---
 

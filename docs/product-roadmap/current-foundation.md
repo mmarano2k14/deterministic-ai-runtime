@@ -44,7 +44,7 @@ The current architecture is built around the following core foundations:
 | Execution Identity | Provide stable identifiers for executions, runs, runtime instances, workers, and correlation. |
 | Deterministic Runtime | Execute AI workflows through controlled state transitions instead of uncontrolled execution. |
 | DAG Execution | Represent workflows as step-based directed execution graphs. |
-| Durable Child DAG Composition | **Implemented / validated.** Delegate from one DAG to another, park the parent durably, recover nested work through existing runtime recovery, and resume the same parent execution through deterministic continuation. Recursive Depth3 and centralized EventDriven lifecycle validation are green. |
+| Durable Child DAG Composition | **Implemented / validated.** Delegate from one DAG to another, park the parent durably, recover nested work through existing runtime recovery, and resume the same parent execution through deterministic continuation. Native recursive Depth3 and centralized EventDriven lifecycle validation are green; immutable published custom child binding and hosted Python/TypeScript/.NET execution are supported with a separately bounded nested proof. |
 | Execution State | Track workflow progress, step status, retry direction, pause/resume/cancel state, retention decisions, memory/context evidence direction, and finalization. |
 | Worker Model | Allow work to be processed by workers inside runtime instances. |
 | Queue Model | Support local queues and shared queue direction for multi-instance execution. |
@@ -313,7 +313,7 @@ The runtime foundation is designed to orchestrate these steps in a controlled wa
 
 ## 6A. Durable Child DAG Composition Foundation — Implemented / Validated
 
-The runtime now contains a native durable Child DAG composition path rather than only a future nested-workflow direction.
+The runtime contains a durable Child DAG composition path rather than only a future nested-workflow direction. The lifecycle primitive remains native runtime orchestration, while exact inline child definitions can now also bind immutable published custom implementations to the allocated child execution.
 
 ```text
 Parent DAG
@@ -331,9 +331,9 @@ deterministic continuation
 same parent ExecutionId resumes
 ```
 
-The capability reuses the existing DAG engine, execution state, Policy Engine, shared queue, recovery, replay, Ledger, tracing, and Forensics foundations. It does not create a second orchestration engine.
+The capability reuses the existing DAG engine, execution state, Policy Engine, shared queue, recovery, replay, Ledger, tracing, and Forensics foundations. It does not create a second orchestration engine. For published custom children, immutable publication compilation records the exact nested declaration path and an allocated `ChildExecutionId` is bound before dispatch to the original publication. Python, TypeScript, and .NET child functions then reuse the existing durable invocation journal, hosted worker path, completion coordinator, and parent continuation. Native-only child subtrees remain on the historical path without a publication binding.
 
-The recursive production proof is green through `ChildDepth = 3`, including `3×3×3×2×Depth3` validation and larger `5×5×5×2×Depth3` high-scale scenarios. Canonical lifecycle observation is centralized through the existing Event Manager and correlated with the durable Ledger, Runtime Lifecycle Journal, replay, trace, and Recovery Forensics. Exact per-depth child logical-step accounting is closed for the bounded recursive proof, and the canonical nine-row deterministic adversarial matrix is green across HTTP/gRPC × ProcessHostPool/KubernetesPool. The capability is therefore **Implemented / validated**.
+The native recursive production proof is green through `ChildDepth = 3`, including `3×3×3×2×Depth3` validation and larger `5×5×5×2×Depth3` high-scale scenarios. Canonical lifecycle observation is centralized through the existing Event Manager and correlated with the durable Ledger, Runtime Lifecycle Journal, replay, trace, and Recovery Forensics. Exact per-depth child logical-step accounting is closed for the bounded recursive proof, and the canonical nine-row deterministic adversarial matrix is green across HTTP/gRPC × ProcessHostPool/KubernetesPool. Published custom Child DAG validation is a separate bounded proof domain and explicitly exercises two nested Child DAG levels; it does not inherit the native Depth3 claim. The capability is therefore **Implemented / validated** within those documented boundaries.
 
 The 36/36 row-level proof archive is indexed in [`../ai/adversarial-runtime-validation-evidence-index.md`](../ai/adversarial-runtime-validation-evidence-index.md).
 
@@ -1644,7 +1644,7 @@ It is the foundation for a complete AI workflow execution platform.
 |---|---|
 | Deterministic execution | Foundation exists |
 | DAG workflow execution | Foundation exists |
-| Durable Child DAG composition | **Implemented / validated** — recursive Depth3 production validation and centralized EventDriven lifecycle observation are green |
+| Durable Child DAG composition | **Implemented / validated** — native recursive Depth3 production validation and centralized EventDriven lifecycle observation are green; published custom child binding/execution is supported with a separately bounded nested proof |
 | Execution state | Foundation exists |
 | Step lifecycle | Foundation exists |
 | Worker model | Foundation exists |

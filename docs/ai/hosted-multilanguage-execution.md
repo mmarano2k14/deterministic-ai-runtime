@@ -91,7 +91,13 @@ The pin covers the complete published definition, including functions that have 
 
 Publish, read, and execute operations use the existing RBAC engine with server-configured capabilities. Immutable publication material is not treated as ordinary disposable per-execution payload. Retaining environments and artifacts required by existing runs remains an operational obligation; changed code or requirements require a new publication rather than in-place replacement.
 
-The current published custom-function path is an explicit DAG integration. Native Child DAG composition remains supported independently; publishing custom code inside nested Child DAG definitions is not covered by this path.
+### Published custom Child DAGs
+
+The published custom-function path also supports exact inline nested Child DAG definitions. Nested custom declarations are captured in the same immutable publication and identified by a canonical `DefinitionPath`; root declarations retain `DefinitionPath == null` for compatibility. A root execution continues to use its immutable `AiPublicationRunPin`. Before an allocated published child is dispatched, an immutable child binding associates its `ChildExecutionId` with the original publication and exact nested definition.
+
+Nested target resolution and worker materialization use that execution association to select the exact call site and original source/dependency/environment material. Republishing does not upgrade an unstarted or recovered child. Missing bindings, changed artifacts, corrupted frozen definition bytes, tenant/owner mismatches, and conflicting immutable content fail explicitly rather than selecting newer material.
+
+Publication authority can propagate from a root pin to a child binding and then to a deeper child binding. This reuses the existing Child DAG relation, dispatcher, durable invocation journal, hosted worker supervisor, result application, completion coordinator, and parent continuation. A native-only child subtree remains unbound and follows the historical native path.
 
 ## Durable invocation and result application
 
@@ -236,7 +242,7 @@ The following remain outside the implemented foundation:
 | Hostile code | Enforced container isolation, CPU/memory limits, filesystem policy, network egress, descendant containment, and cleanup after host loss. |
 | Dependencies | Python wheels/native extensions/namespace packages; general npm/lockfile bundles and native add-ons; automatic .NET dependency-closure/native packaging. |
 | Additional policies | Family-specific remote contracts where appropriate; no implicit extension to every policy kind. |
-| Nested published code | Custom implementations inside published Child DAG definitions. |
+| Published-child validation breadth | Broader provider/store failure matrices, operating-system host-kill proofs, and unlimited recursive-depth claims are not implied by the bounded published-child closure. |
 | External effects | Durable MCP evidence, reconciliation, schema pinning, connection-catalog lifecycle, and credential-provider integrations. |
 
 No arbitrary network package installation, implicit `latest` resolution, or tenant C# compilation belongs in the current execution path. A future SDK describes and publishes work; the platform hosts it and the runtime governs it. No direct or transitive engine-DLL dependency is required of that SDK.
@@ -251,6 +257,7 @@ These are server implementation points, not public SDK contracts.
 | Policy scope and language | [`AiConcurrencyPolicyBindingResolver.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/AiConcurrencyPolicyBindingResolver.cs) |
 | Publication validation | [`AiPublicationCompiler.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Publication/AiPublicationCompiler.cs) |
 | Immutable run creation | [`AiPublishedDagRunService.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Publication/AiPublishedDagRunService.cs) |
+| Published Child DAG binding | [`AiPublishedChildDagBindingCoordinator.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Publication/AiPublishedChildDagBindingCoordinator.cs) |
 | Durable invocation authority | [`AiDurableInvocationJournal.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Durable/AiDurableInvocationJournal.cs) |
 | Continuation acknowledgement | [`AiDurableInvocationDagContinuationCoordinator.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Durable/Dag/AiDurableInvocationDagContinuationCoordinator.cs) |
 | Provider capability checks | [`AiWorkerExecutionAdmission.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/AiWorkerExecutionAdmission.cs) |

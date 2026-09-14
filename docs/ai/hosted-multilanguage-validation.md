@@ -89,7 +89,22 @@ The existing HTTP and gRPC ProcessHostPool `ContinuationConsume` scenarios were 
 
 The broad regression artifact also contains passing policy discovery/startup tests. Discovery compatibility matters because contextual adapters must not enter native singleton registration.
 
-Reported host success is recorded separately from inspected TRX results. It does not promote nested published custom Child DAG execution, hostile-code containment, or durable MCP external effects into supported capabilities. Historical runtime-pool evidence remains documented in [Runtime Pool Production Validation](runtime-pool-production-validation.md) and is not recomputed here.
+Reported host success is recorded separately from inspected TRX results. Historical runtime-pool evidence remains documented in [Runtime Pool Production Validation](runtime-pool-production-validation.md) and is not recomputed here. That native host evidence is not used as proof for published custom Child DAG execution, hostile-code containment, or durable MCP external effects.
+
+## Published custom Child DAG branch evidence
+
+Published custom Child DAG support is validated through a separate bounded branch-level suite rather than being inferred from the earlier hosted-execution TRX artifacts above. The branch adds four finite proof groups:
+
+| Proof group | Boundary |
+|---|---|
+| Nested publication identity and compilation | Canonical nested `DefinitionPath`, child-local language resolution, exact code attachment, schema compatibility, and root/nested resolver isolation. |
+| Immutable child execution binding | `ChildExecutionId` is bound before dispatch to the original publication and exact nested definition; nested target/material resolution reuses the existing hosted path. |
+| Durability and recovery | Rehydration, republication pinning, lost binding-write acknowledgement, missing/changed material, snapshot-integrity checks, tenant isolation, stale result rejection, dispatch redrive, and duplicate continuation convergence. |
+| Compatibility closure | Native-only compatibility, two explicit nested Child DAG levels, and mixed native/custom hosted execution for Python, TypeScript, and .NET through the existing journal, worker, completion, and continuation path. |
+
+The compilation, execution-binding, and durability/recovery targets have reported passing target-environment results. The closure suite defines five targeted cases. Python and TypeScript retain their existing explicit process-test configuration; a skipped hosted-language case is not closure evidence for that language. No aggregate passing-test total is inferred without the corresponding result artifacts.
+
+The published-custom nesting claim is intentionally bounded to the depth actually exercised by the closure suite: two Child DAG levels below the published root. The existing native Child DAG Depth3 evidence remains a separate proof domain and is not automatically transferred to published custom execution.
 
 ## Artifact integrity
 
@@ -108,7 +123,7 @@ SHA-256 identifies the exact supplied result files used for this summary.
 
 The evidence supports the stated implementation boundaries, not a completed public SDK product. No new public publication endpoint, SDK package, sandbox, package installer, or external-effect ledger is implied by these results.
 
-Dedicated reruns supplement the earlier regression artifact without changing its recorded outcomes. The available evidence does not certify every runtime version, deployment topology, or failure mode.
+Dedicated reruns supplement the earlier regression artifact without changing its recorded outcomes. The available evidence does not certify every runtime version, deployment topology, or failure mode. Published custom Child DAG evidence does not establish operating-system host-kill recovery, Redis/MongoDB restart or failover, Kubernetes provider coverage, hostile-code isolation, or unlimited recursive depth.
 
 ## Related documents
 
