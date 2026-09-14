@@ -8,7 +8,7 @@ Most AI tooling starts at prompts, agents, and RAG. This runtime starts one laye
 
 It provides durable DAG execution, Redis-backed coordination, provider-based dispatch, bounded reusable capacity, crash recovery, deterministic replay, tenant isolation, and canonical event observation behind one shared control plane. The engine does not judge the answer; it guarantees the lifecycle of the execution that produced it — an LLM call, a RAG step, an MCP tool, a database command, a human approval, or any HTTP/gRPC workload.
 
-[![Version](https://img.shields.io/badge/Version-0.0.8.5-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-0.0.8.7-blue)](./CHANGELOG.md)
 [![Changelog](https://img.shields.io/badge/Changelog-view-lightgrey)](./CHANGELOG.md)
 ![AI Runtime](https://img.shields.io/badge/AI-Deterministic%20Execution-purple)
 ![Runtime](https://img.shields.io/badge/Runtime-distributed-brightgreen)
@@ -27,6 +27,7 @@ It provides durable DAG execution, Redis-backed coordination, provider-based dis
 
 ## Start here
 
+- **Understand the runtime:** [Architecture Quick Start](docs/ai/architecture-quick-start.md) — core components, durable truth, failure boundaries, and trade-offs.
 - **Complete documentation:** [docs/index.md](docs/index.md)
 - **Interactive AI Runtime Analysis Demo:** [demo/rbac-aiAnalysis/nextjs/README.md](demo/rbac-aiAnalysis/nextjs/README.md)
 - **Installation / local Kubernetes:** [Kubernetes / Minikube installation and recovery guide](docs/ai/kubernetes-local-environment.md)
