@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Concurrency;
+using Multiplexed.Abstractions.AI.Concurrency;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
@@ -499,12 +499,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                             },
                             async trace =>
                             {
-                                var result = await _engineServices.DagStore.TryFailStepAsync(
-                                    executionId,
-                                    claimed.StepName,
-                                    claimed.ClaimToken,
-                                    stepResult.Error,
-                                    cancellationToken).ConfigureAwait(false);
+                                var result = stepResult.InvocationReceipt is null
+                                    ? await _engineServices.DagStore.TryFailStepAsync(
+                                        executionId, claimed.StepName, claimed.ClaimToken, stepResult.Error, cancellationToken).ConfigureAwait(false)
+                                    : await _engineServices.DagStore.TryFailStepWithResultAsync(
+                                        executionId, claimed.StepName, claimed.ClaimToken, stepResult, cancellationToken).ConfigureAwait(false);
 
                                 trace.SetTag("failed", result);
                                 trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, workerId);
@@ -948,6 +947,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
             {
                 Name = stepDefinition.Name,
                 StepKey = stepDefinition.StepKey,
+                ExecutionLanguage = stepDefinition.ExecutionLanguage,
+                Invocation = stepDefinition.Invocation,
                 Config = stepDefinition.Config ?? new Dictionary<string, object?>(),
                 DependsOn = stepDefinition.DependsOn ?? Array.Empty<string>()
             };

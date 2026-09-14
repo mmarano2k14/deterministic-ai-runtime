@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Abstractions.AI.Retry;
@@ -396,6 +396,11 @@ namespace Multiplexed.AI.Stores.Memory
             return new AiStepResult
             {
                 Success = source.Success,
+                Outcome = source.Outcome,
+                Value = source.Value,
+                Payload = source.Payload,
+                InvocationReceipt = source.InvocationReceipt,
+                DataPayloads = source.DataPayloads is null ? null : new Dictionary<string, AiStoredPayload>(source.DataPayloads, StringComparer.Ordinal),
                 Error = source.Error,
                 Output = source.Output,
                 Data = new Dictionary<string, object?>(

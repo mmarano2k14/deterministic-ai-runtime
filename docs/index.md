@@ -20,6 +20,8 @@ Focused AI runtime documentation is organized under:
 | [`runtime-internals.md`](runtime-internals.md) | Complete technical reference preserved from the original README. |
 | [`enterprise-readiness.md`](enterprise-readiness.md) | Matrix of enterprise AI execution questions and runtime answers. |
 | [`ai/architecture-overview.md`](ai/architecture-overview.md) | High-level runtime architecture and major runtime layers, including shared control-plane orchestration, provider dispatch, Redis coordination, and multi-tenant runtime isolation. |
+| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Published Python, TypeScript and .NET functions, immutable environments, durable invocation, custom Concurrency policies, outbound MCP, and explicit SDK/security boundaries. |
+| [`ai/hosted-multilanguage-validation.md`](ai/hosted-multilanguage-validation.md) | Inspected language, durability, boundary and MongoDB/Redis results, with overlap, skipped-case and host-report limitations. |
 | [`ai/child-dag-composition.md`](ai/child-dag-composition.md) | Implemented / validated durable Child DAG composition with `WaitingForExternal`, deterministic continuation, recursive Depth3 validation, EventDriven recovery observation, warm reuse, replay, lifecycle, Ledger, trace, and Forensics evidence. |
 | [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | Multi-tenant control-plane isolation, RBAC execution-context propagation, durable `ExecutionContextSnapshot`, tenant-aware registry/capacity/admission, Shared/Dedicated/Hybrid runtime visibility, and tenant-aware scale-out. |
 | [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | End-to-end ASCII runtime flow explaining MCP/RBAC context resolution, durable `ExecutionContextSnapshot`, shared run persistence, tenant-aware admission, tenant-aware scale-out, shared queue dispatch, local runtime queue execution, DAG worker loop, execution control, finalization, and observability. |
@@ -222,6 +224,18 @@ This document explains:
 - Redis hot state and distributed coordination
 - replay, observability, retention, and policy layers
 - multi-tenant control-plane/runtime isolation as a first-class architecture boundary
+
+### [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md)
+
+Server-side execution reference covering effective language selection, immutable publication and run pinning, worker lease/epoch authority, durable result application, actual Python/TypeScript/.NET execution, custom `Concurrency` policies, execution requirements, and authorized outbound MCP.
+
+The hosted function process is not a trusted runtime instance. The public SDK library, hostile-code sandboxing, nested custom publication, and durable MCP external-effect evidence remain separate capabilities.
+
+### [`ai/hosted-multilanguage-validation.md`](ai/hosted-multilanguage-validation.md)
+
+Result-artifact inventory for the hosted execution foundation. Separates inspected TRX results from reported HTTP/gRPC host validation and from unsupported production guarantees.
+
+---
 
 ### [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md)
 
@@ -848,6 +862,7 @@ The project roadmap organized into phases:
 | [`ai/config-driven-runtime.md`](ai/config-driven-runtime.md) | How pipeline definitions and structured configuration drive runtime behavior, with tenant runtime settings moving toward config/database-backed resolution. |
 | [`ai/policy-driven-execution.md`](ai/policy-driven-execution.md) | Shared policy model used by retry, retention, concurrency, throttling, admission control, and future tenant-specific governance. |
 | [`ai/context-resolution-and-helpers.md`](ai/context-resolution-and-helpers.md) | Input resolution, step context building, payload rehydration, provider metadata, policy context, helper services, and durable execution context snapshot propagation. |
+| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Native/custom/MCP binding, published code and dependencies, language workers, execution requirements, and the external SDK boundary. |
 | [`ai/step-plugins.md`](ai/step-plugins.md) | Step keys, registered executors, class attributes, assembly scanning, provider abstractions, and plugin-style runtime extension. |
 | [`ai/rag-pipelines.md`](ai/rag-pipelines.md) | RAG retrieval, merge, compose, provider-oriented workflow execution, auto-registered RAG steps, and deterministic RAG pipelines. |
 
@@ -877,6 +892,7 @@ Useful entry points:
 Many focused documents started as documentation split placeholders, but several core runtime areas are now fully documented, including:
 
 - architecture overview
+- hosted multilanguage execution and its validation evidence
 - multi-tenant control-plane isolation
 - multi-tenant runtime flow ASCII reference
 - RBAC execution-context propagation

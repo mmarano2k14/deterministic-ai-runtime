@@ -32,6 +32,16 @@ The runtime remains the execution authority. Child DAG composition reuses the ex
 
 ---
 
+## Published Custom Function Boundary
+
+The validated composition contract in this document concerns native durable Child DAG execution. It remains separate from publication of hosted custom code inside nested Child DAG definitions.
+
+The current immutable publication path supports hosted custom functions and `Concurrency` policy sites in its supported root DAG scope. It preserves native child definitions but rejects unsupported nested custom publication locations. Native recursive recovery evidence does not imply that nested Python, TypeScript, or .NET publication/admission is implemented.
+
+See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md) for the published-code boundary.
+
+---
+
 ## Historical Promotion Gate — Now Closed
 
 The capability was previously held behind a promotion gate while recursive execution transitions were still inferred too heavily from polling and timeout diagnostics. That gate has now been closed.

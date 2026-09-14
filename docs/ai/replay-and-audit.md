@@ -78,6 +78,18 @@ This document intentionally separates the implemented Replay Engine V1 from futu
 
 ---
 
+## Hosted Invocation Restoration and External Effects
+
+Hosted custom functions add a durable result-reuse path alongside the existing replay engine. Once the journal has accepted a result, reconstructed services can apply that exact result through the existing DAG continuation without launching the function again. A receipt binds the operation to the accepted result hash; acknowledgement also requires the terminal parent.
+
+This recovery/application path is not a new replay mode. It does not turn arbitrary function side effects into exactly-once operations, and controlled restoration from serialized stores is distinct from a host kill or database restart.
+
+Outbound MCP carries stable effect identity and an intent digest, but does not yet persist a durable effect journal or reconcile uncertain remote outcomes. Those metadata fields alone cannot prove that a tool executed, deduplicate repeated calls remotely, or reconstruct a lost tool response. The existing audit-only snapshot inspection remains separate from any deliberate new tool execution.
+
+The hosted custom `Concurrency` policy path likewise does not introduce a durable policy-result replay store. See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md) and [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) for these exact boundaries.
+
+---
+
 ## Replay Engine V1
 
 Replay Engine V1 is implemented as replay-as-validation and replay-as-restoration.

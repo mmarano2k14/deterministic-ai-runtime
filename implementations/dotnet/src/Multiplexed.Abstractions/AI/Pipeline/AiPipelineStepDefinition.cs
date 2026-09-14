@@ -1,4 +1,7 @@
-﻿namespace Multiplexed.Abstractions.AI.Pipeline
+﻿using Multiplexed.Abstractions.AI.Invocation;
+using System.Text.Json.Serialization;
+
+namespace Multiplexed.Abstractions.AI.Pipeline
 {
     /// <summary>
     /// Represents declarative execution policy metadata attached to a pipeline step.
@@ -55,6 +58,14 @@
         /// This identifies the step type, not the step instance.
         /// </summary>
         public string StepKey { get; init; } = string.Empty;
+
+        /// <summary>Optional local custom language override. Never propagates to other steps.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ExecutionLanguage { get; init; }
+
+        /// <summary>Optional invocation descriptor. Absence preserves native registry resolution.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public AiInvocationDefinition? Invocation { get; init; }
 
         /// <summary>
         /// Gets or sets the execution order of the step.

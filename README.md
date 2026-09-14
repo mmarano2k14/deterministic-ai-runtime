@@ -8,7 +8,7 @@ Most AI tooling starts at prompts, agents, and RAG. This runtime starts one laye
 
 It provides durable DAG execution, Redis-backed coordination, provider-based dispatch, bounded reusable capacity, crash recovery, deterministic replay, tenant isolation, and canonical event observation behind one shared control plane. The engine does not judge the answer; it guarantees the lifecycle of the execution that produced it — an LLM call, a RAG step, an MCP tool, a database command, a human approval, or any HTTP/gRPC workload.
 
-[![Version](https://img.shields.io/badge/Version-0.0.8.5-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-0.0.8.7-blue)](./CHANGELOG.md)
 [![Changelog](https://img.shields.io/badge/Changelog-view-lightgrey)](./CHANGELOG.md)
 ![AI Runtime](https://img.shields.io/badge/AI-Deterministic%20Execution-purple)
 ![Runtime](https://img.shields.io/badge/Runtime-distributed-brightgreen)
@@ -27,6 +27,7 @@ It provides durable DAG execution, Redis-backed coordination, provider-based dis
 
 ## Start here
 
+- **Understand the runtime:** [Architecture Quick Start](docs/ai/architecture-quick-start.md) — core components, durable truth, failure boundaries, and trade-offs.
 - **Complete documentation:** [docs/index.md](docs/index.md)
 - **Interactive AI Runtime Analysis Demo:** [demo/rbac-aiAnalysis/nextjs/README.md](demo/rbac-aiAnalysis/nextjs/README.md)
 - **Installation / local Kubernetes:** [Kubernetes / Minikube installation and recovery guide](docs/ai/kubernetes-local-environment.md)
@@ -1016,6 +1017,16 @@ The engine owns orchestration correctness.
 Plugins own domain behavior.
 
 See [Step plugins](docs/ai/step-plugins.md).
+
+### Hosted multilanguage execution
+
+Published Python and TypeScript sources and precompiled .NET assemblies execute in hosted processes through immutable publications, whole-run version pinning, and a durable invocation journal. The existing DAG retains claim, retry, recovery, and continuation authority; hosted function workers do not become runtime instances.
+
+Custom `Concurrency` policies use the same language infrastructure at their existing admission checkpoint. Outbound MCP is a separate invocation mode using server-owned connections and the existing RBAC engine.
+
+**Scope:** opt-in server-side execution foundation, not the external SDK library. Process isolation is not a hostile-code sandbox, and MCP effect identity does not provide durable external-effect replay.
+
+See [Hosted Multilanguage Execution](docs/ai/hosted-multilanguage-execution.md) and [Hosted Multilanguage Validation](docs/ai/hosted-multilanguage-validation.md).
 
 ---
 

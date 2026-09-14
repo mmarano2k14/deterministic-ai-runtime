@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseAppHost>false</UseAppHost>
+    <GenerateDependencyFile>true</GenerateDependencyFile>
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+  </PropertyGroup>
+
+  <Target Name="BuildAndGetHostedDotNetWorkerFiles" DependsOnTargets="Restore;Build"
+          Returns="@(_HostedDotNetWorkerFiles)" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="'$(TargetPath)' == '' or '$(ProjectDepsFilePath)' == '' or '$(ProjectRuntimeConfigFilePath)' == ''"
+           Text="The hosted .NET worker requires assembly, dependency and runtime configuration outputs." />
+    <ItemGroup>
+      <_HostedDotNetWorkerFiles Remove="@(_HostedDotNetWorkerFiles)" />
+      <_HostedDotNetWorkerFiles Include="$(TargetPath)" />
+      <_HostedDotNetWorkerFiles Include="$(ProjectDepsFilePath)" />
+      <_HostedDotNetWorkerFiles Include="$(ProjectRuntimeConfigFilePath)" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_HostedDotNetWorkerFiles.Identity)')"
+           Text="The hosted .NET worker build did not produce '%(_HostedDotNetWorkerFiles.Identity)'." />
+  </Target>
+</Project>

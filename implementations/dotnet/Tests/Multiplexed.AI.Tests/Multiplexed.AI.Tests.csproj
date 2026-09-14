@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFramework>net10.0</TargetFramework>
@@ -23,6 +23,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\..\src\Multiplexed.Abstractions\Multiplexed.Abstractions.csproj" />
 		<ProjectReference Include="..\..\src\Multiplexed.AI\Multiplexed.AI.csproj" />
+		<ProjectReference Include="..\..\src\Multiplexed.AI.McpServer\Multiplexed.AI.McpServer.csproj" />
 		<ProjectReference Include="..\..\src\Multiplexed.Rbac.Core\Multiplexed.Rbac.Core.csproj" />
 		<ProjectReference Include="..\..\src\Multiplexed.Realtime\Multiplexed.Realtime.csproj" />
 	</ItemGroup>
@@ -36,4 +37,54 @@
 		<Folder Include="Runtime\Retry\" />
 	</ItemGroup>
 
+
+  <ItemGroup>
+    <ProjectReference Include="..\Multiplexed.AI.WorkerProtocol.Probe\Multiplexed.AI.WorkerProtocol.Probe.csproj" ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+
+  <!-- The probe owns its launch files. Do not copy transitive content before its build. -->
+  <Target Name="CopyWorkerProtocolProbe" AfterTargets="Build"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <_WorkerProtocolProbeFiles Remove="@(_WorkerProtocolProbeFiles)" />
+    </ItemGroup>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Multiplexed.AI.WorkerProtocol.Probe\Multiplexed.AI.WorkerProtocol.Probe.csproj"
+             Targets="BuildAndGetWorkerProtocolProbeFiles"
+             Properties="Configuration=$(Configuration);TargetFramework=net10.0"
+             RebaseOutputs="true" StopOnFirstFailure="true">
+      <Output TaskParameter="TargetOutputs" ItemName="_WorkerProtocolProbeFiles" />
+    </MSBuild>
+    <Error Condition="'@(_WorkerProtocolProbeFiles)' == ''"
+           Text="The worker protocol probe did not return its required launch files." />
+    <Copy SourceFiles="@(_WorkerProtocolProbeFiles)" DestinationFolder="$(TargetDir)worker-probe" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Build deployment/test-only .NET worker artifacts without loading them into the test assembly. -->
+  <Target Name="CopyHostedDotNetWorkerFixture" AfterTargets="Build"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <_HostedDotNetFixtureFiles Remove="@(_HostedDotNetFixtureFiles)" />
+    </ItemGroup>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\workers\Multiplexed.AI.HostedInvocation.DotNetWorker\Multiplexed.AI.HostedInvocation.DotNetWorker.csproj"
+             Targets="Restore;BuildAndGetHostedDotNetWorkerFiles"
+             Properties="Configuration=$(Configuration);TargetFramework=net10.0"
+             RebaseOutputs="true" StopOnFirstFailure="true">
+      <Output TaskParameter="TargetOutputs" ItemName="_HostedDotNetFixtureFiles" />
+    </MSBuild>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Multiplexed.AI.HostedInvocation.TestDependency\Multiplexed.AI.HostedInvocation.TestDependency.csproj"
+             Targets="Restore;BuildAndGetHostedDotNetTestDependency"
+             Properties="Configuration=$(Configuration);TargetFramework=net10.0"
+             RebaseOutputs="true" StopOnFirstFailure="true">
+      <Output TaskParameter="TargetOutputs" ItemName="_HostedDotNetFixtureFiles" />
+    </MSBuild>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Multiplexed.AI.HostedInvocation.TestFunctions\Multiplexed.AI.HostedInvocation.TestFunctions.csproj"
+             Targets="Restore;BuildAndGetHostedDotNetTestFunctions"
+             Properties="Configuration=$(Configuration);TargetFramework=net10.0"
+             RebaseOutputs="true" StopOnFirstFailure="true">
+      <Output TaskParameter="TargetOutputs" ItemName="_HostedDotNetFixtureFiles" />
+    </MSBuild>
+    <Error Condition="'@(_HostedDotNetFixtureFiles)' == ''"
+           Text="Hosted .NET worker fixture did not return its required build outputs." />
+    <Copy SourceFiles="@(_HostedDotNetFixtureFiles)" DestinationFolder="$(TargetDir)dotnet-worker-fixture" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

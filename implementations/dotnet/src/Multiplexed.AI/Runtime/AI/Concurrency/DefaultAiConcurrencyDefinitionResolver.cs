@@ -91,6 +91,19 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
         }
 
         /// <summary>
+        /// Reads policy declarations without applying policy defaults or creating throttle
+        /// rules. Used when compiling invocation scopes, not when deciding admission.
+        /// </summary>
+        public IReadOnlyList<AiConfiguredPolicyDefinition> ReadPolicyDeclarations(
+            IReadOnlyDictionary<string, object?>? config)
+        {
+            var policies = TryReadDefinition(config, applyPolicyDefaults: false)?.Policies;
+            return policies is null
+                ? Array.Empty<AiConfiguredPolicyDefinition>()
+                : Array.AsReadOnly(policies.ToArray());
+        }
+
+        /// <summary>
         /// Reads a raw nullable concurrency definition from a configuration dictionary.
         /// </summary>
         /// <param name="config">
@@ -100,7 +113,8 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
         /// A raw nullable concurrency definition, or <c>null</c> when no concurrency section exists.
         /// </returns>
         private static RawAiConcurrencyDefinition? TryReadDefinition(
-            IReadOnlyDictionary<string, object?>? config)
+            IReadOnlyDictionary<string, object?>? config,
+            bool applyPolicyDefaults = true)
         {
             if (config is null ||
                 !config.TryGetValue("concurrency", out var value) ||
@@ -128,8 +142,8 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
                     JsonOptions);
             }
 
-            return definition is null
-                ? null
+            return definition is null || !applyPolicyDefaults
+                ? definition
                 : ApplyConfiguredPolicyDefaults(definition);
         }
 

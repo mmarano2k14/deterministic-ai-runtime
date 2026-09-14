@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Scheduling;
 using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Runtime.Execution.Engine.Models;
@@ -219,6 +219,12 @@ namespace Multiplexed.AI.Stores.Cache.Redis
         {
             return await _services.TransitionService.TryCompleteStepAsync(executionId, stepName, claimToken, result, cancellationToken);
         }
+
+        /// <summary>Uses the same claim-fenced failure transition while retaining the exact custom result.</summary>
+        public Task<bool> TryFailStepWithResultAsync(
+            string executionId, string stepName, string claimToken, AiStepResult result,
+            CancellationToken cancellationToken = default) =>
+            _services.TransitionService.TryFailStepWithResultAsync(executionId, stepName, claimToken, result, cancellationToken);
 
         /// <summary>
         /// Attempts to atomically park a claimed DAG step while it waits for an external condition.

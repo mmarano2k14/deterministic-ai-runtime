@@ -708,7 +708,11 @@ namespace Multiplexed.AI.DI
         {
             var policies = assemblies
                 .SelectMany(a => a.GetTypes())
-                .Where(t => typeof(IAiPolicy).IsAssignableFrom(t) && !t.IsAbstract);
+                // Invocation-bound adapters are created by their contextual factory,
+                // not by the native singleton registry. Keep legacy discovery otherwise.
+                .Where(t => typeof(IAiPolicy).IsAssignableFrom(t) &&
+                    !t.IsAbstract &&
+                    !t.IsDefined(typeof(AiPolicyDiscoveryIgnoreAttribute), inherit: true));
 
             foreach (var policy in policies)
             {

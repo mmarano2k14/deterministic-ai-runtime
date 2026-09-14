@@ -393,6 +393,20 @@ The runtime core remains protected behind focused abstractions.
 
 ---
 
+## Inbound Control Plane and Outbound Tool Execution
+
+The MCP server described here exposes inbound runtime-control operations. Outbound MCP is a separate execution adapter: the DAG invokes an authorized tool through Streamable HTTP. Neither path is the private protocol used by hosted Python, TypeScript, or .NET workers.
+
+The outbound adapter restores trusted execution identity, resolves the server-owned connection/tool, applies the existing RBAC decision, and resolves the declared arguments. The transport verifies tenant, connection revision, tool, and request consistency before network activity. Endpoint and credentials are not supplied as trusted values by tenant code.
+
+Outgoing requests distinguish a per-attempt `RequestId` from a stable `EffectId` and canonical `RequestDigest`; the existing `ConnectionRevision` participates in that digest. Physical claim replacement does not create a new logical effect. These fields are not remote idempotency keys and are not injected into tool arguments or headers.
+
+The transport uses HTTPS except for explicitly enabled loopback HTTP, disables redirects/cookies, and does not automatically retry an uncertain tool effect. Durable outbound-effect evidence, reconciliation, and replay without re-emission remain outside this integration. Read-only or explicitly idempotent tools define the validated network boundary.
+
+See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md#outbound-mcp-and-effect-identity) for the contract and [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) for the evidence. This does not add a public SDK publication/submission endpoint to the inbound tool catalog below.
+
+---
+
 ## MCP Host Modes
 
 The MCP host supports multiple runtime operating modes.

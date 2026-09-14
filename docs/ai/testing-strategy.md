@@ -68,6 +68,18 @@ The purpose of the testing strategy is to validate that the runtime behaves like
 
 ---
 
+## Hosted Multilanguage Validation Evidence
+
+[Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the supplied results for invocation durability, environment/provider admission, launch paths, Python/TypeScript/.NET execution, custom `Concurrency` policies, outgoing MCP, and real MongoDB/Redis integration.
+
+The broad invocation/publication artifact contains 1,098 passing results and 54 individual skipped results. Dedicated Python, TypeScript, and infrastructure artifacts execute the previously inactive paths. Counts overlap and must not be presented as one combined run or an additive unique-test total.
+
+Cold-restoration tests reconstruct services and serialized state; a real .NET worker produces the initial result in one case. This differs from an OS-level host kill. The HTTP/gRPC ProcessHostPool continuation scenarios have reported passing results, recorded separately because their final TRX/log is not included in the inspected evidence set.
+
+Capability-refusal and symbolic-link tests validate declared boundaries without claiming a hostile-code sandbox. MCP identity/transport tests validate authorized read-only/idempotent calls without claiming durable replay of external effects. The existing production harnesses and historical evidence below are unchanged.
+
+---
+
 ## Testing Philosophy
 
 The runtime testing philosophy is based on one principle:

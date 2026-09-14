@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Scheduling;
 using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Runtime.Execution.Engine.Models;
@@ -109,6 +109,16 @@ namespace Multiplexed.AI.Stores
             string claimToken,
             string? error,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Applies the existing failure/retry transition while atomically retaining a complete
+        /// durable invocation result and its receipt. Providers must implement this boundary;
+        /// falling back to the error-only operation would discard application evidence.
+        /// </summary>
+        Task<bool> TryFailStepWithResultAsync(
+            string executionId, string stepName, string claimToken, AiStepResult result,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("This DAG store does not support atomic failure result receipts.");
 
         /// <summary>
         /// Atomically parks a claimed running step while it waits for an external durable condition.

@@ -1,4 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.Steps;
+using Multiplexed.Abstractions.AI.Invocation;
+using System.Text.Json.Serialization;
 
 namespace Multiplexed.Abstractions.AI.Pipeline
 {
@@ -27,6 +29,26 @@ namespace Multiplexed.Abstractions.AI.Pipeline
         /// This identifies the step type, not the pipeline instance.
         /// </summary>
         public string StepKey { get; init; } = string.Empty;
+
+        /// <summary>The original local declaration, not an inherited value.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ExecutionLanguage { get; init; }
+
+        /// <summary>Original invocation descriptor, preserved for definition projections.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public AiInvocationDefinition? Invocation { get; init; }
+
+        /// <summary>Effective immutable metadata; null on historical undeclared native steps.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public AiInvocationBinding? InvocationBinding { get; init; }
+
+        /// <summary>
+        /// Ordered concurrency-policy bindings with their original declaration scope.
+        /// Recompiled from the pinned definition, never from a merged admission config.
+        /// </summary>
+        [JsonIgnore]
+        public IReadOnlyList<AiPolicyInvocationBinding> ConcurrencyPolicyBindings { get; init; }
+            = Array.Empty<AiPolicyInvocationBinding>();
 
         /// <summary>
         /// Gets or sets the resolved runtime step instance.

@@ -797,6 +797,20 @@ Step executors receive resolved context from the context resolution layer.
 
 ---
 
+### Hosted Function Execution
+
+The runtime also supports opt-in hosted Python, TypeScript, and .NET functions through contextual adapters. Invocation kind is separate from language: native implementations remain native, custom declarations select an approved language environment, and MCP declarations select an authorized tool connection.
+
+Immutable publication binds code, supplied dependencies, and the environment to the whole run. The custom-function journal freezes invocation inputs, controls worker assignment through leases and epochs, and records an authoritative result. Continuation uses the existing DAG; acknowledgement requires the exact application receipt and terminal parent, not only queue acceptance.
+
+A hosted function process is not a trusted `RuntimeInstance` and does not own DAG claims, retries, `Park`, recovery, or successor selection. The existing RBAC engine authorizes publication and execution. Contextual policy adapters are excluded from native singleton discovery.
+
+The process provider validates declared requirements against actual capabilities before launch. It remains a trusted-process provider and refuses sandbox, denied-egress, OCI-image, or sealed-closure requirements it cannot enforce. This foundation does not include the external SDK library or a public publication endpoint.
+
+See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md) for the language backends, environment identity, custom `Concurrency` policy checkpoint, outbound MCP effect metadata, and remaining scope. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the evidence boundaries.
+
+---
+
 ### 11. Policy and Governance Layer
 
 Policies provide reusable runtime decision logic.
@@ -1499,7 +1513,13 @@ Plugins remain responsible for domain-specific execution.
 | Observability dashboard | Planned |
 | Kubernetes runtime host provider | Implemented / validated for Host Manager lifecycle, Kubernetes SDK Pod/Service creation, layered readiness, HTTP/gRPC transport preservation, and Pod crash-recovery scenarios |
 | Full Kubernetes deployment packaging and cluster operations | Ongoing |
-| Public SDK polish | Planned |
+| Hosted Python, TypeScript and .NET execution | Implemented / targeted validation; opt-in trusted-process hosting |
+| Immutable publication and whole-run pinning | Implemented / validated within the supported published DAG path |
+| Durable function journal and DAG continuation | Implemented / validated; recorded result and exact application receipt remain distinct |
+| Hosted custom Concurrency policies | Implemented / validated at the existing admission checkpoint |
+| Outbound MCP tool transport and effect identity | Implemented / validated for read-only/idempotent targets; durable effect evidence is not included |
+| Execution requirements and artifact descriptors | Implemented / validated capability refusal; not a hostile-code sandbox |
+| External SDK library and public publication/submission API | Planned; no engine-DLL dependency in the target contract |
 | Process-host Runtime Pool Manager | Implemented / validated |
 | Independent `PoolId` / `HostId` / `RuntimeInstanceId` identity | Implemented / validated |
 | Stable HTTP and gRPC pool routing | Implemented / validated |

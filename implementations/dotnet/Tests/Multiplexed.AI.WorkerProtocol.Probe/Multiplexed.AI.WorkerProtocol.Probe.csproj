@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseAppHost>false</UseAppHost>
+    <GenerateDependencyFile>true</GenerateDependencyFile>
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+  </PropertyGroup>
+
+  <!-- Querying a target path does not build an executable or its JSON launch files. -->
+  <Target Name="BuildAndGetWorkerProtocolProbeFiles" DependsOnTargets="Build"
+          Returns="@(_WorkerProtocolProbeFiles)"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="'$(GenerateDependencyFile)' != 'true' or '$(GenerateRuntimeConfigurationFiles)' != 'true'"
+           Text="The worker protocol probe requires dependency and runtime configuration file generation." />
+    <Error Condition="'$(TargetPath)' == '' or '$(ProjectDepsFilePath)' == '' or '$(ProjectRuntimeConfigFilePath)' == ''"
+           Text="The worker protocol probe requires resolved assembly, dependency and runtime configuration paths." />
+    <ItemGroup>
+      <_WorkerProtocolProbeFiles Remove="@(_WorkerProtocolProbeFiles)" />
+      <_WorkerProtocolProbeFiles Include="$(TargetPath)" />
+      <_WorkerProtocolProbeFiles Include="$(ProjectDepsFilePath)" />
+      <_WorkerProtocolProbeFiles Include="$(ProjectRuntimeConfigFilePath)" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_WorkerProtocolProbeFiles.Identity)')"
+           Text="The worker protocol probe build did not produce required launch file '%(_WorkerProtocolProbeFiles.Identity)'." />
+  </Target>
+</Project>

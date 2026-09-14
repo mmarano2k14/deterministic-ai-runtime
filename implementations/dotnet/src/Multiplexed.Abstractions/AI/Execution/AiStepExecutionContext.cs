@@ -1,4 +1,6 @@
 ﻿using Multiplexed.Abstractions.AI.Pipeline;
+using Multiplexed.Abstractions.AI.Invocation;
+using Multiplexed.Abstractions.AI.Concurrency;
 
 namespace Multiplexed.Abstractions.AI.Execution
 {
@@ -52,6 +54,19 @@ namespace Multiplexed.Abstractions.AI.Execution
         /// Gets the resolved pipeline step bound to this context.
         /// </summary>
         public ResolvedAiPipelineStep Step { get; }
+
+        /// <summary>Effective binding; historical undeclared steps remain native.</summary>
+        public AiInvocationBinding InvocationBinding => Step.InvocationBinding ?? AiInvocationBinding.Native;
+
+        /// <summary>Original scopes for the configured concurrency checkpoint.</summary>
+        public IReadOnlyList<AiPolicyInvocationBinding> ConcurrencyPolicyBindings => Step.ConcurrencyPolicyBindings;
+
+        /// <summary>
+        /// Effective definition already prepared for the admission gate. Present only
+        /// in admission contexts; prevents re-reading a different step-only config.
+        /// This is a borrowed decision input, not a durable state mutation.
+        /// </summary>
+        public AiConcurrencyDefinition? ConcurrencyAdmissionDefinition { get; init; }
 
         /// <summary>
         /// Gets the persisted execution record.

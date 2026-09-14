@@ -2,7 +2,7 @@
 
 Status: Documentation split in progress.
 
-This document describes the step plugin and executor extension model used by the Deterministic AI Runtime.
+This document describes the native step plugin and executor extension model used by the Deterministic AI Runtime, and its boundary with hosted functions and MCP invocations.
 
 The complete technical reference is currently preserved in:
 
@@ -54,6 +54,16 @@ The engine should not need to know how to:
 - write to an external system
 
 The engine only needs to know how to safely run a step.
+
+---
+
+## Native Plugins, Hosted Functions, and MCP
+
+Assembly registration in this document concerns native plugins. Published Python/TypeScript functions and .NET assemblies use contextual hosted adapters, not native discovery of tenant code. An outbound MCP invocation uses a separate tool adapter. Both paths remain under the existing runtime's orchestration and authorization.
+
+A missing hosted or MCP capability fails explicitly rather than selecting a native executor with the same key. Contextual step adapters are not discovered as attributed native plugins. The runtime-side adapter contract does not require the future external SDK or the published function to reference engine DLLs.
+
+Hosted custom functions use immutable publication, run pinning, the durable invocation journal, and the existing DAG continuation path. Actual language loaders, execution requirements, supported dependencies, and limits are documented in [Hosted Multilanguage Execution](hosted-multilanguage-execution.md).
 
 ---
 
@@ -882,6 +892,8 @@ Public plugin SDK polish and versioned plugin contracts remain planned work.
 | Runtime-controlled retry around plugins | Implemented / validated |
 | Runtime-controlled concurrency around plugins | Implemented / validated |
 | Runtime-controlled retention around plugin outputs | Implemented / validated |
+| Published hosted function adapters | Implemented / validated for the supported DAG path; separate from native discovery |
+| Outbound MCP invocation adapter | Implemented / validated; server-owned target and existing RBAC |
 | Public plugin SDK polish | Planned |
 | Versioned plugin contract | Planned |
 
@@ -910,7 +922,7 @@ Step plugins allow the runtime to stay generic while supporting specialized beha
 
 The DAG engine does not need to know how RAG retrieval, LLM calls, tools, or domain decisions work.
 
-Step executors are discovered through explicit metadata, registered through assembly scanning, resolved by `stepKey`, and executed inside the runtime safety boundary.
+Native step executors are discovered through explicit metadata, registered through assembly scanning, resolved by `stepKey`, and executed inside the runtime safety boundary. Hosted functions use the separate contextual adapter path described above.
 
 This keeps the runtime extensible without weakening deterministic execution guarantees.
 

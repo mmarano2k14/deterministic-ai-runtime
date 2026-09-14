@@ -4,6 +4,8 @@ using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Policies;
 using Multiplexed.AI.Abstractions.AI.Policies;
 using Multiplexed.AI.Runtime.AI.Policies;
+using Multiplexed.Abstractions.AI.Invocation;
+using Multiplexed.AI.Runtime.Invocation;
 
 namespace Multiplexed.AI.Runtime.AI.Concurrency
 {
@@ -137,8 +139,8 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var definition = DefinitionResolver.Resolve(
-                StepContext.StepState);
+            var definition = StepContext.ConcurrencyAdmissionDefinition
+                ?? DefinitionResolver.Resolve(StepContext.StepState);
 
             return Task.FromResult(definition ?? DefaultConcurrencyDefinition);
         }
@@ -163,25 +165,41 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
             AiConcurrencyDefinition definition,
             CancellationToken cancellationToken)
         {
-            if (definition.Policies.Count == 0)
+            var hasCustomBinding = StepContext.ConcurrencyPolicyBindings.Any(x => x.Invocation.Kind == AiInvocationKind.Custom);
+            if (definition.Policies.Count == 0 && !hasCustomBinding)
             {
                 return Array.Empty<AiPolicyResult>();
             }
 
             var results = new List<AiPolicyResult>(definition.Policies.Count);
+            AiConcurrencyPolicyAdapterFactory? customFactory = null;
+            if (hasCustomBinding || definition.Policies.Any(x => x.Invocation?.Kind == AiInvocationKind.Custom))
+            {
+                customFactory = StepContext.Services.GetService(typeof(AiConcurrencyPolicyAdapterFactory)) as AiConcurrencyPolicyAdapterFactory
+                    ?? throw new NotSupportedException("No contextual custom concurrency policy adapter is installed; native fallback is forbidden.");
+                ValidateCompiledPolicyList(definition);
+            }
+            var bindingIndex = 0;
 
             foreach (var configuredPolicy in definition.Policies)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (string.IsNullOrWhiteSpace(configuredPolicy.Name))
+                IReadOnlyCollection<IAiPolicy> policies;
+                if (configuredPolicy.Invocation?.Kind == AiInvocationKind.Custom)
                 {
-                    continue;
+                    policies = new[] { customFactory!.Bind(
+                        StepContext, configuredPolicy, StepContext.ConcurrencyPolicyBindings[bindingIndex]) };
                 }
-
-                var policies = ResolvePolicies(
-                    new[] { configuredPolicy.Name },
-                    AiPolicyKind.Concurrency);
+                else
+                {
+                    // Native guards and blank-entry behaviour remain unchanged. MCP and
+                    // contradictory declarations never become a native registry lookup.
+                    AiInvocationBindingResolver.EnsureNativePolicy(configuredPolicy);
+                    if (string.IsNullOrWhiteSpace(configuredPolicy.Name)) continue;
+                    policies = ResolvePolicies(new[] { configuredPolicy.Name }, AiPolicyKind.Concurrency);
+                }
+                bindingIndex++;
 
                 if (policies.Count == 0)
                 {
@@ -204,6 +222,38 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
             }
 
             return results;
+        }
+
+        /// <summary>
+        /// Aligns the effective list with the compiled scopes by position, not a name-only
+        /// dictionary. Duplicate names retain independent order/configuration. A missing or
+        /// stale custom binding is a technical failure, never an empty native result.
+        /// </summary>
+        private void ValidateCompiledPolicyList(AiConcurrencyDefinition definition)
+        {
+            var expected = new List<AiConfiguredPolicyDefinition>();
+            foreach (var policy in definition.Policies)
+            {
+                if (string.IsNullOrWhiteSpace(policy.Name))
+                {
+                    AiInvocationBindingResolver.EnsureNativePolicy(policy);
+                    continue;
+                }
+                expected.Add(policy);
+            }
+            var bindings = StepContext.ConcurrencyPolicyBindings;
+            if (expected.Count != bindings.Count)
+            {
+                throw new InvalidOperationException("The effective concurrency policy list does not match its compiled bindings.");
+            }
+            for (var index = 0; index < expected.Count; index++)
+            {
+                if (expected[index].Name != bindings[index].PolicyName ||
+                    (expected[index].Invocation?.Kind ?? AiInvocationKind.Native) != bindings[index].Invocation.Kind)
+                {
+                    throw new InvalidOperationException("The effective concurrency policy order or invocation kind changed after binding.");
+                }
+            }
         }
 
         /// <summary>
@@ -234,9 +284,14 @@ namespace Multiplexed.AI.Runtime.AI.Concurrency
                     .Select(x => x.Message)
                     .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
 
+                // Historical blocks have no typed delay and keep the configured default.
+                // A validated custom denial may carry a bounded family-specific delay.
+                var retryAfter = results.Where(x => x.Kind == AiPolicyResultKind.Block)
+                    .Select(x => (x as AiPolicyResultGeneric<AiConcurrencyPolicyOutcome>)?.Data?.RetryAfter
+                        ?? TimeSpan.FromMilliseconds(definition.DefaultRetryAfterMs))
+                    .Max();
                 return AiConcurrencyDecision.Deny(
-                    reason ?? "Blocked by concurrency policy.",
-                    TimeSpan.FromMilliseconds(definition.DefaultRetryAfterMs));
+                    reason ?? "Blocked by concurrency policy.", retryAfter);
             }
 
             var outcomes = results

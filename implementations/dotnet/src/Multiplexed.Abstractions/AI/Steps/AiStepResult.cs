@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
+using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
+using Multiplexed.Abstractions.AI.Invocation.Durable;
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
@@ -26,6 +27,14 @@ namespace Multiplexed.Abstractions.AI.Steps
         /// Gets or sets whether the step completed successfully.
         /// </summary>
         public bool Success { get; set; }
+
+        /// <summary>
+        /// Gets or sets server-created evidence of a durable custom result. Runners persist
+        /// this with the result transition, never when merely reading a worker response.
+        /// Historical/native results omit the field and retain their previous JSON shape.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public AiDurableInvocationApplicationReceipt? InvocationReceipt { get; set; }
 
         /// <summary>
         /// Gets or sets the explicit orchestration outcome for this step attempt.

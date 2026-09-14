@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Concurrency;
+using Multiplexed.Abstractions.AI.Concurrency;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
@@ -401,12 +401,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
                             ? "Step execution failed."
                             : result.Error;
 
-                        var failed = await _engineServices.DagStore.TryFailStepAsync(
-                            executionId,
-                            claimedStep.StepName,
-                            claimedStep.ClaimToken,
-                            error,
-                            cancellationToken);
+                        var failed = result.InvocationReceipt is null
+                            ? await _engineServices.DagStore.TryFailStepAsync(
+                                executionId, claimedStep.StepName, claimedStep.ClaimToken, error, cancellationToken)
+                            : await _engineServices.DagStore.TryFailStepWithResultAsync(
+                                executionId, claimedStep.StepName, claimedStep.ClaimToken, result, cancellationToken);
 
                         if (!failed)
                         {
@@ -883,6 +882,8 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
                     StepKey = string.IsNullOrWhiteSpace(step.StepKey)
                         ? step.Name
                         : step.StepKey,
+                    ExecutionLanguage = step.ExecutionLanguage,
+                    Invocation = step.Invocation,
                     Config = step.Config ?? new Dictionary<string, object?>()
                 };
             }

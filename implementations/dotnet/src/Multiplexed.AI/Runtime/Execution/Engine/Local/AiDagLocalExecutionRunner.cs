@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
+using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Signals;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
@@ -336,6 +336,11 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Local
                             null,
                             DateTime.UtcNow,
                             cancellationToken);
+
+                    // Persist custom failure evidence in the same optimistic state write.
+                    // Native failures retain their historical result behavior.
+                    if (stepResult.InvocationReceipt is not null)
+                        stepState.Result = stepResult;
 
                     if (stepState.Status == AiStepExecutionStatus.WaitingForRetry)
                     {

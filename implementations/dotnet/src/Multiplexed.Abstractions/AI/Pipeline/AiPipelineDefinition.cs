@@ -22,6 +22,10 @@ namespace Multiplexed.Abstractions.AI.Pipeline
         /// </summary>
         public string? Version { get; init; }
 
+        /// <summary>Optional default language for explicitly custom steps and policies.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ExecutionLanguage { get; init; }
+
         /// <summary>
         /// Gets or sets the execution mode of the pipeline.
         ///

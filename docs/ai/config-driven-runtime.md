@@ -237,7 +237,7 @@ Example:
 
 The step definition does not execute itself.
 
-The runtime resolves the step and dispatches it to the registered executor for its `stepKey`.
+For a native invocation, the runtime resolves the step and dispatches it to the registered executor for its `stepKey`. Hosted and MCP invocations use the contextual binding described below.
 
 ---
 
@@ -473,6 +473,22 @@ Runtime decision
 Configuration resolution must be deterministic.
 
 The same pipeline and input should produce the same effective runtime behavior.
+
+---
+
+## Execution Language and Invocation Binding
+
+The optional pipeline `ExecutionLanguage` supplies a default for custom invocations. A custom step's explicit `ExecutionLanguage` overrides that default locally; it does not propagate to its successors. The `Invocation` descriptor distinguishes native, custom, and MCP execution. MCP is not a language.
+
+These fields are separate from the existing `Execution` retry settings. Omitting them preserves legacy native behavior. Invalid or missing effective custom languages are rejected, and a missing custom capability does not fall back to a native implementation with the same name.
+
+Custom policies preserve their declaration scope. An explicit policy language takes precedence; a locally attached policy may inherit its custom step's language and then the pipeline default. A pipeline-scoped policy does not inherit the language override of the step currently being admitted.
+
+Plan resolution produces immutable bindings without starting a function worker. Admission uses the same resolved metadata; a custom `Concurrency` policy may execute at that checkpoint without executing the step body.
+
+For published custom DAGs, the run pin fixes the definition, code, dependencies, and environment, including unstarted call sites. Changing a declaration or environment requires a new publication; running executions do not resolve `latest`.
+
+See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md) for publication, environment requirements, worker execution, and the independent external SDK boundary.
 
 ---
 

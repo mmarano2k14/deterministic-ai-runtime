@@ -161,7 +161,7 @@ concurrency.model.admission
 concurrency.operation.admission
 ```
 
-The exact registered policies depend on the runtime configuration and assemblies.
+The exact registered native policies depend on the runtime configuration and assemblies. Custom policy implementations are resolved contextually from the run-pinned publication; they are not inserted into a mutable global tenant-policy registry. Contextual policy adapters are excluded from native singleton discovery.
 
 ---
 
@@ -479,6 +479,20 @@ no DAG claim
         ↓
 no step execution
 ```
+
+---
+
+## Hosted Custom Concurrency Policies
+
+Custom `Concurrency` policies can execute through the hosted Python, TypeScript, and .NET backends while retaining the existing concurrency engine and admission checkpoint. Their code and environment come from the run-pinned publication, and the original pipeline/local declaration scope is preserved.
+
+The existing RBAC engine authorizes the selected implementation before execution. Evaluation is short and deadline-bounded; it does not prepare a durable custom-function invocation or create a DAG continuation.
+
+A successful worker response must contain a valid `concurrency/v1` payload. An explicit typed denial becomes a blocking outcome. Invalid output, timeout, transport failure, unavailable code, or worker-level failure remains a technical error and cannot produce implicit `Allow`.
+
+This integration does not make every policy family remote. Retry, retention, validation, and other families retain their own checkpoints and contracts; custom remote support is not inferred from `Concurrency`. It also does not provide audit replay of every remote decision from a durable policy-result store.
+
+See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md#hosted-custom-concurrency-policies) and [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) for the implemented boundary and execution evidence.
 
 ---
 

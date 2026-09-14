@@ -1,0 +1,3 @@
+# Keep the audited upstream bytes unchanged, including on Windows.
+*.cjs -text
+*.txt -text
