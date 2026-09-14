@@ -13,11 +13,15 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.DI
     {
         public static IServiceCollection AddAiHostedInvocationWorkers(this IServiceCollection services,
             IAiWorkerProcessCatalog catalog, AiWorkerSupervisionOptions supervision,
-            AiWorkerProcessTransportOptions? transport = null)
+            AiWorkerProcessTransportOptions? transport = null,
+            AiWorkerExecutionAdmissionPolicy? executionPolicy = null)
         {
             ArgumentNullException.ThrowIfNull(services); ArgumentNullException.ThrowIfNull(catalog); ArgumentNullException.ThrowIfNull(supervision);
             if (services.Any(s => s.ServiceType == typeof(AiWorkerSupervisionOptions)))
                 throw new InvalidOperationException("Hosted invocation workers are already configured.");
+            if (executionPolicy is not null && services.Any(s => s.ServiceType == typeof(AiWorkerExecutionAdmissionPolicy)))
+                throw new InvalidOperationException("Worker execution admission policy is already configured.");
+            services.TryAddSingleton(executionPolicy ?? AiWorkerExecutionAdmissionPolicy.LegacyCompatible);
             services.AddAiDurableInvocationJournal();
             services.TryAddSingleton<TimeProvider>(TimeProvider.System);
             services.AddSingleton(catalog); services.AddSingleton(supervision);

@@ -29,6 +29,7 @@ namespace Multiplexed.AI.Runtime.Publication
                 await DocumentAsync(function.Implementation, "implementation", guard, token).ConfigureAwait(false));
             var environment = AiPublicationJson.Read<AiPublicationEnvironmentSnapshot>(
                 await DocumentAsync(function.Environment, "environment", guard, token).ConfigureAwait(false));
+            AiPublicationExecutionDescriptors.RequirePinned(environment, actual.ExecutionLanguage, _catalog);
             async Task<IReadOnlyList<AiWorkerFile>> Files(IReadOnlyList<AiPublicationFile> files)
             {
                 var values = new List<AiWorkerFile>(files.Count);
@@ -51,7 +52,7 @@ namespace Multiplexed.AI.Runtime.Publication
                 dependencies.Add(new(dependency.Name, dependency.Version, await Files(dependency.Files).ConfigureAwait(false)));
             guard.RequireCurrent(); token.ThrowIfCancellationRequested();
             return new(actual, environment.Runtime, implementation.EntryPointPath, implementation.EntryPointSymbol,
-                sources, dependencies.AsReadOnly());
+                sources, dependencies.AsReadOnly()) { ExecutionDescriptor = environment.ExecutionDescriptor };
         }
     }
 }

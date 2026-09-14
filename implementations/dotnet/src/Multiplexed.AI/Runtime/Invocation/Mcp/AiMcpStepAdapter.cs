@@ -69,10 +69,12 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp
                 var arguments = AiMcpToolJson.CopyArguments(inputs);
                 deadline.Token.ThrowIfCancellationRequested();
                 identity.EnsureCurrent(context.Services);
-                var request = new AiMcpToolRequest(1, Guid.NewGuid().ToString("N"), deadlineUtc,
+                var request = new AiMcpToolRequest(AiMcpEffectIdentities.RequestSchemaVersion, Guid.NewGuid().ToString("N"), deadlineUtc,
                     new AiMcpToolInvocationContext(identity.TenantId, identity.TenantGroupId, context.ExecutionId,
                         _metadata.PipelineName, _metadata.PipelineVersion, Name, _metadata.StepKey),
                     target.ConnectionRef, target.ConnectionRevision, target.Tool, arguments);
+                request = request with { Effect = AiMcpEffectIdentities.Create(request) };
+                deadline.Token.ThrowIfCancellationRequested();
 
                 var response = await AwaitBoundedAsync(_transport.InvokeAsync(request, deadline.Token), deadline.Token)
                     .ConfigureAwait(false);

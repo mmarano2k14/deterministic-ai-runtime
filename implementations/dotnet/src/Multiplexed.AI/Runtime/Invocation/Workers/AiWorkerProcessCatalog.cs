@@ -13,7 +13,9 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
         public AiWorkerProcessProfile(AiPublicationEnvironment runtime, string executablePath,
             string executableSha256, IEnumerable<string> arguments, string workingDirectory,
             IReadOnlyDictionary<string, string>? environment = null,
-            IReadOnlyDictionary<string, string>? verifiedHostFiles = null)
+            IReadOnlyDictionary<string, string>? verifiedHostFiles = null,
+            AiPublicationExecutionDescriptor? executionDescriptor = null,
+            IEnumerable<string>? approvedLaunchRoots = null)
         {
             AiPublicationJson.ValidateEnvironment(runtime);
             AiPublicationJson.ValidateHash(executableSha256);
@@ -38,12 +40,27 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
                 AiPublicationJson.ValidateHash(item.Value); files.Add(item.Key, item.Value);
             }
             if (files.Count > 64) throw new ArgumentException("Too many verified host files.");
+            if (executionDescriptor is not null)
+            {
+                AiPublicationExecutionDescriptors.Validate(executionDescriptor, runtime);
+                if (executionDescriptor.Artifact.Kind == AiPublicationEnvironmentArtifactKind.HostRuntime &&
+                    runtime.RuntimeSha256 != executableSha256)
+                    throw new InvalidOperationException("The versioned host artifact must identify the configured executable bytes.");
+            }
+            var roots = (approvedLaunchRoots ?? Array.Empty<string>()).ToArray();
+            if (roots.Length > 16 || roots.Any(r => string.IsNullOrWhiteSpace(r) || !Path.IsPathFullyQualified(r)) ||
+                roots.Distinct(StringComparer.OrdinalIgnoreCase).Count() != roots.Length)
+                throw new ArgumentException("Approved launch roots must be unique bounded absolute host paths.");
+            ExecutionDescriptor = executionDescriptor;
+            ApprovedLaunchRoots = Array.AsReadOnly(roots);
             Runtime = runtime; ExecutablePath = executablePath; ExecutableSha256 = executableSha256;
             Arguments = Array.AsReadOnly(args); WorkingDirectory = workingDirectory;
             Environment = new ReadOnlyDictionary<string, string>(env);
             VerifiedHostFiles = new ReadOnlyDictionary<string, string>(files);
         }
         public AiPublicationEnvironment Runtime { get; }
+        public AiPublicationExecutionDescriptor? ExecutionDescriptor { get; }
+        public IReadOnlyList<string> ApprovedLaunchRoots { get; }
         public string ExecutablePath { get; }
         public string ExecutableSha256 { get; }
         public IReadOnlyList<string> Arguments { get; }

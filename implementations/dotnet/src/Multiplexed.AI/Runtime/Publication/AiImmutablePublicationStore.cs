@@ -124,10 +124,9 @@ namespace Multiplexed.AI.Runtime.Publication
                 if (!implementation.Sources.Any(s => s.Path == implementation.EntryPointPath))
                     throw new InvalidOperationException("Publication entry point is missing.");
                 var environment = AiPublicationJson.Read<AiPublicationEnvironmentSnapshot>(await ReadDocument(function.Environment, "environment").ConfigureAwait(false));
-                AiPublicationJson.ValidateEnvironment(environment.Runtime);
-                if (environment.SchemaVersion != 1 || environment.Runtime.ExecutionLanguage != function.ExecutionLanguage ||
-                    _catalog.Find(environment.Runtime.Reference) != environment.Runtime || environment.Dependencies is null || environment.Dependencies.Count > 64)
-                    throw new InvalidOperationException("The exact pinned host runtime is unavailable or incompatible.");
+                AiPublicationExecutionDescriptors.RequirePinned(environment, function.ExecutionLanguage, _catalog);
+                if (environment.Dependencies is null || environment.Dependencies.Count > 64)
+                    throw new InvalidOperationException("Invalid pinned dependency list.");
                 var dependencies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var dependency in environment.Dependencies)
                 {

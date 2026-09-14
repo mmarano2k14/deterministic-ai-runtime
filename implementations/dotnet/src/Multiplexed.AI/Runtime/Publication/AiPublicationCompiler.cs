@@ -110,7 +110,7 @@ namespace Multiplexed.AI.Runtime.Publication
                 if (runtime.Reference != source.EnvironmentRef || runtime.ExecutionLanguage != slot.Language)
                     throw new InvalidOperationException("Host environment does not match the declared reference and effective language.");
                 var dependencies = source.Dependencies.Select(d => new AiPublicationDependency(d.Name, d.Version, d.Files.Select(File).ToArray())).ToArray();
-                var environment = Add("environment", new AiPublicationEnvironmentSnapshot(1, runtime, dependencies));
+                var environment = Add("environment", AiPublicationExecutionDescriptors.Capture(runtime, dependencies, catalog));
                 var implementation = Add("implementation", new AiPublicationImplementation(1, slot.Language,
                     source.EntryPointPath, source.EntryPointSymbol, source.Sources.Select(File).ToArray(), environment));
                 var reference = "impl-" + implementation.Sha256;

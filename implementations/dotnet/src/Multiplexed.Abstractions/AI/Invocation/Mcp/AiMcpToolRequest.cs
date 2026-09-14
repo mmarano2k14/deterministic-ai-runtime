@@ -16,7 +16,16 @@ namespace Multiplexed.Abstractions.AI.Invocation.Mcp
         [property: JsonPropertyName("connectionRef")] string ConnectionRef,
         [property: JsonPropertyName("connectionRevision")] string ConnectionRevision,
         [property: JsonPropertyName("tool")] string Tool,
-        [property: JsonPropertyName("arguments")] JsonElement Arguments);
+        [property: JsonPropertyName("arguments")] JsonElement Arguments)
+    {
+        /// <summary>
+        /// Required by envelope version 2. Absent in historical version 1 envelopes.
+        /// This server-side metadata is not added to MCP tool arguments or HTTP headers.
+        /// </summary>
+        [JsonPropertyName("effect")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public AiMcpEffectIdentity? Effect { get; init; }
+    }
 
     /// <summary>No live context, RBAC snapshot, provider, stores or runtime credentials.</summary>
     public sealed record AiMcpToolInvocationContext(

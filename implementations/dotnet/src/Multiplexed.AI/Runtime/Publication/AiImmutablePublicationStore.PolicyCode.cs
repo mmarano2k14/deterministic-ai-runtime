@@ -62,11 +62,13 @@ namespace Multiplexed.AI.Runtime.Publication
             var environment = AiPublicationJson.Read<AiPublicationEnvironmentSnapshot>(
                 await DocumentAsync(function.Environment, "environment", guard, token).ConfigureAwait(false));
             if (implementation.SchemaVersion != 1 || implementation.ExecutionLanguage != request.ExecutionLanguage ||
-                implementation.Environment != function.Environment || environment.SchemaVersion != 1 ||
+                implementation.Environment != function.Environment ||
                 environment.Runtime.ExecutionLanguage != request.ExecutionLanguage)
             {
                 throw new InvalidOperationException("Pinned custom policy implementation metadata is inconsistent.");
             }
+
+            AiPublicationExecutionDescriptors.RequirePinned(environment, request.ExecutionLanguage, _catalog);
 
             async Task<IReadOnlyList<AiWorkerFile>> Files(IReadOnlyList<AiPublicationFile> files)
             {
@@ -105,7 +107,7 @@ namespace Multiplexed.AI.Runtime.Publication
                 implementation.EntryPointPath,
                 implementation.EntryPointSymbol,
                 sources,
-                dependencies.AsReadOnly());
+                dependencies.AsReadOnly()) { ExecutionDescriptor = environment.ExecutionDescriptor };
         }
     }
 }

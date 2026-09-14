@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Multiplexed.Abstractions.AI.Invocation.Durable;
 using Multiplexed.Abstractions.AI.Publication;
 
@@ -12,7 +13,13 @@ namespace Multiplexed.Abstractions.AI.Invocation.Workers
     public sealed record AiWorkerCodeBundle(
         AiDurableInvocationTarget Target, AiPublicationEnvironment Runtime,
         string EntryPointPath, string EntryPointSymbol, IReadOnlyList<AiWorkerFile> Sources,
-        IReadOnlyList<AiWorkerDependency> Dependencies);
+        IReadOnlyList<AiWorkerDependency> Dependencies)
+    {
+        // Server-only admission metadata, restored from the verified immutable environment.
+        // Never forward it automatically to the closed Python/Node/.NET wire readers.
+        [JsonIgnore]
+        public AiPublicationExecutionDescriptor? ExecutionDescriptor { get; init; }
+    }
 
     /// <summary>
     /// Server-owned wire projection. A worker reads JSON; it never references this assembly.

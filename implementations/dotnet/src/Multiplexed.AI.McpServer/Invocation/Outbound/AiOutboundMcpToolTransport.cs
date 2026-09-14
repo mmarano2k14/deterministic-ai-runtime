@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using Multiplexed.Abstractions.AI.Invocation.Mcp;
+using Multiplexed.AI.Runtime.Invocation.Mcp;
 
 namespace Multiplexed.AI.McpServer.Invocation.Outbound
 {
@@ -145,20 +146,7 @@ namespace Multiplexed.AI.McpServer.Invocation.Outbound
             return document.RootElement.Clone();
         }
 
-        private static void ValidateRequest(AiMcpToolRequest request)
-        {
-            ArgumentNullException.ThrowIfNull(request);
-            ArgumentNullException.ThrowIfNull(request.Context);
-            if (request.SchemaVersion != 1 || string.IsNullOrWhiteSpace(request.RequestId) ||
-                string.IsNullOrWhiteSpace(request.Context.TenantId) ||
-                string.IsNullOrWhiteSpace(request.Context.TenantGroupId) ||
-                string.IsNullOrWhiteSpace(request.ConnectionRef) ||
-                string.IsNullOrWhiteSpace(request.ConnectionRevision) ||
-                string.IsNullOrWhiteSpace(request.Tool) ||
-                request.Arguments.ValueKind != JsonValueKind.Object)
-            {
-                throw new InvalidOperationException("Invalid outbound MCP request envelope.");
-            }
-        }
+        private static void ValidateRequest(AiMcpToolRequest request) =>
+            AiMcpEffectIdentities.ValidateRequest(request);
     }
 }

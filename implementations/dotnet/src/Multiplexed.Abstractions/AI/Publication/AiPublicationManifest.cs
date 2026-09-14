@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Multiplexed.Abstractions.AI.Invocation.Durable;
 
 namespace Multiplexed.Abstractions.AI.Publication
@@ -20,7 +21,12 @@ namespace Multiplexed.Abstractions.AI.Publication
 
     /// <summary>Effective environment includes the immutable dependency closure supplied at publication.</summary>
     public sealed record AiPublicationEnvironmentSnapshot(
-        int SchemaVersion, AiPublicationEnvironment Runtime, IReadOnlyList<AiPublicationDependency> Dependencies);
+        int SchemaVersion, AiPublicationEnvironment Runtime, IReadOnlyList<AiPublicationDependency> Dependencies)
+    {
+        // Omitted for historical schema 1: its canonical bytes and hashes must not change.
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public AiPublicationExecutionDescriptor? ExecutionDescriptor { get; init; }
+    }
 
     public sealed record AiPublicationImplementation(
         int SchemaVersion, string ExecutionLanguage, string EntryPointPath, string EntryPointSymbol,

@@ -15,7 +15,9 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.DotNet
             string workerAssemblySha256, string workerDepsPath, string workerDepsSha256,
             string workerRuntimeConfigPath, string workerRuntimeConfigSha256, string workingDirectory,
             int heartbeatMilliseconds = 1000, IReadOnlyDictionary<string, string>? environment = null,
-            IReadOnlyDictionary<string, string>? verifiedRuntimeFiles = null)
+            IReadOnlyDictionary<string, string>? verifiedRuntimeFiles = null,
+            AiPublicationExecutionDescriptor? executionDescriptor = null,
+            IEnumerable<string>? approvedLaunchRoots = null)
         {
             ArgumentNullException.ThrowIfNull(runtime);
             if (runtime.ExecutionLanguage != "dotnet")
@@ -47,7 +49,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.DotNet
                     "--runtime-version=" + runtime.RuntimeVersion,
                     "--runtime-sha256=" + runtime.RuntimeSha256,
                     "--heartbeat-ms=" + heartbeatMilliseconds.ToString(CultureInfo.InvariantCulture) },
-                workingDirectory, environment, verified);
+                workingDirectory, environment, verified, executionDescriptor, approvedLaunchRoots);
 
             void Add(string path, string hash)
             {

@@ -37,10 +37,12 @@ namespace Multiplexed.AI.Runtime.Publication
     }
 
     /// <summary>Fixed exact runtime catalog for hosts with explicitly provisioned language environments.</summary>
-    public sealed class AiConfiguredPublicationEnvironmentCatalog : IAiPublicationEnvironmentCatalog
+    public sealed class AiConfiguredPublicationEnvironmentCatalog : IAiPublicationExecutionEnvironmentCatalog
     {
         private readonly IReadOnlyDictionary<string, AiPublicationEnvironment> _environments;
-        public AiConfiguredPublicationEnvironmentCatalog(IEnumerable<AiPublicationEnvironment> environments)
+        private readonly IReadOnlyDictionary<string, AiPublicationExecutionDescriptor> _descriptors;
+        public AiConfiguredPublicationEnvironmentCatalog(IEnumerable<AiPublicationEnvironment> environments,
+            IReadOnlyDictionary<string, AiPublicationExecutionDescriptor>? executionDescriptors = null)
         {
             ArgumentNullException.ThrowIfNull(environments);
             var copy = new Dictionary<string, AiPublicationEnvironment>(StringComparer.Ordinal);
@@ -49,8 +51,17 @@ namespace Multiplexed.AI.Runtime.Publication
                 AiPublicationJson.ValidateEnvironment(entry);
                 if (!copy.TryAdd(entry.Reference, entry)) throw new ArgumentException("Duplicate environment reference.");
             }
-            _environments = copy;
+            var descriptors = new Dictionary<string, AiPublicationExecutionDescriptor>(StringComparer.Ordinal);
+            foreach (var item in executionDescriptors ?? new Dictionary<string, AiPublicationExecutionDescriptor>())
+            {
+                if (!copy.TryGetValue(item.Key, out var runtime))
+                    throw new ArgumentException("Execution descriptor references an unregistered host environment.");
+                AiPublicationExecutionDescriptors.Validate(item.Value, runtime);
+                descriptors.Add(item.Key, item.Value);
+            }
+            _environments = copy; _descriptors = descriptors;
         }
         public AiPublicationEnvironment? Find(string reference) => _environments.GetValueOrDefault(reference);
+        public AiPublicationExecutionDescriptor? FindExecutionDescriptor(string reference) => _descriptors.GetValueOrDefault(reference);
     }
 }

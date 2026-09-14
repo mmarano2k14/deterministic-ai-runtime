@@ -1,7 +1,7 @@
 using System.Diagnostics;
-using System.Security.Cryptography;
 using Multiplexed.Abstractions.AI.Invocation.Durable;
 using Multiplexed.Abstractions.AI.Invocation.Workers;
+using Multiplexed.AI.Runtime.Publication;
 
 namespace Multiplexed.AI.Runtime.Invocation.Workers
 {
@@ -22,12 +22,17 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
         private readonly IAiWorkerProcessCatalog _catalog;
         private readonly AiWorkerProcessTransportOptions _options;
         private readonly TimeProvider _time;
+        private readonly AiWorkerExecutionAdmissionPolicy _executionPolicy;
         public AiWorkerProcessTransport(IAiWorkerProcessCatalog catalog, AiWorkerProcessTransportOptions options,
-            TimeProvider? timeProvider = null)
+            TimeProvider? timeProvider = null, AiWorkerExecutionAdmissionPolicy? executionPolicy = null)
         {
             _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _time = timeProvider ?? TimeProvider.System;
+            // Preserve historical trusted-process callers. Hosts can supply the strict policy
+            // to refuse legacy requests and any requirement this provider cannot enforce.
+            _executionPolicy = executionPolicy ?? AiWorkerExecutionAdmissionPolicy.LegacyCompatible;
+            AiPublicationExecutionDescriptors.ValidateRequirements(_executionPolicy.MinimumRequirements);
         }
 
         public async Task<AiDurableInvocationResult> InvokeAsync(AiWorkerInvocationRequest request,
@@ -41,9 +46,9 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
             using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
             var token = stop.Token;
             var profile = _catalog.Resolve(request.Code.Runtime);
-            await VerifyFileAsync(profile.ExecutablePath, profile.ExecutableSha256, token).ConfigureAwait(false);
-            foreach (var file in profile.VerifiedHostFiles)
-                await VerifyFileAsync(file.Key, file.Value, token).ConfigureAwait(false);
+            // Check required policy and provider facts before reading launch files or starting a process.
+            AiWorkerExecutionAdmission.Require(request.Code, profile, _executionPolicy);
+            await using var verifiedFiles = await AiWorkerVerifiedLaunchFiles.OpenAsync(profile, token).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
             if (!Directory.Exists(profile.WorkingDirectory)) throw new DirectoryNotFoundException("Worker working directory is not installed.");
             using var process = new Process { StartInfo = CreateStartInfo(profile) };
@@ -53,6 +58,8 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
             CancellationTokenRegistration cancellation = default;
             try
             {
+                AiWorkerLaunchPaths.ValidateProfile(profile);
+                token.ThrowIfCancellationRequested();
                 if (!process.Start()) throw new IOException("The installed worker process did not start.");
                 started = true;
                 // Cancellation requests termination immediately, including while a store renewal is awaiting I/O.
@@ -169,13 +176,6 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
             foreach (var item in profile.Environment) info.Environment.Add(item.Key, item.Value);
             foreach (var argument in profile.Arguments) info.ArgumentList.Add(argument);
             return info;
-        }
-        private static async Task VerifyFileAsync(string path, string expected, CancellationToken token)
-        {
-            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
-                81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
-            var hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, token).ConfigureAwait(false)).ToLowerInvariant();
-            if (hash != expected) throw new InvalidOperationException("An installed worker host file differs from its approved digest.");
         }
         private static void RequestStop(Process process)
         {
