@@ -35,6 +35,7 @@ namespace Multiplexed.AI.Runtime.Invocation
                 InvocationBinding = source.InvocationBinding,
                 ConcurrencyPolicyBindings = source.ConcurrencyPolicyBindings,
                 RetryPolicyBindings = source.RetryPolicyBindings,
+                DelegationPolicyBindings = source.DelegationPolicyBindings,
                 Order = source.Order,
                 DependsOn = source.DependsOn,
                 Input = source.Input,

@@ -55,6 +55,11 @@ namespace Multiplexed.Abstractions.AI.Pipeline
         public IReadOnlyList<AiPolicyInvocationBinding> RetryPolicyBindings { get; init; }
             = Array.Empty<AiPolicyInvocationBinding>();
 
+        /// <summary>Ordered Delegation policy bindings for the ExecuteChildDag checkpoint.</summary>
+        [JsonIgnore]
+        public IReadOnlyList<AiPolicyInvocationBinding> DelegationPolicyBindings { get; init; }
+            = Array.Empty<AiPolicyInvocationBinding>();
+
         /// <summary>
         /// Gets or sets the resolved runtime step instance.
         /// </summary>

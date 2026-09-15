@@ -117,11 +117,11 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
         }
 
         [Fact]
-        public async Task Delegation_Custom_Publication_Does_Not_Enable_Hosted_Execution()
+        public async Task Delegation_Custom_Publication_Advertises_Hosted_Execution_Without_Native_Fallback()
         {
             var capability = AiCustomPolicyFamilyCapabilities.Get(Multiplexed.AI.Abstractions.AI.Policies.AiPolicyKind.Delegation);
             Assert.True(capability.SupportsCustomPublication);
-            Assert.False(capability.SupportsHostedExecution);
+            Assert.True(capability.SupportsHostedExecution);
 
             var declaration = BoundCustomPolicy("delegation.remote", "Delegation");
             Assert.Throws<NotSupportedException>(() => Multiplexed.AI.Runtime.Invocation.AiInvocationBindingResolver.EnsureNativePolicy(declaration));

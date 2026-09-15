@@ -19,7 +19,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation
         [Theory]
         [InlineData(AiPolicyKind.Concurrency, AiCustomPolicyFamilyAvailability.Hosted, AiCustomPolicyFamilyContracts.ConcurrencyV1)]
         [InlineData(AiPolicyKind.Retry, AiCustomPolicyFamilyAvailability.Hosted, AiCustomPolicyFamilyContracts.RetryV1)]
-        [InlineData(AiPolicyKind.Delegation, AiCustomPolicyFamilyAvailability.ContractDefined, AiCustomPolicyFamilyContracts.DelegationV1)]
+        [InlineData(AiPolicyKind.Delegation, AiCustomPolicyFamilyAvailability.Hosted, AiCustomPolicyFamilyContracts.DelegationV1)]
         [InlineData(AiPolicyKind.Retention, AiCustomPolicyFamilyAvailability.NativeOnly, null)]
         [InlineData(AiPolicyKind.Timeout, AiCustomPolicyFamilyAvailability.NoRuntimeCheckpoint, null)]
         [InlineData(AiPolicyKind.CircuitBreaker, AiCustomPolicyFamilyAvailability.NoRuntimeCheckpoint, null)]

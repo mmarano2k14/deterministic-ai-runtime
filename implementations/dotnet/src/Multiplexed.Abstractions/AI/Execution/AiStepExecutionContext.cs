@@ -64,6 +64,9 @@ namespace Multiplexed.Abstractions.AI.Execution
         /// <summary>Original scopes for the configured Retry checkpoint.</summary>
         public IReadOnlyList<AiPolicyInvocationBinding> RetryPolicyBindings => Step.RetryPolicyBindings;
 
+        /// <summary>Original scopes for the configured Delegation checkpoint.</summary>
+        public IReadOnlyList<AiPolicyInvocationBinding> DelegationPolicyBindings => Step.DelegationPolicyBindings;
+
         /// <summary>
         /// Effective definition already prepared for the admission gate. Present only
         /// in admission contexts; prevents re-reading a different step-only config.

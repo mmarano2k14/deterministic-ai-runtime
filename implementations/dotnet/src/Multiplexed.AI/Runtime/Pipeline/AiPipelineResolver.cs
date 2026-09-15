@@ -41,6 +41,7 @@ namespace Multiplexed.AI.Runtime.Pipeline
         private readonly AiStepImplementationBinder _implementationBinder;
         private static readonly AiConcurrencyPolicyBindingResolver PolicyBindingResolver = new();
         private static readonly AiRetryPolicyBindingResolver RetryPolicyBindingResolver = new();
+        private static readonly AiDelegationPolicyBindingResolver DelegationPolicyBindingResolver = new();
         private static readonly AiInvocationBindingResolver InvocationResolver = new();
 
         /// <summary>
@@ -97,6 +98,7 @@ namespace Multiplexed.AI.Runtime.Pipeline
             var adapterContexts = new Dictionary<string, AiStepInvocationAdapterContext>(StringComparer.Ordinal);
             var policyBindings = new Dictionary<string, IReadOnlyList<AiPolicyInvocationBinding>>(StringComparer.Ordinal);
             var retryPolicyBindings = new Dictionary<string, IReadOnlyList<AiPolicyInvocationBinding>>(StringComparer.Ordinal);
+            var delegationPolicyBindings = new Dictionary<string, IReadOnlyList<AiPolicyInvocationBinding>>(StringComparer.Ordinal);
             foreach (var stepDefinition in definition.Steps)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -107,6 +109,7 @@ namespace Multiplexed.AI.Runtime.Pipeline
                 adapterContexts.Add(stepDefinition.Name, adapterContext);
                 policyBindings.Add(stepDefinition.Name, PolicyBindingResolver.Resolve(definition, stepDefinition));
                 retryPolicyBindings.Add(stepDefinition.Name, RetryPolicyBindingResolver.Resolve(definition, stepDefinition));
+                delegationPolicyBindings.Add(stepDefinition.Name, DelegationPolicyBindingResolver.Resolve(definition, stepDefinition));
             }
 
             // --- RESOLUTION PHASE ---
@@ -135,6 +138,7 @@ namespace Multiplexed.AI.Runtime.Pipeline
                         : null,
                     ConcurrencyPolicyBindings = policyBindings[stepDefinition.Name],
                     RetryPolicyBindings = retryPolicyBindings[stepDefinition.Name],
+                    DelegationPolicyBindings = delegationPolicyBindings[stepDefinition.Name],
                     Step = step,
                     Order = stepDefinition.Order,
                     DependsOn = stepDefinition.DependsOn,

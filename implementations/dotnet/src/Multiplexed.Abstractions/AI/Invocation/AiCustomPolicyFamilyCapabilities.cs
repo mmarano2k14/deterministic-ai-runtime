@@ -52,7 +52,7 @@ namespace Multiplexed.Abstractions.AI.Invocation
             new(AiPolicyKind.Routing, AiCustomPolicyFamilyAvailability.NoRuntimeCheckpoint, null),
             new(AiPolicyKind.Retention, AiCustomPolicyFamilyAvailability.NativeOnly, null),
             new(AiPolicyKind.Concurrency, AiCustomPolicyFamilyAvailability.Hosted, AiCustomPolicyFamilyContracts.ConcurrencyV1),
-            new(AiPolicyKind.Delegation, AiCustomPolicyFamilyAvailability.ContractDefined, AiCustomPolicyFamilyContracts.DelegationV1)
+            new(AiPolicyKind.Delegation, AiCustomPolicyFamilyAvailability.Hosted, AiCustomPolicyFamilyContracts.DelegationV1)
         ];
 
         /// <summary>Gets one entry for every currently declared <see cref="AiPolicyKind"/> value.</summary>

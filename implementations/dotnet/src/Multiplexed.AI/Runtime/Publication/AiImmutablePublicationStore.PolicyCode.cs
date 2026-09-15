@@ -11,6 +11,8 @@ namespace Multiplexed.AI.Runtime.Publication
             => ReadPolicyWorkerCodeCoreAsync(request.Context.ExecutionId,request.PolicyName,request.Scope,request.OwnerStepName,request.ExecutionLanguage,request.ImplementationRef,AiPublicationFunctionKind.ConcurrencyPolicy,guard,token);
         internal Task<AiWorkerCodeBundle> ReadRetryPolicyWorkerCodeAsync(AiRetryPolicyRequest request,AiPublicationIdentity.Guard guard,CancellationToken token)
             => ReadPolicyWorkerCodeCoreAsync(request.Context.ExecutionId,request.PolicyName,request.Scope,request.OwnerStepName,request.ExecutionLanguage,request.ImplementationRef,AiPublicationFunctionKind.RetryPolicy,guard,token);
+        internal Task<AiWorkerCodeBundle> ReadDelegationPolicyWorkerCodeAsync(AiDelegationPolicyRequest request,AiPublicationIdentity.Guard guard,CancellationToken token)
+            => ReadPolicyWorkerCodeCoreAsync(request.Context.ParentExecutionId,request.PolicyName,request.Scope,request.OwnerStepName,request.ExecutionLanguage,request.ImplementationRef,AiPublicationFunctionKind.DelegationPolicy,guard,token);
 
         private async Task<AiWorkerCodeBundle> ReadPolicyWorkerCodeCoreAsync(string executionId,string policyName,string scope,string? ownerStepName,string language,string implementationRef,AiPublicationFunctionKind kind,AiPublicationIdentity.Guard guard,CancellationToken token)
         {
