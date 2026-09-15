@@ -52,7 +52,7 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
 
         [Theory]
         [InlineData("validation")]
-        [InlineData("retry")]
+        [InlineData("routing")]
         [InlineData("retention")]
         public async Task Unsupported_Custom_Policy_Checkpoints_Are_Not_Silently_Published(string family)
         {

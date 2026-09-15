@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Pipeline;
+using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Concurrency;
 
@@ -60,6 +60,9 @@ namespace Multiplexed.Abstractions.AI.Execution
 
         /// <summary>Original scopes for the configured concurrency checkpoint.</summary>
         public IReadOnlyList<AiPolicyInvocationBinding> ConcurrencyPolicyBindings => Step.ConcurrencyPolicyBindings;
+
+        /// <summary>Original scopes for the configured Retry checkpoint.</summary>
+        public IReadOnlyList<AiPolicyInvocationBinding> RetryPolicyBindings => Step.RetryPolicyBindings;
 
         /// <summary>
         /// Effective definition already prepared for the admission gate. Present only

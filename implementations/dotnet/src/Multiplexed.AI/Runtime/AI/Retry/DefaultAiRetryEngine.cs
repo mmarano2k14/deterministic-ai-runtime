@@ -1,9 +1,11 @@
-﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Policies;
 using Multiplexed.AI.Abstractions.AI.Policies;
 using Multiplexed.AI.Abstractions.AI.Retry;
 using Multiplexed.AI.Runtime.AI.Policies;
+using Multiplexed.AI.Runtime.Invocation;
 
 namespace Multiplexed.AI.Runtime.AI.Retry
 {
@@ -125,9 +127,7 @@ namespace Multiplexed.AI.Runtime.AI.Retry
             ArgumentNullException.ThrowIfNull(retryContext);
             ArgumentNullException.ThrowIfNull(retryDefinition);
 
-            var policies = ResolvePolicies(
-                retryDefinition.Policies.GetPolicyNames(),
-                AiPolicyKind.Retry);
+            var policies = ResolveRetryPolicies(retryDefinition);
 
             var results = await ExecutePoliciesAsync(
                     retryContext,
@@ -135,9 +135,11 @@ namespace Multiplexed.AI.Runtime.AI.Retry
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            if (results.Any(x => x.Kind == AiPolicyResultKind.Block))
+            var blocking = results.FirstOrDefault(x => x.Kind == AiPolicyResultKind.Block);
+            if (blocking is not null)
             {
-                return AiRetryDecision.Fail("Blocked by retry policy.");
+                var typed = blocking as AiPolicyResultGeneric<AiRetryPolicyOutcome>;
+                return AiRetryDecision.Fail(typed?.Data?.Reason ?? blocking.Message ?? "Blocked by retry policy.");
             }
 
             if (retryContext.RetryCount >= retryDefinition.MaxRetries)
@@ -165,6 +167,43 @@ namespace Multiplexed.AI.Runtime.AI.Retry
             var reason = ResolveReason(outcomes);
 
             return AiRetryDecision.Retry(delay, reason);
+        }
+
+
+        private IReadOnlyCollection<IAiPolicy> ResolveRetryPolicies(AiRetryPolicyDefinition definition)
+        {
+            var bindings = StepContext.RetryPolicyBindings;
+            if (bindings.Count == 0)
+            {
+                return ResolvePolicies(definition.Policies.GetPolicyNames(), AiPolicyKind.Retry);
+            }
+
+            var result = new List<IAiPolicy>();
+            var bindingIndex = 0;
+            var customFactory = StepContext.Services.GetService(typeof(AiRetryPolicyAdapterFactory)) as AiRetryPolicyAdapterFactory;
+            foreach (var declaration in definition.Policies)
+            {
+                if (string.IsNullOrWhiteSpace(declaration.Name))
+                {
+                    AiInvocationBindingResolver.EnsureNativePolicy(declaration);
+                    continue;
+                }
+                if (bindingIndex >= bindings.Count) throw new InvalidOperationException("Retry policy bindings do not match the effective declaration list.");
+                var binding = bindings[bindingIndex++];
+                if (binding.PolicyName != declaration.Name) throw new InvalidOperationException("Retry policy binding order does not match the effective declaration list.");
+                if (binding.Invocation.Kind == AiInvocationKind.Custom)
+                {
+                    if (customFactory is null) throw new NotSupportedException("Custom Retry policy execution is not installed; native fallback is forbidden.");
+                    result.Add(customFactory.Bind(StepContext, declaration, binding));
+                }
+                else
+                {
+                    AiInvocationBindingResolver.EnsureNativePolicy(declaration);
+                    result.Add(ResolvePolicies(new[] { declaration.Name }, AiPolicyKind.Retry).Single());
+                }
+            }
+            if (bindingIndex != bindings.Count) throw new InvalidOperationException("Retry policy bindings contain declarations not present in the effective Retry definition.");
+            return result.AsReadOnly();
         }
 
         public async Task<AiRetryPolicyDefinition> ResolveRetryDefinitionAsync(
@@ -225,7 +264,7 @@ namespace Multiplexed.AI.Runtime.AI.Retry
             stepState.MarkWaitingForRetry(error, nextRetryAtUtc);
         }
 
-        private static AiRetryContext CreateRetryContext(
+        private AiRetryContext CreateRetryContext(
             AiStepState stepState,
             AiRetryPolicyDefinition retryDefinition,
             string? error,
@@ -234,9 +273,9 @@ namespace Multiplexed.AI.Runtime.AI.Retry
         {
             return new AiRetryContext
             {
-                ExecutionId = string.Empty,
+                ExecutionId = StepContext.ExecutionId,
                 StepId = stepState.StepName,
-                StepKey = stepState.StepName,
+                StepKey = StepContext.StepKey,
                 RetryCount = stepState.RetryState?.RetryCount ?? 0,
                 MaxRetries = retryDefinition.MaxRetries,
                 Exception = exception,

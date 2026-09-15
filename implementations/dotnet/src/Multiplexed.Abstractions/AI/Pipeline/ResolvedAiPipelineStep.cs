@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Steps;
+using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.Abstractions.AI.Invocation;
 using System.Text.Json.Serialization;
 
@@ -48,6 +48,11 @@ namespace Multiplexed.Abstractions.AI.Pipeline
         /// </summary>
         [JsonIgnore]
         public IReadOnlyList<AiPolicyInvocationBinding> ConcurrencyPolicyBindings { get; init; }
+            = Array.Empty<AiPolicyInvocationBinding>();
+
+        /// <summary>Ordered Retry policy bindings preserving their declaration scope.</summary>
+        [JsonIgnore]
+        public IReadOnlyList<AiPolicyInvocationBinding> RetryPolicyBindings { get; init; }
             = Array.Empty<AiPolicyInvocationBinding>();
 
         /// <summary>

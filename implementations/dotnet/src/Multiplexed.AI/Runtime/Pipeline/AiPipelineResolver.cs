@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Pipeline;
+using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.AI.Runtime.Invocation;
 
@@ -40,6 +40,7 @@ namespace Multiplexed.AI.Runtime.Pipeline
 
         private readonly AiStepImplementationBinder _implementationBinder;
         private static readonly AiConcurrencyPolicyBindingResolver PolicyBindingResolver = new();
+        private static readonly AiRetryPolicyBindingResolver RetryPolicyBindingResolver = new();
         private static readonly AiInvocationBindingResolver InvocationResolver = new();
 
         /// <summary>
@@ -95,6 +96,7 @@ namespace Multiplexed.AI.Runtime.Pipeline
             // implementation. An unavailable custom/MCP step cannot fall back to native.
             var adapterContexts = new Dictionary<string, AiStepInvocationAdapterContext>(StringComparer.Ordinal);
             var policyBindings = new Dictionary<string, IReadOnlyList<AiPolicyInvocationBinding>>(StringComparer.Ordinal);
+            var retryPolicyBindings = new Dictionary<string, IReadOnlyList<AiPolicyInvocationBinding>>(StringComparer.Ordinal);
             foreach (var stepDefinition in definition.Steps)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -104,6 +106,7 @@ namespace Multiplexed.AI.Runtime.Pipeline
                 _implementationBinder.EnsureSupported(adapterContext, definition.ExecutionMode);
                 adapterContexts.Add(stepDefinition.Name, adapterContext);
                 policyBindings.Add(stepDefinition.Name, PolicyBindingResolver.Resolve(definition, stepDefinition));
+                retryPolicyBindings.Add(stepDefinition.Name, RetryPolicyBindingResolver.Resolve(definition, stepDefinition));
             }
 
             // --- RESOLUTION PHASE ---
@@ -131,6 +134,7 @@ namespace Multiplexed.AI.Runtime.Pipeline
                         ? adapterContext.Binding
                         : null,
                     ConcurrencyPolicyBindings = policyBindings[stepDefinition.Name],
+                    RetryPolicyBindings = retryPolicyBindings[stepDefinition.Name],
                     Step = step,
                     Order = stepDefinition.Order,
                     DependsOn = stepDefinition.DependsOn,

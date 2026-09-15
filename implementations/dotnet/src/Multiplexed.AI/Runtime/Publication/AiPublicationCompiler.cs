@@ -1,10 +1,13 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Delegation;
 using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.Abstractions.AI.Policies;
 using Multiplexed.Abstractions.AI.Publication;
+using Multiplexed.AI.Abstractions.AI.Policies;
+using Multiplexed.AI.Abstractions.AI.Retry;
 using Multiplexed.AI.Runtime.AI.Concurrency;
 using Multiplexed.AI.Runtime.Invocation;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution;
@@ -170,23 +173,40 @@ namespace Multiplexed.AI.Runtime.Publication
                 var steps = pipeline["Steps"]?.AsArray()
                     ?? throw new InvalidOperationException("Published DAG steps are required.");
 
-                void Policies(JsonObject? config, string? stepName)
+                void Policies(
+                    JsonObject? config,
+                    string? stepName,
+                    string configKey,
+                    AiPolicyKind family,
+                    AiPublicationFunctionKind functionKind)
                 {
-                    if (config?["concurrency"] is not JsonObject section) return;
+                    if (config is null || Get(config, configKey) is not JsonObject section) return;
                     var list = Get(section, "policies") as JsonArray;
                     if (list is null) return;
+
+                    var capability = AiCustomPolicyFamilyCapabilities.Get(family);
                     for (var index = 0; index < list.Count; index++)
                     {
                         var policy = AiPublicationJson.Read<AiConfiguredPolicyDefinition>(list[index]!.ToJsonString());
                         if (policy.Invocation?.Kind != AiInvocationKind.Custom) continue;
-                        if (policy.Kind is not null && !string.Equals(policy.Kind, "Concurrency", StringComparison.OrdinalIgnoreCase))
-                            throw new NotSupportedException("Only concurrency policy publication is supported by this checkpoint.");
+
+                        if (!capability.SupportsCustomPublication)
+                        {
+                            throw new NotSupportedException(
+                                $"Custom {family} policy publication is not supported by the current family capability contract.");
+                        }
+
+                        if (policy.Kind is not null && !string.Equals(policy.Kind, family.ToString(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new NotSupportedException(
+                                $"Policy '{policy.Name}' declares family '{policy.Kind}' inside the '{configKey}' checkpoint.");
+                        }
 
                         // Canonicalize custom policy aliases with the existing converter, not an alternate parser.
                         var canonical = JsonNode.Parse(AiPublicationJson.Serialize(policy))!.AsObject();
                         list[index] = canonical;
                         Attach(
-                            new AiPublicationCallSite(AiPublicationFunctionKind.ConcurrencyPolicy, stepName, index)
+                            new AiPublicationCallSite(functionKind, stepName, index)
                             {
                                 DefinitionPath = definitionPath
                             },
@@ -212,10 +232,17 @@ namespace Multiplexed.AI.Runtime.Publication
                             definitions);
                     }
 
-                    Policies(step["Config"] as JsonObject, declaration.Name);
+                    Policies(step["Config"] as JsonObject, declaration.Name, "concurrency", AiPolicyKind.Concurrency, AiPublicationFunctionKind.ConcurrencyPolicy);
+                    Policies(step["Config"] as JsonObject, declaration.Name, "retry", AiPolicyKind.Retry, AiPublicationFunctionKind.RetryPolicy);
+                    if (declaration.StepKey == ExecuteChildDagStep.StepKey)
+                    {
+                        Policies(step["Config"] as JsonObject, declaration.Name, "delegation", AiPolicyKind.Delegation, AiPublicationFunctionKind.DelegationPolicy);
+                    }
                 }
 
-                Policies(pipeline["Config"] as JsonObject, null);
+                Policies(pipeline["Config"] as JsonObject, null, "concurrency", AiPolicyKind.Concurrency, AiPublicationFunctionKind.ConcurrencyPolicy);
+                Policies(pipeline["Config"] as JsonObject, null, "retry", AiPolicyKind.Retry, AiPublicationFunctionKind.RetryPolicy);
+                Policies(pipeline["Config"] as JsonObject, null, "delegation", AiPolicyKind.Delegation, AiPublicationFunctionKind.DelegationPolicy);
 
                 var prepared = AiPublicationJson.Read<AiPipelineDefinition>(pipeline.ToJsonString());
                 resolver.ValidatePipelineLanguage(prepared);
@@ -228,8 +255,10 @@ namespace Multiplexed.AI.Runtime.Publication
                         ? resolver.ResolveStep(prepared, owner!)
                         : resolver.ResolvePolicy(
                             prepared,
-                            new DefaultAiConcurrencyDefinitionResolver()
-                                .ReadPolicyDeclarations(owner?.Config ?? prepared.Config)[entry.Site.PolicyIndex!.Value],
+                            ReadPolicyDeclaration(
+                                entry.Site.Kind,
+                                owner?.Config ?? prepared.Config,
+                                entry.Site.PolicyIndex!.Value),
                             owner is null ? AiPolicyBindingScope.Pipeline : AiPolicyBindingScope.Step,
                             owner).Invocation;
                     result.Add(new Slot(entry.Site, entry.Name, binding.ExecutionLanguage!, entry.Invocation));
@@ -292,6 +321,55 @@ namespace Multiplexed.AI.Runtime.Publication
             return result;
         }
 
+        private static AiConfiguredPolicyDefinition ReadPolicyDeclaration(
+            AiPublicationFunctionKind kind,
+            IReadOnlyDictionary<string, object?> config,
+            int index)
+        {
+            IReadOnlyList<AiConfiguredPolicyDefinition> policies = kind switch
+            {
+                AiPublicationFunctionKind.ConcurrencyPolicy =>
+                    new DefaultAiConcurrencyDefinitionResolver().ReadPolicyDeclarations(config),
+                AiPublicationFunctionKind.RetryPolicy =>
+                    ReadConfiguredPolicies<AiRetryPolicyDefinition>(config, "retry", value => value.Policies),
+                AiPublicationFunctionKind.DelegationPolicy =>
+                    ReadConfiguredPolicies<AiChildDelegationPolicyDefinition>(config, "delegation", value => value.Policies),
+                _ => throw new InvalidOperationException($"Publication site '{kind}' is not a policy declaration.")
+            };
+
+            if (index < 0 || index >= policies.Count)
+            {
+                throw new InvalidOperationException("Published policy index is outside its frozen declaration list.");
+            }
+
+            return policies[index];
+        }
+
+        private static IReadOnlyList<AiConfiguredPolicyDefinition> ReadConfiguredPolicies<TDefinition>(
+            IReadOnlyDictionary<string, object?> config,
+            string configKey,
+            Func<TDefinition, IReadOnlyList<AiConfiguredPolicyDefinition>> select)
+            where TDefinition : class
+        {
+            var matches = config
+                .Where(pair => pair.Key.Equals(configKey, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (matches.Length > 1)
+            {
+                throw new InvalidOperationException($"Ambiguous '{configKey}' policy configuration casing.");
+            }
+            if (matches.Length == 0 || matches[0].Value is null)
+            {
+                return Array.Empty<AiConfiguredPolicyDefinition>();
+            }
+
+            var raw = matches[0].Value;
+            var definition = raw as TDefinition
+                ?? JsonSerializer.Deserialize<TDefinition>(AiPublicationJson.Serialize(raw))
+                ?? throw new InvalidOperationException($"Invalid '{configKey}' policy definition.");
+            return select(definition);
+        }
+
         // Preserve the historical simple-symbol grammar while also allowing the explicit
         // CLR TypeName::MethodName form used by the hosted .NET worker. Colons are never
         // accepted outside that exact form, so publication still rejects ambiguous symbols.
@@ -324,8 +402,12 @@ namespace Multiplexed.AI.Runtime.Publication
         internal static void ValidateSite(AiPublicationCallSite site)
         {
             ArgumentNullException.ThrowIfNull(site);
-            if (!Enum.IsDefined(site.Kind) || site.Kind == AiPublicationFunctionKind.Step && (site.StepName is null || site.PolicyIndex is not null) ||
-                site.Kind == AiPublicationFunctionKind.ConcurrencyPolicy && (site.PolicyIndex is null || site.PolicyIndex < 0))
+            var policySite = site.Kind is AiPublicationFunctionKind.ConcurrencyPolicy
+                or AiPublicationFunctionKind.RetryPolicy
+                or AiPublicationFunctionKind.DelegationPolicy;
+            if (!Enum.IsDefined(site.Kind) ||
+                site.Kind == AiPublicationFunctionKind.Step && (site.StepName is null || site.PolicyIndex is not null) ||
+                policySite && (site.PolicyIndex is null || site.PolicyIndex < 0))
                 throw new InvalidOperationException("Invalid publication declaration site.");
             if (site.StepName is not null) AiPublicationJson.Text(site.StepName, "StepName");
             if (site.DefinitionPath is not null) AiPublicationDefinitionPath.Validate(site.DefinitionPath);

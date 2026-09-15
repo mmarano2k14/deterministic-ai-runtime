@@ -4,7 +4,7 @@ using Multiplexed.Abstractions.AI.Pipeline;
 namespace Multiplexed.Abstractions.AI.Publication
 {
     /// <summary>Supported declaration sites; a policy index preserves its original ordered scope.</summary>
-    public enum AiPublicationFunctionKind { Step, ConcurrencyPolicy }
+    public enum AiPublicationFunctionKind { Step, ConcurrencyPolicy, RetryPolicy, DelegationPolicy }
 
     /// <summary>
     /// Identifies one immutable custom declaration inside a published definition closure.
