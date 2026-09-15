@@ -262,6 +262,26 @@ The policy engine can support:
 
 This is essential for banking, financial services, enterprise SaaS, managed hosting, and regulated workloads.
 
+### Current hosted custom policy capability matrix
+
+Hosted execution is enabled family by family rather than through a universal remote-policy protocol. The current server-side capability matrix is:
+
+| Family | Existing checkpoint | Hosted custom execution | Contract |
+|---|---|---|---|
+| `Concurrency` | Admission | Yes | `concurrency/v1` |
+| `Retry` | Retry engine | Yes | `retry/v1` |
+| `Delegation` | Child DAG `DelegationPolicyPending` | Yes | `delegation/v1` |
+| `Retention` | Retention engine | No | Native-only |
+| `Timeout` | No independent checkpoint | No | None |
+| `CircuitBreaker` | No independent checkpoint | No | None |
+| `RateLimit` | No independent checkpoint | No | None |
+| `Validation` | No independent checkpoint | No | None |
+| `Routing` | No independent checkpoint | No | None |
+
+Hosted code supplies only family-specific decision evidence. The existing runtime checkpoint remains authoritative: concurrency admission and native guards remain in the concurrency engine; retry budget/backoff/jitter/state transitions remain in the Retry engine; delegation relation persistence, child allocation/dispatch, continuation, and recovery remain in Child DAG orchestration. Technical worker failure cannot become implicit `Allow`, `Retry`, or `Approve`.
+
+`retry.timeout.default` and `retry.rate-limit.default` are native policies of the `Retry` family; they do not imply independent `Timeout` or `RateLimit` engines. Public SDK exposure remains a later product boundary: client libraries may eventually declare these policy contracts, but they do not execute policy authority locally.
+
 ---
 
 ## Policy-by-Context Model

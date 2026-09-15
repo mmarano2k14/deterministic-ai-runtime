@@ -173,6 +173,14 @@ consume child result and continue parent DAG
 
 The Child DAG path therefore composes existing runtime primitives instead of bypassing them.
 
+### Hosted custom Delegation policies
+
+The existing delegation checkpoint can evaluate an immutable published custom policy through Python, TypeScript, or .NET while the durable relation is still `DelegationPolicyPending`. The closed `delegation/v1` result is only `approve` or `deny` with a required reason.
+
+The hosted request deliberately contains no `ChildExecutionId`, because child allocation remains a runtime action after the existing coordinator durably accepts approval. The worker cannot mutate the child relation, commit `DelegationApproved`/`DelegationDenied`, allocate or dispatch a child, park/resume the parent, select continuation behavior, or choose recovery actions. Technical failure cannot become implicit approval.
+
+For a published parent, delegation policy material is selected from the same immutable execution association used by other hosted publication paths: the root run pin for a root execution or the child publication binding and exact `DefinitionPath` for a published child.
+
 ---
 
 ## `WaitingForExternal` and Capacity Release

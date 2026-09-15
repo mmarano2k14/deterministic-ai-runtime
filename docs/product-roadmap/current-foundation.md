@@ -53,7 +53,7 @@ The current architecture is built around the following core foundations:
 | Decision Ledger | Record structured decisions that explain runtime behavior. |
 | Configuration-Driven Runtime | Allow runtime behavior to be controlled through options, providers, host modes, queue settings, worker settings, replay settings, retention settings, and observability settings. |
 | Context-Driven Execution | Allow execution behavior to depend on tenant, project, pipeline, execution, run, step, user, RBAC, provider, model, operation, runtime instance, worker, and correlation context. |
-| Policy-Driven Runtime | Evaluate important runtime decisions through policies rather than hardcoded behavior. |
+| Policy-Driven Runtime | Evaluate important runtime decisions through policies rather than hardcoded behavior. Hosted custom execution is implemented for `Concurrency`, `Retry`, and `Delegation` through distinct family contracts at their existing checkpoints; `Retention` remains native-only. |
 | Policy Engine | Provide a foundation for allowed, denied, failed, throttled, delayed, blocked, approval-required, and retry-later decisions. |
 | Provider-Driven Architecture | Allow runtime hosting, storage, hot state, shared queue, registry, ledger, replay, observability, memory/context, and provider concerns to evolve behind abstractions. |
 | Control Plane | Operate the runtime through execution control, replay, diagnostics, and queue/instance visibility. |
@@ -1327,6 +1327,7 @@ The visual pipeline builder can be built on top of:
 - model/provider configuration;
 - retry policies;
 - concurrency policies;
+- Child DAG delegation policies;
 - human-in-the-loop steps;
 - validation;
 - versioning direction;

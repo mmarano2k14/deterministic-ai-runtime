@@ -4,7 +4,7 @@
 
 ## Purpose and scope
 
-Hosted execution allows the existing DAG runtime to invoke published Python, TypeScript, and .NET functions without giving those functions orchestration authority. The same language infrastructure also evaluates custom `Concurrency` policies at their existing admission checkpoint. Outbound MCP is a separate invocation mode, not another language or a replacement for the inbound MCP control plane.
+Hosted execution allows the existing DAG runtime to invoke published Python, TypeScript, and .NET functions without giving those functions orchestration authority. The same language infrastructure also evaluates custom `Concurrency`, `Retry`, and `Delegation` policies at their existing family checkpoints. Outbound MCP is a separate invocation mode, not another language or a replacement for the inbound MCP control plane.
 
 This reference covers the implemented contracts and their limits. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the supplied test results and distinguishes process execution, controlled restoration, infrastructure integration, and reported host scenarios.
 
@@ -12,7 +12,7 @@ This reference covers the implemented contracts and their limits. [Hosted Multil
 |---|---|
 | Published custom functions | Explicit DAG execution with immutable code, supplied dependencies, and a pinned environment. |
 | Hosted languages | Python source, TypeScript source compiled with a bundled toolchain, and precompiled .NET assemblies. |
-| Custom policies | `Concurrency`, evaluated through the existing engine with a family-specific result contract. |
+| Custom policies | `Concurrency`, `Retry`, and `Delegation`, each evaluated at its existing checkpoint with a distinct closed result contract. `Retention` remains native-only. |
 | Outbound MCP | Real Streamable HTTP transport, existing RBAC, server-owned connections, and logical-effect metadata. |
 | Isolation | Trusted-process execution with capability checks and verified launch paths; no hostile-code sandbox. |
 | External SDK | Not delivered. Public models and clients must remain independent of engine DLLs and internal CLR contracts. |
@@ -73,13 +73,13 @@ Custom policy resolution preserves the declaration's original scope. An explicit
 
 The language and invocation fields are separate from the existing `Execution` retry settings. Legacy definitions without the new fields retain the native path. JSON converters, resolved-plan copies, admission projections, and pinned definitions preserve the effective metadata.
 
-Resolving a plan does not start a worker. Admission receives the resolved binding without executing the step body or preparing its business invocation. Evaluating an explicitly configured custom `Concurrency` policy can itself start a short policy worker; this is distinct from executing the admitted step.
+Resolving a plan does not start a worker. Admission receives the resolved binding without executing the step body or preparing its business invocation. Evaluating an explicitly configured hosted custom policy can itself start a short policy worker at that family's existing checkpoint; this is distinct from executing the step body or preparing a durable custom-function invocation.
 
 Native implementations remain in their existing registries. Contextual factories create hosted and MCP adapters; a missing custom capability cannot silently select a native implementation with the same name. Contextual policy adapters are excluded from native singleton discovery. Hosted step adapters are not discovered as attributed native plugins.
 
 ## Immutable publication and run pinning
 
-Publication attaches code and supplied dependency bytes to supported custom declarations and ordered `Concurrency` policy sites. The compiler generates implementation references from the captured content; it does not require a tenant-maintained mutable handler registry. Installed runtime profiles are still explicitly approved by the server.
+Publication attaches code and supplied dependency bytes to supported custom declarations and ordered `Concurrency`, `Retry`, and `Delegation` policy sites. The compiler generates implementation references from the captured content; it does not require a tenant-maintained mutable handler registry. Installed runtime profiles are still explicitly approved by the server.
 
 The publication includes the definition, implementation metadata, source or assembly files, dependency files, and environment snapshots. Raw file hashes and canonical document hashes identify different byte sequences. The existing immutable payload store is reused rather than introducing another publication database.
 
@@ -189,13 +189,22 @@ These columns must not be conflated. The process provider rejects unsupported re
 
 Launch checks validate approved roots, path containment, links/reparse points, collisions, and file hashes. Verified file handles are retained for the versioned path. These checks do not seal every mutable filesystem dependency, enforce network isolation, or eliminate all filesystem races on every platform. Stronger requirements remain refused until an enforcing provider exists.
 
-## Hosted custom concurrency policies
+## Hosted custom policy families
 
-A custom `Concurrency` policy resolves through its run-pinned publication and original declaration scope, restores the execution owner, and uses the existing RBAC boundary before worker execution. It is a short, deadline-bounded evaluation at admission, not a durable function invocation with its own journal or continuation.
+Hosted policy execution is enabled only for families that have an existing runtime checkpoint and an explicit family contract. It reuses immutable publication, restored execution ownership, RBAC, and the existing Python/TypeScript/.NET worker transports. Policy evaluation is short and deadline-bounded; it is not a durable custom-function invocation and does not receive DAG lifecycle authority.
 
-The worker returns a portable result whose payload must satisfy the `concurrency/v1` contract. An explicit valid denial becomes the existing typed blocking outcome. An invalid response, timeout, failed transport, unavailable implementation, or worker-level failure remains a technical error and cannot become implicit `Allow`.
+| Family | Existing checkpoint | Contract | Hosted result boundary | Runtime authority retained |
+|---|---|---|---|---|
+| `Concurrency` | Admission | `concurrency/v1` | Explicit allow/deny admission evidence. | Concurrency engine, native governance guards, lease/admission flow. |
+| `Retry` | Retry engine | `retry/v1` | `pass`, `retry` with optional bounded `suggestedDelayMs`, or `stop` with a required reason. | Retry budget, retry count, backoff, jitter, final delay, `WaitingForRetry`, terminal failure. |
+| `Delegation` | `DelegationPolicyPending` before child allocation | `delegation/v1` | `approve` or `deny` with a required reason. | Durable relation decision CAS, `ChildExecutionId` allocation, dispatch, parent park/resume, continuation and recovery. |
+| `Retention` | Retention engine | Native-only | No hosted contract in the current capability matrix. | Existing retention engine and native policies. |
 
-The existing concurrency engine applies the decision. No universal boolean policy transport, replacement policy engine, or tenant-provided governance override is introduced. Other policy families retain their existing checkpoints and native behavior; remote support is not inferred from `Concurrency` coverage. Recorded observations are not a general replay contract for every remote policy evaluation.
+`Timeout`, `CircuitBreaker`, `RateLimit`, `Validation`, and `Routing` remain policy taxonomy values without independent hosted runtime checkpoints in the current implementation. In particular, `retry.timeout.default` and `retry.rate-limit.default` are native policies of the `Retry` family; their names do not create independent policy engines.
+
+A custom policy resolves through the run-pinned publication and original declaration scope. When the evaluating execution is itself a published Child DAG, policy materialization reuses the child publication binding and exact `DefinitionPath`; it does not resolve a mutable current publication. Missing custom capability cannot silently fall back to a native policy with the same name.
+
+Technical failure is fail-closed at the family boundary. Invalid response shape, timeout, failed transport, unavailable immutable material, authorization/ownership failure, or worker-level failure cannot become implicit `Allow`, `Retry`, or `Approve`. No universal boolean policy transport or replacement policy engine is introduced. Recorded policy observations are not a durable replay store for every hosted evaluation.
 
 ## Outbound MCP and effect identity
 
@@ -241,7 +250,7 @@ The following remain outside the implemented foundation:
 | Public integration | Independent SDK libraries, public publication/submission models, and Gateway/API productization. |
 | Hostile code | Enforced container isolation, CPU/memory limits, filesystem policy, network egress, descendant containment, and cleanup after host loss. |
 | Dependencies | Python wheels/native extensions/namespace packages; general npm/lockfile bundles and native add-ons; automatic .NET dependency-closure/native packaging. |
-| Additional policies | Family-specific remote contracts where appropriate; no implicit extension to every policy kind. |
+| Additional policies | `Retention` is native-only in the current matrix. Taxonomy values without an independent checkpoint are not hosted. Any further family requires its own existing checkpoint, request/response contract, authority analysis, and bounded validation. |
 | Published-child validation breadth | Broader provider/store failure matrices, operating-system host-kill proofs, and unlimited recursive-depth claims are not implied by the bounded published-child closure. |
 | External effects | Durable MCP evidence, reconciliation, schema pinning, connection-catalog lifecycle, and credential-provider integrations. |
 
@@ -254,7 +263,9 @@ These are server implementation points, not public SDK contracts.
 | Boundary | Source |
 |---|---|
 | Effective invocation binding | [`AiInvocationBindingResolver.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/AiInvocationBindingResolver.cs) |
-| Policy scope and language | [`AiConcurrencyPolicyBindingResolver.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/AiConcurrencyPolicyBindingResolver.cs) |
+| Concurrency policy scope and language | [`AiConcurrencyPolicyBindingResolver.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/AiConcurrencyPolicyBindingResolver.cs) |
+| Retry policy scope and language | [`AiRetryPolicyBindingResolver.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/AiRetryPolicyBindingResolver.cs) |
+| Delegation policy scope and language | [`AiDelegationPolicyBindingResolver.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/AiDelegationPolicyBindingResolver.cs) |
 | Publication validation | [`AiPublicationCompiler.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Publication/AiPublicationCompiler.cs) |
 | Immutable run creation | [`AiPublishedDagRunService.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Publication/AiPublishedDagRunService.cs) |
 | Published Child DAG binding | [`AiPublishedChildDagBindingCoordinator.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Publication/AiPublishedChildDagBindingCoordinator.cs) |
@@ -263,7 +274,9 @@ These are server implementation points, not public SDK contracts.
 | Provider capability checks | [`AiWorkerExecutionAdmission.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/AiWorkerExecutionAdmission.cs) |
 | Launch-file boundary | [`AiWorkerLaunchPaths.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/AiWorkerLaunchPaths.cs) |
 | TypeScript environment binding | [`AiTypeScriptWorkerProcessProfile.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/TypeScript/AiTypeScriptWorkerProcessProfile.cs) |
-| Hosted policy transport | [`AiHostedConcurrencyPolicyTransport.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/Policies/AiHostedConcurrencyPolicyTransport.cs) |
+| Hosted Concurrency policy transport | [`AiHostedConcurrencyPolicyTransport.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/Policies/AiHostedConcurrencyPolicyTransport.cs) |
+| Hosted Retry policy transport | [`AiHostedRetryPolicyTransport.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/Policies/AiHostedRetryPolicyTransport.cs) |
+| Hosted Delegation policy transport | [`AiHostedDelegationPolicyTransport.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/Policies/AiHostedDelegationPolicyTransport.cs) |
 | MCP intent identity | [`AiMcpEffectIdentities.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Mcp/AiMcpEffectIdentities.cs) |
 | Outbound network boundary | [`AiOutboundMcpToolTransport.cs`](../../implementations/dotnet/src/Multiplexed.AI.McpServer/Invocation/Outbound/AiOutboundMcpToolTransport.cs) |
 

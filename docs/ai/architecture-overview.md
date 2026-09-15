@@ -807,7 +807,7 @@ A hosted function process is not a trusted `RuntimeInstance` and does not own DA
 
 The process provider validates declared requirements against actual capabilities before launch. It remains a trusted-process provider and refuses sandbox, denied-egress, OCI-image, or sealed-closure requirements it cannot enforce. This foundation does not include the external SDK library or a public publication endpoint.
 
-See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md) for the language backends, environment identity, custom `Concurrency` policy checkpoint, outbound MCP effect metadata, and remaining scope. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the evidence boundaries.
+See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md) for the language backends, environment identity, hosted custom `Concurrency`, `Retry`, and `Delegation` policy checkpoints, outbound MCP effect metadata, and remaining scope. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the evidence boundaries.
 
 ---
 
@@ -818,6 +818,7 @@ Policies provide reusable runtime decision logic.
 Policy-driven behavior applies to:
 
 - retry decisions
+- Child DAG delegation approval/denial
 - retention decisions
 - concurrency admission
 - distributed throttling
@@ -835,6 +836,9 @@ Retention policy context
 
 Concurrency context
 = pipeline + step + provider + model + operation + runtime instance
+
+Delegation policy context
+= parent execution + child definition + deterministic invocation relation + declaration scope
 ```
 
 Policies decide.
@@ -1516,7 +1520,7 @@ Plugins remain responsible for domain-specific execution.
 | Hosted Python, TypeScript and .NET execution | Implemented / targeted validation; opt-in trusted-process hosting |
 | Immutable publication and whole-run pinning | Implemented / validated within the supported published DAG path |
 | Durable function journal and DAG continuation | Implemented / validated; recorded result and exact application receipt remain distinct |
-| Hosted custom Concurrency policies | Implemented / validated at the existing admission checkpoint |
+| Hosted custom policy families | `Concurrency`, `Retry`, and `Delegation` implemented at their existing checkpoints with distinct family contracts; `Retention` remains native-only |
 | Outbound MCP tool transport and effect identity | Implemented / validated for read-only/idempotent targets; durable effect evidence is not included |
 | Execution requirements and artifact descriptors | Implemented / validated capability refusal; not a hostile-code sandbox |
 | External SDK library and public publication/submission API | Planned; no engine-DLL dependency in the target contract |

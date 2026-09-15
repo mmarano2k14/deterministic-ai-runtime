@@ -26,6 +26,8 @@ The current foundation already covers several critical areas required for produc
 - policy-driven execution direction;
 - policy engine foundation;
 - pluggable policy-by-context model;
+- hosted custom policy execution for `Concurrency`, `Retry`, and `Delegation` through separate family contracts at their existing checkpoints;
+- explicit native-only `Retention` boundary and explicit non-hosted status for policy kinds without independent runtime checkpoints;
 - RBAC-aware execution context direction;
 - ARN-inspired resource scoping direction;
 - policy and decision event direction;
@@ -1271,6 +1273,7 @@ The pipeline builder can be built on top of:
 - step configuration;
 - retry policies;
 - concurrency policies;
+- Child DAG delegation policies;
 - tool/model/provider configuration;
 - versioning direction;
 - test-run mode.

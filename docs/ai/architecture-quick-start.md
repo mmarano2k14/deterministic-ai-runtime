@@ -106,7 +106,7 @@ Details: [pool failure recovery](runtime-pool-failure-recovery.md). Durable Chil
 | **Explicit identities and exact routing** | Recovery targets failed work without silently substituting a healthy sibling. | Identity and tenant context must be propagated and validated across every asynchronous boundary. |
 | **Bounded reusable runtime pools** | Healthy capacity survives execution cycles and can be reused. | Admission must queue or apply backpressure when available capacity is exhausted. |
 | **Immutable publication and supplied dependencies** | A run retains its original implementation and environment selection. | Required artifacts must remain available. Changes require publication, not network package resolution during execution. |
-| **Policies decide; the engine transitions** | Behavior is extensible without moving lifecycle authority into plugins. | Each policy family needs its own checkpoint and result contract; hosted custom support currently covers `Concurrency`. |
+| **Policies decide; the engine transitions** | Behavior is extensible without moving lifecycle authority into plugins. | Hosted custom support is family-specific: `Concurrency`, `Retry`, and `Delegation` use distinct contracts at their existing checkpoints. `Retention` remains native-only, and policy taxonomy values without an independent checkpoint are not advertised as hosted capabilities. |
 
 ## 6. What this does not claim
 
@@ -114,7 +114,7 @@ Hosted execution is opt-in server integration, **not yet an external SDK or publ
 
 Process isolation is **not a hostile-code sandbox**. Unsupported isolation/network requirements are rejected rather than downgraded.
 
-Outbound MCP transport and effect metadata do **not** guarantee exactly-once actions or audit replay without re-emission. Validation uses read-only or explicitly idempotent tools.
+Outbound MCP transport and effect metadata do **not** guarantee exactly-once actions or audit replay without re-emission. Validation uses read-only or explicitly idempotent tools. Hosted policy workers likewise do not own lifecycle transitions: `Retry` budget/backoff/state transitions and Child DAG delegation allocation/CAS remain server-owned.
 
 Evidence is bounded: existing adversarial tests cover selected failure schedules, not all possible interleavings. Native recursive Child DAG validation reaches Depth3, while published custom Child DAG closure explicitly exercises two nested Child DAG levels. Parent replay is covered; dedicated recursive-child replay remains `NOT_EVALUATED`. See the [runtime validation matrix](adversarial-runtime-validation-matrix.md) and [hosted validation](hosted-multilanguage-validation.md).
 

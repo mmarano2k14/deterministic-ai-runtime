@@ -6,6 +6,149 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 0.0.8.8 - 2026-09-16 — Multilanguage — Custom policy family capability contracts
+
+#### Added
+
+- Add a finite server-side capability matrix covering every currently declared `AiPolicyKind` value exactly once.
+- Classify `Concurrency` as hosted, `Retry` and `Delegation` as contract-defined, `Retention` as native-only, and `Timeout`, `CircuitBreaker`, `RateLimit`, `Validation`, and `Routing` as taxonomy entries without independent runtime checkpoints.
+- Add explicit `concurrency/v1`, `retry/v1`, and `delegation/v1` contract identifiers. The new contracts remain server-side transport contracts and are not public SDK wire models.
+- Add a portable `retry/v1` request containing bounded execution/step identity, retry counters, failure classification fields, policy configuration, immutable implementation identity, and a server deadline. Exclude exception objects, services, stores, mutable execution state, RBAC snapshots, and retry-transition authority.
+- Add a closed `retry/v1` response contract with `pass`, `retry`, and `stop` decisions. Permit a bounded `suggestedDelayMs` only for `retry`; require a reason for `stop`; reject unknown fields, wrong schema/family/correlation, and malformed values.
+- Add a portable `delegation/v1` request containing immutable parent-to-child logical identity before child allocation. Deliberately omit `ChildExecutionId`, relation mutation authority, and continuation/recovery commands.
+- Add a closed `delegation/v1` response contract with `approve` and `deny`; require a reason for denial and reject unknown or malformed response shapes.
+- Add `RetryPolicy` and `DelegationPolicy` immutable publication call-site kinds while preserving the historical values of `Step` and `ConcurrencyPolicy`.
+- Capture custom `Retry` and `Delegation` declarations through the existing content-addressed publication closure, including policy index, declaration scope, language resolution, immutable implementation/environment material, and nested Child DAG `DefinitionPath` when applicable.
+- Add 30 targeted source cases covering the capability matrix, request authority boundaries, closed response validation, immutable Retry/Delegation publication, and the distinction between publication support and hosted execution support.
+
+#### Behavior and compatibility
+
+- Preserve the existing hosted custom `Concurrency` path unchanged.
+- Preserve existing native `Retry`, `Delegation`, and `Retention` engines and checkpoints unchanged.
+- Keep `Retry` and `Delegation` hosted execution disabled in this change. Their current engines continue to reject custom declarations through the existing native-only guard until the corresponding contextual adapters are installed.
+- Do not infer runtime support from an `AiPolicyKind` enum value. Families without an independent checkpoint remain explicitly unavailable for custom publication/execution.
+- Keep `Retention` native-only because its engine coordinates full execution-state retention and physical compaction/eviction actions that are not represented by a short remote policy contract.
+- Preserve the existing retry engine as the authority for retry budget, backoff, jitter, delay selection, waiting transitions, and terminal failure. A future hosted Retry policy may classify or suggest; it cannot perform the transition.
+- Preserve the existing delegation coordinator and durable relation CAS as the authority for approval/denial persistence, child allocation, and parent continuation. A future hosted Delegation policy cannot allocate or resume a child execution.
+- Preserve existing RBAC, immutable publication, run pinning, Child DAG publication binding, hosted worker supervision, durable invocation journal, recovery, and continuation contracts.
+- Preserve the rule that missing custom capability never falls back to a native policy with the same name.
+
+#### Validation
+
+- Source-declared target inventory: 30 cases across `AiCustomPolicyFamilyContractTests` and `AiCustomPolicyFamilyPublicationTests`.
+- Update the historical unsupported-family publication test so `Retry` is no longer classified as an unsupported publication family; `Validation`, `Routing`, and `Retention` remain explicitly rejected as custom publication checkpoints.
+- No .NET build or test execution is claimed during preparation because the preparation environment does not provide the .NET SDK. Static checks cover changed-file boundaries, CRLF preservation, delimiter balance, family matrix completeness by inspection, and archive contents.
+
+#### Limits
+
+- No hosted Retry transport/adapter is installed yet.
+- No hosted Delegation transport/adapter is installed yet.
+- No additional policy family is enabled.
+- No second policy engine, scheduler, queue, retry state machine, Child DAG authority, recovery path, or public SDK model is introduced.
+- Dependency packaging, worker isolation, durable MCP effect evidence, public wire contracts, and external SDK libraries remain separately scoped work.
+
+### Hosted custom Retry policy execution
+
+#### Added
+
+- Activate `Retry` as a hosted custom policy family using the previously frozen `retry/v1` contract while retaining `DefaultAiRetryEngine` as the existing checkpoint and decision authority.
+- Add `IAiRetryPolicyTransport`, `AiRetryPolicyAdapterFactory`, and a contextual `AiRetryPolicyAdapter` that evaluates one custom Retry declaration without registering it as a native singleton policy.
+- Add `AiRetryPolicyBindingResolver` and non-serialized `RetryPolicyBindings` on resolved steps so step/pipeline declaration scope, order, effective language source, and immutable implementation reference survive plan resolution without introducing another durable binding format.
+- Add explicit hosted Retry registration for Python, TypeScript, and .NET through the existing `IAiWorkerInvocationTransport`. Registration remains opt-in and refuses missing worker/publication prerequisites and conflicting Retry transport/factory registration.
+- Add `IAiRetryPolicyCodePreparer` and `AiRetryPolicyPublicationPreparer` to restore the durable execution owner, apply the existing publication execute capability, and materialize the exact Retry implementation pinned to a root or published Child DAG execution.
+- Extend immutable policy-code materialization with exact `RetryPolicy` call-site selection, including declaration scope, owner step, execution language, implementation reference, immutable publication, and nested `DefinitionPath`.
+- Add a .NET hosted test function for a valid `retry/v1` retry recommendation and real Python, TypeScript, and .NET process coverage.
+- Add 39 targeted source cases covering contextual Retry binding, fail-closed technical errors, transport envelopes, registration, and immutable publication/ownership across all three hosted language identities.
+
+#### Behavior and compatibility
+
+- Preserve the existing retry engine as the sole owner of retry budget, backoff strategy, maximum delay, jitter, final delay, `WaitingForRetry`, and terminal failure transitions.
+- Interpret hosted `pass`, `retry`, and `stop` only as family-specific policy evidence. A worker cannot mutate retry counters, schedule another attempt, select DAG lifecycle transitions, or control recovery.
+- Preserve historical native Retry policy resolution through `IAiPolicyRegistry`. Custom declarations are never inserted into that registry and cannot fall back to a same-named native policy.
+- Preserve existing native multi-policy retry semantics. A hosted `stop` retains its typed reason while native blocking and retry-classification behavior remain unchanged.
+- Preserve effective configuration precedence: a step Retry section replaces the pipeline Retry section for that step; otherwise the pipeline declaration applies.
+- Preserve existing language hierarchy for custom policies: explicit policy language, declaring custom-step language when applicable, then pipeline language.
+- Use the existing root run pin or published Child DAG binding for immutable code selection. No mutable publication lookup or second nested-execution identity is introduced.
+- Keep Retry policy evaluation non-durable as a policy operation. The failed step and retry state remain durable through existing runtime state; no policy-specific journal, lease, queue, scheduler, or recovery authority is added.
+- Treat worker failure, timeout, cancellation, malformed output, wrong schema/family/correlation, missing immutable material, ownership mismatch, and unsupported language as technical failures. None can become an implicit Retry decision.
+- Keep `Concurrency` hosted behavior unchanged, `Delegation` contract-defined, `Retention` native-only, and policy kinds without checkpoints unavailable.
+- Preserve existing DAG, RBAC, durable custom-step journal, worker supervisor, Child DAG continuation, recovery, Redis transition, and publication contracts.
+
+#### Validation
+
+- Add 10 contextual Retry binding/capability cases in `AiCustomRetryPolicyTests`.
+- Add 15 hosted Retry transport cases across eight facts and seven theory rows.
+- Add five explicit registration cases.
+- Add nine immutable publication/ownership cases, including Python, TypeScript, and .NET materialization.
+- Update family capability/publication expectations so `Retry` is `Hosted` while the native-only guard still rejects custom declarations at native resolution boundaries.
+- No .NET build or test execution is claimed during preparation because the preparation environment does not provide the .NET SDK. Static checks are not passing-test evidence.
+
+#### Limits
+
+- Hosted Retry execution uses the existing trusted-process boundary and does not add sandbox/container isolation.
+- Side-effect-free policy behavior remains a semantic requirement rather than an OS-enforced property.
+- No durable policy-evaluation replay record, package installer, dependency resolver, public SDK API, or client builder is added.
+- Hosted Delegation execution remains separately scoped.
+
+## Fixed - Custom policy publication native-fallback validation
+
+### Fixed
+
+- Correct the custom policy family publication tests so native-fallback rejection is evaluated with a structurally valid resolved custom invocation descriptor.
+- Provide an explicit immutable `ImplementationRef` only to the assertions that call `AiInvocationBindingResolver.EnsureNativePolicy`.
+- Keep publication-compilation scenarios unchanged: unresolved custom declarations continue to omit `ImplementationRef` so the immutable publication compiler remains responsible for assigning it.
+- Preserve the production descriptor-validation order. Invalid custom descriptors still fail with `InvalidOperationException`; valid custom descriptors passed to a native-only checkpoint fail with `NotSupportedException`.
+- No runtime, publication compiler, Retry engine, Delegation checkpoint, hosted worker, RBAC, DAG, recovery, or persistence behavior changed.
+
+### Validation
+
+- Re-run `AiCustomPolicyFamilyPublicationTests` after applying this correction.
+- The correction is test-only and does not alter the hosted Retry execution contract.
+
+### Hosted custom Delegation policy execution
+
+#### Added
+
+- Activate `Delegation` as a hosted custom policy family using the frozen `delegation/v1` contract while retaining the existing Child DAG delegation engine and coordinator as the checkpoint and durable decision authorities.
+- Add `IAiDelegationPolicyTransport`, `AiDelegationPolicyAdapterFactory`, and a contextual `AiDelegationPolicyAdapter` that evaluates one custom Delegation declaration without registering it as a native singleton policy.
+- Add `AiDelegationPolicyBindingResolver` and non-serialized `DelegationPolicyBindings` on resolved steps so pipeline/step declaration scope, order, effective language, and immutable implementation reference survive plan resolution without another durable binding format.
+- Restrict Delegation binding resolution to the existing `ExecuteChildDag` checkpoint. Pipeline-scoped Delegation declarations remain available to that checkpoint, while unrelated steps do not acquire a Delegation execution surface.
+- Add explicit hosted Delegation registration for Python, TypeScript, and .NET through the existing `IAiWorkerInvocationTransport`. Registration remains opt-in and refuses missing worker/publication prerequisites and conflicting Delegation transport/factory registration.
+- Add `IAiDelegationPolicyCodePreparer` and `AiDelegationPolicyPublicationPreparer` to restore the durable parent execution owner, apply the existing publication execute capability, and materialize the exact Delegation implementation pinned to the parent execution.
+- Extend immutable policy-code materialization with exact `DelegationPolicy` call-site selection, including declaration scope, owner step, execution language, implementation reference, immutable publication, and nested `DefinitionPath`.
+- Project only preallocation relation identity into the hosted request. The request includes parent execution/call-site identity, child DAG id/version, deterministic child invocation key and invocation generation, but no `ChildExecutionId`.
+
+#### Behavior and compatibility
+
+- Preserve `DelegationPolicyPending` as the only state in which hosted Delegation evaluation is valid. A relation that already has a child execution id cannot be evaluated by the hosted adapter.
+- Map hosted `approve` to the existing successful policy result and hosted `deny` to the existing blocking result. The adapter does not mutate the relation.
+- Preserve `AiChildDelegationPolicyCoordinator` as the only owner of the durable decision snapshot and compare-and-swap transition to `DelegationApproved` or `DelegationDenied`.
+- Preserve child allocation as a separate runtime action after durable approval. Hosted code cannot allocate/select `ChildExecutionId`, dispatch a child, park/resume the parent, choose continuation behavior, or request recovery.
+- Preserve historical native Delegation policy resolution through `IAiPolicyRegistry`. Custom declarations are never inserted into that registry and cannot fall back to a same-named native policy.
+- Preserve step-override/pipeline-fallback configuration precedence used by the existing delegation definition resolver.
+- Reuse the existing root publication run pin or published-child execution binding for immutable code selection. No current/latest publication lookup or second nested identity model is introduced.
+- Treat worker failure, timeout, cancellation, malformed output, wrong schema/family/correlation, missing immutable material, ownership mismatch, and unsupported language as technical failures. None can become implicit approval.
+- Keep `Concurrency` and `Retry` hosted behavior unchanged, `Retention` native-only, and policy kinds without independent checkpoints unavailable.
+- Preserve existing DAG, RBAC, Child DAG relation persistence, durable custom-step journal, worker supervisor, recovery, continuation, and publication contracts.
+
+#### Validation
+
+- Add 33 targeted Delegation cases across binding/adapter, hosted transport, registration, and immutable publication preparation. Coverage includes pipeline/step scope, checkpoint isolation, language resolution, declaration ordering, approve/deny mapping, and technical failure propagation.
+- Add hosted Delegation transport coverage for canonical language identities, exact preallocation request projection, technical worker failure, immutable implementation substitution rejection, expired deadlines, and cancellation.
+- Add explicit hosted Delegation registration coverage for prerequisites, canonical transports, duplicate registration, and conflicting custom transports.
+- Add immutable publication/ownership coverage for exact pinned Delegation material, changed implementation references, tenant isolation, and scope/owner mismatch.
+- Update the finite family capability matrix so `Delegation` is `Hosted` while the native-only guard continues to reject custom declarations at native resolution boundaries.
+- No .NET build or test execution is claimed during preparation because the preparation environment does not provide the .NET SDK. Static checks are not passing-test evidence.
+
+#### Limits
+
+- Hosted Delegation evaluation remains non-durable as a worker operation; the durable child relation and its decision snapshot remain the recovery boundary.
+- Real Python/TypeScript/.NET cross-family process closure remains part of the final finite branch validation.
+- Trusted-process execution does not add sandbox/container isolation.
+- No additional policy family, package installer, dependency resolver, public SDK model, scheduler, queue, or recovery authority is introduced.
+
+---
+
 ## 0.0.8.8 - 2026-09-14 — Multilanguage - Nested Publication Identity and Compilation
 
 ### Added

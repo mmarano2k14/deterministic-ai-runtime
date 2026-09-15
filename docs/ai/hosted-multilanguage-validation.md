@@ -70,6 +70,22 @@ The broader regression artifact also includes the 31 .NET profile, process, and 
 
 Standalone Python/Node test-runner results are not part of these .NET TRX counts. Published-DAG language tests use real language processes with controlled in-memory stores; database coverage is recorded separately below.
 
+## Hosted custom policy family branch evidence
+
+Hosted custom policy-family expansion is tracked separately from the earlier closure TRX artifacts. The implemented server capability matrix is finite:
+
+| Family | Hosted status | Contract | Evidence status in this documentation update |
+|---|---|---|---|
+| `Concurrency` | Hosted | `concurrency/v1` | Existing hosted-policy evidence is part of the earlier language foundation. |
+| `Retry` | Hosted | `retry/v1` | Targeted implementation tests were reported passing in the target .NET environment. |
+| `Delegation` | Hosted | `delegation/v1` | Targeted implementation tests were reported passing in the target .NET environment. |
+| `Retention` | Native-only | None | Explicitly not advertised as hosted. |
+| `Timeout`, `CircuitBreaker`, `RateLimit`, `Validation`, `Routing` | No independent hosted checkpoint | None | Explicitly not advertised as hosted capabilities. |
+
+The final cross-family closure suite defines five cases: capability-matrix closure, contract-identity separation, and real Python, TypeScript, and .NET process execution of all three hosted families. Python and TypeScript retain explicit process-test prerequisites, so a skipped language case is not closure evidence. A final all-language passing result is not claimed by this document until that closure run is recorded.
+
+During the .NET real-process rerun, a validation-fixture environment issue was isolated: the test profile intentionally clears inherited environment variables but originally forwarded `SystemRoot` without `TEMP`/`TMP`, causing `Path.GetTempPath()` in the hosted .NET worker to resolve under `C:\Windows` and fail workspace creation before the required `ready` frame. The test profile now forwards the host temporary directory explicitly. The legacy direct .NET worker test was reported passing after that correction. This correction changes the validation fixture environment, not policy authority, worker protocol semantics, or DAG behavior.
+
 ## MongoDB and Redis integration
 
 All 20 formerly skipped infrastructure cases have passing results in the dedicated infrastructure artifact.

@@ -482,17 +482,23 @@ no step execution
 
 ---
 
-## Hosted Custom Concurrency Policies
+## Hosted Custom Policy Families
 
-Custom `Concurrency` policies can execute through the hosted Python, TypeScript, and .NET backends while retaining the existing concurrency engine and admission checkpoint. Their code and environment come from the run-pinned publication, and the original pipeline/local declaration scope is preserved.
+Custom `Concurrency`, `Retry`, and `Delegation` policies can execute through the hosted Python, TypeScript, and .NET backends while retaining their existing runtime checkpoints. Their code and environment come from the run-pinned publication, the original pipeline/local declaration scope is preserved, and a published Child DAG reuses its immutable child publication binding and exact `DefinitionPath`.
 
-The existing RBAC engine authorizes the selected implementation before execution. Evaluation is short and deadline-bounded; it does not prepare a durable custom-function invocation or create a DAG continuation.
+The existing RBAC engine authorizes the selected implementation before execution. Hosted policy evaluation is short and deadline-bounded; it does not prepare the durable custom-step journal operation or create a policy-specific scheduler/continuation path.
 
-A successful worker response must contain a valid `concurrency/v1` payload. An explicit typed denial becomes a blocking outcome. Invalid output, timeout, transport failure, unavailable code, or worker-level failure remains a technical error and cannot produce implicit `Allow`.
+| Family | Contract | Hosted decision | Authority that remains in the runtime |
+|---|---|---|---|
+| `Concurrency` | `concurrency/v1` | Admission allow/deny evidence. | Existing concurrency engine, native guards, lease/admission path. |
+| `Retry` | `retry/v1` | `pass`, `retry` with optional bounded delay suggestion, or `stop` with reason. | Retry budget, backoff, jitter, final delay, `WaitingForRetry`, terminal failure. |
+| `Delegation` | `delegation/v1` | `approve` or `deny` with reason. | Durable delegation relation CAS, child allocation/dispatch, parent lifecycle, continuation and recovery. |
 
-This integration does not make every policy family remote. Retry, retention, validation, and other families retain their own checkpoints and contracts; custom remote support is not inferred from `Concurrency`. It also does not provide audit replay of every remote decision from a durable policy-result store.
+Technical output/transport failures remain technical failures. They cannot become implicit `Allow`, `Retry`, or `Approve`. No universal boolean policy protocol, replacement policy engine, or custom-policy lifecycle authority is introduced.
 
-See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md#hosted-custom-concurrency-policies) and [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) for the implemented boundary and execution evidence.
+`Retention` remains native-only in the current capability matrix. `Timeout`, `CircuitBreaker`, `RateLimit`, `Validation`, and `Routing` do not currently have independent hosted policy checkpoints. `retry.timeout.default` and `retry.rate-limit.default` remain native `Retry` policies rather than separate family engines.
+
+See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md#hosted-custom-policy-families) and [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) for the implemented boundary and validation evidence.
 
 ---
 
@@ -884,6 +890,11 @@ Durable decision ledger, advanced cost governance, routing policies, and validat
 | Retry policy execution | Implemented / validated |
 | Retention policy execution | Implemented / validated |
 | Concurrency policy execution | Implemented / validated |
+| Hosted custom `Concurrency` policy execution | Implemented / validated at the existing admission checkpoint |
+| Hosted custom `Retry` policy execution | Implemented; targeted target-environment validation reported passing |
+| Hosted custom `Delegation` policy execution | Implemented; targeted target-environment validation reported passing |
+| Hosted custom `Retention` policy execution | Native-only by current capability matrix |
+| Hosted `Timeout` / `CircuitBreaker` / `RateLimit` / `Validation` / `Routing` families | No independent runtime checkpoint; not advertised as hosted |
 | Legacy string policy support | Implemented / validated |
 | Legacy `type` compatibility | Implemented / compatibility support |
 | Structured policy definitions | Implemented / validated |

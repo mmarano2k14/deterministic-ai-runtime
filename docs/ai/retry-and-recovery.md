@@ -276,6 +276,14 @@ Structured policies are supported.
 
 The retry engine executes policies for the `Retry` policy kind.
 
+### Hosted custom Retry policies
+
+A `Retry` declaration may also bind to immutable published custom code and execute through the existing hosted Python, TypeScript, or .NET worker transport. The family contract is `retry/v1`; it returns only `pass`, `retry` with an optional bounded `suggestedDelayMs`, or `stop` with a required reason.
+
+The hosted policy classifies one failure. `DefaultAiRetryEngine` remains authoritative for retry budget, retry count, backoff, jitter, maximum/final delay, `WaitingForRetry`, and terminal failure. The worker cannot mutate `RetryState`, schedule the step, select a DAG transition, or trigger recovery. Technical failure, timeout, malformed output, missing immutable material, or authorization failure does not become an implicit retry recommendation.
+
+The request uses the real durable execution and step identity. When Retry is evaluated inside a published Child DAG, immutable code selection reuses that child execution's publication binding and exact `DefinitionPath`; it does not resolve a mutable current publication.
+
 ---
 
 ## Legacy and Structured Retry Policies
@@ -1080,6 +1088,7 @@ The retry and recovery implementation is validated through integration tests cov
 |---|---|
 | Config-driven retry | Implemented / validated |
 | Policy-driven retry | Implemented / validated |
+| Hosted custom Retry (`retry/v1`) | Implemented; targeted target-environment validation reported passing |
 | Legacy string retry policies | Implemented / validated |
 | Structured retry policy definitions | Implemented / validated |
 | Retry state model | Implemented / validated |

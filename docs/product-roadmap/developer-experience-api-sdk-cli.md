@@ -730,7 +730,11 @@ This project should keep that trust.
 | Product roadmap documentation | Foundation exists |
 | Immutable publication and run pinning | Server implementation with targeted validation |
 | Hosted Python / TypeScript / .NET functions | Server implementation with real-process validation |
-| Hosted custom Concurrency policies | Implemented at the existing checkpoint; other families are not implied |
+| Hosted custom Concurrency policies | Implemented at the existing admission checkpoint |
+| Hosted custom Retry policies | Implemented at the existing retry checkpoint through `retry/v1`; retry lifecycle authority remains server-side |
+| Hosted custom Delegation policies | Implemented at the existing pre-child-allocation checkpoint through `delegation/v1`; child lifecycle authority remains server-side |
+| Hosted custom Retention | Native-only in the current capability matrix |
+| Policy kinds without independent checkpoints | `Timeout`, `CircuitBreaker`, `RateLimit`, `Validation`, and `Routing` are not advertised as hosted families |
 | Outbound MCP transport and effect metadata | Implemented; durable external-effect evidence remains separate |
 | API packaging | Productization target |
 | SDK | Productization target |
