@@ -28,6 +28,39 @@ public static class Functions
         decision = "allow",
         reason = (string?)null
     });
+    public static object PolicyFamily(JsonElement inputs, JsonElement context)
+    {
+        var requestId = inputs.GetProperty("requestId").GetString();
+        return inputs.GetProperty("policyKind").GetString() switch
+        {
+            "concurrency" => Result(true, new
+            {
+                schemaVersion = 1,
+                requestId,
+                policyKind = "concurrency",
+                decision = "allow",
+                reason = (string?)null
+            }),
+            "retry" => Result(true, new
+            {
+                schemaVersion = 1,
+                requestId,
+                policyKind = "retry",
+                decision = "retry",
+                reason = "transient",
+                suggestedDelayMs = 250
+            }),
+            "delegation" => Result(true, new
+            {
+                schemaVersion = 1,
+                requestId,
+                policyKind = "delegation",
+                decision = "approve",
+                reason = (string?)null
+            }),
+            _ => throw new InvalidOperationException("unsupported policy family")
+        };
+    }
     public static object Log(JsonElement inputs, JsonElement context)
     {
         Console.WriteLine("published console output");

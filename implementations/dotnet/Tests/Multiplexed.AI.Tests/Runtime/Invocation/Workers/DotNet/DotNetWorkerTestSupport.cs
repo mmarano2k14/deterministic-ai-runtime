@@ -80,8 +80,21 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.DotNet
             foreach (var path in new[] { workerAssembly, workerDeps, workerRuntimeConfig, functions, dependency })
                 if (!System.IO.File.Exists(path)) throw new FileNotFoundException("Hosted .NET fixture output is missing.", path);
             var environment = new Dictionary<string, string>();
-            if (OperatingSystem.IsWindows()) environment["SystemRoot"] = Environment.GetEnvironmentVariable("SystemRoot")
-                ?? throw new InvalidOperationException("Windows hosted .NET tests require SystemRoot.");
+            var tempRoot = Path.GetTempPath();
+            if (string.IsNullOrWhiteSpace(tempRoot) || !Path.IsPathFullyQualified(tempRoot))
+                throw new InvalidOperationException("Hosted .NET tests require an absolute temporary directory.");
+            Directory.CreateDirectory(tempRoot);
+            if (OperatingSystem.IsWindows())
+            {
+                environment["SystemRoot"] = Environment.GetEnvironmentVariable("SystemRoot")
+                    ?? throw new InvalidOperationException("Windows hosted .NET tests require SystemRoot.");
+                environment["TEMP"] = tempRoot;
+                environment["TMP"] = tempRoot;
+            }
+            else
+            {
+                environment["TMPDIR"] = tempRoot;
+            }
             var version = await FindRuntimeVersionAsync(executable, environment);
             var executableHash = WorkerTestSupport.FileHash(executable);
             var runtime = new AiPublicationEnvironment("dotnet-fixed", "dotnet", version, executableHash);
