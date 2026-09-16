@@ -136,9 +136,11 @@ Launch capacity is bounded. A slot is quarantined when termination of its root p
 
 ### Python
 
-The Python loader verifies the published `.py` closure before invoking the declared function. It supports synchronous and asynchronous functions, regular packages and explicit source dependencies, with frozen inputs and read-only portable metadata. Module/path collisions and invalid bytes or results are refused.
+The Python loader verifies the published `.py` closure before invoking the declared function. It supports synchronous and asynchronous functions, regular packages, explicit source dependencies, and deterministic pure-Python wheel bundles, with frozen inputs and read-only portable metadata. Module/path collisions and invalid bytes or results are refused.
 
-The current profile accepts exact CPython 3.12.x and 3.13.x identities. Python compatibility is not broadened by the Node backend's version policy. There is no `pip install`, wheel resolution, native-extension installation, or ambient dependency substitution in this path.
+A supported wheel bundle is captured before publication, bound to the existing immutable environment, and revalidated from its exact bytes in the worker before readiness. The current contract is pure Python only: the manifest binds the wheel path, SHA-256, distribution, version, and allowed import roots. There is no `pip install`, PyPI lookup, runtime wheel resolution, native-extension installation, namespace-package expansion, or ambient dependency substitution.
+
+The current profile accepts exact CPython 3.12.x and 3.13.x identities. Python compatibility is not broadened by the Node backend's version policy.
 
 Published source is loaded in the function process, not inside the .NET engine. Output handling separates ordinary/raw stdout diagnostics from the runtime protocol, but does not make hostile Python code a sandboxed workload.
 
@@ -148,7 +150,7 @@ The current backend runs a normal `.mjs` loader and compiles verified `.ts` file
 
 Compatibility depends on the Node APIs required by the loader and published code. An exact installed version and executable hash are still required. Accepting a version label is not certification of every historical or future Node release.
 
-The compiler performs per-file transpilation, not whole-program type checking. Enums, namespaces, constructor parameter properties, and supported relative/dynamic imports are emitted under the fixed contract. Supplied dependency aliases resolve to the published closure; there is no npm install, global compiler discovery, or registry access. Declaration-only files are not executable entry points.
+The compiler performs per-file transpilation, not whole-program type checking. Enums, namespaces, constructor parameter properties, and supported relative/dynamic imports are emitted under the fixed contract. Supplied dependency aliases can resolve either historical explicit source dependencies or a deterministic locked Node bundle captured before publication. The locked bundle manifest binds package name/version, entry point, every source path, and every SHA-256; the worker revalidates the closed file set before readiness. There is no `npm install`, `npm ci`, `npx`, global compiler discovery, `node_modules` resolution, registry access, or runtime package download. Declaration-only files are not executable entry points.
 
 `AiTypeScriptWorkerProcessProfile.CreateRuntime` binds the compiler/emission contract and loader digest into the approved runtime reference before publication. The Node executable digest keeps its original meaning. A changed compiler or loader requires a new environment; existing pins must not be relabeled in place.
 
@@ -156,7 +158,7 @@ The function child returns its result through IPC. Child stdout is not the paren
 
 ### .NET
 
-The .NET backend executes immutable published assemblies and explicit dependency DLLs in a separate function process. The runtime does not compile tenant C# or restore tenant NuGet packages during invocation.
+The .NET backend executes immutable published assemblies and deterministic managed dependency closures in a separate function process. A managed-closure manifest binds each supplied DLL to its SHA-256, CLR assembly name, and assembly version. The server validates the captured closure before publication and the worker revalidates it before readiness, then uses the existing collectible `AssemblyLoadContext` to load only the published material. The runtime does not compile tenant C#, run MSBuild, restore tenant NuGet packages, discover transitive packages, or resolve native dependencies during invocation.
 
 An entry point identifies `Fully.Qualified.Type::Method` and receives portable JSON inputs and context. Supported synchronous/asynchronous results must satisfy the portable business-result contract. Assembly loading and dependency selection are scoped to the published material; loading isolation is not an operating-system security sandbox.
 
@@ -249,12 +251,12 @@ The following remain outside the implemented foundation:
 |---|---|
 | Public integration | Independent SDK libraries, public publication/submission models, and Gateway/API productization. |
 | Hostile code | Enforced container isolation, CPU/memory limits, filesystem policy, network egress, descendant containment, and cleanup after host loss. |
-| Dependencies | Python wheels/native extensions/namespace packages; general npm/lockfile bundles and native add-ons; automatic .NET dependency-closure/native packaging. |
+| Dependencies | Deterministic pure-Python wheel bundles, locked Node source bundles, and managed .NET assembly closures are implemented. Native Python extensions/namespace packages, Node native add-ons/general npm ecosystem installation, and .NET native dependency/package-manager resolution remain outside scope. |
 | Additional policies | `Retention` is native-only in the current matrix. Taxonomy values without an independent checkpoint are not hosted. Any further family requires its own existing checkpoint, request/response contract, authority analysis, and bounded validation. |
 | Published-child validation breadth | Broader provider/store failure matrices, operating-system host-kill proofs, and unlimited recursive-depth claims are not implied by the bounded published-child closure. |
 | External effects | Durable MCP evidence, reconciliation, schema pinning, connection-catalog lifecycle, and credential-provider integrations. |
 
-No arbitrary network package installation, implicit `latest` resolution, or tenant C# compilation belongs in the current execution path. A future SDK describes and publishes work; the platform hosts it and the runtime governs it. No direct or transitive engine-DLL dependency is required of that SDK.
+Supported dependency bundles are captured and verified before publication; no arbitrary network package installation, implicit `latest` resolution, or tenant C# compilation belongs in the current execution path. A future SDK describes and publishes work; the platform hosts it and the runtime governs it. No direct or transitive engine-DLL dependency is required of that SDK.
 
 ## Implementation references
 

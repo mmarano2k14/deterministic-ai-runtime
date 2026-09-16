@@ -801,7 +801,7 @@ Step executors receive resolved context from the context resolution layer.
 
 The runtime also supports opt-in hosted Python, TypeScript, and .NET functions through contextual adapters. Invocation kind is separate from language: native implementations remain native, custom declarations select an approved language environment, and MCP declarations select an authorized tool connection.
 
-Immutable publication binds code, supplied dependencies, and the environment to the whole run. The custom-function journal freezes invocation inputs, controls worker assignment through leases and epochs, and records an authoritative result. Continuation uses the existing DAG; acknowledgement requires the exact application receipt and terminal parent, not only queue acceptance.
+Immutable publication binds code, supplied dependencies, deterministic package bundles, and the environment to the whole run. Supported dependency packaging includes pure-Python wheel bundles, locked Node source bundles, and managed .NET assembly closures; package-manager/network resolution remains outside runtime execution. The custom-function journal freezes invocation inputs, controls worker assignment through leases and epochs, and records an authoritative result. Continuation uses the existing DAG; acknowledgement requires the exact application receipt and terminal parent, not only queue acceptance.
 
 A hosted function process is not a trusted `RuntimeInstance` and does not own DAG claims, retries, `Park`, recovery, or successor selection. The existing RBAC engine authorizes publication and execution. Contextual policy adapters are excluded from native singleton discovery.
 
@@ -1519,6 +1519,7 @@ Plugins remain responsible for domain-specific execution.
 | Full Kubernetes deployment packaging and cluster operations | Ongoing |
 | Hosted Python, TypeScript and .NET execution | Implemented / targeted validation; opt-in trusted-process hosting |
 | Immutable publication and whole-run pinning | Implemented / validated within the supported published DAG path |
+| Deterministic dependency packaging | Pure-Python wheels, locked Node source bundles, and managed .NET assembly closures implemented on the existing immutable publication/environment identity; no runtime package-manager resolution |
 | Durable function journal and DAG continuation | Implemented / validated; recorded result and exact application receipt remain distinct |
 | Hosted custom policy families | `Concurrency`, `Retry`, and `Delegation` implemented at their existing checkpoints with distinct family contracts; `Retention` remains native-only |
 | Outbound MCP tool transport and effect identity | Implemented / validated for read-only/idempotent targets; durable effect evidence is not included |

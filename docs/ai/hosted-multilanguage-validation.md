@@ -86,6 +86,22 @@ The final cross-family closure suite defines five cases: capability-matrix closu
 
 During the .NET real-process rerun, a validation-fixture environment issue was isolated: the test profile intentionally clears inherited environment variables but originally forwarded `SystemRoot` without `TEMP`/`TMP`, causing `Path.GetTempPath()` in the hosted .NET worker to resolve under `C:\Windows` and fail workspace creation before the required `ready` frame. The test profile now forwards the host temporary directory explicitly. The legacy direct .NET worker test was reported passing after that correction. This correction changes the validation fixture environment, not policy authority, worker protocol semantics, or DAG behavior.
 
+## Deterministic dependency packaging branch evidence
+
+Deterministic dependency packaging is tracked separately from the earlier hosted-language closure artifacts. Three finite package kinds are implemented on top of the existing immutable publication and environment identity:
+
+| Package kind | Runtime status | Supported boundary | Evidence status in this documentation update |
+|---|---|---|---|
+| `PythonWheelBundle` | Hosted | Pure-Python wheel, exact manifest/hash/import roots, no native extension or namespace-package expansion | Targeted .NET tests were reported passing; the standalone Python worker suite also passed 53/53 during preparation. |
+| `NodeLockedBundle` | Hosted | Closed TypeScript source bundle with exact package/version/entry point/file hashes; no package-manager or registry resolution | Targeted .NET tests were reported passing; the standalone Node suite also passed 45/45 during preparation. |
+| `DotNetAssemblyClosure` | Hosted | Precompiled managed DLL closure with exact hashes and CLR assembly identity/version; no NuGet/MSBuild/native resolution | Targeted .NET worker/publication tests were reported passing in the target environment. |
+
+The packaging model does not introduce another environment identity. Package manifests and captured bytes participate in the existing immutable publication/environment material; the canonical environment-document SHA-256 retains its existing meaning and remains distinct from host-runtime or future OCI artifact digests.
+
+The final cross-language compatibility closure defines seven cases: final capability/legacy compatibility, one republish-and-pin proof for each supported package kind using the real hosted worker path, and one missing-pinned-material refusal for each package kind. A final all-language closure result is not claimed by this document until that closure run is recorded. Python and TypeScript process prerequisites must execute rather than be skipped for complete branch closure.
+
+The supported packaging boundary is deliberately narrower than a general package manager. No `pip install`, PyPI lookup, npm/yarn/pnpm install, `npx`, Node registry resolution, NuGet restore, tenant compilation, native extension/add-on discovery, or mutable `latest` lookup occurs in the runtime execution path.
+
 ## MongoDB and Redis integration
 
 All 20 formerly skipped infrastructure cases have passing results in the dedicated infrastructure artifact.
@@ -137,7 +153,7 @@ SHA-256 identifies the exact supplied result files used for this summary.
 
 ## Interpretation limits
 
-The evidence supports the stated implementation boundaries, not a completed public SDK product. No new public publication endpoint, SDK package, sandbox, package installer, or external-effect ledger is implied by these results.
+The evidence supports the stated implementation boundaries, not a completed public SDK product. Deterministic package bundles are captured before publication; no general runtime package installer, new public publication endpoint, SDK package, sandbox, or external-effect ledger is implied by these results.
 
 Dedicated reruns supplement the earlier regression artifact without changing its recorded outcomes. The available evidence does not certify every runtime version, deployment topology, or failure mode. Published custom Child DAG evidence does not establish operating-system host-kill recovery, Redis/MongoDB restart or failover, Kubernetes provider coverage, hostile-code isolation, or unlimited recursive depth.
 

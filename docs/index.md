@@ -20,7 +20,8 @@ Focused AI runtime documentation is organized under:
 | [`runtime-internals.md`](runtime-internals.md) | Complete technical reference preserved from the original README. |
 | [`enterprise-readiness.md`](enterprise-readiness.md) | Matrix of enterprise AI execution questions and runtime answers. |
 | [`ai/architecture-overview.md`](ai/architecture-overview.md) | High-level runtime architecture and major runtime layers, including shared control-plane orchestration, provider dispatch, Redis coordination, and multi-tenant runtime isolation. |
-| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Published Python, TypeScript and .NET functions, immutable environments, published custom Child DAG binding, durable invocation, hosted custom Concurrency/Retry/Delegation policies, outbound MCP, and explicit SDK/security boundaries. |
+| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Published Python, TypeScript and .NET functions, immutable environments, deterministic dependency bundles, published custom Child DAG binding, durable invocation, hosted custom Concurrency/Retry/Delegation policies, outbound MCP, and explicit SDK/security boundaries. |
+| [`ai/deterministic-dependency-packaging.md`](ai/deterministic-dependency-packaging.md) | Immutable pure-Python wheel, locked Node source-bundle, and managed .NET assembly-closure contracts, execution boundaries, pinning, and validation limits. |
 | [`ai/hosted-multilanguage-validation.md`](ai/hosted-multilanguage-validation.md) | Inspected language, durability, boundary and MongoDB/Redis results, with overlap, skipped-case and host-report limitations. |
 | [`ai/child-dag-composition.md`](ai/child-dag-composition.md) | Implemented / validated durable Child DAG composition with `WaitingForExternal`, deterministic continuation, native recursive Depth3 validation, published custom Child DAG integration, EventDriven recovery observation, warm reuse, replay, lifecycle, Ledger, trace, and Forensics evidence. |
 | [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | Multi-tenant control-plane isolation, RBAC execution-context propagation, durable `ExecutionContextSnapshot`, tenant-aware registry/capacity/admission, Shared/Dedicated/Hybrid runtime visibility, and tenant-aware scale-out. |
@@ -227,9 +228,9 @@ This document explains:
 
 ### [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md)
 
-Server-side execution reference covering effective language selection, immutable publication and run pinning, published custom Child DAG binding, worker lease/epoch authority, durable result application, actual Python/TypeScript/.NET execution, custom `Concurrency` policies, execution requirements, and authorized outbound MCP.
+Server-side execution reference covering effective language selection, immutable publication and run pinning, deterministic dependency packaging, published custom Child DAG binding, worker lease/epoch authority, durable result application, actual Python/TypeScript/.NET execution, hosted custom policy families, execution requirements, and authorized outbound MCP.
 
-The hosted function process is not a trusted runtime instance. Published custom Child DAGs reuse the same immutable publication, durable journal, hosted worker and existing continuation authorities. The public SDK library, hostile-code sandboxing, broader dependency packaging, and durable MCP external-effect evidence remain separate capabilities.
+The hosted function process is not a trusted runtime instance. Published custom Child DAGs and deterministic dependency bundles reuse the same immutable publication, durable journal, hosted worker and existing continuation authorities. Pure-Python wheels, locked Node source bundles, and managed .NET assembly closures are supported; native package ecosystems, hostile-code sandboxing, the public SDK library, and durable MCP external-effect evidence remain separate capabilities.
 
 ### [`ai/hosted-multilanguage-validation.md`](ai/hosted-multilanguage-validation.md)
 
@@ -862,7 +863,8 @@ The project roadmap organized into phases:
 | [`ai/config-driven-runtime.md`](ai/config-driven-runtime.md) | How pipeline definitions and structured configuration drive runtime behavior, with tenant runtime settings moving toward config/database-backed resolution. |
 | [`ai/policy-driven-execution.md`](ai/policy-driven-execution.md) | Shared policy model used by retry, retention, concurrency, throttling, admission control, and future tenant-specific governance. |
 | [`ai/context-resolution-and-helpers.md`](ai/context-resolution-and-helpers.md) | Input resolution, step context building, payload rehydration, provider metadata, policy context, helper services, and durable execution context snapshot propagation. |
-| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Native/custom/MCP binding, published code and dependencies, language workers, execution requirements, and the external SDK boundary. |
+| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Native/custom/MCP binding, published code and deterministic dependency bundles, language workers, execution requirements, and the external SDK boundary. |
+| [`ai/deterministic-dependency-packaging.md`](ai/deterministic-dependency-packaging.md) | Supported immutable package forms, package-manifest integrity, republish pinning, worker revalidation, and unsupported package-manager/native dependency boundaries. |
 | [`ai/step-plugins.md`](ai/step-plugins.md) | Step keys, registered executors, class attributes, assembly scanning, provider abstractions, and plugin-style runtime extension. |
 | [`ai/rag-pipelines.md`](ai/rag-pipelines.md) | RAG retrieval, merge, compose, provider-oriented workflow execution, auto-registered RAG steps, and deterministic RAG pipelines. |
 

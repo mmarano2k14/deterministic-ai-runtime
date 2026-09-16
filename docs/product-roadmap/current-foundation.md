@@ -45,6 +45,7 @@ The current architecture is built around the following core foundations:
 | Deterministic Runtime | Execute AI workflows through controlled state transitions instead of uncontrolled execution. |
 | DAG Execution | Represent workflows as step-based directed execution graphs. |
 | Durable Child DAG Composition | **Implemented / validated.** Delegate from one DAG to another, park the parent durably, recover nested work through existing runtime recovery, and resume the same parent execution through deterministic continuation. Native recursive Depth3 and centralized EventDriven lifecycle validation are green; immutable published custom child binding and hosted Python/TypeScript/.NET execution are supported with a separately bounded nested proof. |
+| Deterministic Dependency Packaging | **Implemented for the selected finite formats.** Pure-Python wheel bundles, locked Node source bundles, and managed .NET assembly closures are captured before manifest visibility, hash-verified, bound to the existing immutable environment, revalidated by hosted workers, and retained by whole-run pinning. Runtime package-manager/network resolution remains excluded. |
 | Execution State | Track workflow progress, step status, retry direction, pause/resume/cancel state, retention decisions, memory/context evidence direction, and finalization. |
 | Worker Model | Allow work to be processed by workers inside runtime instances. |
 | Queue Model | Support local queues and shared queue direction for multi-instance execution. |
