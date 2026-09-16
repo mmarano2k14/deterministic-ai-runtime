@@ -4,9 +4,12 @@ All notable changes to this project will be documented in this file.
 
 This project follows a deterministic runtime and observability model designed for high-concurrency execution, focusing on consistency, isolation, and lifecycle control.
 
+
 ---
 
-## 0.0.8.8 - 2026-09-16 — Multilanguage — Custom policy family capability contracts
+## 0.0.8.9 - 2026-09-16 — Multilanguage — Custom policy family capability contracts
+
+### Custom policy family capability contracts
 
 #### Added
 
@@ -146,6 +149,223 @@ This project follows a deterministic runtime and observability model designed fo
 - Real Python/TypeScript/.NET cross-family process closure remains part of the final finite branch validation.
 - Trusted-process execution does not add sandbox/container isolation.
 - No additional policy family, package installer, dependency resolver, public SDK model, scheduler, queue, or recovery authority is introduced.
+
+### Custom policy family compatibility closure
+
+#### Added
+
+- Add a finite branch-closure suite for the three hosted custom policy families implemented by the runtime: `Concurrency`, `Retry`, and `Delegation`.
+- Add one real-process closure scenario per hosted language. Each Python, TypeScript, and .NET scenario executes all three family contracts through the existing one-assignment worker transport.
+- Add a .NET test-function entry point that emits only the closed `concurrency/v1`, `retry/v1`, or `delegation/v1` payload selected by the portable request's `policyKind`.
+- Freeze the final capability boundary in closure tests: `Concurrency`, `Retry`, and `Delegation` are hosted; `Retention` remains native-only; `Timeout`, `CircuitBreaker`, `RateLimit`, `Validation`, and `Routing` remain without independent runtime checkpoints.
+
+#### Behavior and compatibility
+
+- Preserve separate family-specific response contracts rather than introducing a universal boolean policy protocol.
+- Preserve the existing Concurrency, Retry, Delegation, and Retention engines/checkpoints as runtime authorities.
+- Preserve Retry ownership of retry budget, backoff, jitter, final delay, waiting transitions, and terminal failure.
+- Preserve Delegation ownership of durable decision persistence, child allocation, dispatch, recovery, and parent continuation.
+- Preserve native policy discovery and prevent custom declarations from falling back to same-named native policies.
+- Preserve immutable publication, root run pins, published Child DAG execution bindings, RBAC, hosted worker transport, DAG scheduling, recovery, and durable custom-step journal behavior.
+- No production runtime source changes are included in this closure delivery.
+
+#### Validation
+
+- Add five cases in `AiCustomPolicyFamilyCompatibilityClosureTests`: two finite contract/capability checks and three real hosted-language process cases.
+- Each real hosted-language case executes `Concurrency`, `Retry`, and `Delegation` sequentially through the existing process transport and validates the family-specific result contract.
+- Python and TypeScript continue to use the repository's existing opt-in worker facts. A skipped process case is not counted as branch-closure evidence.
+- The preceding hosted Retry and hosted Delegation targets have reported passing target-environment results. No raw TRX artifacts are bundled here, so no aggregate passing-test total is inferred.
+- No .NET execution is claimed during package preparation because the preparation environment does not provide the .NET SDK.
+
+#### Limits
+
+- `Retention` remains native-only.
+- Policy kinds without independent runtime checkpoints remain unavailable for custom publication/execution.
+- Trusted-process execution is not sandbox/container isolation.
+- No additional policy family, second policy engine, scheduler, queue, recovery authority, package installer, dependency resolver, public SDK wire model, or external SDK library is added.
+
+## Deterministic Dependency Packaging Contract Foundation
+
+### Added
+
+- Add `AiPublicationDependencyPackageKind` with explicit `PythonWheelBundle`, `NodeLockedBundle`, and `DotNetAssemblyClosure` formats.
+- Add an optional versioned `AiPublicationDependencyPackage` descriptor to publication-upload and immutable dependency records while preserving the historical positional constructors.
+- Bind each package descriptor to one portable immutable JSON manifest already present in the dependency's file set. The manifest bytes participate in the existing environment/publication content identity.
+- Add a finite `AiDependencyPackagingContracts` capability matrix mapping Python wheels to `python`, locked Node bundles to `typescript`, and managed assembly closures to `dotnet`.
+- Mark all three new package formats as `ContractDefined` until their language-specific runtime projection is implemented.
+- Capture package metadata inside the existing immutable `AiPublicationEnvironmentSnapshot`; no second environment identity, mutable package pointer, or package registry identity is introduced.
+- Add targeted contract tests for capability boundaries, serialization compatibility, language/package matching, manifest validation, immutable identity changes, fail-closed execution and historical explicit-file behavior.
+
+### Behavior and Compatibility
+
+- Preserve historical dependencies with no package descriptor. Null package metadata is omitted from JSON and existing explicit-file worker behavior remains unchanged.
+- Require package schema version 1, a portable JSON manifest path, exactly one matching manifest file, and a package kind compatible with the implementation's effective language.
+- Preserve the existing environment-document hash as the immutable environment identity. Package metadata and manifest bytes change that hash naturally through the existing canonical environment document.
+- Keep environment-document SHA-256 distinct from host-runtime artifact digests and future OCI image-manifest digests.
+- Fail closed during worker materialization when a published dependency uses a package format whose capability remains `ContractDefined`. The old worker wire model cannot silently reinterpret packaged material as a historical source dependency.
+- Preserve immutable publication/run pinning, published Child DAG definition paths, custom policy publication, RBAC, durable invocation journal, worker leases/epochs, process supervision, recovery and continuation contracts.
+- Perform no package extraction, installation, registry lookup, network download, tenant compilation or package-manager restore in this delivery.
+
+### Validation
+
+- Add targeted cases in `AiDependencyPackagingContractTests` covering the finite capability matrix, historical JSON omission, matching/mismatched languages, required manifests, schema/path rejection, immutable publication identity, fail-closed worker projection and existing explicit-file compatibility.
+- No target-environment .NET execution is claimed during preparation. Static source/package checks are not passing-test evidence.
+
+### Limits
+
+- Pure-Python wheel consumption, locked Node bundle consumption and managed .NET closure collection remain the next bounded implementations in this branch.
+- Python native extensions, Node native addons, .NET native dependency resolution and arbitrary package ecosystems remain deferred.
+- Dependency packaging does not provide sandbox/container enforcement or network isolation.
+- Public SDK wire models and external SDK builders remain outside this branch.
+
+## Pure-Python Wheel Dependency Packaging
+
+### Added
+
+- Promote `PythonWheelBundle` from `ContractDefined` to `Hosted` while leaving `NodeLockedBundle` and `DotNetAssemblyClosure` fail-closed.
+- Add the portable `AiPythonWheelBundleManifest` schema carrying the exact wheel path, wheel SHA-256, distribution, version, and sorted import roots.
+- Validate one immutable pure-Python wheel per packaged dependency before publication visibility. Require the manifest and referenced wheel bytes to be present in the existing dependency file closure.
+- Validate wheel ZIP paths, entry bounds, case collisions, link entries, `.dist-info/WHEEL`, `METADATA`, `RECORD`, `Root-Is-Purelib`, runtime-compatible pure-Python tags, distribution/version identity, regular-package boundaries, and exact import roots.
+- Add the optional immutable package descriptor to `AiWorkerDependency`. Null descriptors remain omitted from the worker JSON wire shape.
+- Project verified Python wheel package metadata and exact bytes through the existing step and hosted-policy publication materializers.
+- Extend the standalone Python worker to revalidate packaged wheel material and load `.py` modules directly from the wheel bytes through the existing in-memory module loader.
+- Add standalone Python, publication, real hosted-process, pinned-publication, and dependency-republication coverage for the supported wheel subset.
+
+### Behavior and Compatibility
+
+- Preserve historical explicit-file Python dependencies and their existing three-field worker dependency shape.
+- Perform no `pip install`, PyPI lookup, package-cache mutation, extraction to a worker directory, `site` processing, `PYTHONPATH` resolution, or runtime network dependency lookup.
+- Preserve the existing immutable environment document as the dependency/environment identity. The wheel manifest and wheel file descriptors participate in the existing environment digest; no package-specific durable identity is added.
+- Preserve whole-run pinning and published Child DAG binding. Republishing changed wheel bytes under the same logical dependency does not alter an already admitted run.
+- Preserve the existing Python 3.12/3.13 hosted-process profile and one-assignment worker transport.
+- Preserve durable invocation journal identity, worker lease/epoch authority, accepted-result rules, RBAC, DAG/Child DAG transitions, recovery, and continuation.
+- Keep `NodeLockedBundle` and `DotNetAssemblyClosure` blocked during worker preparation until their own bounded implementations are delivered.
+
+### Validation
+
+- The standalone Python hosted-invocation suite now contains 53 tests and passes in the preparation environment.
+- New Python coverage executes a pure wheel directly from immutable in-memory bytes and rejects wheel-digest mismatch, native extension content, non-purelib metadata, and wheel path traversal.
+- Add nine publication-side Python wheel validation cases covering immutable capture, digest mismatch, native content, non-purelib wheels, path traversal, namespace packages, import-root mismatch, incompatible runtime tags, and package metadata identity.
+- Add a real hosted Python process case that imports a function from an immutable wheel without package installation.
+- Add pinned publication/DAG cases proving execution from the captured wheel and preservation of the original wheel after dependency republication.
+- Extend the combined Python validator so complete .NET/Python validation requires the live wheel execution and pinned wheel scenarios; a skipped process case is not closure evidence.
+- No .NET build or C# test execution is claimed during preparation because the preparation environment does not provide the .NET SDK.
+
+### Limits
+
+- The initial hosted subset supports exactly one wheel artifact per packaged dependency; multiple dependencies may each supply one wheel.
+- Only pure-Python regular packages and top-level modules are supported. Namespace packages, `.data` install trees, package resources, console-script installation, native extensions, ABI-specific wheels, and platform-specific wheels remain deferred.
+- Transitive dependency discovery is not performed. Every dependency must be supplied explicitly as immutable publication material.
+- Dependency packaging does not provide sandbox/container isolation or external-effect guarantees.
+
+
+## Locked Node Dependency Packaging
+
+### Added
+
+- Promote `NodeLockedBundle` from `ContractDefined` to `Hosted` while leaving `DotNetAssemblyClosure` fail-closed.
+- Add `AiNodeLockedBundleManifest` and exact per-file digest entries for a bounded immutable TypeScript dependency source closure.
+- Validate package name/version identity, manifest schema, complete sorted file coverage, portable TypeScript paths, UTF-8 source bytes, executable entry point, and SHA-256 equality before publication visibility.
+- Extend deterministic dependency capture so Node package manifests are validated against the effective TypeScript runtime before entering the existing immutable environment snapshot.
+- Extend the hosted TypeScript worker to accept the optional package descriptor, independently revalidate the locked manifest and all source digests, and bind the package import alias to the declared entry point.
+- Preserve the existing host-pinned TypeScript compiler and one-assignment workspace; packaged sources use the same compiler and process transport as historical explicit-file dependencies.
+- Add standalone Node, publication, real hosted-process, and pinned-publication/republication coverage for locked dependency bundles.
+
+### Behavior and Compatibility
+
+- Preserve historical explicit TypeScript dependencies and their existing three-field worker dependency shape.
+- Perform no `npm install`, `npm ci`, `npx`, yarn/pnpm invocation, package-registry lookup, `node_modules` resolution, lifecycle script, or runtime dependency download.
+- Require the manifest to enumerate the complete TypeScript source closure. Undeclared extra material, missing material, changed bytes, case ambiguity, invalid paths, declaration-only entry points, and identity substitution fail before authoritative execution.
+- Preserve the existing immutable environment document as the canonical dependency/environment identity. No package-specific durable identity or mutable registry pointer is introduced.
+- Preserve whole-run pinning and published Child DAG binding so later dependency republication cannot alter an already admitted execution.
+- Preserve existing TypeScript runtime/compiler identity, RBAC, durable invocation journal, worker lease/epoch authority, DAG/Child DAG transitions, recovery, continuation, and hosted custom-policy execution.
+- Keep `PythonWheelBundle` hosted and `DotNetAssemblyClosure` blocked until its bounded implementation is delivered.
+
+### Validation
+
+- Extend the standalone Node worker suite from 38 to 45 tests; all 45 pass in the preparation environment with Node.js 22.16.0.
+- Add real locked-bundle execution and fail-closed cases for source digest mismatch, package identity substitution, undeclared material, declaration-only entry point, wrong package kind, and noncanonical manifest ordering.
+- Add server-side locked-bundle publication cases covering immutable capture, source digest validation, identity matching, entry-point coverage, complete file enumeration, ordering, TypeScript-only source paths, and closed manifest fields.
+- Add real .NET/Node transport coverage and immutable publication/republication coverage using the existing TypeScript process-test opt-in.
+- No .NET build or C# test execution is claimed during preparation because the preparation environment does not provide the .NET SDK.
+
+### Limits
+
+- The initial Node package subset is a closed TypeScript source bundle, not a general npm ecosystem implementation.
+- `.tsx`, `.cts`, `.mts`, JavaScript packages, CommonJS package semantics, native addons, package scripts, arbitrary `package.json`/`exports` behavior, and registry-derived transitive dependencies remain unsupported.
+- Trusted-process execution remains unchanged; dependency determinism does not provide filesystem, network, CPU, memory, or descendant-process isolation.
+
+
+## Managed .NET Assembly Dependency Packaging
+
+### Added
+
+- Promote `DotNetAssemblyClosure` from `ContractDefined` to `Hosted` for the bounded managed-IL dependency subset.
+- Add `AiDotNetAssemblyClosureManifest` and exact per-assembly declarations carrying portable path, SHA-256, CLR assembly simple name and exact four-part assembly version.
+- Validate complete managed assembly package material before publication visibility without loading or executing tenant assemblies.
+- Inspect PE/CLI metadata directly from immutable bytes and reject non-managed/native DLL material, malformed assemblies, digest mismatches, identity mismatches, undeclared extra assemblies, path ambiguity and duplicate assembly identities.
+- Extend deterministic dependency capture so managed .NET package manifests participate in the existing immutable environment snapshot and publication digest.
+- Extend the hosted .NET worker to accept the optional package descriptor and independently revalidate package kind, manifest identity, complete assembly coverage, digests and assembly metadata before `ready`.
+- Reuse the existing private one-assignment workspace and collectible `AssemblyLoadContext`; no package-specific process transport or loader authority is introduced.
+- Add real hosted-process coverage for packaged dependency loading and fail-closed worker validation, plus immutable publication/DAG execution coverage.
+
+### Behavior and Compatibility
+
+- Preserve historical explicit-file .NET dependencies and their existing worker dependency shape when `package` is absent.
+- Perform no NuGet restore, MSBuild/Roslyn compilation, package-registry lookup, runtime download or mutable `latest` resolution.
+- Require the manifest to enumerate the complete supplied managed assembly set and bind each assembly's exact bytes and CLR identity.
+- Preserve the existing immutable environment document as the canonical dependency/environment identity; no package-specific durable identity is introduced.
+- Preserve root run pinning and published Child DAG bindings so later republication cannot change an already admitted managed assembly closure.
+- Preserve existing .NET runtime identity, RBAC, durable invocation journal, worker lease/epoch authority, DAG/Child DAG transitions, recovery, continuation and custom policy execution.
+- Keep `PythonWheelBundle` and `NodeLockedBundle` hosted and unchanged.
+
+### Validation
+
+- Add server-side managed assembly-closure validation covering immutable capture, dependency identity, digest and CLR identity matching, managed-IL enforcement, complete file enumeration, DLL-only paths and closed manifest fields.
+- Extend existing .NET worker tests with real packaged dependency execution, wrong-package rejection and package-manifest digest mismatch rejection before readiness.
+- Add immutable publication/DAG coverage executing a function that consumes the packaged dependency through the existing worker supervisor and durable invocation journal.
+- Update the finite dependency packaging capability matrix so all three selected package kinds are `Hosted`.
+- No .NET build or C# test execution is claimed during preparation because the preparation environment does not provide the .NET SDK. Static checks are not passing-test evidence.
+
+### Limits
+
+- This is not general NuGet compatibility or transitive package resolution. Non-framework managed dependencies must be supplied explicitly.
+- Native DLLs, RID-specific native assets, P/Invoke dependency packaging, binding redirects, ReadyToRun/native AOT-specific contracts and NuGet runtime asset selection remain deferred.
+- Managed assembly validation does not provide sandbox/container isolation.
+- No scheduler, queue, journal, recovery authority, dependency installer or public SDK contract is introduced.
+
+## Deterministic Dependency Packaging Compatibility Closure
+
+### Added
+
+- Add a finite cross-language closure suite for the three supported deterministic dependency formats: `PythonWheelBundle`, `NodeLockedBundle`, and `DotNetAssemblyClosure`.
+- Add real hosted-process republication proofs for Python, TypeScript, and .NET using the existing immutable publication, run pin, durable invocation journal, worker supervisor, and DAG application path.
+- Add fail-closed immutable-material proofs for all three package formats by removing one exact dependency artifact after run admission and verifying worker preparation refuses the missing pinned material.
+- Freeze the branch capability boundary with all three selected package formats marked `Hosted` while historical explicit-file dependencies remain package-metadata-free and compatible.
+
+### Behavior and Compatibility
+
+- Preserve the existing immutable environment document as the only dependency-environment identity. No package-specific mutable pointer or second environment identity is introduced.
+- Preserve whole-run publication pinning. Python wheel and Node locked-bundle closure cases republish changed dependency material after admission and verify the existing run continues to use the original package bytes.
+- Preserve the same publication/run-pin path for managed .NET assembly closures and verify the admitted run remains associated with its original immutable publication after a later publication is created.
+- Preserve fail-closed materialization. Missing pinned wheel, locked source, or managed assembly material is not replaced from a newer publication and fails before worker launch.
+- Preserve historical explicit-file dependency behavior and JSON omission of null package metadata.
+- Preserve existing DAG, published Child DAG, RBAC, durable invocation journal, worker supervision, recovery, and continuation authorities.
+- No package manager, registry lookup, network resolution, compilation, restore, scheduler, queue, journal, or recovery mechanism is added by this closure.
+
+### Validation
+
+- Add seven targeted cases in `AiDependencyPackagingCompatibilityClosureTests`: one finite capability/compatibility case, three real hosted-language republication/pinning cases, and three missing-material refusal cases.
+- Python and TypeScript closure cases retain the repository's existing executable opt-in attributes. A skipped process case is not closure evidence for that language.
+- The pure-Python wheel, locked Node bundle, and managed .NET assembly closure deliveries have reported passing target-environment results before this closure. No raw TRX artifacts are bundled here, so no aggregate passing-test total is inferred.
+- The new closure suite is not claimed passing during preparation because the preparation environment does not provide the .NET SDK and does not reproduce the user's configured Python/Node/.NET target environment.
+
+### Limits
+
+- The supported subsets remain intentionally bounded: pure-Python wheels, locked TypeScript source closures, and already-compiled managed .NET assemblies.
+- Native Python extensions, Node native addons/general npm semantics, .NET native/RID assets, transitive package-manager resolution, and runtime downloads remain outside this branch.
+- Trusted-process execution is not sandbox/container isolation. Filesystem, network, CPU, memory, and descendant-process enforcement remain assigned to the hosted-worker isolation workstream.
+- The final closure does not claim Redis/Mongo restart, operating-system host-kill, Kubernetes provider, or database-failover evidence.
 
 ---
 
