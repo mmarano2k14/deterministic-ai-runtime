@@ -6,5 +6,11 @@ namespace Multiplexed.AI.Sdk.Contracts.Common
         public const int PipelineDefinition = 1;
         public const int PipelinePublicationRequest = 1;
         public const int PipelinePublicationResponse = 1;
+        public const int ExecutionSubmissionRequest = 1;
+        public const int ExecutionSubmissionResponse = 1;
+        public const int ExecutionObservation = 1;
+        public const int ExecutionResult = 1;
+        public const int ExecutionCancellationRequest = 1;
+        public const int ExecutionCancellationResponse = 1;
     }
 }
