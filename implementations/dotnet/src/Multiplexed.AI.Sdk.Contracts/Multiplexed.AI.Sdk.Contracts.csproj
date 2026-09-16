@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <PackageId>Multiplexed.AI.Sdk.Contracts</PackageId>
+    <Description>Portable public wire contracts for the Multiplexed AI SDK boundary.</Description>
+  </PropertyGroup>
+
+  <!--
+    This assembly is the public wire-contract boundary. It must remain independent
+    from engine, persistence, transport, hosting and infrastructure assemblies.
+  -->
+  <Target Name="EnforceSdkContractDependencyFirewall" BeforeTargets="ResolveReferences">
+    <Error Condition="'@(ProjectReference)' != ''"
+           Text="Multiplexed.AI.Sdk.Contracts must not reference repository projects. Map server models at the API boundary instead." />
+    <Error Condition="'@(PackageReference)' != ''"
+           Text="Multiplexed.AI.Sdk.Contracts must not take package dependencies. Keep public wire contracts BCL-only." />
+  </Target>
+
+</Project>
