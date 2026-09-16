@@ -28,6 +28,7 @@ The current foundation already covers several critical areas required for produc
 - pluggable policy-by-context model;
 - hosted custom policy execution for `Concurrency`, `Retry`, and `Delegation` through separate family contracts at their existing checkpoints;
 - deterministic dependency packaging for pure-Python wheels, locked Node source bundles, and managed .NET assembly closures, all bound to immutable publication/environment material without runtime package-manager resolution;
+- selected OCI hosted-worker isolation for Linux/amd64 with exact image digests, fail-closed applied-state attestation, denied egress, read-only root plus bounded tmpfs, non-root/capability restrictions, CPU/memory/PID limits, lifecycle cleanup/quarantine, restart orphan reconciliation, and explicit real-engine Docker/Linux proof;
 - explicit native-only `Retention` boundary and explicit non-hosted status for policy kinds without independent runtime checkpoints;
 - RBAC-aware execution context direction;
 - ARN-inspired resource scoping direction;

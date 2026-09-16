@@ -184,7 +184,7 @@ Not included:
 - general npm ecosystem/lockfile installation or native add-ons;
 - .NET native dependencies, NuGet restore, runtime compilation, or automatic transitive discovery;
 - arbitrary Internet package installation;
-- sandbox/container enforcement;
+- sandbox/container enforcement as a responsibility of dependency packaging itself (the separate hosted-worker isolation provider may consume the captured material);
 - public SDK upload/build tooling.
 
-The next isolation workstream may consume the same immutable environment/artifact material, but it must not collapse environment-document identity into OCI image identity.
+The implemented hosted-worker isolation provider consumes the same immutable environment/artifact material without collapsing identities: environment-document identity, deterministic package identity, host-runtime identity, and OCI image-manifest identity remain separate. Tenant code and dependency bundles are released to the isolated worker only after applied container state is attested.

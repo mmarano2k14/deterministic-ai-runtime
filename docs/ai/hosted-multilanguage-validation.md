@@ -8,7 +8,7 @@ The result counts below are derived from the individual `UnitTestResult` entries
 
 The HTTP and gRPC ProcessHostPool continuation scenarios have a reported passing result. Their final TRX/log artifact is not included in this evidence set, so this record does not assign inspected per-scenario counts, durations, or a new crash-volume total to that report.
 
-This is a consolidation of existing evidence, not an additional test execution. The selections overlap, and the broader regression run predates the TypeScript compatibility update. Their counts must not be added into a single unique-test total or described as one full-suite run on a single revision.
+This is a consolidation of the hosted-language/publication evidence, not an additional test execution. The selections overlap, and the broader regression run predates the TypeScript compatibility update. Their counts must not be added into a single unique-test total or described as one full-suite run on a single revision. Hosted worker container isolation is validated separately in [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md).
 
 ## Inspected result artifacts
 
@@ -55,7 +55,7 @@ The 185-result selection covers:
 
 All three symbolic-link cases ran and passed. The protocol-process case validates the explicitly trusted process profile; it is not execution of tenant functions in all three languages.
 
-The tests establish refusal of requirements that the process provider cannot enforce, consistent server-side environment binding, checked launch paths, and authorization before the outgoing tool call. They do not establish a container sandbox, enforced network denial, a fully sealed filesystem, or a durable remote-effect replay implementation.
+These earlier trusted-process tests establish refusal of requirements that the process provider cannot enforce, consistent server-side environment binding, checked launch paths, and authorization before the outgoing tool call. They do not by themselves establish a container sandbox, enforced network denial, or a fully sealed filesystem. Those guarantees are covered by the separate isolated-provider evidence; durable remote-effect replay remains outside both test sets.
 
 ## Real language execution
 
@@ -96,7 +96,7 @@ Deterministic dependency packaging is tracked separately from the earlier hosted
 | `NodeLockedBundle` | Hosted | Closed TypeScript source bundle with exact package/version/entry point/file hashes; no package-manager or registry resolution | Targeted .NET tests were reported passing; the standalone Node suite also passed 45/45 during preparation. |
 | `DotNetAssemblyClosure` | Hosted | Precompiled managed DLL closure with exact hashes and CLR assembly identity/version; no NuGet/MSBuild/native resolution | Targeted .NET worker/publication tests were reported passing in the target environment. |
 
-The packaging model does not introduce another environment identity. Package manifests and captured bytes participate in the existing immutable publication/environment material; the canonical environment-document SHA-256 retains its existing meaning and remains distinct from host-runtime or future OCI artifact digests.
+The packaging model does not introduce another environment identity. Package manifests and captured bytes participate in the existing immutable publication/environment material; the canonical environment-document SHA-256 retains its existing meaning and remains distinct from host-runtime and OCI image-manifest digests.
 
 The final cross-language compatibility closure defines seven cases: final capability/legacy compatibility, one republish-and-pin proof for each supported package kind using the real hosted worker path, and one missing-pinned-material refusal for each package kind. A final all-language closure result is not claimed by this document until that closure run is recorded. Python and TypeScript process prerequisites must execute rather than be skipped for complete branch closure.
 
@@ -138,6 +138,17 @@ The compilation, execution-binding, and durability/recovery targets have reporte
 
 The published-custom nesting claim is intentionally bounded to the depth actually exercised by the closure suite: two Child DAG levels below the published root. The existing native Child DAG Depth3 evidence remains a separate proof domain and is not automatically transferred to published custom execution.
 
+## Hosted worker isolation evidence
+
+The selected OCI-backed `SandboxedContainer` provider is validated separately from the earlier trusted-process artifacts. The current closure contains two evidence layers:
+
+- a deterministic provider/isolation suite validating admission, immutable provider selection, no downgrade, launch/inspect ordering, applied-state refusal, cancellation, cleanup, quarantine, owner-scope orphan reconciliation, journal/result-path compatibility, and deterministic package metadata crossing the isolated transport;
+- explicit opt-in real Docker/Linux tests validating the selected kernel/cgroup-visible boundary.
+
+The recorded final run for the deterministic isolation target is **86 passed, 0 failed, 0 skipped**. The real-engine target is **2 passed, 0 failed, 0 skipped**. The real tests verify non-root execution, zero effective capabilities, `NoNewPrivs=1`, read-only root filesystem, writable bounded `/tmp`, denied outbound networking with only loopback visible, exact memory/PID/CPU cgroup limits, and force-removal of a running descendant container workload.
+
+These results do not mean that the 86 deterministic tests and the 2 real-engine tests prove the same thing. The first layer proves runtime contracts and failure behavior, frequently through a controlled engine probe. The second layer proves that the selected real container engine/Linux boundary actually applies key isolation properties. See [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) for commands, fixture setup, and limitations.
+
 ## Artifact integrity
 
 SHA-256 identifies the exact supplied result files used for this summary.
@@ -153,9 +164,9 @@ SHA-256 identifies the exact supplied result files used for this summary.
 
 ## Interpretation limits
 
-The evidence supports the stated implementation boundaries, not a completed public SDK product. Deterministic package bundles are captured before publication; no general runtime package installer, new public publication endpoint, SDK package, sandbox, or external-effect ledger is implied by these results.
+The evidence supports the stated hosted-language and packaging boundaries, not a completed public SDK product. Deterministic package bundles are captured before publication; no general runtime package installer, new public publication endpoint, SDK package, or external-effect ledger is implied by these results. Container isolation is a separate implemented provider with its own evidence and limits.
 
-Dedicated reruns supplement the earlier regression artifact without changing its recorded outcomes. The available evidence does not certify every runtime version, deployment topology, or failure mode. Published custom Child DAG evidence does not establish operating-system host-kill recovery, Redis/MongoDB restart or failover, Kubernetes provider coverage, hostile-code isolation, or unlimited recursive depth.
+Dedicated reruns supplement the earlier regression artifact without changing its recorded outcomes. The available hosted-language evidence does not certify every runtime version, deployment topology, or failure mode. Published custom Child DAG evidence does not establish operating-system host-kill recovery, Redis/MongoDB restart or failover, Kubernetes sandbox-provider coverage, or unlimited recursive depth. Selected OCI container isolation is evidenced separately and must not be generalized beyond its tested provider/platform boundary.
 
 ## Related documents
 

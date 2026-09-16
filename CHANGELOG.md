@@ -4,6 +4,194 @@ All notable changes to this project will be documented in this file.
 
 This project follows a deterministic runtime and observability model designed for high-concurrency execution, focusing on consistency, isolation, and lifecycle control.
 
+---
+
+## 0.0.9.0 - 2026-09-16 — Multilanguage — Isolated Provider Contract and Admission
+
+### Added
+
+- Add a separate OCI-backed worker profile contract for the isolated hosted-worker provider. The existing trusted-process provider is not reclassified or upgraded.
+- Select the first isolated provider target as Linux amd64 with an exact OCI image-manifest artifact, `SandboxedContainer`, `DenyAll`, and `SealedClosure`.
+- Add `AiContainerWorkerResourceLimits` for server-owned CPU millicores, memory bytes, process-count and writable-workspace bounds.
+- Add `AiContainerWorkerProfile` with exact container-engine executable identity, explicit engine environment, approved host launch roots, immutable execution descriptor, server-owned image repository and explicit non-root numeric container user.
+- Compose the executable OCI image reference from the server-owned repository plus the immutable manifest digest stored in the existing execution descriptor. Mutable tags and tenant-supplied digest/repository combinations are rejected.
+- Add `IAiContainerWorkerCatalog` and `AiConfiguredContainerWorkerCatalog` for exact runtime-profile resolution without `latest`, language fallback or mutable tenant registration.
+- Add `AiContainerWorkerExecutionAdmission` as the isolated-provider pre-launch capability guard.
+
+### Behavior and Compatibility
+
+- Preserve `AiWorkerExecutionAdmission.ProcessCapabilities` as `HostRuntime` / `TrustedProcess` / `HostNetwork` / `ValidatedPaths`.
+- Do not report the trusted-process provider as satisfying sandbox, denied-egress or sealed-closure requirements.
+- Keep the OCI image-manifest digest distinct from the canonical environment-document hash and historical runtime SHA-256.
+- Refuse descriptor-free legacy execution and unsupported isolation/network/path combinations on the isolated provider.
+- Preserve publication pinning, deterministic dependency packaging, RBAC, durable invocation journal, leases/epochs, worker protocol, DAG transitions, recovery and continuation.
+
+### Validation
+
+- Add targeted provider-contract and admission coverage without claiming container enforcement from declarations alone.
+
+### Limits
+
+- The initial isolated provider target is Linux amd64 only.
+- `PinnedPolicy` egress, OCI registry access, image pulling, Kubernetes and additional platforms remain outside this bounded target.
+
+## OCI Container Transport and Exact Image Launch
+
+### Added
+
+- Add `AiContainerWorkerLaunchPlan` as a pure server-owned launch projection for one exact immutable OCI image reference.
+- Add `AiContainerWorkerTransport` implementing the existing `IAiWorkerInvocationTransport`; the durable supervisor, journal, leases, epochs and result acceptance remain unchanged.
+- Launch only `<repository>@sha256:<manifest-digest>` with `--pull=never`; no mutable tag, registry fallback or implicit image update is accepted.
+- Reuse the existing private newline-framed worker protocol over redirected container-engine stdin/stdout.
+- Verify the configured container-engine executable digest and approved host launch paths before starting the engine process.
+- Clear inherited engine environment and pass only explicit host-owned values.
+- Generate a server-owned opaque container name without tenant or execution identity.
+- Carry initial isolation controls into the launch: non-root user, denied network, read-only root filesystem, dropped capabilities, no-new-privileges, bounded pids/memory/CPU and bounded memory-backed `/tmp`.
+- Add deterministic direct cleanup and explicit force removal after interrupted attached execution.
+- Surface unconfirmed cleanup through the existing `AiWorkerProcessCleanupException` so capacity remains quarantined by the existing supervisor.
+
+### Fixed
+
+- Resolve the build-owned container-engine probe apphost with an explicit `.exe` path on Windows and the extensionless apphost path on non-Windows platforms instead of relying on `$(ExeExtension)`.
+
+### Validation
+
+- Add a build-owned Docker-compatible engine probe for exact process arguments, private protocol correlation, engine digest refusal, deadline handling, cancellation cleanup and cleanup-failure signaling.
+
+### Limits
+
+- Argument selection and a process probe are not by themselves proof of kernel/container enforcement.
+- Exact images must already be available to the configured engine; image acquisition remains deliberately absent.
+
+## Applied Isolation Attestation and Fail-Closed Enforcement
+
+### Added
+
+- Add `AiContainerWorkerIsolationAttestation` to verify the running container state reported by the configured engine before tenant invocation bytes are released to the worker.
+- Require exact attestation of the immutable OCI image reference and configured non-root numeric `uid:gid`.
+- Require the applied root filesystem to be read-only, non-privileged and configured for automatic removal.
+- Require applied `NetworkMode=none` before the worker receives its invocation request.
+- Require applied memory, memory+swap, CPU and PID bounds to equal the server-owned `AiContainerWorkerResourceLimits`.
+- Add `--memory-swap=<memory-limit>` so the selected provider does not silently expand the memory bound through additional swap allowance.
+- Require no host bind mounts and no added Linux capabilities.
+- Require `CapDrop=ALL` and `no-new-privileges` in the applied container state.
+- Require the only writable filesystem surface represented by the provider contract to be `/tmp` as a bounded `tmpfs` with `noexec`, `nosuid`, `nodev` and the exact configured size.
+- Reject persistent or host-backed mounts other than the selected `/tmp` tmpfs representation.
+- Delay writing the existing `AiWorkerInvocationRequest` until the running container passes attestation. The host-owned worker process may start, but tenant code/input is not released through stdin before verification succeeds.
+- Add bounded container inspection through the same verified engine executable and explicit engine environment used for launch and cleanup.
+- Extend the build-owned engine probe with an `inspect` surface so tests can prove request-release ordering and fail-closed behavior for applied-state mismatches.
+
+### Behavior and Compatibility
+
+- Keep `AiContainerWorkerExecutionAdmission` as the pre-launch requirements/capability guard; runtime attestation is an additional post-launch/pre-request gate, not a replacement.
+- Preserve the existing worker protocol, supervisor, durable journal, assignment authority, RBAC, publication pinning, DAG lifecycle, recovery and continuation.
+- Preserve the trusted-process provider unchanged; it still does not satisfy `SandboxedContainer`, `DenyAll` or `SealedClosure`.
+- If runtime inspection cannot identify the launched container before the existing startup bound, execution fails closed and direct cleanup is attempted.
+- If applied isolation differs from the profile, the request is never written and the container is terminated/removed through the existing cleanup path.
+- Runtime attestation trusts the deployment-owned engine as infrastructure; it does not treat tenant code or the publication as an authority over isolation controls.
+
+### Validation
+
+- Add targeted coverage proving successful invocation only after the engine probe has completed isolation inspection.
+- Add fail-closed mismatch coverage for network mode, read-only root, memory, memory+swap, CPU quota, PID limit, tmpfs options/size, user identity, privileged mode, capability drop, no-new-privileges, image identity, host binds and automatic removal.
+- Verify attestation failure occurs before the probe receives the tenant invocation request.
+- Verify unexpected persistent mounts are rejected by the attestation parser.
+- Preserve existing cancellation and cleanup-failure coverage through the attested launch path.
+
+### Limits
+
+- The engine probe models Docker-compatible inspection state; it is not a kernel isolation proof.
+- Real-engine adversarial tests for outbound connectivity, rootfs writes, writable-workspace exhaustion, CPU/memory pressure, PID exhaustion, descendant containment and host-loss cleanup remain required before branch closure.
+- The initial provider continues to support only `DenyAll`; immutable pinned egress policies remain deferred.
+
+## Provider Routing and Lifecycle Integration
+
+### Added
+
+- Add `AiWorkerInvocationTransportRouter` behind the existing `IAiWorkerInvocationTransport` boundary so the durable supervisor and hosted policy transports remain provider-agnostic.
+- Select the trusted-process or isolated-container provider only from the immutable execution descriptor restored with the prepared code bundle.
+- Keep descriptor-free historical execution on the explicit trusted-process compatibility path.
+- Route `HostRuntime` artifacts to the trusted-process provider and `OciImage` artifacts to the isolated provider. An unavailable OCI profile cannot fall back to trusted-process execution.
+- Add explicit `AddAiHostedInvocationContainerWorkers` registration that composes only with the default hosted process transport, installs one router and preserves the existing shared supervisor/capacity boundary.
+- Refuse duplicate isolated-provider configuration and refuse silent replacement of an unknown preconfigured worker transport.
+- Add `--init` to the selected OCI launch and require applied PID-1 init/reaping through runtime attestation before request release.
+
+### Fixed
+
+- Treat exit of an interrupted attached container-engine client as insufficient proof of container cleanup. Abnormal or cancelled execution continues to require direct container removal, and unconfirmed removal retains the existing shared-capacity quarantine behavior.
+- Keep provider/supervisor integration tests on one shared `TimeProvider`, matching production dependency injection and preventing deterministic journal clocks from being compared against wall-clock transport deadlines.
+
+### Behavior and Compatibility
+
+- Preserve `AiWorkerInvocationSupervisor` as the only durable dispatch owner. Provider routing occurs after immutable preparation and does not change operation identity, worker lease/epoch, result acceptance or continuation behavior.
+- Preserve one process-wide `AiWorkerProcessCapacity` across trusted-process and isolated-container invocations. Provider selection does not create a second capacity authority.
+- Preserve existing cleanup-quarantine behavior. An unconfirmed isolated-container cleanup still surfaces as `AiWorkerProcessCleanupException` and permanently withholds the acquired shared capacity slot until host recovery.
+- Preserve the trusted-process provider unchanged for historical and explicitly trusted `HostRuntime` environments.
+- Do not downgrade an OCI/sandbox request when the isolated provider or exact runtime profile is unavailable.
+- Require the container runtime to report applied init/reaping support in addition to the previously attested isolation controls.
+
+### Validation
+
+- The preceding applied-isolation enforcement target has a reported passing target-environment result. No raw TRX artifact is included, so no aggregate pass total is inferred.
+- Add provider-selection coverage for descriptor-free trusted-process compatibility and exact OCI routing.
+- Add registration coverage proving one router is installed behind the existing transport contract and duplicate/unknown transport composition fails closed.
+- Add supervisor integration coverage proving isolated execution persists its authoritative result through the existing journal and releases the shared slot after confirmed cleanup.
+- Add cleanup-failure integration coverage proving an isolated-container cleanup failure yields `CapacityQuarantined`, retains the invocation for reconciliation and leaves the shared slot quarantined.
+- Extend applied-isolation tests with required PID-1 init/reaping attestation and fail-closed mismatch coverage.
+
+### Limits
+
+- PID-1 init/reaping and container PID namespace confinement do not by themselves prove operating-system host-crash orphan cleanup.
+- Startup reconciliation of containers left by an abruptly terminated runtime host and real-engine descendant/resource adversarial tests remain branch-closure work.
+
+## Adversarial Isolation Closure and Restart Reconciliation
+
+### Added
+
+- Add an explicit server-owned container owner scope to isolated worker profiles. The scope is physical provider configuration and is not derived from tenant, execution, publication or operation identity.
+- Label every OCI worker with a managed-worker marker and the exact configured owner scope.
+- Require both ownership labels in applied-state attestation before tenant request bytes are released.
+- Add one fail-closed stale-container reconciliation per container-engine/owner-scope pair before the first isolated launch in a transport lifetime.
+- Enumerate only containers carrying both provider labels and require returned names to remain in the server-generated `multiplexed-ai-*` namespace before force removal.
+- Reuse `AiWorkerProcessCleanupException` when startup enumeration or stale cleanup cannot be confirmed, preserving the existing supervisor capacity-quarantine authority.
+- Add explicit cleanup of an in-flight engine inspection subprocess when startup attestation is cancelled.
+- Extend the independent container-engine probe with startup enumeration, owner-label inspection, delayed inspection, engine-client loss and packaged-dependency wire evidence.
+- Add adversarial provider tests for startup stale cleanup, fail-closed reconciliation, cancellation during attestation, engine-client loss and Python/TypeScript/.NET package metadata compatibility.
+- Add opt-in real Docker-compatible engine tests for applied inspection state, denied outbound networking, read-only root filesystem, writable bounded `/tmp`, non-root identity, zero effective capabilities, no-new-privileges, CPU/memory/PID cgroup bounds and descendant removal.
+- Add a repository-owned Linux/amd64 isolation fixture Dockerfile and PowerShell preparation script. The script resolves the fixture base to an exact digest, builds and publishes through a loopback test registry, preloads the resulting exact OCI manifest reference and can execute the opt-in real-engine matrix without weakening `--pull=never` runtime behavior.
+
+### Behavior and Compatibility
+
+- Keep stale-container reconciliation strictly physical. It does not read or mutate durable invocation state, choose recovery work, change leases/epochs, accept results or select continuation behavior.
+- Preserve the existing `AiWorkerInvocationSupervisor`, durable journal, shared `AiWorkerProcessCapacity`, publication/run pinning, RBAC, DAG lifecycle and recovery authorities.
+- Require the owner scope to be stable across restart of one physical runtime host and exclusive among simultaneously active hosts sharing the same container engine.
+- Preserve `--pull=never` and exact OCI manifest selection. Real-engine validation requires the exact image to be present before execution.
+- Preserve deterministic dependency package identities. The isolated transport forwards the already-validated `PythonWheelBundle`, `NodeLockedBundle` and `DotNetAssemblyClosure` metadata without introducing runtime package resolution.
+
+### Fixed
+
+- Prevent cancellation during applied-state inspection from leaving the inspection control process unreaped.
+- Preserve direct container cleanup after abnormal attached engine-client loss even when applied-state inspection completed immediately before the client exited.
+
+### Validation
+
+- The targeted provider lifecycle integration tests for the preceding delivery were reported passing in the target environment; no raw TRX artifact is included, so no aggregate pass total is inferred.
+- Add build-owned probe coverage for startup reconciliation ordering, cleanup failure, unexpected stale identity, startup cancellation, abnormal engine-client exit and owner-label attestation.
+- Add transport-boundary compatibility coverage for all three deterministic dependency package kinds.
+- Add explicit `ContainerRealEngine` tests. These tests are skipped unless `MULTIPLEXED_AI_TEST_CONTAINER_ENGINE` and `MULTIPLEXED_AI_TEST_CONTAINER_IMAGE` are configured; a skip is not treated as enforcement evidence.
+- Add a one-command `Prepare-RealEngineTestImage.ps1 -RunTests` path for preparing the exact local fixture image and executing the real-engine evidence target. Mutable image acquisition remains outside worker execution.
+- Resolve the container-engine probe apphost from the actual SDK build outputs instead of relying on an inherited `OS` environment property, preserving Windows `.exe` discovery when the probe target is invoked through nested MSBuild.
+- Add a Windows `.cmd` launcher that applies `ExecutionPolicy Bypass` only to the child PowerShell process, allowing repository-owned test setup to run under restrictive local PowerShell execution policies without changing machine or user policy.
+- Make the real-engine preparation helper compatible with Windows PowerShell 5.1 native stderr semantics so expected failed discovery probes can be inspected without being promoted to terminating PowerShell errors.
+
+### Limits
+
+- The selected isolated provider remains Linux/amd64 with `DenyAll` networking and `SealedClosure` filesystem semantics.
+- The container engine and its daemon remain trusted deployment infrastructure.
+- A machine or container-daemon outage cannot be reconciled while that infrastructure is unavailable; stale owned containers are reconciled before the next isolated launch after engine availability returns.
+- Concurrent runtime hosts sharing one engine must use distinct owner scopes. Reusing one owner scope across simultaneously active hosts is unsupported.
+- Real-engine tests require a preloaded exact image containing `/bin/sh` and basic BusyBox/Alpine-compatible utilities. They validate the selected container boundary, not arbitrary OCI runtimes or platforms.
+- No universal hostile-code, throughput or cross-platform guarantee is made.
 
 ---
 

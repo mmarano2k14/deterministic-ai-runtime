@@ -805,9 +805,9 @@ Immutable publication binds code, supplied dependencies, deterministic package b
 
 A hosted function process is not a trusted `RuntimeInstance` and does not own DAG claims, retries, `Park`, recovery, or successor selection. The existing RBAC engine authorizes publication and execution. Contextual policy adapters are excluded from native singleton discovery.
 
-The process provider validates declared requirements against actual capabilities before launch. It remains a trusted-process provider and refuses sandbox, denied-egress, OCI-image, or sealed-closure requirements it cannot enforce. This foundation does not include the external SDK library or a public publication endpoint.
+Physical execution is provider-specific. The trusted-process provider validates declared requirements against actual capabilities and refuses sandbox, denied-egress, OCI-image, or sealed-closure requirements it cannot enforce. A separate selected OCI provider implements `SandboxedContainer` execution for Linux/amd64 with an exact image digest, non-root identity, denied egress, read-only root, bounded tmpfs, dropped capabilities, `no-new-privileges`, CPU/memory/PID limits, applied-state attestation before tenant material release, and fail-closed cleanup/quarantine. It reuses the same supervisor, capacity, journal, lease/epoch, result-acceptance, DAG, and recovery authorities. This foundation still does not include the external SDK library or public publication endpoint, and KubernetesPool does not yet materialize hosted sandboxes as ephemeral Pods.
 
-See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md) for the language backends, environment identity, hosted custom `Concurrency`, `Retry`, and `Delegation` policy checkpoints, outbound MCP effect metadata, and remaining scope. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the evidence boundaries.
+See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md) for the language backends, environment identity, hosted custom `Concurrency`, `Retry`, and `Delegation` policy checkpoints, outbound MCP effect metadata, and remaining scope. [Hosted Worker Isolation](hosted-worker-isolation.md) describes the physical OCI provider and [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) records the deterministic and real-engine evidence boundaries. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) remains the language/publication evidence reference.
 
 ---
 
@@ -1517,13 +1517,13 @@ Plugins remain responsible for domain-specific execution.
 | Observability dashboard | Planned |
 | Kubernetes runtime host provider | Implemented / validated for Host Manager lifecycle, Kubernetes SDK Pod/Service creation, layered readiness, HTTP/gRPC transport preservation, and Pod crash-recovery scenarios |
 | Full Kubernetes deployment packaging and cluster operations | Ongoing |
-| Hosted Python, TypeScript and .NET execution | Implemented / targeted validation; opt-in trusted-process hosting |
+| Hosted Python, TypeScript and .NET execution | Implemented / targeted validation through the existing hosted-worker abstraction; trusted-process execution remains supported |
 | Immutable publication and whole-run pinning | Implemented / validated within the supported published DAG path |
 | Deterministic dependency packaging | Pure-Python wheels, locked Node source bundles, and managed .NET assembly closures implemented on the existing immutable publication/environment identity; no runtime package-manager resolution |
 | Durable function journal and DAG continuation | Implemented / validated; recorded result and exact application receipt remain distinct |
 | Hosted custom policy families | `Concurrency`, `Retry`, and `Delegation` implemented at their existing checkpoints with distinct family contracts; `Retention` remains native-only |
 | Outbound MCP tool transport and effect identity | Implemented / validated for read-only/idempotent targets; durable effect evidence is not included |
-| Execution requirements and artifact descriptors | Implemented / validated capability refusal; not a hostile-code sandbox |
+| Hosted worker physical isolation | Selected Linux/amd64 OCI `SandboxedContainer` provider implemented / validated with fail-closed attestation, cleanup/quarantine, orphan reconciliation, 86 deterministic isolation tests and 2 explicit real-engine tests; not a universal platform or Kubernetes sandbox claim |
 | External SDK library and public publication/submission API | Planned; no engine-DLL dependency in the target contract |
 | Process-host Runtime Pool Manager | Implemented / validated |
 | Independent `PoolId` / `HostId` / `RuntimeInstanceId` identity | Implemented / validated |

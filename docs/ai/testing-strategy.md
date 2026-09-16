@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Status: Actively validated by a large unit and integration suite covering MCP, Redis, local runtime pools, HTTP/gRPC ProcessHostPool, KubernetesPool, historical one-runtime-per-Pod Kubernetes hosting, real process and Pod failure, hierarchical child/full-boundary recovery, operator-triggered external parent-boundary failure, multi-tenant isolation, replay, ledger, lifecycle, trace, and forensics proof.
+Status: Actively validated by a large unit and integration suite covering MCP, Redis, local runtime pools, HTTP/gRPC ProcessHostPool, KubernetesPool, historical one-runtime-per-Pod Kubernetes hosting, real process and Pod failure, hierarchical child/full-boundary recovery, operator-triggered external parent-boundary failure, multi-tenant isolation, hosted worker provider isolation, replay, ledger, lifecycle, trace, and forensics proof.
 
 This document describes the testing strategy used to validate the Deterministic AI Runtime.
 
@@ -76,7 +76,15 @@ The broad invocation/publication artifact contains 1,098 passing results and 54 
 
 Cold-restoration tests reconstruct services and serialized state; a real .NET worker produces the initial result in one case. This differs from an OS-level host kill. The HTTP/gRPC ProcessHostPool continuation scenarios have reported passing results, recorded separately because their final TRX/log is not included in the inspected evidence set.
 
-Capability-refusal and symbolic-link tests validate declared boundaries without claiming a hostile-code sandbox. MCP identity/transport tests validate authorized read-only/idempotent calls without claiming durable replay of external effects. The existing production harnesses and historical evidence below are unchanged.
+The earlier trusted-process capability-refusal and symbolic-link tests validate declared process-provider boundaries; they do not become sandbox evidence retroactively. A separate OCI isolation suite now validates the selected `SandboxedContainer` provider, including explicit real Docker/Linux enforcement tests. MCP identity/transport tests still validate authorized read-only/idempotent calls without claiming durable replay of external effects. The existing production harnesses and historical evidence below are unchanged.
+
+## Hosted Worker Isolation Evidence
+
+[Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) records the final selected-provider evidence. The deterministic isolation target completed with **86 passed, 0 failed, 0 skipped**. It proves runtime-side contracts such as exact provider routing, no sandbox-to-process downgrade, OCI digest admission, launch/inspect ordering, applied-state fail-closed behavior, cleanup/quarantine, startup orphan reconciliation, cancellation handling, package metadata preservation, and reuse of the existing journal/result-acceptance path.
+
+The explicit real-engine target completed with **2 passed, 0 failed, 0 skipped**. Those tests use a preloaded exact `repository@sha256:<manifest>` image and a real Docker-compatible Linux engine to observe non-root identity, capability removal, `no-new-privileges`, read-only root, writable bounded `/tmp`, denied outbound networking, cgroup CPU/memory/PID limits, and force-removal of a running descendant workload.
+
+The two layers must remain distinct. A simulated/probe result demonstrates runtime logic and deterministic failure handling; a real-engine result demonstrates selected kernel/container enforcement. Neither is a claim about every OCI engine, every operating system, a Kubernetes sandbox-Pod provider, or universal hostile-code safety.
 
 ---
 

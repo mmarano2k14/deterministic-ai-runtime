@@ -1,12 +1,12 @@
 # Hosted Multilanguage Execution
 
-**Status:** Implemented server-side foundation with targeted execution, persistence, authorization, and restoration validation. The external SDK library and production isolation for hostile code are separate deliverables.
+**Status:** Implemented server-side foundation with targeted execution, persistence, authorization, restoration validation, and a selected OCI-backed `SandboxedContainer` provider. The external SDK library, Kubernetes sandbox-Pod provider, and broader hostile-code/platform guarantees remain separate deliverables.
 
 ## Purpose and scope
 
 Hosted execution allows the existing DAG runtime to invoke published Python, TypeScript, and .NET functions without giving those functions orchestration authority. The same language infrastructure also evaluates custom `Concurrency`, `Retry`, and `Delegation` policies at their existing family checkpoints. Outbound MCP is a separate invocation mode, not another language or a replacement for the inbound MCP control plane.
 
-This reference covers the implemented contracts and their limits. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the supplied test results and distinguishes process execution, controlled restoration, infrastructure integration, and reported host scenarios.
+This reference covers the implemented contracts and their limits. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the supplied language/publication evidence. [Hosted Worker Isolation](hosted-worker-isolation.md) documents the selected OCI provider, and [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) separates deterministic provider tests from real Docker/Linux enforcement evidence.
 
 | Capability | Current boundary |
 |---|---|
@@ -14,7 +14,7 @@ This reference covers the implemented contracts and their limits. [Hosted Multil
 | Hosted languages | Python source, TypeScript source compiled with a bundled toolchain, and precompiled .NET assemblies. |
 | Custom policies | `Concurrency`, `Retry`, and `Delegation`, each evaluated at its existing checkpoint with a distinct closed result contract. `Retention` remains native-only. |
 | Outbound MCP | Real Streamable HTTP transport, existing RBAC, server-owned connections, and logical-effect metadata. |
-| Isolation | Trusted-process execution with capability checks and verified launch paths; no hostile-code sandbox. |
+| Isolation | Two explicit physical providers: approved `TrustedProcess` execution, plus a selected Linux/amd64 OCI `SandboxedContainer` path with fail-closed applied-state attestation. |
 | External SDK | Not delivered. Public models and clients must remain independent of engine DLLs and internal CLR contracts. |
 
 Registration is opt-in. Existing hosts do not automatically activate every hosted capability. Internal publication/run services are not a new public upload API, and run creation alone does not enqueue or start execution.
@@ -37,8 +37,8 @@ For a custom function, the execution path is:
 Existing DAG admission and claim
     -> resolve declared inputs and prepare durable invocation
     -> Park while the authoritative result is unavailable
-    -> supervisor assigns a hosted process under journal authority
-    -> process executes the pinned function
+    -> supervisor selects the pinned physical provider under journal authority
+    -> trusted process or attested OCI sandbox executes the pinned function
     -> journal accepts the result
     -> existing continuation path resumes the same call site
     -> DAG persists the result and application receipt
@@ -52,7 +52,7 @@ A result may arrive before `Park`; the sequence is not an ordering assumption th
 | Authorization and restored execution ownership | Existing RBAC and execution-context infrastructure. |
 | Code, dependencies, and environment selection | Immutable publication and run pin. |
 | Invocation identity, assignment epoch, and accepted result | Durable invocation journal. |
-| Process lifecycle, liveness, and bounded launch capacity | Hosted worker supervisor and process transport. |
+| Physical worker lifecycle, liveness, bounded launch capacity, cleanup, and quarantine | Hosted worker supervisor plus the selected trusted-process or OCI-container transport. |
 | Function body and portable business result | Hosted function process. |
 | Continuation acknowledgement | Observation of the exact applied result and terminal parent state. |
 
@@ -132,7 +132,7 @@ The private UTF-8 JSON protocol uses closed `invoke`, `ready`, `heartbeat`, and 
 
 The supervisor acquires journal authority before materializing the authorized publication, renews only with validated liveness and confirmed journal writes, and accepts results through the journal. It does not advance the DAG. Technical failures remain technical failures rather than manufactured business denials or permission for immediate reexecution.
 
-Launch capacity is bounded. A slot is quarantined when termination of its root process cannot be confirmed. This does not establish complete containment of descendants after every host failure. Optional dispatch polling uses explicit control-plane/tenant/language partitions and bounded pagination rather than discovering arbitrary tenant work.
+Launch capacity is bounded. A slot is quarantined when physical cleanup cannot be confirmed. On the trusted-process path this does not establish complete descendant containment after every host failure. On the selected OCI path, descendant containment relies on the container boundary, init/reaping, force-removal on interrupted execution, and owner-scope orphan reconciliation on provider restart. Optional dispatch polling uses explicit control-plane/tenant/language partitions and bounded pagination rather than discovering arbitrary tenant work.
 
 ### Python
 
@@ -142,7 +142,7 @@ A supported wheel bundle is captured before publication, bound to the existing i
 
 The current profile accepts exact CPython 3.12.x and 3.13.x identities. Python compatibility is not broadened by the Node backend's version policy.
 
-Published source is loaded in the function process, not inside the .NET engine. Output handling separates ordinary/raw stdout diagnostics from the runtime protocol, but does not make hostile Python code a sandboxed workload.
+Published source is loaded in the function worker, not inside the .NET engine. On the trusted-process path this does not create an operating-system sandbox. On the selected OCI path, tenant request/code/dependency material is released only after container inspection attests the required isolation boundary. Output handling remains separate from the runtime protocol in both cases.
 
 ### TypeScript and Node.js
 
@@ -160,7 +160,7 @@ The function child returns its result through IPC. Child stdout is not the paren
 
 The .NET backend executes immutable published assemblies and deterministic managed dependency closures in a separate function process. A managed-closure manifest binds each supplied DLL to its SHA-256, CLR assembly name, and assembly version. The server validates the captured closure before publication and the worker revalidates it before readiness, then uses the existing collectible `AssemblyLoadContext` to load only the published material. The runtime does not compile tenant C#, run MSBuild, restore tenant NuGet packages, discover transitive packages, or resolve native dependencies during invocation.
 
-An entry point identifies `Fully.Qualified.Type::Method` and receives portable JSON inputs and context. Supported synchronous/asynchronous results must satisfy the portable business-result contract. Assembly loading and dependency selection are scoped to the published material; loading isolation is not an operating-system security sandbox.
+An entry point identifies `Fully.Qualified.Type::Method` and receives portable JSON inputs and context. Supported synchronous/asynchronous results must satisfy the portable business-result contract. Assembly loading and dependency selection are scoped to the published material. On the trusted-process path, `AssemblyLoadContext` is not an operating-system security boundary; the selected OCI provider supplies the separate physical sandbox when `SandboxedContainer` is required.
 
 The standalone worker remains distinct from engine assemblies. Tenant console output does not become readiness, heartbeat, or result frames in the parent protocol.
 
@@ -177,19 +177,22 @@ ExecutionDescriptor.Artifact.Digest
     = sha256:<hex> identifying the selected executable artifact
 ```
 
-`EnvironmentRef` retains its existing `env-<hash>` form. A host-runtime artifact digest identifies approved executable bytes, not every shared library, framework file, or operating-system component. An OCI descriptor represents an image-manifest digest with media type and platform metadata; it neither downloads nor attests an image. The current process provider refuses OCI execution.
+`EnvironmentRef` retains its existing `env-<hash>` form. A host-runtime artifact digest identifies approved executable bytes, not every shared library, framework file, or operating-system component. An OCI descriptor represents an exact image-manifest digest with media type and platform metadata. The trusted-process provider refuses OCI execution; the isolated provider resolves the server-owned repository plus that pinned digest and verifies the applied container state before tenant material is released. Environment identity, package identity, host-runtime identity, and OCI image identity remain distinct.
 
 Historical environment snapshots omit the descriptor. Versioned snapshots include and validate it; a version/descriptor mismatch is rejected. Requirements participate in publication identity and are carried server-side without changing the closed worker JSON. They are not taken from worker responses.
 
-| Requirement or capability | Default requirement for a new descriptor | Actual process-provider capability |
+| Requirement or capability | Trusted-process provider | Selected OCI isolated provider |
 |---|---|---|
-| Isolation | `SandboxedContainer` | `TrustedProcess` |
-| Network egress | `DenyAll` | `HostNetwork` |
-| Path protection | `SealedClosure` | `ValidatedPaths` |
+| Artifact | `HostRuntime` | `OciImage` with exact `sha256` manifest digest |
+| Isolation | `TrustedProcess` | `SandboxedContainer` |
+| Network egress | `HostNetwork` | `DenyAll` |
+| Path protection | `ValidatedPaths` | `SealedClosure` |
+| Platform | Host-approved executable profile | Linux / amd64 |
+| User | Host process identity | Explicit non-root numeric `uid:gid` |
 
-These columns must not be conflated. The process provider rejects unsupported requirements before reading launch files or starting a process. An explicitly approved trusted-process/host-network/validated-path profile can run; a sandbox requirement cannot silently downgrade to that profile. Existing legacy profiles remain a compatibility path, not newly sandboxed environments.
+The providers are not interchangeable. A sandbox requirement cannot silently downgrade to the trusted-process path. The trusted provider validates approved roots, path containment, links/reparse points, collisions, and executable/file hashes. The isolated provider starts the exact OCI image with `--pull=never`, then inspects the applied state and fails closed unless networking, root filesystem, capabilities, `no-new-privileges`, resource limits, mounts, tmpfs, init/reaping, user, image digest, and server-owned ownership labels match the selected profile.
 
-Launch checks validate approved roots, path containment, links/reparse points, collisions, and file hashes. Verified file handles are retained for the versioned path. These checks do not seal every mutable filesystem dependency, enforce network isolation, or eliminate all filesystem races on every platform. Stronger requirements remain refused until an enforcing provider exists.
+The container image is the controlled worker/runtime environment; tenant publication code and deterministic dependency bundles remain separate immutable material. They are not baked into a per-publication image and are not host-mounted into the container. The request material is written to the worker only after applied-state attestation succeeds. No runtime package-manager or registry resolution is introduced.
 
 ## Hosted custom policy families
 
@@ -250,7 +253,7 @@ The following remain outside the implemented foundation:
 | Area | Remaining scope |
 |---|---|
 | Public integration | Independent SDK libraries, public publication/submission models, and Gateway/API productization. |
-| Hostile code | Enforced container isolation, CPU/memory limits, filesystem policy, network egress, descendant containment, and cleanup after host loss. |
+| Isolation breadth | The selected Linux/amd64 OCI provider implements bounded container isolation, resource limits, denied egress, descendant containment, verified cleanup/quarantine, and restart orphan reconciliation. This is not a universal hostile-code guarantee and is not yet a Kubernetes sandbox-Pod provider. |
 | Dependencies | Deterministic pure-Python wheel bundles, locked Node source bundles, and managed .NET assembly closures are implemented. Native Python extensions/namespace packages, Node native add-ons/general npm ecosystem installation, and .NET native dependency/package-manager resolution remain outside scope. |
 | Additional policies | `Retention` is native-only in the current matrix. Taxonomy values without an independent checkpoint are not hosted. Any further family requires its own existing checkpoint, request/response contract, authority analysis, and bounded validation. |
 | Published-child validation breadth | Broader provider/store failure matrices, operating-system host-kill proofs, and unlimited recursive-depth claims are not implied by the bounded published-child closure. |
@@ -272,6 +275,10 @@ These are server implementation points, not public SDK contracts.
 | Immutable run creation | [`AiPublishedDagRunService.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Publication/AiPublishedDagRunService.cs) |
 | Published Child DAG binding | [`AiPublishedChildDagBindingCoordinator.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Publication/AiPublishedChildDagBindingCoordinator.cs) |
 | Durable invocation authority | [`AiDurableInvocationJournal.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Durable/AiDurableInvocationJournal.cs) |
+| Physical provider routing | [`AiWorkerInvocationTransportRouter.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/AiWorkerInvocationTransportRouter.cs) |
+| OCI isolation profile | [`AiContainerWorkerProfile.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/Isolation/AiContainerWorkerProfile.cs) |
+| OCI transport and lifecycle | [`AiContainerWorkerTransport.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/Isolation/AiContainerWorkerTransport.cs) |
+| Applied isolation attestation | [`AiContainerWorkerIsolationAttestation.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/Isolation/AiContainerWorkerIsolationAttestation.cs) |
 | Continuation acknowledgement | [`AiDurableInvocationDagContinuationCoordinator.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Durable/Dag/AiDurableInvocationDagContinuationCoordinator.cs) |
 | Provider capability checks | [`AiWorkerExecutionAdmission.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/AiWorkerExecutionAdmission.cs) |
 | Launch-file boundary | [`AiWorkerLaunchPaths.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/AiWorkerLaunchPaths.cs) |
