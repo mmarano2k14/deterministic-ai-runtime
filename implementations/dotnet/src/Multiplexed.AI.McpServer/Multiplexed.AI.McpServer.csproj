@@ -15,6 +15,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Multiplexed.Abstractions\Multiplexed.Abstractions.csproj" />
     <ProjectReference Include="..\Multiplexed.AI\Multiplexed.AI.csproj" />
+    <ProjectReference Include="..\Multiplexed.AI.Sdk.Contracts\Multiplexed.AI.Sdk.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>

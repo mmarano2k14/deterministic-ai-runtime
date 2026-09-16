@@ -1,5 +1,6 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.AI.McpServer.Hosting;
+using Multiplexed.AI.McpServer.PublicSdk;
 using Multiplexed.AI.McpServer.Tools;
 
 namespace Multiplexed.AI.McpServer.DependencyInjection
@@ -18,6 +19,9 @@ namespace Multiplexed.AI.McpServer.DependencyInjection
             this IServiceCollection services)
         {
             services.AddAiMcpServerConfiguration();
+
+            services.AddScoped<IAiPublicSdkBoundary, AiPublicSdkBoundary>();
+            services.AddSingleton<PublicSdkMcpTools>();
 
             services.AddSingleton<SharedRunMcpTools>();
             services.AddSingleton<SharedQueueMcpTools>();

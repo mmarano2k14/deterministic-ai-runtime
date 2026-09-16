@@ -71,6 +71,19 @@ namespace Multiplexed.AI.Runtime.Publication
             return record;
         }
 
+        public async Task<AiPublicationRunPin> ReadPinAsync(
+            AiDurableInvocationScope scope,
+            string executionId,
+            CancellationToken cancellationToken = default)
+        {
+            AiPublicationJson.Text(executionId, nameof(executionId));
+            var guard = await _identity.AuthorizeAsync(scope, _options.Read, cancellationToken).ConfigureAwait(false);
+            var pin = await _store.ReadPinAsync(executionId, guard, cancellationToken).ConfigureAwait(false);
+            guard.RequireCurrent();
+            cancellationToken.ThrowIfCancellationRequested();
+            return pin ?? throw new KeyNotFoundException($"Published execution '{executionId}' was not found.");
+        }
+
         private static void RequireRecord(AiExecutionRecord record, AiPublicationRunPin pin)
         {
             var owner = record.ExecutionContextSnapshot;
