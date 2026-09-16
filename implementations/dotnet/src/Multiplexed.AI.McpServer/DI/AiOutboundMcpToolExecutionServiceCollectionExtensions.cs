@@ -3,6 +3,7 @@ using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Invocation.Mcp;
 using Multiplexed.AI.McpServer.Invocation.Outbound;
 using Multiplexed.AI.Runtime.Invocation.Mcp;
+using Multiplexed.AI.Runtime.Invocation.Mcp.Durable;
 
 namespace Multiplexed.AI.McpServer.DependencyInjection
 {
@@ -31,12 +32,20 @@ namespace Multiplexed.AI.McpServer.DependencyInjection
             services.AddSingleton(catalog);
             services.AddSingleton<IAiMcpToolResolver>(catalog);
             services.AddSingleton(httpClients);
-            services.AddSingleton<IAiMcpToolTransport>(provider => new AiOutboundMcpToolTransport(
+            services.AddSingleton<AiOutboundMcpToolTransport>(provider => new AiOutboundMcpToolTransport(
                 provider.GetRequiredService<AiOutboundMcpConnectionCatalog>(),
                 provider.GetRequiredService<AiOutboundMcpHttpClientPool>(),
                 provider.GetRequiredService<AiOutboundMcpToolExecutionOptions>(),
                 provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>(),
                 provider.GetService<TimeProvider>()));
+            services.AddSingleton<IAiMcpToolTransport>(provider =>
+            {
+                var physical = provider.GetRequiredService<AiOutboundMcpToolTransport>();
+                var journal = provider.GetService<AiMcpEffectEvidenceJournal>();
+                return journal is null
+                    ? physical
+                    : new AiDurableMcpToolTransport(journal, physical);
+            });
 
             if (services.Any(item => item.ServiceType == typeof(AiMcpStepInvocationOptions)))
             {
