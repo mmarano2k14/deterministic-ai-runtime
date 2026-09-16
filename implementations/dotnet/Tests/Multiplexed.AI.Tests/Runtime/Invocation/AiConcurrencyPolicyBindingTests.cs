@@ -70,7 +70,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation
         {
             var config = Config(CustomPolicy());
             var step = mcp ? Mcp(config: config) : Native(config: config);
-            var binding = Assert.Single(new AiConcurrencyPolicyBindingResolver().Resolve(CreatePipeline(new[] { step }), step));
+            var binding = Assert.Single(new AiConcurrencyPolicyBindingResolver().Resolve(CreatePipeline([step]), step));
             Assert.Equal(AiPolicyBindingScope.Step, binding.Scope);
             Assert.Equal("python", binding.Invocation.ExecutionLanguage);
             Assert.Equal(AiExecutionLanguageSource.Pipeline, binding.Invocation.LanguageSource);

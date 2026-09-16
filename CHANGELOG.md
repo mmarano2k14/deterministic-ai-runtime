@@ -6,7 +6,9 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
-## 0.0.9.0 - 2026-09-16 — Multilanguage — Isolated Provider Contract and Admission
+## 0.0.9.0 - 2026-09-16 — Multilanguage Hosted Worker Isolation
+
+### Isolated Provider Contract and Admission
 
 ### Added
 
