@@ -101,7 +101,9 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
                         }
                         else
                         {
-                            containerMayStillRun = false;
+                            // An attached engine client may exit because it was killed or lost while the
+                            // container continues independently. Only the normal result path above proves
+                            // that this invocation completed with the expected engine/container lifecycle.
                             await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
                         }
                     }

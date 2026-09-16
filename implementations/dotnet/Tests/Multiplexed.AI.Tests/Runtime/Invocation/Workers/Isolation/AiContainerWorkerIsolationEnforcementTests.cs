@@ -13,6 +13,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             var plan = AiContainerWorkerLaunchPlan.Create(profile, "multiplexed-ai-test");
             Assert.Contains("--memory=268435456", plan.Arguments);
             Assert.Contains("--memory-swap=268435456", plan.Arguments);
+            Assert.Contains("--init", plan.Arguments);
         }
 
         [Fact]
@@ -48,6 +49,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
         [InlineData("image")]
         [InlineData("bind")]
         [InlineData("autoremove")]
+        [InlineData("init")]
         public async Task Applied_Isolation_Mismatch_Is_Refused_Before_Tenant_Request(string tamper)
         {
             var marker = Path.Combine(Path.GetTempPath(), "multiplexed-container-request-" + Guid.NewGuid().ToString("N") + ".txt");
@@ -74,7 +76,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             [{
               "Config":{"Image":"{{profile.ImageReference}}","User":"{{profile.ContainerUser}}"},
               "HostConfig":{
-                "ReadonlyRootfs":true,"Privileged":false,"AutoRemove":true,"NetworkMode":"none",
+                "ReadonlyRootfs":true,"Privileged":false,"AutoRemove":true,"Init":true,"NetworkMode":"none",
                 "Memory":268435456,"MemorySwap":268435456,"NanoCpus":750000000,"PidsLimit":32,
                 "Binds":null,"CapAdd":[],"CapDrop":["ALL"],"SecurityOpt":["no-new-privileges"],
                 "Tmpfs":{"/tmp":"rw,noexec,nosuid,nodev,size=33554432"}

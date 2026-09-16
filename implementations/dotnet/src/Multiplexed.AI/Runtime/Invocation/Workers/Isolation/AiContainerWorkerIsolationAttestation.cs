@@ -35,6 +35,8 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
                 throw new InvalidOperationException("Privileged container execution is not permitted.");
             if (!RequireBoolean(host, "AutoRemove"))
                 throw new InvalidOperationException("Container automatic cleanup was not applied.");
+            if (!RequireBoolean(host, "Init"))
+                throw new InvalidOperationException("Container PID-1 init/reaping was not applied.");
 
             RequireEqual(RequireString(host, "NetworkMode"), "none",
                 "Container network mode does not enforce denied egress.");

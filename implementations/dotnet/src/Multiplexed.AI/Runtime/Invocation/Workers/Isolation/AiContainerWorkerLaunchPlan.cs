@@ -28,6 +28,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
             {
                 "run",
                 "--rm",
+                "--init",
                 "--interactive",
                 "--pull=never",
                 "--name", containerName,

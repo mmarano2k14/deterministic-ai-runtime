@@ -143,6 +143,7 @@ internal static class Program
                 ["ReadonlyRootfs"] = args.Contains("--read-only", StringComparer.Ordinal),
                 ["Privileged"] = args.Contains("--privileged", StringComparer.Ordinal),
                 ["AutoRemove"] = args.Contains("--rm", StringComparer.Ordinal),
+                ["Init"] = args.Contains("--init", StringComparer.Ordinal),
                 ["NetworkMode"] = Prefixed(args, "--network=") ?? string.Empty,
                 ["Memory"] = long.Parse(Prefixed(args, "--memory=") ?? "0", CultureInfo.InvariantCulture),
                 ["MemorySwap"] = long.Parse(Prefixed(args, "--memory-swap=") ?? "0", CultureInfo.InvariantCulture),
@@ -185,6 +186,7 @@ internal static class Program
             case "image": config["Image"] = "registry.example.com/other@sha256:" + new string('c', 64); break;
             case "bind": host["Binds"] = new JsonArray(JsonValue.Create("/host:/guest")); break;
             case "autoremove": host["AutoRemove"] = false; break;
+            case "init": host["Init"] = false; break;
             default: throw new InvalidOperationException("Unknown attestation tamper mode.");
         }
     }
