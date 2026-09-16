@@ -30,7 +30,7 @@ namespace Multiplexed.AI.Runtime.Publication
                 new AiDependencyPackageCapability(
                     AiPublicationDependencyPackageKind.NodeLockedBundle,
                     "typescript",
-                    AiDependencyPackageExecutionSupport.ContractDefined),
+                    AiDependencyPackageExecutionSupport.Hosted),
                 new AiDependencyPackageCapability(
                     AiPublicationDependencyPackageKind.DotNetAssemblyClosure,
                     "dotnet",
@@ -52,9 +52,14 @@ namespace Multiplexed.AI.Runtime.Publication
         {
             if (package is null) return null;
             Validate(package, files.Select(file => file.Path), runtime.ExecutionLanguage);
-            return package.Kind == AiPublicationDependencyPackageKind.PythonWheelBundle
-                ? AiPythonWheelPackaging.Capture(package, files, runtime, dependencyName, dependencyVersion)
-                : package with { };
+            return package.Kind switch
+            {
+                AiPublicationDependencyPackageKind.PythonWheelBundle =>
+                    AiPythonWheelPackaging.Capture(package, files, runtime, dependencyName, dependencyVersion),
+                AiPublicationDependencyPackageKind.NodeLockedBundle =>
+                    AiNodeLockedPackaging.Capture(package, files, runtime, dependencyName, dependencyVersion),
+                _ => package with { }
+            };
         }
 
         internal static void Validate(

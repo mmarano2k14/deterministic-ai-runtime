@@ -9,7 +9,7 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
     public sealed class AiDependencyPackagingContractTests
     {
         [Fact]
-        public void Capability_Matrix_Promotes_Only_Python_Wheels_To_Hosted()
+        public void Capability_Matrix_Promotes_Python_And_Node_Bundles_To_Hosted()
         {
             var capabilities = AiDependencyPackagingContracts.All.OrderBy(value => value.Kind).ToArray();
 
@@ -22,8 +22,10 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
                 value.Kind == AiPublicationDependencyPackageKind.DotNetAssemblyClosure).ExecutionLanguage);
             Assert.Equal(AiDependencyPackageExecutionSupport.Hosted, capabilities.Single(value =>
                 value.Kind == AiPublicationDependencyPackageKind.PythonWheelBundle).Support);
-            Assert.All(capabilities.Where(value => value.Kind != AiPublicationDependencyPackageKind.PythonWheelBundle), capability =>
-                Assert.Equal(AiDependencyPackageExecutionSupport.ContractDefined, capability.Support));
+            Assert.Equal(AiDependencyPackageExecutionSupport.Hosted, capabilities.Single(value =>
+                value.Kind == AiPublicationDependencyPackageKind.NodeLockedBundle).Support);
+            Assert.Equal(AiDependencyPackageExecutionSupport.ContractDefined, capabilities.Single(value =>
+                value.Kind == AiPublicationDependencyPackageKind.DotNetAssemblyClosure).Support);
         }
 
         [Fact]
@@ -135,15 +137,7 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
             using var fixture = new PublicationTestSupport.Fixture();
             var upload = PublicationTestSupport.Upload(language: "typescript", secondLanguage: null);
             var function = upload.Functions[0];
-            var files = new[]
-            {
-                new AiPublicationFileUpload(
-                    "bundle.manifest.json",
-                    Encoding.UTF8.GetBytes("{\"schemaVersion\":1}")),
-                new AiPublicationFileUpload(
-                    "runtime.bin",
-                    Encoding.UTF8.GetBytes("runtime"))
-            };
+            var files = NodeBundleFiles(function.Dependencies[0].Name, function.Dependencies[0].Version);
             function = function with
             {
                 Dependencies = new[]
@@ -171,12 +165,8 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
                 packaged.Manifest.Functions[0].Environment.Sha256);
         }
 
-        [Theory]
-        [InlineData(AiPublicationDependencyPackageKind.NodeLockedBundle, "typescript")]
-        [InlineData(AiPublicationDependencyPackageKind.DotNetAssemblyClosure, "dotnet")]
-        public void Contract_Defined_Packages_Fail_Closed_At_Worker_Projection(
-            AiPublicationDependencyPackageKind kind,
-            string language)
+        [Fact]
+        public void Contract_Defined_DotNet_Package_Fails_Closed_At_Worker_Projection()
         {
             var manifest = new AiPublicationFile(
                 "bundle.manifest.json",
@@ -185,13 +175,14 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
                 new AiPublicationDocument("key", new string('b', 64), 2));
             var dependency = new AiPublicationDependency("rules", "1.0.0", new[] { manifest })
             {
-                Package = new AiPublicationDependencyPackage(1, kind, manifest.Path)
+                Package = new AiPublicationDependencyPackage(
+                    1, AiPublicationDependencyPackageKind.DotNetAssemblyClosure, manifest.Path)
             };
 
             Assert.Throws<NotSupportedException>(() =>
                 AiDependencyPackagingContracts.RequireExecutionSupported(
                     new[] { dependency },
-                    language));
+                    "dotnet"));
         }
 
         [Fact]
@@ -210,6 +201,24 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
             };
 
             AiDependencyPackagingContracts.RequireExecutionSupported(new[] { dependency }, "python");
+        }
+
+        [Fact]
+        public void Node_Locked_Package_Metadata_Is_Execution_Supported()
+        {
+            var manifest = new AiPublicationFile(
+                "bundle.manifest.json", new string('a', 64), 2,
+                new AiPublicationDocument("key-a", new string('b', 64), 2));
+            var source = new AiPublicationFile(
+                "index.ts", new string('c', 64), 2,
+                new AiPublicationDocument("key-c", new string('d', 64), 2));
+            var dependency = new AiPublicationDependency("rules", "2.0.1", new[] { manifest, source })
+            {
+                Package = new AiPublicationDependencyPackage(
+                    1, AiPublicationDependencyPackageKind.NodeLockedBundle, manifest.Path)
+            };
+
+            AiDependencyPackagingContracts.RequireExecutionSupported(new[] { dependency }, "typescript");
         }
 
         [Fact]
@@ -237,9 +246,10 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
             AiPublicationDependencyPackageKind kind)
         {
             var function = upload.Functions[0];
-            var dependency = function.Dependencies[0] with
-            {
-                Files = new[]
+            var current = function.Dependencies[0];
+            var files = kind == AiPublicationDependencyPackageKind.NodeLockedBundle
+                ? NodeBundleFiles(current.Name, current.Version)
+                : new[]
                 {
                     new AiPublicationFileUpload(
                         "bundle.manifest.json",
@@ -247,14 +257,31 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
                     new AiPublicationFileUpload(
                         "runtime.bin",
                         Encoding.UTF8.GetBytes("runtime"))
-                },
-                Package = new AiPublicationDependencyPackage(
-                    1,
-                    kind,
-                    "bundle.manifest.json")
+                };
+            var dependency = current with
+            {
+                Files = files,
+                Package = new AiPublicationDependencyPackage(1, kind, "bundle.manifest.json")
             };
             function = function with { Dependencies = new[] { dependency } };
             return upload with { Functions = new[] { function, upload.Functions[1] } };
+        }
+
+        private static AiPublicationFileUpload[] NodeBundleFiles(string name, string version)
+        {
+            var source = Encoding.UTF8.GetBytes("export const value = 1;\n");
+            var sourceHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(source)).ToLowerInvariant();
+            var manifest = JsonSerializer.SerializeToUtf8Bytes(new AiNodeLockedBundleManifest(
+                1,
+                name,
+                version,
+                "index.ts",
+                new[] { new AiNodeLockedBundleFile("index.ts", sourceHash) }));
+            return new[]
+            {
+                new AiPublicationFileUpload("bundle.manifest.json", manifest),
+                new AiPublicationFileUpload("index.ts", source)
+            };
         }
     }
 }

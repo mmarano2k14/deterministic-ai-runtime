@@ -60,6 +60,21 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.TypeScript
         }
 
         [TypeScriptWorkerFact]
+        public async Task Locked_Node_Dependency_Executes_Without_Registry_Resolution()
+        {
+            var source = "import { scale } from '#rules'; export function run(inputs: { amount: number }, context: unknown) { return { success: true, payload: scale(inputs.amount) }; }\n";
+            var request = await TypeScriptWorkerTestSupport.RequestAsync(
+                source,
+                new[] { TypeScriptWorkerTestSupport.LockedDependency() });
+
+            var result = await (await TypeScriptWorkerTestSupport.TransportAsync()).InvokeAsync(
+                request, _ => Task.CompletedTask);
+
+            Assert.True(result.Success);
+            Assert.Equal("84", result.PayloadJson);
+        }
+
+        [TypeScriptWorkerFact]
         public async Task Console_And_Process_Stdout_Do_Not_Forge_Protocol_Frames()
         {
             var source = "export function run(inputs: unknown, context: unknown) { console.log('log'); process.stdout.write('output\\n'); return { success: true, payload: 42 }; }\n";

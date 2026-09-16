@@ -166,7 +166,7 @@ function parseDeadline(value) {
   return milliseconds;
 }
 
-function portablePath(value) {
+function portableRelativePath(value) {
   requireCondition(typeof value === 'string' && value.length > 0 && value.length <= 240, 'Invalid source path.');
   const parts = value.split('/');
   for (const part of parts) {
@@ -175,13 +175,24 @@ function portablePath(value) {
     const stem = part.split('.')[0].toUpperCase();
     requireCondition(!['CON', 'PRN', 'AUX', 'NUL'].includes(stem) && !/^(?:COM|LPT)[1-9]$/u.test(stem), 'Device path is forbidden.');
   }
-  requireCondition(parts[parts.length - 1].endsWith('.ts'), 'Only .ts TypeScript source files are supported.');
   return value;
 }
 
-function decodeFile(value) {
+function portablePath(value) {
+  portableRelativePath(value);
+  requireCondition(value.endsWith('.ts'), 'Only .ts TypeScript source files are supported.');
+  return value;
+}
+
+function portableManifestPath(value) {
+  portableRelativePath(value);
+  requireCondition(value.endsWith('.json'), 'A locked dependency manifest must be JSON.');
+  return value;
+}
+
+function decodeFile(value, pathValidator = portablePath) {
   const item = exactObject(value, ['path', 'sha256', 'sizeBytes', 'base64Url']);
-  const sourcePath = portablePath(item.path);
+  const sourcePath = pathValidator(item.path);
   const sha256 = digest(item.sha256);
   const size = integer(item.sizeBytes, 0, MAX_FILE_BYTES);
   requireCondition(typeof item.base64Url === 'string' && /^[A-Za-z0-9_\-]*$/u.test(item.base64Url) && item.base64Url.length % 4 !== 1,
@@ -201,6 +212,36 @@ function ensureDirectory(root, relative) {
   return target;
 }
 
+function readLockedDependencyManifest(raw, dependencyName, dependencyVersion, sourceFiles) {
+  let manifest;
+  try { manifest = JSON.parse(raw.toString('utf8')); } catch { throw new ContractError('Invalid locked dependency manifest JSON.'); }
+  const value = exactObject(manifest, ['schemaVersion', 'packageName', 'version', 'entryPoint', 'files']);
+  requireCondition(value.schemaVersion === 1, 'Unsupported locked dependency manifest schema.');
+  requireCondition(value.packageName === dependencyName && value.version === dependencyVersion,
+    'Locked dependency manifest identity does not match its dependency.');
+  const entryPoint = portablePath(value.entryPoint);
+  requireCondition(!entryPoint.endsWith('.d.ts'), 'A declaration file cannot be a locked dependency entry point.');
+  requireCondition(Array.isArray(value.files) && value.files.length > 0 && value.files.length === sourceFiles.size,
+    'Locked dependency manifest must enumerate the complete source closure.');
+  let previous = null;
+  const seen = new Set();
+  for (const declaration of value.files) {
+    const item = exactObject(declaration, ['path', 'sha256']);
+    const sourcePath = portablePath(item.path);
+    const sourceDigest = digest(item.sha256);
+    const folded = sourcePath.toLowerCase();
+    requireCondition(!seen.has(folded), 'Locked dependency manifest contains duplicate or case-ambiguous paths.');
+    seen.add(folded);
+    requireCondition(previous === null || previous < sourcePath, 'Locked dependency manifest files must be ordinally sorted.');
+    previous = sourcePath;
+    const source = sourceFiles.get(sourcePath);
+    requireCondition(source !== undefined && sha256(source) === sourceDigest,
+      'Locked dependency source does not match its manifest digest.');
+  }
+  requireCondition(sourceFiles.has(entryPoint), 'Locked dependency entry point is missing from its source closure.');
+  return entryPoint;
+}
+
 function materialize(bundle) {
   const dependencies = bundle.dependencies;
   requireCondition(Array.isArray(dependencies) && dependencies.length <= MAX_DEPENDENCIES, 'Invalid dependency list.');
@@ -210,10 +251,10 @@ function materialize(bundle) {
   let total = 0;
   let count = 0;
 
-  function collect(files, owner, targetMap) {
+  function collect(files, owner, targetMap, pathValidator = portablePath) {
     requireCondition(Array.isArray(files) && files.length > 0 && files.length <= MAX_FILES, 'An explicit file list is required.');
     for (const file of files) {
-      const decoded = decodeFile(file);
+      const decoded = decodeFile(file, pathValidator);
       const key = `${owner}:${decoded.path.toLowerCase()}`;
       requireCondition(!seenPaths.has(key), 'Duplicate or case-ambiguous source path.');
       seenPaths.add(key);
@@ -228,16 +269,34 @@ function materialize(bundle) {
   const aliases = {};
   const seenDependencies = new Set();
   for (const dependency of dependencies) {
-    const item = exactObject(dependency, ['name', 'version', 'files']);
+    requireCondition(dependency !== null && typeof dependency === 'object' && !Array.isArray(dependency), 'Invalid dependency.');
+    const hasPackage = Object.prototype.hasOwnProperty.call(dependency, 'package');
+    const item = exactObject(dependency, hasPackage ? ['name', 'version', 'files', 'package'] : ['name', 'version', 'files']);
     const name = text(item.name);
     requireCondition(DEPENDENCY_NAME.test(name) && !seenDependencies.has(name.toLowerCase()), 'Ambiguous dependency name.');
     requireCondition(typeof item.version === 'string' && EXACT_VERSION.test(item.version), 'An exact dependency version is required.');
     seenDependencies.add(name.toLowerCase());
     const files = new Map();
-    collect(item.files, `dependency:${name.toLowerCase()}`, files);
-    requireCondition(files.has('index.ts'), 'A TypeScript dependency must publish index.ts as its explicit entry point.');
+    let dependencyEntryPoint = 'index.ts';
+    if (hasPackage) {
+      const packageDescriptor = exactObject(item.package, ['schemaVersion', 'kind', 'manifestPath']);
+      requireCondition(packageDescriptor.schemaVersion === 1 && packageDescriptor.kind === 'NodeLockedBundle',
+        'This TypeScript worker supports only locked Node dependency packages.');
+      const manifestPath = portableManifestPath(packageDescriptor.manifestPath);
+      collect(item.files, `dependency:${name.toLowerCase()}`, files, value => {
+        if (value === manifestPath) return portableManifestPath(value);
+        return portablePath(value);
+      });
+      const manifestBytes = files.get(manifestPath);
+      requireCondition(manifestBytes !== undefined, 'Locked dependency manifest is missing.');
+      files.delete(manifestPath);
+      dependencyEntryPoint = readLockedDependencyManifest(manifestBytes, name, item.version, files);
+    } else {
+      collect(item.files, `dependency:${name.toLowerCase()}`, files);
+      requireCondition(files.has('index.ts'), 'A TypeScript dependency must publish index.ts as its explicit entry point.');
+    }
     dependencyFiles.set(name, files);
-    aliases[`#${name}`] = `./.dependencies/${name}/index.js`;
+    aliases[`#${name}`] = `./.dependencies/${name}/${dependencyEntryPoint.slice(0, -3)}.js`;
     aliases[`#${name}/*.ts`] = `./.dependencies/${name}/*.js`;
     aliases[`#${name}/*`] = `./.dependencies/${name}/*`;
   }

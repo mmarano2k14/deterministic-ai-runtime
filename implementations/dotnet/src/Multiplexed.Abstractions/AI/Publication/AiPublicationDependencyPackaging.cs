@@ -32,4 +32,17 @@ namespace Multiplexed.Abstractions.AI.Publication
         [property: JsonPropertyName("version")] string Version,
         [property: JsonPropertyName("importRoots")] IReadOnlyList<string> ImportRoots);
 
+    /// <summary>One exact source file carried by a locked Node dependency bundle.</summary>
+    public sealed record AiNodeLockedBundleFile(
+        [property: JsonPropertyName("path")] string Path,
+        [property: JsonPropertyName("sha256")] string Sha256);
+
+    /// <summary>Portable manifest for one immutable TypeScript dependency source closure.</summary>
+    public sealed record AiNodeLockedBundleManifest(
+        [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
+        [property: JsonPropertyName("packageName")] string PackageName,
+        [property: JsonPropertyName("version")] string Version,
+        [property: JsonPropertyName("entryPoint")] string EntryPoint,
+        [property: JsonPropertyName("files")] IReadOnlyList<AiNodeLockedBundleFile> Files);
+
 }

@@ -42,14 +42,43 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.TypeScript
         internal static async Task<AiWorkerProcessTransport> TransportAsync(AiWorkerProcessTransportOptions? options = null) =>
             new(new AiConfiguredWorkerProcessCatalog(new[] { await ProfileAsync() }), options ?? new());
 
-        internal static AiWorkerFile Source(string path, string text)
+        internal static AiWorkerFile Source(string path, string text) => WorkerFile(path, Encoding.UTF8.GetBytes(text));
+
+        internal static AiWorkerFile WorkerFile(string path, byte[] bytes) => new(
+            path,
+            Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+            bytes.LongLength,
+            Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_'));
+
+        internal static AiWorkerDependency LockedDependency(
+            string name = "rules",
+            string version = "2.0.1",
+            string factor = "4")
         {
-            var bytes = Encoding.UTF8.GetBytes(text);
-            return new(path, Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), bytes.LongLength,
-                Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_'));
+            var index = Encoding.UTF8.GetBytes("export { scale } from './math.ts';\n");
+            var math = Encoding.UTF8.GetBytes($"export function scale(value: number): number {{ return value * {factor}; }}\n");
+            var declared = new[]
+            {
+                new AiNodeLockedBundleFile("index.ts", Convert.ToHexString(SHA256.HashData(index)).ToLowerInvariant()),
+                new AiNodeLockedBundleFile("math.ts", Convert.ToHexString(SHA256.HashData(math)).ToLowerInvariant())
+            };
+            var manifest = JsonSerializer.SerializeToUtf8Bytes(new AiNodeLockedBundleManifest(
+                1, name, version, "index.ts", declared));
+            return new AiWorkerDependency(name, version, new[]
+            {
+                WorkerFile("bundle.manifest.json", manifest),
+                WorkerFile("index.ts", index),
+                WorkerFile("math.ts", math)
+            })
+            {
+                Package = new AiPublicationDependencyPackage(
+                    1, AiPublicationDependencyPackageKind.NodeLockedBundle, "bundle.manifest.json")
+            };
         }
 
-        internal static async Task<AiWorkerInvocationRequest> RequestAsync(string source = Simple)
+        internal static async Task<AiWorkerInvocationRequest> RequestAsync(
+            string source = Simple,
+            IReadOnlyList<AiWorkerDependency>? dependencies = null)
         {
             var request = WorkerTestSupport.Request();
             var profile = await ProfileAsync();
@@ -57,7 +86,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.TypeScript
             {
                 Inputs = JsonSerializer.SerializeToElement(new { amount = 21 }),
                 Code = new(request.Code.Target with { ExecutionLanguage = "typescript" }, profile.Runtime,
-                    "main.ts", "run", new[] { Source("main.ts", source) }, Array.Empty<AiWorkerDependency>())
+                    "main.ts", "run", new[] { Source("main.ts", source) }, dependencies ?? Array.Empty<AiWorkerDependency>())
             };
         }
 
@@ -131,6 +160,35 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.TypeScript
                 runtime.Reference, "main.ts", "run",
                 new[] { new AiPublicationFileUpload("main.ts", Encoding.UTF8.GetBytes(source)) },
                 Array.Empty<AiPublicationDependencyUpload>());
+            return new(PublicationTestSupport.Definition(revision, "typescript", secondLanguage: null),
+                new[] { Function("first"), Function("second") });
+        }
+
+        internal static AiPipelinePublicationUpload UploadWithLockedDependency(
+            AiPublicationEnvironment runtime,
+            string revision = "1",
+            string factor = "4")
+        {
+            var source = "import { scale } from '#rules'; export function run(inputs: { amount: number }, context: unknown) { " +
+                "return { success: true, payload: { revision: " + revision + ", amount: scale(inputs.amount) } }; }\n";
+            var dependency = LockedDependency(factor: factor);
+            var uploadDependency = new AiPublicationDependencyUpload(
+                dependency.Name,
+                dependency.Version,
+                dependency.Files.Select(file => new AiPublicationFileUpload(
+                    file.Path,
+                    Convert.FromBase64String(file.Base64Url.Replace('-', '+').Replace('_', '/') +
+                        new string('=', (4 - file.Base64Url.Length % 4) % 4)))).ToArray())
+            {
+                Package = dependency.Package
+            };
+            AiPublicationFunctionUpload Function(string name) => new(
+                new(AiPublicationFunctionKind.Step, name),
+                runtime.Reference,
+                "main.ts",
+                "run",
+                new[] { new AiPublicationFileUpload("main.ts", Encoding.UTF8.GetBytes(source)) },
+                new[] { uploadDependency });
             return new(PublicationTestSupport.Definition(revision, "typescript", secondLanguage: null),
                 new[] { Function("first"), Function("second") });
         }
