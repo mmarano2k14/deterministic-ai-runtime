@@ -31,8 +31,9 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
 
     /// <summary>
     /// Trusted host configuration for one exact OCI-backed worker environment.
-    /// The image repository is server-owned; the immutable manifest digest comes only from the
-    /// publication execution descriptor. No mutable tag or tenant-provided engine option is accepted.
+    /// The image repository and physical owner scope are server-owned; the immutable manifest digest
+    /// comes only from the publication execution descriptor. No tenant execution identity, mutable tag
+    /// or tenant-provided engine option is accepted.
     /// </summary>
     public sealed class AiContainerWorkerProfile
     {
@@ -43,6 +44,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
             string engineExecutableSha256,
             string engineWorkingDirectory,
             string imageRepository,
+            string containerOwnerScope,
             AiContainerWorkerResourceLimits? resourceLimits = null,
             string containerUser = "65532:65532",
             IReadOnlyDictionary<string, string>? engineEnvironment = null,
@@ -70,6 +72,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
                 throw new ArgumentException("Container engine executable and working directory must be inside an approved launch root.");
 
             ValidateImageRepository(imageRepository);
+            AiContainerWorkerOwnership.ValidateOwnerScope(containerOwnerScope);
             ValidateContainerUser(containerUser);
 
             var limits = resourceLimits ?? new AiContainerWorkerResourceLimits();
@@ -92,6 +95,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
             EngineExecutableSha256 = engineExecutableSha256;
             EngineWorkingDirectory = Path.GetFullPath(engineWorkingDirectory);
             ImageRepository = imageRepository;
+            ContainerOwnerScope = containerOwnerScope;
             ResourceLimits = limits;
             ContainerUser = containerUser;
             EngineEnvironment = new ReadOnlyDictionary<string, string>(environment);
@@ -104,6 +108,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
         public string EngineExecutableSha256 { get; }
         public string EngineWorkingDirectory { get; }
         public string ImageRepository { get; }
+        public string ContainerOwnerScope { get; }
         public string ImageReference => ImageRepository + "@" + ExecutionDescriptor.Artifact.Digest;
         public AiContainerWorkerResourceLimits ResourceLimits { get; }
         public string ContainerUser { get; }

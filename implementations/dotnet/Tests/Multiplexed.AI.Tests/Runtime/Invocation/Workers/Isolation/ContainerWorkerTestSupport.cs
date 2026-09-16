@@ -18,11 +18,14 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
 
         internal static AiContainerWorkerProfile Profile(
             IReadOnlyDictionary<string, string>? environment = null,
-            string? executableHash = null)
+            string? executableHash = null,
+            AiPublicationEnvironment? runtime = null,
+            string? containerOwnerScope = null)
         {
             if (!File.Exists(ProbeExecutable))
                 throw new FileNotFoundException("Build the test project to produce the container engine probe.", ProbeExecutable);
-            var runtime = PublicationTestSupport.Environment("python");
+            runtime ??= PublicationTestSupport.Environment("python");
+            var ownerScope = containerOwnerScope ?? "test-host-" + Guid.NewGuid().ToString("N")[..16];
             var descriptor = new AiPublicationExecutionDescriptor
             {
                 OperatingSystem = "linux",
@@ -37,7 +40,8 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             {
                 ["CONTAINER_ENGINE_PROBE_VALUE"] = "explicit-only",
                 ["CONTAINER_ENGINE_PROBE_STATE_DIR"] = Path.Combine(ProbeRoot, "state-" + Guid.NewGuid().ToString("N")),
-                ["CONTAINER_ENGINE_PROBE_REQUIRE_INSPECT_BEFORE_REQUEST"] = "1"
+                ["CONTAINER_ENGINE_PROBE_REQUIRE_INSPECT_BEFORE_REQUEST"] = "1",
+                ["CONTAINER_ENGINE_PROBE_EXPECT_OWNER_SCOPE"] = ownerScope
             };
             if (OperatingSystem.IsWindows())
                 engineEnvironment["SystemRoot"] = Environment.GetEnvironmentVariable("SystemRoot")
@@ -49,7 +53,8 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
                 ProbeExecutable,
                 executableHash ?? FileHash(ProbeExecutable),
                 ProbeRoot,
-                "registry.example.com/multiplexed/python-worker",
+                "registry.example.com/multiplexed/" + runtime.ExecutionLanguage + "-worker",
+                ownerScope,
                 new AiContainerWorkerResourceLimits
                 {
                     CpuMilliCores = 750,

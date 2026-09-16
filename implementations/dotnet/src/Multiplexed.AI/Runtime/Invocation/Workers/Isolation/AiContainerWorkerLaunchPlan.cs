@@ -32,6 +32,8 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
                 "--interactive",
                 "--pull=never",
                 "--name", containerName,
+                AiContainerWorkerOwnership.ManagedLabelArgument,
+                AiContainerWorkerOwnership.OwnerScopeLabelArgument(profile.ContainerOwnerScope),
                 "--user", profile.ContainerUser,
                 "--network=none",
                 "--read-only",

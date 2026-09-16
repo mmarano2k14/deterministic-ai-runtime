@@ -9,16 +9,23 @@
     <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
   </PropertyGroup>
 
+  <!-- Resolve the apphost from the files actually emitted by the SDK. Do not depend on
+       the inherited OS environment property when this target is called through MSBuild. -->
   <Target Name="BuildAndGetContainerEngineProbeFiles" DependsOnTargets="Build"
           Returns="@(_ContainerEngineProbeFiles)"
           Condition="'$(DesignTimeBuild)' != 'true'">
-    <PropertyGroup>
-      <_ContainerEngineProbeExecutable Condition="'$(OS)' == 'Windows_NT'">$(TargetDir)$(AssemblyName).exe</_ContainerEngineProbeExecutable>
-      <_ContainerEngineProbeExecutable Condition="'$(OS)' != 'Windows_NT'">$(TargetDir)$(AssemblyName)</_ContainerEngineProbeExecutable>
-    </PropertyGroup>
+    <ItemGroup>
+      <_ContainerEngineProbeAppHost Remove="@(_ContainerEngineProbeAppHost)" />
+      <_ContainerEngineProbeAppHost Include="$(TargetDir)$(AssemblyName).exe"
+                                    Condition="Exists('$(TargetDir)$(AssemblyName).exe')" />
+      <_ContainerEngineProbeAppHost Include="$(TargetDir)$(AssemblyName)"
+                                    Condition="Exists('$(TargetDir)$(AssemblyName)')" />
+    </ItemGroup>
+    <Error Condition="'@(_ContainerEngineProbeAppHost)' == ''"
+           Text="The container engine probe build did not produce an apphost executable in '$(TargetDir)'." />
     <ItemGroup>
       <_ContainerEngineProbeFiles Remove="@(_ContainerEngineProbeFiles)" />
-      <_ContainerEngineProbeFiles Include="$(_ContainerEngineProbeExecutable)" />
+      <_ContainerEngineProbeFiles Include="@(_ContainerEngineProbeAppHost)" />
       <_ContainerEngineProbeFiles Include="$(TargetPath)" />
       <_ContainerEngineProbeFiles Include="$(ProjectDepsFilePath)" />
       <_ContainerEngineProbeFiles Include="$(ProjectRuntimeConfigFilePath)" />

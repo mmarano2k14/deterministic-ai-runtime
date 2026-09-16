@@ -28,6 +28,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
                 "Container image does not match the pinned immutable OCI manifest.");
             RequireEqual(RequireString(config, "User"), profile.ContainerUser,
                 "Container user does not match the configured non-root identity.");
+            ValidateOwnershipLabels(config, profile.ContainerOwnerScope);
 
             if (!RequireBoolean(host, "ReadonlyRootfs"))
                 throw new InvalidOperationException("Container root filesystem is not read-only.");
@@ -60,6 +61,27 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
 
             ValidateTmpfs(host, limits.WritableWorkspaceBytes);
             ValidateMounts(container);
+        }
+
+
+        private static void ValidateOwnershipLabels(JsonElement config, string ownerScope)
+        {
+            if (!config.TryGetProperty("Labels", out var labels) || labels.ValueKind != JsonValueKind.Object)
+                throw new InvalidOperationException("Container ownership labels are missing from applied state.");
+
+            if (!labels.TryGetProperty(AiContainerWorkerOwnership.ManagedLabel, out var managed) ||
+                managed.ValueKind != JsonValueKind.String ||
+                managed.GetString() != AiContainerWorkerOwnership.ManagedLabelValue)
+            {
+                throw new InvalidOperationException("Container managed-worker ownership label was not applied.");
+            }
+
+            if (!labels.TryGetProperty(AiContainerWorkerOwnership.OwnerScopeLabel, out var scope) ||
+                scope.ValueKind != JsonValueKind.String ||
+                scope.GetString() != ownerScope)
+            {
+                throw new InvalidOperationException("Container owner-scope label does not match the configured host scope.");
+            }
         }
 
         private static void ValidateTmpfs(JsonElement host, long expectedBytes)

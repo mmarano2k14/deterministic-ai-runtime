@@ -140,6 +140,16 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
         }
 
         [Theory]
+        [InlineData("")]
+        [InlineData("contains space")]
+        [InlineData("../other-host")]
+        [InlineData("owner/scope")]
+        public void Container_Owner_Scope_Must_Be_An_Opaque_Server_Identifier(string ownerScope)
+        {
+            Assert.Throws<ArgumentException>(() => Profile(containerOwnerScope: ownerScope));
+        }
+
+        [Theory]
         [InlineData(0, 268435456L, 64, 67108864L)]
         [InlineData(1000, 1024L, 64, 67108864L)]
         [InlineData(1000, 268435456L, 1, 67108864L)]
@@ -272,6 +282,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             AiPublicationEnvironment? runtime = null,
             AiPublicationExecutionDescriptor? descriptor = null,
             string imageRepository = "registry.example.com/multiplexed/python-worker",
+            string containerOwnerScope = "test-host-a",
             string containerUser = "65532:65532",
             AiContainerWorkerResourceLimits? limits = null,
             string? enginePath = null,
@@ -288,6 +299,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
                 new string('e', 64),
                 root,
                 imageRepository,
+                containerOwnerScope,
                 limits,
                 containerUser,
                 environment,

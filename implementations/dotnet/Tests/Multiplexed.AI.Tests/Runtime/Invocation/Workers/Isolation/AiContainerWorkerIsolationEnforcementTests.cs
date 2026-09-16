@@ -50,6 +50,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
         [InlineData("bind")]
         [InlineData("autoremove")]
         [InlineData("init")]
+        [InlineData("labels")]
         public async Task Applied_Isolation_Mismatch_Is_Refused_Before_Tenant_Request(string tamper)
         {
             var marker = Path.Combine(Path.GetTempPath(), "multiplexed-container-request-" + Guid.NewGuid().ToString("N") + ".txt");
@@ -74,7 +75,14 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             var profile = ContainerWorkerTestSupport.Profile();
             var json = $$"""
             [{
-              "Config":{"Image":"{{profile.ImageReference}}","User":"{{profile.ContainerUser}}"},
+              "Config":{
+                "Image":"{{profile.ImageReference}}",
+                "User":"{{profile.ContainerUser}}",
+                "Labels":{
+                  "multiplexed.ai.hosted-worker":"1",
+                  "multiplexed.ai.owner-scope":"{{profile.ContainerOwnerScope}}"
+                }
+              },
               "HostConfig":{
                 "ReadonlyRootfs":true,"Privileged":false,"AutoRemove":true,"Init":true,"NetworkMode":"none",
                 "Memory":268435456,"MemorySwap":268435456,"NanoCpus":750000000,"PidsLimit":32,

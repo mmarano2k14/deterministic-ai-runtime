@@ -29,6 +29,8 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             var plan = AiContainerWorkerLaunchPlan.Create(profile, "multiplexed-ai-test");
             Assert.Contains("--user", plan.Arguments);
             Assert.Contains(profile.ContainerUser, plan.Arguments);
+            Assert.Contains("--label=multiplexed.ai.hosted-worker=1", plan.Arguments);
+            Assert.Contains("--label=multiplexed.ai.owner-scope=" + profile.ContainerOwnerScope, plan.Arguments);
             Assert.Contains("--network=none", plan.Arguments);
             Assert.Contains("--read-only", plan.Arguments);
             Assert.Contains("--cap-drop=ALL", plan.Arguments);

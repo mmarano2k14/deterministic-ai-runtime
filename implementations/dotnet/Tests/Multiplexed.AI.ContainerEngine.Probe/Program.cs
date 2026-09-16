@@ -13,6 +13,7 @@ internal static class Program
         {
             "run" => await RunAsync(args),
             "inspect" => await InspectAsync(args),
+            "ps" => await ListAsync(args),
             "rm" => await RemoveAsync(args),
             _ => 65
         };
@@ -30,8 +31,29 @@ internal static class Program
         };
         await File.WriteAllTextAsync(statePath, state.ToJsonString());
 
+        var runMarker = Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_RUN_MARKER");
+        if (!string.IsNullOrWhiteSpace(runMarker)) await File.WriteAllTextAsync(runMarker, name);
+
+        if (Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_REQUIRE_CLEANUP_BEFORE_RUN") == "1")
+        {
+            var cleanupMarker = Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_CLEANUP_MARKER");
+            if (string.IsNullOrWhiteSpace(cleanupMarker) || !File.Exists(cleanupMarker)) return 73;
+        }
+
+        var mode = Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_MODE");
         try
         {
+            if (mode == "exit-after-inspect")
+            {
+                while (true)
+                {
+                    var current = JsonNode.Parse(await File.ReadAllTextAsync(statePath))?.AsObject()
+                        ?? throw new InvalidOperationException("Missing engine probe state.");
+                    if (current["inspected"]?.GetValue<bool>() == true) return 74;
+                    await Task.Delay(10);
+                }
+            }
+
             var line = await Console.In.ReadLineAsync();
             if (line is null) return 66;
             var requestMarker = Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_REQUEST_MARKER");
@@ -70,10 +92,26 @@ internal static class Program
             }
 
             await Send(Frame("ready"));
-            if (Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_MODE") == "hang-after-ready")
+            if (mode == "hang-after-ready")
             {
                 await Task.Delay(Timeout.InfiniteTimeSpan);
                 return 0;
+            }
+
+            var packageKinds = new List<string>();
+            if (request.GetProperty("code").TryGetProperty("dependencies", out var dependencies) &&
+                dependencies.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var dependency in dependencies.EnumerateArray())
+                {
+                    if (dependency.TryGetProperty("package", out var package) &&
+                        package.ValueKind == JsonValueKind.Object &&
+                        package.TryGetProperty("kind", out var kind) &&
+                        kind.ValueKind == JsonValueKind.String)
+                    {
+                        packageKinds.Add(kind.GetString()!);
+                    }
+                }
             }
 
             await Send(Frame("result", true, new
@@ -81,13 +119,14 @@ internal static class Program
                 arguments = args,
                 image = args[^1],
                 explicitValue = Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_VALUE"),
-                inheritedPath = Environment.GetEnvironmentVariable("PATH")
+                inheritedPath = Environment.GetEnvironmentVariable("PATH"),
+                dependencyPackages = packageKinds
             }));
             return 0;
         }
         finally
         {
-            if (Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_MODE") != "hang-after-ready")
+            if (mode is not ("hang-after-ready" or "exit-after-inspect"))
             {
                 try { File.Delete(statePath); } catch { }
             }
@@ -97,6 +136,10 @@ internal static class Program
     private static async Task<int> InspectAsync(string[] args)
     {
         if (args.Length != 4 || args[1] != "--type" || args[2] != "container") return 67;
+        var delayText = Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_INSPECT_DELAY_MS");
+        if (int.TryParse(delayText, NumberStyles.None, CultureInfo.InvariantCulture, out var delay) && delay > 0)
+            await Task.Delay(delay);
+
         var statePath = StatePath(args[3]);
         if (!File.Exists(statePath)) return 1;
         var state = JsonNode.Parse(await File.ReadAllTextAsync(statePath))?.AsObject()
@@ -112,15 +155,39 @@ internal static class Program
         return 0;
     }
 
+    private static async Task<int> ListAsync(string[] args)
+    {
+        if (Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_PS_FAIL") == "1") return 75;
+        var filters = SeparateAll(args, "--filter").ToArray();
+        var expectedScope = Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_EXPECT_OWNER_SCOPE");
+        if (!filters.Contains("label=multiplexed.ai.hosted-worker=1", StringComparer.Ordinal) ||
+            string.IsNullOrWhiteSpace(expectedScope) ||
+            !filters.Contains("label=multiplexed.ai.owner-scope=" + expectedScope, StringComparer.Ordinal))
+        {
+            return 76;
+        }
+
+        var format = Separate(args, "--format");
+        if (format != "{{.Names}}") return 77;
+        var names = Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_PS_NAMES");
+        if (!string.IsNullOrWhiteSpace(names))
+        {
+            foreach (var name in names.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                await Console.Out.WriteLineAsync(name);
+        }
+        return 0;
+    }
+
     private static async Task<int> RemoveAsync(string[] args)
     {
         var marker = Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_CLEANUP_MARKER");
         if (!string.IsNullOrWhiteSpace(marker)) await File.WriteAllTextAsync(marker, string.Join(Environment.NewLine, args));
+        if (Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_CLEANUP_FAIL") == "1") return 70;
         if (args.Length >= 3)
         {
             try { File.Delete(StatePath(args[^1])); } catch { }
         }
-        return Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_CLEANUP_FAIL") == "1" ? 70 : 0;
+        return 0;
     }
 
     private static JsonObject BuildInspection(string[] args)
@@ -131,12 +198,21 @@ internal static class Program
         var tmpfsDestination = tmpfs[..split];
         var tmpfsOptions = tmpfs[(split + 1)..];
         var cpus = decimal.Parse(Prefixed(args, "--cpus=") ?? "0", CultureInfo.InvariantCulture);
+        var labels = new JsonObject();
+        foreach (var label in PrefixedAll(args, "--label="))
+        {
+            var separator = label.IndexOf('=');
+            if (separator <= 0) throw new InvalidOperationException("Invalid label argument.");
+            labels[label[..separator]] = label[(separator + 1)..];
+        }
+
         return new JsonObject
         {
             ["Config"] = new JsonObject
             {
                 ["Image"] = args[^1],
-                ["User"] = Separate(args, "--user") ?? string.Empty
+                ["User"] = Separate(args, "--user") ?? string.Empty,
+                ["Labels"] = labels
             },
             ["HostConfig"] = new JsonObject
             {
@@ -187,6 +263,11 @@ internal static class Program
             case "bind": host["Binds"] = new JsonArray(JsonValue.Create("/host:/guest")); break;
             case "autoremove": host["AutoRemove"] = false; break;
             case "init": host["Init"] = false; break;
+            case "labels": config["Labels"] = new JsonObject
+            {
+                ["multiplexed.ai.hosted-worker"] = "1",
+                ["multiplexed.ai.owner-scope"] = "other-host"
+            }; break;
             default: throw new InvalidOperationException("Unknown attestation tamper mode.");
         }
     }
@@ -197,8 +278,18 @@ internal static class Program
         return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
     }
 
+    private static IEnumerable<string> SeparateAll(string[] args, string option)
+    {
+        for (var index = 0; index + 1 < args.Length; index++)
+            if (args[index] == option) yield return args[index + 1];
+    }
+
     private static string? Prefixed(string[] args, string prefix) =>
         args.FirstOrDefault(argument => argument.StartsWith(prefix, StringComparison.Ordinal))?[prefix.Length..];
+
+    private static IEnumerable<string> PrefixedAll(string[] args, string prefix) =>
+        args.Where(argument => argument.StartsWith(prefix, StringComparison.Ordinal))
+            .Select(argument => argument[prefix.Length..]);
 
     private static string StatePath(string containerName)
     {
