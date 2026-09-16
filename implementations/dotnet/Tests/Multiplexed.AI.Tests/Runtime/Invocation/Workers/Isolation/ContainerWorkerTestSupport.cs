@@ -35,7 +35,9 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             };
             var engineEnvironment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["CONTAINER_ENGINE_PROBE_VALUE"] = "explicit-only"
+                ["CONTAINER_ENGINE_PROBE_VALUE"] = "explicit-only",
+                ["CONTAINER_ENGINE_PROBE_STATE_DIR"] = Path.Combine(ProbeRoot, "state-" + Guid.NewGuid().ToString("N")),
+                ["CONTAINER_ENGINE_PROBE_REQUIRE_INSPECT_BEFORE_REQUEST"] = "1"
             };
             if (OperatingSystem.IsWindows())
                 engineEnvironment["SystemRoot"] = Environment.GetEnvironmentVariable("SystemRoot")

@@ -38,6 +38,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
                 "--security-opt=no-new-privileges",
                 "--pids-limit=" + profile.ResourceLimits.PidsLimit.ToString(CultureInfo.InvariantCulture),
                 "--memory=" + profile.ResourceLimits.MemoryBytes.ToString(CultureInfo.InvariantCulture),
+                "--memory-swap=" + profile.ResourceLimits.MemoryBytes.ToString(CultureInfo.InvariantCulture),
                 "--cpus=" + cpu,
                 "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=" + profile.ResourceLimits.WritableWorkspaceBytes.ToString(CultureInfo.InvariantCulture),
                 "--env=TMPDIR=/tmp",

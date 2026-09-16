@@ -68,6 +68,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
                 containerMayStillRun = true;
                 cancellation = token.Register(() => RequestStop(process));
                 stderr = DrainStderrAsync();
+                await AwaitIsolationAttestationAsync(profile, containerName, process, token).ConfigureAwait(false);
                 var exchange = ExchangeAsync();
                 Observe(exchange);
                 var result = await exchange.WaitAsync(token).ConfigureAwait(false);
@@ -220,6 +221,63 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
             profile.EngineEnvironment,
             executionDescriptor: profile.ExecutionDescriptor,
             approvedLaunchRoots: profile.ApprovedLaunchRoots);
+
+
+        private async Task AwaitIsolationAttestationAsync(
+            AiContainerWorkerProfile profile,
+            string containerName,
+            Process attachedRunProcess,
+            CancellationToken cancellationToken)
+        {
+            var expires = _time.GetUtcNow() + _options.StartupTimeout;
+            Exception? lastFailure = null;
+            while (_time.GetUtcNow() < expires)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (attachedRunProcess.HasExited)
+                    throw new IOException("Container engine exited before isolation attestation completed.", lastFailure);
+
+                using var inspect = new Process
+                {
+                    StartInfo = CreateEngineControlStartInfo(profile, new[] { "inspect", "--type", "container", containerName })
+                };
+                if (!inspect.Start()) throw new IOException("Container inspection process did not start.");
+                var stdoutTask = inspect.StandardOutput.ReadToEndAsync(cancellationToken);
+                var stderrTask = inspect.StandardError.ReadToEndAsync(cancellationToken);
+                var remaining = expires - _time.GetUtcNow();
+                if (remaining <= TimeSpan.Zero) break;
+                try
+                {
+                    await inspect.WaitForExitAsync(cancellationToken)
+                        .WaitAsync(remaining, _time, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    lastFailure = exception;
+                    RequestStop(inspect);
+                    Observe(stdoutTask);
+                    Observe(stderrTask);
+                    continue;
+                }
+
+                var stdout = await stdoutTask.ConfigureAwait(false);
+                var stderrText = await stderrTask.ConfigureAwait(false);
+                if (stdout.Length > _options.MaxFrameBytes || stderrText.Length > _options.MaxStderrBytes)
+                    throw new IOException("Container inspection output exceeded configured bounds.");
+                if (inspect.ExitCode == 0)
+                {
+                    AiContainerWorkerIsolationAttestation.Validate(stdout, profile);
+                    return;
+                }
+
+                lastFailure = new IOException("Container inspection did not yet identify the launched container.");
+                remaining = expires - _time.GetUtcNow();
+                if (remaining <= TimeSpan.Zero) break;
+                await Task.Delay(remaining < TimeSpan.FromMilliseconds(25) ? remaining : TimeSpan.FromMilliseconds(25),
+                    _time, cancellationToken).ConfigureAwait(false);
+            }
+            throw new IOException("Container isolation attestation did not complete before worker startup timeout.", lastFailure);
+        }
 
         private async Task ForceRemoveAsync(AiContainerWorkerProfile profile, string containerName)
         {
