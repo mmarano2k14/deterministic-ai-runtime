@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <PackageId>Multiplexed.AI.Sdk</PackageId>
+    <Description>External client SDK for the Multiplexed AI public execution boundary.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Multiplexed.AI.Sdk.Contracts\Multiplexed.AI.Sdk.Contracts.csproj" />
+  </ItemGroup>
+
+  <Target Name="EnforceExternalSdkProjectBoundary" BeforeTargets="ResolveReferences">
+    <ItemGroup>
+      <ForbiddenSdkProjectReference Include="@(ProjectReference)"
+                                    Condition="'%(Filename)' != 'Multiplexed.AI.Sdk.Contracts'" />
+    </ItemGroup>
+    <Error Condition="'@(ForbiddenSdkProjectReference)' != ''"
+           Text="Multiplexed.AI.Sdk may reference only Multiplexed.AI.Sdk.Contracts from this repository. Runtime and infrastructure projects are forbidden." />
+  </Target>
+
+</Project>

@@ -1,0 +1,23 @@
+{
+  "name": "@multiplexed/ai-sdk",
+  "version": "0.0.0-dev",
+  "type": "module",
+  "description": "External TypeScript SDK for the Multiplexed AI public execution boundary.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "validate:foundation": "node tests/validate.mjs"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3"
+  }
+}

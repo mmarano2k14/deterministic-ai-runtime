@@ -1,0 +1,106 @@
+{
+  "protocolVersion": 1,
+  "transportBinding": "mcp-tools",
+  "wireFormat": "json",
+  "serialization": {
+    "propertyNames": "camelCase",
+    "enumValues": "strings",
+    "timestamps": "RFC3339/ISO-8601 UTC",
+    "binaryPayloads": "base64 strings in explicit contract fields",
+    "nullHandling": "contract-defined",
+    "unknownInternalIdentity": "forbidden"
+  },
+  "schemaNegotiation": {
+    "mode": "fail-closed",
+    "implicitDowngrade": false,
+    "requestRule": "send the schemaVersion declared by the public contract",
+    "responseRule": "reject unsupported response schema versions instead of coercing them"
+  },
+  "authentication": {
+    "owner": "transport",
+    "payloadContainsCredentials": false,
+    "rule": "credentials are injected by the physical transport and never serialized into SDK operation arguments"
+  },
+  "requestCancellation": {
+    "rule": "cancelling a client invocation only cancels that in-flight transport call",
+    "durableExecutionCancellationOperation": "sdk.execution.cancel"
+  },
+  "retry": {
+    "automaticTransportRetry": "safe-read operations only",
+    "businessEffectRetry": "forbidden",
+    "rule": "publish, submit and cancel are never automatically retried by the SDK transport"
+  },
+  "errorModel": {
+    "scope": "client-normalized",
+    "fallbackCode": "remote_failure",
+    "kinds": [
+      "transport",
+      "authentication",
+      "authorization",
+      "invalid_request",
+      "unsupported_schema",
+      "not_found",
+      "conflict",
+      "result_unavailable",
+      "remote_failure",
+      "invalid_response",
+      "cancelled"
+    ]
+  },
+  "operations": [
+    {
+      "name": "sdk.publish_pipeline",
+      "requestSchema": "pipelinePublicationRequest",
+      "requestSchemaVersion": 1,
+      "responseSchema": "pipelinePublicationResponse",
+      "responseSchemaVersion": 1,
+      "transportRetry": "never"
+    },
+    {
+      "name": "sdk.execution.submit",
+      "requestSchema": "executionSubmissionRequest",
+      "requestSchemaVersion": 1,
+      "responseSchema": "executionSubmissionResponse",
+      "responseSchemaVersion": 1,
+      "transportRetry": "never"
+    },
+    {
+      "name": "sdk.execution.observe",
+      "arguments": "executionId",
+      "responseSchema": "executionObservation",
+      "responseSchemaVersion": 1,
+      "transportRetry": "safe-read"
+    },
+    {
+      "name": "sdk.execution.result",
+      "arguments": "executionId",
+      "responseSchema": "executionResult",
+      "responseSchemaVersion": 1,
+      "transportRetry": "safe-read"
+    },
+    {
+      "name": "sdk.execution.cancel",
+      "arguments": "executionId + executionCancellationRequest",
+      "requestSchema": "executionCancellationRequest",
+      "requestSchemaVersion": 1,
+      "responseSchema": "executionCancellationResponse",
+      "responseSchemaVersion": 1,
+      "transportRetry": "never"
+    }
+  ],
+  "packages": {
+    "dotnet": {
+      "package": "Multiplexed.AI.Sdk",
+      "root": "implementations/dotnet/src/Multiplexed.AI.Sdk"
+    },
+    "typescript": {
+      "package": "@multiplexed/ai-sdk",
+      "root": "implementations/node/sdk"
+    },
+    "python": {
+      "package": "multiplexed-ai-sdk",
+      "module": "multiplexed_ai_sdk",
+      "root": "implementations/python/sdk"
+    }
+  }
+}
