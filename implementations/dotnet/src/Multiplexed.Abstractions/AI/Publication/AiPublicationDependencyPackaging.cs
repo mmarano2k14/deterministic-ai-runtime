@@ -45,4 +45,18 @@ namespace Multiplexed.Abstractions.AI.Publication
         [property: JsonPropertyName("entryPoint")] string EntryPoint,
         [property: JsonPropertyName("files")] IReadOnlyList<AiNodeLockedBundleFile> Files);
 
+    /// <summary>One exact managed assembly carried by an immutable .NET dependency closure.</summary>
+    public sealed record AiDotNetAssemblyClosureFile(
+        [property: JsonPropertyName("path")] string Path,
+        [property: JsonPropertyName("sha256")] string Sha256,
+        [property: JsonPropertyName("assemblyName")] string AssemblyName,
+        [property: JsonPropertyName("assemblyVersion")] string AssemblyVersion);
+
+    /// <summary>Portable manifest for one immutable managed .NET assembly dependency closure.</summary>
+    public sealed record AiDotNetAssemblyClosureManifest(
+        [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
+        [property: JsonPropertyName("packageName")] string PackageName,
+        [property: JsonPropertyName("version")] string Version,
+        [property: JsonPropertyName("assemblies")] IReadOnlyList<AiDotNetAssemblyClosureFile> Assemblies);
+
 }

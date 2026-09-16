@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -26,13 +28,15 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.DotNet
             Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), bytes.LongLength,
             Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_'));
 
-        internal static async Task<AiWorkerInvocationRequest> RequestAsync(string method = "Run", bool includeDependency = true)
+        internal static async Task<AiWorkerInvocationRequest> RequestAsync(
+            string method = "Run",
+            bool includeDependency = true,
+            bool packagedDependency = false)
         {
             var installation = await Installed.Value;
             var request = WorkerTestSupport.Request();
             var dependencies = includeDependency
-                ? new[] { new AiWorkerDependency("testdependency", "1.0.0",
-                    new[] { File("Multiplexed.AI.HostedInvocation.TestDependency.dll", installation.DependencyBytes) }) }
+                ? new[] { WorkerDependency(installation, packagedDependency) }
                 : Array.Empty<AiWorkerDependency>();
             return request with
             {
@@ -43,23 +47,90 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.DotNet
             };
         }
 
-        internal static async Task<AiDurableInvocationResult> ExecuteAsync(string method = "Run", bool includeDependency = true)
+        internal static async Task<AiDurableInvocationResult> ExecuteAsync(
+            string method = "Run",
+            bool includeDependency = true,
+            bool packagedDependency = false)
         {
-            var request = await RequestAsync(method, includeDependency);
+            var request = await RequestAsync(method, includeDependency, packagedDependency);
             return await (await TransportAsync()).InvokeAsync(request, _ => Task.CompletedTask);
         }
 
-        internal static AiPipelinePublicationUpload Upload(AiPublicationEnvironment runtime, string revision = "1")
+        internal static AiPipelinePublicationUpload Upload(
+            AiPublicationEnvironment runtime,
+            string revision = "1",
+            bool packagedDependency = false,
+            string? method = null)
         {
             var installation = Installed.Value.GetAwaiter().GetResult();
-            var symbol = TypeName + "::" + (revision == "2" ? "Revision2" : "Revision1");
+            var selectedMethod = method ?? (revision == "2" ? "Revision2" : "Revision1");
+            var symbol = TypeName + "::" + selectedMethod;
             AiPublicationFunctionUpload Function(string name) => new(new(AiPublicationFunctionKind.Step, name),
                 runtime.Reference, "functions.dll", symbol,
                 new[] { new AiPublicationFileUpload("functions.dll", installation.FunctionBytes) },
-                new[] { new AiPublicationDependencyUpload("testdependency", "1.0.0",
-                    new[] { new AiPublicationFileUpload("Multiplexed.AI.HostedInvocation.TestDependency.dll", installation.DependencyBytes) }) });
+                new[] { PublicationDependency(installation, packagedDependency) });
             return new(PublicationTestSupport.Definition(revision, "dotnet", secondLanguage: null),
                 new[] { Function("first"), Function("second") });
+        }
+
+        internal static AiPublicationDependencyUpload PackagedDependencyUpload() =>
+            PublicationDependency(Installed.Value.GetAwaiter().GetResult(), packaged: true);
+
+        private static AiPublicationDependencyUpload PublicationDependency(Installation installation, bool packaged)
+        {
+            const string name = "testdependency";
+            const string version = "1.0.0";
+            const string path = "Multiplexed.AI.HostedInvocation.TestDependency.dll";
+            if (!packaged)
+                return new(name, version, new[] { new AiPublicationFileUpload(path, installation.DependencyBytes) });
+            var manifest = AssemblyClosureManifest(name, version, path, installation.DependencyBytes);
+            return new(name, version, new[]
+            {
+                new AiPublicationFileUpload("bundle.manifest.json", manifest),
+                new AiPublicationFileUpload(path, installation.DependencyBytes)
+            })
+            {
+                Package = new AiPublicationDependencyPackage(
+                    1, AiPublicationDependencyPackageKind.DotNetAssemblyClosure, "bundle.manifest.json")
+            };
+        }
+
+        private static AiWorkerDependency WorkerDependency(Installation installation, bool packaged)
+        {
+            var upload = PublicationDependency(installation, packaged);
+            return new AiWorkerDependency(
+                upload.Name,
+                upload.Version,
+                upload.Files.Select(file => File(file.Path, file.Content)).ToArray())
+            {
+                Package = upload.Package
+            };
+        }
+
+        private static byte[] AssemblyClosureManifest(string packageName, string packageVersion, string path, byte[] bytes)
+        {
+            var identity = ReadAssemblyIdentity(bytes);
+            return JsonSerializer.SerializeToUtf8Bytes(new AiDotNetAssemblyClosureManifest(
+                1,
+                packageName,
+                packageVersion,
+                new[]
+                {
+                    new AiDotNetAssemblyClosureFile(
+                        path,
+                        Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+                        identity.Name,
+                        identity.Version)
+                }));
+        }
+
+        internal static (string Name, string Version) ReadAssemblyIdentity(byte[] bytes)
+        {
+            using var stream = new MemoryStream(bytes, writable: false);
+            using var pe = new PEReader(stream, PEStreamOptions.LeaveOpen);
+            var metadata = pe.GetMetadataReader();
+            var definition = metadata.GetAssemblyDefinition();
+            return (metadata.GetString(definition.Name), definition.Version.ToString());
         }
 
         internal static AiWorkerInvocationSupervisor Supervisor(WorkerTestSupport.PublishedFixture fixture,

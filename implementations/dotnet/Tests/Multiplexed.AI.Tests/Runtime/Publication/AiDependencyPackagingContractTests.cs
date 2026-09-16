@@ -9,7 +9,7 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
     public sealed class AiDependencyPackagingContractTests
     {
         [Fact]
-        public void Capability_Matrix_Promotes_Python_And_Node_Bundles_To_Hosted()
+        public void Capability_Matrix_Promotes_All_Selected_Package_Kinds_To_Hosted()
         {
             var capabilities = AiDependencyPackagingContracts.All.OrderBy(value => value.Kind).ToArray();
 
@@ -24,7 +24,7 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
                 value.Kind == AiPublicationDependencyPackageKind.PythonWheelBundle).Support);
             Assert.Equal(AiDependencyPackageExecutionSupport.Hosted, capabilities.Single(value =>
                 value.Kind == AiPublicationDependencyPackageKind.NodeLockedBundle).Support);
-            Assert.Equal(AiDependencyPackageExecutionSupport.ContractDefined, capabilities.Single(value =>
+            Assert.Equal(AiDependencyPackageExecutionSupport.Hosted, capabilities.Single(value =>
                 value.Kind == AiPublicationDependencyPackageKind.DotNetAssemblyClosure).Support);
         }
 
@@ -44,7 +44,6 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
 
         [Theory]
         [InlineData(AiPublicationDependencyPackageKind.NodeLockedBundle, "typescript")]
-        [InlineData(AiPublicationDependencyPackageKind.DotNetAssemblyClosure, "dotnet")]
         public async Task Matching_Package_Kind_Is_Captured_Into_Immutable_Environment(
             AiPublicationDependencyPackageKind kind,
             string language)
@@ -166,7 +165,7 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
         }
 
         [Fact]
-        public void Contract_Defined_DotNet_Package_Fails_Closed_At_Worker_Projection()
+        public void DotNet_Assembly_Closure_Metadata_Is_Execution_Supported()
         {
             var manifest = new AiPublicationFile(
                 "bundle.manifest.json",
@@ -179,10 +178,9 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
                     1, AiPublicationDependencyPackageKind.DotNetAssemblyClosure, manifest.Path)
             };
 
-            Assert.Throws<NotSupportedException>(() =>
-                AiDependencyPackagingContracts.RequireExecutionSupported(
-                    new[] { dependency },
-                    "dotnet"));
+            AiDependencyPackagingContracts.RequireExecutionSupported(
+                new[] { dependency },
+                "dotnet");
         }
 
         [Fact]

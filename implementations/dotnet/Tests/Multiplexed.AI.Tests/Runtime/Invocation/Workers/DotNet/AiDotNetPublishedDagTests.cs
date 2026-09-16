@@ -84,5 +84,50 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.DotNet
                 (await supervisor.DispatchAsync(PublicationTestSupport.Scope, identity)).Disposition);
             Assert.Null((await p.Journal.GetAsync(PublicationTestSupport.Scope, identity))!.Result);
         }
+        [Fact]
+        public async Task Packaged_Managed_Dependency_Executes_Through_Immutable_Publication_And_Existing_Dag()
+        {
+            var profile = await DotNetWorkerTestSupport.ProfileAsync();
+            using var fixture = new WorkerTestSupport.PublishedFixture();
+            var p = fixture.Publication;
+            p.Environments.Entries[profile.Runtime.Reference] = profile.Runtime;
+            p.Clock.Set(DateTimeOffset.UtcNow);
+
+            var published = await p.PublishAsync(DotNetWorkerTestSupport.Upload(
+                profile.Runtime,
+                packagedDependency: true,
+                method: "UseDependency"));
+            var parent = await p.CreateAsync(published);
+            Assert.Equal(AiExecutionStatus.Waiting, (await p.RunNextAsync(parent.ExecutionId)).Status);
+
+            var identity = new AiDurableInvocationIdentity(
+                PublicationTestSupport.Scope.TenantId,
+                parent.ExecutionId,
+                "first");
+            var options = new AiWorkerSupervisionOptions();
+            using var capacity = new AiWorkerProcessCapacity(options);
+            var supervisor = DotNetWorkerTestSupport.Supervisor(
+                fixture,
+                await DotNetWorkerTestSupport.TransportAsync(),
+                capacity,
+                options);
+
+            Assert.Equal(
+                AiWorkerDispatchDisposition.Accepted,
+                (await supervisor.DispatchAsync(PublicationTestSupport.Scope, identity)).Disposition);
+            var recorded = (await p.Journal.GetAsync(PublicationTestSupport.Scope, identity))!;
+            Assert.True(recorded.Result!.Success);
+            Assert.Equal("3", recorded.Result.PayloadJson);
+
+            var engine = new AiDagExecutionEngine(
+                p.EngineServices,
+                DagTestProxy.Noop<IAiDagExecutionEngineRuntimeServices>());
+            await engine.ResumeExternalWaitingStepAsync(parent.ExecutionId, "first");
+            await p.RunNextAsync(parent.ExecutionId);
+            var step = (await p.Store.GetStateAsync(parent.ExecutionId))!.Steps["first"];
+            Assert.Equal(AiStepExecutionStatus.Completed, step.Status);
+            Assert.Equal(recorded.ResultSha256, step.Result!.InvocationReceipt!.ResultSha256);
+        }
+
     }
 }

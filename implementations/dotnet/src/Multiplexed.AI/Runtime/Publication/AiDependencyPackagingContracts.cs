@@ -34,7 +34,7 @@ namespace Multiplexed.AI.Runtime.Publication
                 new AiDependencyPackageCapability(
                     AiPublicationDependencyPackageKind.DotNetAssemblyClosure,
                     "dotnet",
-                    AiDependencyPackageExecutionSupport.ContractDefined)
+                    AiDependencyPackageExecutionSupport.Hosted)
             });
 
         public static IReadOnlyList<AiDependencyPackageCapability> All => Values;
@@ -58,7 +58,9 @@ namespace Multiplexed.AI.Runtime.Publication
                     AiPythonWheelPackaging.Capture(package, files, runtime, dependencyName, dependencyVersion),
                 AiPublicationDependencyPackageKind.NodeLockedBundle =>
                     AiNodeLockedPackaging.Capture(package, files, runtime, dependencyName, dependencyVersion),
-                _ => package with { }
+                AiPublicationDependencyPackageKind.DotNetAssemblyClosure =>
+                    AiDotNetAssemblyClosurePackaging.Capture(package, files, runtime, dependencyName, dependencyVersion),
+                _ => throw new NotSupportedException($"Dependency package kind '{package.Kind}' has no capture implementation.")
             };
         }
 
