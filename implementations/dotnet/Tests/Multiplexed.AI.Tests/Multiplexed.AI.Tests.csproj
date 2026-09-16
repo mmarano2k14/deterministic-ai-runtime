@@ -87,4 +87,24 @@
            Text="Hosted .NET worker fixture did not return its required build outputs." />
     <Copy SourceFiles="@(_HostedDotNetFixtureFiles)" DestinationFolder="$(TargetDir)dotnet-worker-fixture" SkipUnchangedFiles="true" />
   </Target>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Multiplexed.AI.ContainerEngine.Probe\Multiplexed.AI.ContainerEngine.Probe.csproj" ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+
+  <Target Name="CopyContainerEngineProbe" AfterTargets="Build"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <_ContainerEngineProbeFiles Remove="@(_ContainerEngineProbeFiles)" />
+    </ItemGroup>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Multiplexed.AI.ContainerEngine.Probe\Multiplexed.AI.ContainerEngine.Probe.csproj"
+             Targets="BuildAndGetContainerEngineProbeFiles"
+             Properties="Configuration=$(Configuration);TargetFramework=net10.0"
+             RebaseOutputs="true" StopOnFirstFailure="true">
+      <Output TaskParameter="TargetOutputs" ItemName="_ContainerEngineProbeFiles" />
+    </MSBuild>
+    <Error Condition="'@(_ContainerEngineProbeFiles)' == ''"
+           Text="The container engine probe did not return its required launch files." />
+    <Copy SourceFiles="@(_ContainerEngineProbeFiles)" DestinationFolder="$(TargetDir)container-engine-probe" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

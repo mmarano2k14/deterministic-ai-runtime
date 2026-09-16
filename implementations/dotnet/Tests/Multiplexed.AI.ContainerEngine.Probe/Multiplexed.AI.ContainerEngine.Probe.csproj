@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseAppHost>true</UseAppHost>
+    <GenerateDependencyFile>true</GenerateDependencyFile>
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+  </PropertyGroup>
+
+  <Target Name="BuildAndGetContainerEngineProbeFiles" DependsOnTargets="Build"
+          Returns="@(_ContainerEngineProbeFiles)"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <PropertyGroup>
+      <_ContainerEngineProbeExecutable Condition="'$(OS)' == 'Windows_NT'">$(TargetDir)$(AssemblyName).exe</_ContainerEngineProbeExecutable>
+      <_ContainerEngineProbeExecutable Condition="'$(OS)' != 'Windows_NT'">$(TargetDir)$(AssemblyName)</_ContainerEngineProbeExecutable>
+    </PropertyGroup>
+    <ItemGroup>
+      <_ContainerEngineProbeFiles Remove="@(_ContainerEngineProbeFiles)" />
+      <_ContainerEngineProbeFiles Include="$(_ContainerEngineProbeExecutable)" />
+      <_ContainerEngineProbeFiles Include="$(TargetPath)" />
+      <_ContainerEngineProbeFiles Include="$(ProjectDepsFilePath)" />
+      <_ContainerEngineProbeFiles Include="$(ProjectRuntimeConfigFilePath)" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_ContainerEngineProbeFiles.Identity)')"
+           Text="The container engine probe build did not produce required launch file '%(_ContainerEngineProbeFiles.Identity)'." />
+  </Target>
+</Project>
