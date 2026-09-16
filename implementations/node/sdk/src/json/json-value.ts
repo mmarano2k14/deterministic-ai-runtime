@@ -6,3 +6,7 @@ export type AiSdkJsonValue =
   | { readonly [key: string]: AiSdkJsonValue };
 
 export type AiSdkJsonObject = { readonly [key: string]: AiSdkJsonValue };
+
+export function isAiSdkJsonObject(value: unknown): value is AiSdkJsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

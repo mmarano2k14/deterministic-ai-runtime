@@ -7,10 +7,16 @@
     <IsPackable>true</IsPackable>
     <PackageId>Multiplexed.AI.Sdk</PackageId>
     <Description>External client SDK for the Multiplexed AI public execution boundary.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Multiplexed.AI.Sdk.Contracts\Multiplexed.AI.Sdk.Contracts.csproj" />
+    <PackageReference Include="ModelContextProtocol" Version="1.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <Target Name="EnforceExternalSdkProjectBoundary" BeforeTargets="ResolveReferences">

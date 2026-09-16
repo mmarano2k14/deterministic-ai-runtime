@@ -30,7 +30,9 @@ for (const file of sourceFiles) {
       strict: true,
     },
   });
-  const errors = (result.diagnostics ?? []).filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
+  const errors = (result.diagnostics ?? []).filter(
+    (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+  );
   if (errors.length > 0) {
     for (const diagnostic of errors) {
       console.error(ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
@@ -40,7 +42,10 @@ for (const file of sourceFiles) {
 }
 
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-const operationSource = fs.readFileSync(path.join(sourceRoot, "protocol/operations.ts"), "utf8");
+const operationSource = fs.readFileSync(
+  path.join(sourceRoot, "protocol/operations.ts"),
+  "utf8",
+);
 for (const operation of manifest.operations) {
   if (!operationSource.includes(`"${operation.name}"`)) {
     throw new Error(`TypeScript protocol is missing operation '${operation.name}'.`);
@@ -50,4 +55,32 @@ if (!operationSource.includes(`AI_SDK_PROTOCOL_VERSION = ${manifest.protocolVers
   throw new Error("TypeScript protocol version does not match the canonical manifest.");
 }
 
-console.log(`TypeScript SDK foundation validated: ${sourceFiles.length} source files, ${manifest.operations.length} operations.`);
+const packageJson = JSON.parse(fs.readFileSync(path.join(sdkRoot, "package.json"), "utf8"));
+if (packageJson.dependencies?.["@modelcontextprotocol/client"] !== "2.0.0") {
+  throw new Error("TypeScript SDK must pin the external MCP client dependency.");
+}
+if (packageJson.engines?.node !== ">=20") {
+  throw new Error("TypeScript SDK Node requirement must remain capability-based at >=20.");
+}
+
+const forbidden = [
+  "Multiplexed.Abstractions",
+  "MongoDB",
+  "StackExchange.Redis",
+  "RuntimeInstanceId",
+  "WorkerId",
+  "ClaimToken",
+  "AssignmentEpoch",
+];
+for (const file of sourceFiles) {
+  const source = fs.readFileSync(file, "utf8");
+  for (const token of forbidden) {
+    if (source.includes(token)) {
+      throw new Error(`Forbidden runtime/internal token '${token}' found in ${file}.`);
+    }
+  }
+}
+
+console.log(
+  `TypeScript SDK validated: ${sourceFiles.length} source files, ${manifest.operations.length} operations.`,
+);

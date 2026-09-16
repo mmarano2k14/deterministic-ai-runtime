@@ -20,3 +20,13 @@ export interface AiSdkError {
   readonly retryable: boolean;
   readonly details: AiSdkJsonObject;
 }
+
+export function createAiSdkError(
+  kind: AiSdkErrorKind,
+  code: string,
+  message: string,
+  retryable = false,
+  details: AiSdkJsonObject = {},
+): AiSdkError {
+  return { kind, code, message, retryable, details };
+}

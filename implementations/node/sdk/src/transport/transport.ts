@@ -10,13 +10,22 @@ export interface AiSdkTransportRequest {
   readonly arguments: AiSdkJsonObject;
 }
 
-export interface AiSdkTransportResponse {
-  readonly result?: AiSdkJsonValue;
-  readonly error?: AiSdkError;
-}
+export type AiSdkTransportResponse =
+  | {
+      readonly result: AiSdkJsonValue;
+      readonly error?: never;
+    }
+  | {
+      readonly result?: never;
+      readonly error: AiSdkError;
+    };
 
 export interface AiSdkTransportOptions {
   readonly credentialProvider?: AiSdkCredentialProvider;
+  readonly safeReadMaxAttempts?: number;
+  readonly safeReadRetryDelayMs?: number;
+  readonly clientName?: string;
+  readonly clientVersion?: string;
 }
 
 export interface AiSdkTransport {

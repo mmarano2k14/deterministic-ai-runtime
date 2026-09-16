@@ -20,3 +20,7 @@ export const AI_SDK_OPERATION_RETRY: Readonly<Record<AiSdkOperationName, AiSdkTr
   [AI_SDK_OPERATIONS.getExecutionResult]: "safe-read",
   [AI_SDK_OPERATIONS.cancelExecution]: "never",
 };
+
+export function isAiSdkOperationName(value: string): value is AiSdkOperationName {
+  return Object.values(AI_SDK_OPERATIONS).some((operation) => operation === value);
+}
