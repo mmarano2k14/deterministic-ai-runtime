@@ -129,7 +129,7 @@ namespace Multiplexed.AI.Runtime.Publication
                 var dependencies = source.Dependencies.Select(dependency =>
                 {
                     var package = AiDependencyPackagingContracts.Capture(
-                        dependency.Package, dependency.Files, slot.Language);
+                        dependency.Package, dependency.Files, runtime, dependency.Name, dependency.Version);
                     return new AiPublicationDependency(
                         dependency.Name,
                         dependency.Version,

@@ -7,7 +7,11 @@ namespace Multiplexed.Abstractions.AI.Invocation.Workers
 {
     /// <summary>Portable bytes, not a payload-store key or a local filesystem path.</summary>
     public sealed record AiWorkerFile(string Path, string Sha256, long SizeBytes, string Base64Url);
-    public sealed record AiWorkerDependency(string Name, string Version, IReadOnlyList<AiWorkerFile> Files);
+    public sealed record AiWorkerDependency(string Name, string Version, IReadOnlyList<AiWorkerFile> Files)
+    {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public AiPublicationDependencyPackage? Package { get; init; }
+    }
 
     /// <summary>Only the selected, verified function and its pinned dependency closure leave the server.</summary>
     public sealed record AiWorkerCodeBundle(

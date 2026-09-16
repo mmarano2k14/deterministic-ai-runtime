@@ -9,7 +9,7 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
     public sealed class AiDependencyPackagingContractTests
     {
         [Fact]
-        public void Capability_Matrix_Is_Finite_And_Not_Yet_Hosted()
+        public void Capability_Matrix_Promotes_Only_Python_Wheels_To_Hosted()
         {
             var capabilities = AiDependencyPackagingContracts.All.OrderBy(value => value.Kind).ToArray();
 
@@ -20,7 +20,9 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
                 value.Kind == AiPublicationDependencyPackageKind.NodeLockedBundle).ExecutionLanguage);
             Assert.Equal("dotnet", capabilities.Single(value =>
                 value.Kind == AiPublicationDependencyPackageKind.DotNetAssemblyClosure).ExecutionLanguage);
-            Assert.All(capabilities, capability =>
+            Assert.Equal(AiDependencyPackageExecutionSupport.Hosted, capabilities.Single(value =>
+                value.Kind == AiPublicationDependencyPackageKind.PythonWheelBundle).Support);
+            Assert.All(capabilities.Where(value => value.Kind != AiPublicationDependencyPackageKind.PythonWheelBundle), capability =>
                 Assert.Equal(AiDependencyPackageExecutionSupport.ContractDefined, capability.Support));
         }
 
@@ -39,7 +41,6 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
         }
 
         [Theory]
-        [InlineData(AiPublicationDependencyPackageKind.PythonWheelBundle, "python")]
         [InlineData(AiPublicationDependencyPackageKind.NodeLockedBundle, "typescript")]
         [InlineData(AiPublicationDependencyPackageKind.DotNetAssemblyClosure, "dotnet")]
         public async Task Matching_Package_Kind_Is_Captured_Into_Immutable_Environment(
@@ -132,7 +133,7 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
         public async Task Package_Descriptor_Alone_Changes_Immutable_Publication_Identity()
         {
             using var fixture = new PublicationTestSupport.Fixture();
-            var upload = PublicationTestSupport.Upload(language: "python", secondLanguage: null);
+            var upload = PublicationTestSupport.Upload(language: "typescript", secondLanguage: null);
             var function = upload.Functions[0];
             var files = new[]
             {
@@ -157,7 +158,7 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
             {
                 Package = new AiPublicationDependencyPackage(
                     1,
-                    AiPublicationDependencyPackageKind.PythonWheelBundle,
+                    AiPublicationDependencyPackageKind.NodeLockedBundle,
                     "bundle.manifest.json")
             };
             function = function with { Dependencies = new[] { dependency } };
@@ -171,7 +172,6 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
         }
 
         [Theory]
-        [InlineData(AiPublicationDependencyPackageKind.PythonWheelBundle, "python")]
         [InlineData(AiPublicationDependencyPackageKind.NodeLockedBundle, "typescript")]
         [InlineData(AiPublicationDependencyPackageKind.DotNetAssemblyClosure, "dotnet")]
         public void Contract_Defined_Packages_Fail_Closed_At_Worker_Projection(
@@ -192,6 +192,24 @@ namespace Multiplexed.AI.Tests.Runtime.Publication
                 AiDependencyPackagingContracts.RequireExecutionSupported(
                     new[] { dependency },
                     language));
+        }
+
+        [Fact]
+        public void Python_Wheel_Package_Metadata_Is_Execution_Supported()
+        {
+            var manifest = new AiPublicationFile(
+                "bundle.manifest.json", new string('a', 64), 2,
+                new AiPublicationDocument("key-a", new string('b', 64), 2));
+            var wheel = new AiPublicationFile(
+                "rules-2.0.1-py3-none-any.whl", new string('c', 64), 2,
+                new AiPublicationDocument("key-c", new string('d', 64), 2));
+            var dependency = new AiPublicationDependency("rules", "2.0.1", new[] { manifest, wheel })
+            {
+                Package = new AiPublicationDependencyPackage(
+                    1, AiPublicationDependencyPackageKind.PythonWheelBundle, manifest.Path)
+            };
+
+            AiDependencyPackagingContracts.RequireExecutionSupported(new[] { dependency }, "python");
         }
 
         [Fact]

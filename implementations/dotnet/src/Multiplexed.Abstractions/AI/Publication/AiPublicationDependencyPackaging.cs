@@ -22,4 +22,14 @@ namespace Multiplexed.Abstractions.AI.Publication
         int SchemaVersion,
         AiPublicationDependencyPackageKind Kind,
         string ManifestPath);
+
+    /// <summary>Portable manifest for one immutable pure-Python wheel dependency.</summary>
+    public sealed record AiPythonWheelBundleManifest(
+        [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
+        [property: JsonPropertyName("wheelPath")] string WheelPath,
+        [property: JsonPropertyName("wheelSha256")] string WheelSha256,
+        [property: JsonPropertyName("distribution")] string Distribution,
+        [property: JsonPropertyName("version")] string Version,
+        [property: JsonPropertyName("importRoots")] IReadOnlyList<string> ImportRoots);
+
 }

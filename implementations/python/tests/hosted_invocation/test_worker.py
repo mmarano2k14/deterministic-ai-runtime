@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
+import zipfile
 
 WORKER = Path(__file__).resolve().parents[2] / "workers" / "hosted_invocation" / "worker.py"
 _spec = importlib.util.spec_from_file_location("_hosted_worker_test_target", WORKER)
@@ -32,6 +33,35 @@ def file(path: str, source: str | bytes) -> dict:
     raw = source.encode("utf-8") if isinstance(source, str) else source
     return {"path": path, "sha256": hashlib.sha256(raw).hexdigest(), "sizeBytes": len(raw),
             "base64Url": base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")}
+
+
+
+def wheel_dependency(*, module: str = "wheel_rules", wheel_tag: str = "py3-none-any",
+                     purelib: bool = True, native: bool = False,
+                     traversal: bool = False, manifest_hash: str | None = None) -> dict:
+    distribution = "rules"
+    version = "2.0.1"
+    wheel_name = f"rules-{version}-{wheel_tag}.whl"
+    dist_info = f"rules-{version}.dist-info"
+    with io.BytesIO() as stream:
+        with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            module_path = "../escape.py" if traversal else f"{module}/__init__.py"
+            archive.writestr(module_path, "def transform(n):\n    return n * 4\n")
+            if native:
+                archive.writestr(f"{module}/native.pyd", b"binary")
+            archive.writestr(f"{dist_info}/WHEEL",
+                             "Wheel-Version: 1.0\nGenerator: deterministic-test\n"
+                             f"Root-Is-Purelib: {'true' if purelib else 'false'}\nTag: {wheel_tag}\n")
+            archive.writestr(f"{dist_info}/METADATA", f"Metadata-Version: 2.1\nName: {distribution}\nVersion: {version}\n")
+            archive.writestr(f"{dist_info}/RECORD", "")
+        wheel = stream.getvalue()
+    digest = manifest_hash or hashlib.sha256(wheel).hexdigest()
+    manifest = json.dumps({"schemaVersion": 1, "wheelPath": wheel_name, "wheelSha256": digest,
+                           "distribution": distribution, "version": version, "importRoots": [module]},
+                          separators=(",", ":")).encode()
+    return {"name": distribution, "version": version,
+            "files": [file("bundle.manifest.json", manifest), file(wheel_name, wheel)],
+            "package": {"schemaVersion": 1, "kind": "PythonWheelBundle", "manifestPath": "bundle.manifest.json"}}
 
 
 def request(source: str = SIMPLE) -> dict:
@@ -102,6 +132,34 @@ class WorkerExecutionTests(unittest.TestCase):
             file("vendored_rules/__init__.py", "from .maths import transform"),
             file("vendored_rules/maths.py", "def transform(n):\n    return n * 3")]}]
         self.assertEqual(63, self.assert_success(execute(value))["payload"])
+
+
+    def test_pure_python_wheel_executes_without_installation(self) -> None:
+        value = request('from wheel_rules import transform\ndef run(inputs, context):\n    return {"success": True, "payload": transform(inputs["amount"])}')
+        value["code"]["dependencies"] = [wheel_dependency()]
+        self.assertEqual(84, self.assert_success(execute(value))["payload"])
+
+    def test_python_wheel_digest_mismatch_is_rejected_before_ready(self) -> None:
+        value = request()
+        value["code"]["dependencies"] = [wheel_dependency(manifest_hash="0" * 64)]
+        result = execute(value)
+        self.assert_technical(result)
+        self.assertEqual(b"", result.stdout)
+
+    def test_native_wheel_content_is_rejected(self) -> None:
+        value = request()
+        value["code"]["dependencies"] = [wheel_dependency(native=True)]
+        self.assert_technical(execute(value))
+
+    def test_non_purelib_wheel_is_rejected(self) -> None:
+        value = request()
+        value["code"]["dependencies"] = [wheel_dependency(purelib=False)]
+        self.assert_technical(execute(value))
+
+    def test_wheel_path_traversal_is_rejected(self) -> None:
+        value = request()
+        value["code"]["dependencies"] = [wheel_dependency(traversal=True)]
+        self.assert_technical(execute(value))
 
     def test_explicit_business_failure_is_a_result(self) -> None:
         value = self.assert_success(execute(request('def run(inputs, context):\n    return {"success": False, "payload": {"reason": "limit"}}')))

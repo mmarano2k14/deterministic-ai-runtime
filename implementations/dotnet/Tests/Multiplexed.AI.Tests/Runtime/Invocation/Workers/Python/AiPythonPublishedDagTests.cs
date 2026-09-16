@@ -80,6 +80,57 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Python
         }
 
         [PythonWorkerFact]
+        public async Task Published_Pure_Python_Wheel_Executes_From_The_Pinned_Immutable_Environment()
+        {
+            var profile = await PythonWorkerTestSupport.ProfileAsync();
+            using var fixture = new WorkerTestSupport.PublishedFixture(); var p = fixture.Publication;
+            p.Environments.Entries[profile.Runtime.Reference] = profile.Runtime; p.Clock.Set(DateTimeOffset.UtcNow);
+            var source = "from wheel_rules import transform\ndef run(inputs, context):\n    return {\"success\": True, \"payload\": transform(inputs[\"amount\"])}";
+            var published = await p.PublishAsync(PythonWorkerTestSupport.Upload(
+                profile.Runtime, source: source, dependencies: new[] { PythonWorkerTestSupport.WheelUpload() }));
+            var parent = await p.CreateAsync(published);
+            Assert.Equal(AiExecutionStatus.Waiting, (await p.RunNextAsync(parent.ExecutionId)).Status);
+            var identity = new AiDurableInvocationIdentity(PublicationTestSupport.Scope.TenantId, parent.ExecutionId, "first");
+            var options = new AiWorkerSupervisionOptions(); using var capacity = new AiWorkerProcessCapacity(options);
+            var supervisor = PythonWorkerTestSupport.Supervisor(
+                fixture, await PythonWorkerTestSupport.TransportAsync(), capacity, options);
+
+            Assert.Equal(AiWorkerDispatchDisposition.Accepted,
+                (await supervisor.DispatchAsync(PublicationTestSupport.Scope, identity)).Disposition);
+            var recorded = (await p.Journal.GetAsync(PublicationTestSupport.Scope, identity))!;
+            Assert.Equal("84", recorded.Result!.PayloadJson);
+            Assert.Equal(published.PublicationRef, recorded.Definition.Target.PublicationRef);
+            Assert.Equal(0, p.LatestLookups);
+        }
+
+        [PythonWorkerFact]
+        public async Task Unstarted_Run_Keeps_Original_Wheel_After_Dependency_Republication()
+        {
+            var profile = await PythonWorkerTestSupport.ProfileAsync();
+            using var fixture = new WorkerTestSupport.PublishedFixture(); var p = fixture.Publication;
+            p.Environments.Entries[profile.Runtime.Reference] = profile.Runtime; p.Clock.Set(DateTimeOffset.UtcNow);
+            var source = "from wheel_rules import transform\ndef run(inputs, context):\n    return {\"success\": True, \"payload\": transform(inputs[\"amount\"])}";
+            var original = await p.PublishAsync(PythonWorkerTestSupport.Upload(
+                profile.Runtime, source: source, dependencies: new[] { PythonWorkerTestSupport.WheelUpload(4) }));
+            var parent = await p.CreateAsync(original);
+            var replacement = await p.PublishAsync(PythonWorkerTestSupport.Upload(
+                profile.Runtime, source: source, dependencies: new[] { PythonWorkerTestSupport.WheelUpload(5) }));
+            Assert.NotEqual(original.PublicationRef, replacement.PublicationRef);
+
+            Assert.Equal(AiExecutionStatus.Waiting, (await p.RunNextAsync(parent.ExecutionId)).Status);
+            var identity = new AiDurableInvocationIdentity(PublicationTestSupport.Scope.TenantId, parent.ExecutionId, "first");
+            var options = new AiWorkerSupervisionOptions(); using var capacity = new AiWorkerProcessCapacity(options);
+            var supervisor = PythonWorkerTestSupport.Supervisor(
+                fixture, await PythonWorkerTestSupport.TransportAsync(), capacity, options);
+            Assert.Equal(AiWorkerDispatchDisposition.Accepted,
+                (await supervisor.DispatchAsync(PublicationTestSupport.Scope, identity)).Disposition);
+            var recorded = (await p.Journal.GetAsync(PublicationTestSupport.Scope, identity))!;
+            Assert.Equal("84", recorded.Result!.PayloadJson);
+            Assert.Equal(original.PublicationRef, recorded.Definition.Target.PublicationRef);
+            Assert.Equal(0, p.LatestLookups);
+        }
+
+        [PythonWorkerFact]
         public async Task Python_Exception_Retains_Uncertain_Invocation_Without_Manufacturing_Business_Failure()
         {
             var profile = await PythonWorkerTestSupport.ProfileAsync();

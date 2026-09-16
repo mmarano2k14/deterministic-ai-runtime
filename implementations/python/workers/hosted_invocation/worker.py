@@ -14,6 +14,7 @@ import importlib
 import importlib.abc
 import importlib.machinery
 import inspect
+import io
 import json
 import keyword
 import math
@@ -22,6 +23,7 @@ import re
 import sys
 import threading
 import time
+import zipfile
 from types import MappingProxyType
 from typing import Any, BinaryIO
 
@@ -135,23 +137,28 @@ def _deadline(value: Any) -> dt.datetime:
     return parsed
 
 
-def _path(value: Any) -> str:
-    _require(type(value) is str and 0 < len(value) <= 240, "Invalid source path.")
+def _portable_path(value: Any) -> str:
+    _require(type(value) is str and 0 < len(value) <= 240, "Invalid artifact path.")
     parts = value.split("/")
     for part in parts:
         _require(part not in ("", ".", "..") and not part.endswith(".") and
                  re.fullmatch(r"[A-Za-z0-9_.\-]+", part) is not None,
-                 "Source paths must be portable relative paths.")
+                 "Artifact paths must be portable relative paths.")
         stem = part.split(".")[0].upper()
         _require(stem not in ("CON", "PRN", "AUX", "NUL") and
                  re.fullmatch(r"(?:COM|LPT)[1-9]", stem) is None, "Device path is forbidden.")
-    _require(parts[-1].endswith(".py"), "Only Python source files are supported.")
     return value
 
 
-def _file(value: Any) -> tuple[str, bytes]:
+def _path(value: Any) -> str:
+    path = _portable_path(value)
+    _require(path.endswith(".py"), "Only Python source files are supported.")
+    return path
+
+
+def _blob_file(value: Any) -> tuple[str, bytes]:
     item = _object(value, ("path", "sha256", "sizeBytes", "base64Url"))
-    path = _path(item["path"])
+    path = _portable_path(item["path"])
     digest = _hash(item["sha256"])
     size = _integer(item["sizeBytes"], 0, MAX_FILE_BYTES)
     encoded = item["base64Url"]
@@ -162,9 +169,124 @@ def _file(value: Any) -> tuple[str, bytes]:
     _require(base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") == encoded,
              "Noncanonical base64url content.")
     _require(len(raw) == size and hashlib.sha256(raw).hexdigest() == digest,
-             "Source content integrity mismatch.")
+             "Artifact content integrity mismatch.")
+    return path, raw
+
+
+def _file(value: Any) -> tuple[str, bytes]:
+    path, raw = _blob_file(value)
+    _require(path.endswith(".py"), "Only Python source files are supported.")
     raw.decode("utf-8", "strict")
     return path, raw
+
+
+def _distribution(value: str) -> str:
+    return re.sub(r"[-_.]+", "-", value.strip()).lower()
+
+
+def _headers(text: str, name: str) -> list[str]:
+    result: list[str] = []
+    for line in text.replace("\r\n", "\n").split("\n"):
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        if key.lower() == name.lower() and value.strip():
+            result.append(value.strip())
+    return result
+
+
+def _wheel_dependency(dependency: dict[str, Any], runtime_version: str) -> list[tuple[str, bytes]]:
+    package = _object(dependency["package"], ("schemaVersion", "kind", "manifestPath"))
+    _require(package["schemaVersion"] == 1 and package["kind"] == "PythonWheelBundle",
+             "Unsupported Python dependency package contract.")
+    manifest_path = _portable_path(package["manifestPath"])
+    _require(manifest_path.endswith(".json"), "The Python wheel manifest must be JSON.")
+    files = dependency["files"]
+    _require(type(files) is list and len(files) == 2, "A Python wheel dependency requires one manifest and one wheel.")
+    blobs: dict[str, bytes] = {}
+    for item in files:
+        path, raw = _blob_file(item)
+        _require(path not in blobs, "Duplicate Python wheel artifact path.")
+        blobs[path] = raw
+    _require(manifest_path in blobs, "The Python wheel manifest is missing.")
+    manifest = json.loads(blobs[manifest_path].decode("utf-8", "strict"), object_pairs_hook=_unique_pairs,
+                          parse_constant=_invalid_constant)
+    manifest = _object(manifest, ("schemaVersion", "wheelPath", "wheelSha256", "distribution", "version", "importRoots"))
+    _require(manifest["schemaVersion"] == 1, "Unsupported Python wheel manifest schema.")
+    wheel_path = _portable_path(manifest["wheelPath"])
+    _require(wheel_path.endswith(".whl") and wheel_path != manifest_path and wheel_path in blobs,
+             "The Python wheel artifact is missing.")
+    wheel_sha = _hash(manifest["wheelSha256"])
+    _require(hashlib.sha256(blobs[wheel_path]).hexdigest() == wheel_sha, "Python wheel manifest digest mismatch.")
+    distribution = _text(manifest["distribution"])
+    version = manifest["version"]
+    _require(type(version) is str and EXACT_VERSION.fullmatch(version) is not None,
+             "An exact Python wheel version is required.")
+    _require(_distribution(distribution) == _distribution(dependency["name"]) and version == dependency["version"],
+             "Python wheel manifest identity does not match its dependency.")
+    roots = manifest["importRoots"]
+    _require(type(roots) is list and 0 < len(roots) <= MAX_FILES and
+             all(type(root) is str and IDENTIFIER.fullmatch(root) is not None and not keyword.iskeyword(root) for root in roots) and
+             roots == sorted(set(roots)), "Invalid Python wheel import roots.")
+
+    runtime = tuple(int(part) for part in runtime_version.split(".")[:2])
+    _require(runtime in ((3, 12), (3, 13)), "Unsupported Python runtime for wheel execution.")
+    modules: dict[str, bytes] = {}
+    metadata_files: dict[str, bytes] = {}
+    seen: set[str] = set()
+    expanded = 0
+    with zipfile.ZipFile(io.BytesIO(blobs[wheel_path]), "r") as archive:
+        infos = archive.infolist()
+        _require(0 < len(infos) <= MAX_FILES, "Python wheel entry count exceeds its bound.")
+        for info in infos:
+            if info.is_dir():
+                continue
+            path = _portable_path(info.filename)
+            _require(path.casefold() not in seen, "Duplicate or case-ambiguous Python wheel path.")
+            seen.add(path.casefold())
+            _require((info.external_attr >> 16) & 0xF000 != 0xA000, "Python wheel symbolic links are unsupported.")
+            _require(0 <= info.file_size <= MAX_FILE_BYTES, "Python wheel entry exceeds its size bound.")
+            expanded += info.file_size
+            _require(expanded <= MAX_BUNDLE_BYTES, "Expanded Python wheel exceeds its bundle bound.")
+            raw = archive.read(info)
+            _require(len(raw) == info.file_size, "Python wheel entry size changed while reading.")
+            if ".dist-info/" in path:
+                metadata_files[path] = raw
+            else:
+                _require(".data/" not in path and path.endswith(".py"),
+                         "Only Python modules plus wheel metadata are supported.")
+                raw.decode("utf-8", "strict")
+                modules[path] = raw
+    wheel_docs = [path for path in metadata_files if path.endswith(".dist-info/WHEEL")]
+    _require(len(wheel_docs) == 1, "A Python wheel requires one WHEEL document.")
+    dist_info = wheel_docs[0][:-len("WHEEL")]
+    _require(dist_info + "METADATA" in metadata_files and dist_info + "RECORD" in metadata_files,
+             "A Python wheel requires METADATA and RECORD documents.")
+    wheel_text = metadata_files[wheel_docs[0]].decode("utf-8", "strict")
+    _require(any(value.lower() == "true" for value in _headers(wheel_text, "Root-Is-Purelib")),
+             "Only pure-Python wheels are supported.")
+    tags = _headers(wheel_text, "Tag")
+    expected_exact = f"py{runtime[0]}{runtime[1]}-none-any"
+    _require(tags and all(tag in ("py3-none-any", expected_exact) for tag in tags),
+             "Python wheel tags are not compatible with the pinned runtime.")
+    metadata_text = metadata_files[dist_info + "METADATA"].decode("utf-8", "strict")
+    names, versions = _headers(metadata_text, "Name"), _headers(metadata_text, "Version")
+    _require(len(names) == 1 and len(versions) == 1 and _distribution(names[0]) == _distribution(distribution) and
+             versions[0] == version, "Python wheel METADATA identity mismatch.")
+    _require(modules, "A Python wheel must contain at least one Python module.")
+    paths = set(modules)
+    for path in modules:
+        parts = path[:-3].split("/")
+        is_package = parts[-1] == "__init__"
+        module_parts = parts[:-1] if is_package else parts
+        _require(module_parts and all(IDENTIFIER.fullmatch(part) and not keyword.iskeyword(part) for part in module_parts),
+                 "Invalid Python wheel module path.")
+        for length in range(1, len(module_parts)):
+            _require("/".join(module_parts[:length]) + "/__init__.py" in paths,
+                     "Namespace packages are not supported in Python wheel bundles.")
+    actual_roots = sorted({(path.split("/", 1)[0][:-3] if "/" not in path else path.split("/", 1)[0]) for path in modules})
+    _require(actual_roots == roots, "Python wheel import roots do not match the manifest.")
+    return list(modules.items())
 
 
 class _PublishedModules(importlib.abc.MetaPathFinder, importlib.abc.Loader):
@@ -176,29 +298,41 @@ class _PublishedModules(importlib.abc.MetaPathFinder, importlib.abc.Loader):
         seen_paths: set[str] = set()
         seen_modules: set[str] = set()
         owners: dict[str, str] = {}
-        groups: list[tuple[str, Any]] = [("sources", bundle["sources"])]
+        groups: list[tuple[str, list[tuple[str, bytes]]]] = []
+        sources = bundle["sources"]
+        _require(type(sources) is list and 0 < len(sources) <= MAX_FILES, "An explicit source list is required.")
+        groups.append(("sources", [_file(item) for item in sources]))
         dependencies = bundle["dependencies"]
         _require(type(dependencies) is list and len(dependencies) <= MAX_DEPENDENCIES,
                  "Invalid dependency list.")
         seen_dependencies: set[str] = set()
         for dependency in dependencies:
-            item = _object(dependency, ("name", "version", "files"))
+            _require(type(dependency) is dict, "Invalid dependency object.")
+            if set(dependency) == {"name", "version", "files"}:
+                item = dependency
+                packaged = False
+            else:
+                item = _object(dependency, ("name", "version", "files", "package"))
+                packaged = True
             name = _text(item["name"])
             _require(re.fullmatch(r"[A-Za-z0-9_.\-]+", name) is not None and
                      name.casefold() not in seen_dependencies, "Ambiguous dependency name.")
             _require(type(item["version"]) is str and EXACT_VERSION.fullmatch(item["version"]) is not None,
                      "An exact dependency version is required.")
             seen_dependencies.add(name.casefold())
-            groups.append(("dependency:" + name, item["files"]))
+            if packaged:
+                groups.append(("dependency:" + name, _wheel_dependency(item, bundle["runtime"]["runtimeVersion"])))
+            else:
+                files = item["files"]
+                _require(type(files) is list and 0 < len(files) <= MAX_FILES, "An explicit file list is required.")
+                groups.append(("dependency:" + name, [_file(file) for file in files]))
         reserved = set(sys.stdlib_module_names) | {name.split(".")[0] for name in sys.modules}
         reserved |= {"__main__", "__pycache__", "sitecustomize", "usercustomize"}
         reserved = {name.casefold() for name in reserved}
         total = 0
         count = 0
         for owner, files in groups:
-            _require(type(files) is list and 0 < len(files) <= MAX_FILES, "An explicit file list is required.")
-            for item in files:
-                path, raw = _file(item)
+            for path, raw in files:
                 count += 1
                 total += len(raw)
                 _require(count <= MAX_FILES and total <= MAX_BUNDLE_BYTES, "Source closure exceeds its bound.")
@@ -218,7 +352,6 @@ class _PublishedModules(importlib.abc.MetaPathFinder, importlib.abc.Loader):
                 _require(root not in owners or owners[root] == owner, "A package cannot span source/dependency owners.")
                 owners[root] = owner
                 origin = "publication://" + bundle["target"]["implementationSha256"] + "/" + path
-                # Validate every file before importing any published module or running top-level code.
                 code = compile(raw.decode("utf-8"), origin, "exec", dont_inherit=True, optimize=0)
                 self._modules[name] = (origin, is_package, code)
                 if owner == "sources":

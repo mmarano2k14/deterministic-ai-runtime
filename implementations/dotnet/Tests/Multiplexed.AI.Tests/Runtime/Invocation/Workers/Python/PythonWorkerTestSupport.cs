@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -38,11 +39,39 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Python
         internal static Task<AiWorkerProcessProfile> ProfileAsync() => Installation.Value;
         internal static async Task<AiWorkerProcessTransport> TransportAsync(AiWorkerProcessTransportOptions? options = null) =>
             new(new AiConfiguredWorkerProcessCatalog(new[] { await ProfileAsync() }), options ?? new());
-        internal static AiWorkerFile Source(string path, string text)
+        internal static AiWorkerFile Binary(string path, byte[] bytes) => new(
+            path, Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), bytes.LongLength,
+            Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_'));
+
+        internal static AiWorkerFile Source(string path, string text) => Binary(path, Encoding.UTF8.GetBytes(text));
+
+        internal static AiWorkerDependency WheelDependency(int factor = 4)
         {
-            var bytes = Encoding.UTF8.GetBytes(text);
-            return new(path, Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), bytes.LongLength,
-                Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_'));
+            const string wheelPath = "rules-2.0.1-py3-none-any.whl";
+            var wheel = CreateWheel(factor);
+            var digest = Convert.ToHexString(SHA256.HashData(wheel)).ToLowerInvariant();
+            var manifest = JsonSerializer.SerializeToUtf8Bytes(new AiPythonWheelBundleManifest(
+                1, wheelPath, digest, "rules", "2.0.1", new[] { "wheel_rules" }));
+            return new AiWorkerDependency("rules", "2.0.1", new[]
+            {
+                Binary("bundle.manifest.json", manifest),
+                Binary(wheelPath, wheel)
+            })
+            {
+                Package = new AiPublicationDependencyPackage(
+                    1, AiPublicationDependencyPackageKind.PythonWheelBundle, "bundle.manifest.json")
+            };
+        }
+
+        internal static AiPublicationDependencyUpload WheelUpload(int factor = 4)
+        {
+            var dependency = WheelDependency(factor);
+            return new AiPublicationDependencyUpload(dependency.Name, dependency.Version, dependency.Files.Select(file =>
+                new AiPublicationFileUpload(file.Path, Convert.FromBase64String(
+                    file.Base64Url.Replace('-', '+').Replace('_', '/') + new string('=', (4 - file.Base64Url.Length % 4) % 4)))).ToArray())
+            {
+                Package = dependency.Package
+            };
         }
         internal static async Task<AiWorkerInvocationRequest> RequestAsync(string source = Simple)
         {
@@ -65,6 +94,26 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Python
             }
             throw new FileNotFoundException("Apply implementations/python from the package in the same repository as the .NET tests.");
         }
+        private static byte[] CreateWheel(int factor)
+        {
+            using var stream = new MemoryStream();
+            using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                void Write(string path, string text)
+                {
+                    var entry = archive.CreateEntry(path, CompressionLevel.Optimal);
+                    using var output = new StreamWriter(entry.Open(), new UTF8Encoding(false), 1024, leaveOpen: false);
+                    output.Write(text);
+                }
+                Write("wheel_rules/__init__.py", "def transform(n):\n    return n * " + factor + "\n");
+                const string info = "rules-2.0.1.dist-info/";
+                Write(info + "WHEEL", "Wheel-Version: 1.0\nGenerator: deterministic-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n");
+                Write(info + "METADATA", "Metadata-Version: 2.1\nName: rules\nVersion: 2.0.1\n");
+                Write(info + "RECORD", string.Empty);
+            }
+            return stream.ToArray();
+        }
+
         private static async Task<AiWorkerProcessProfile> LoadInstallationAsync()
         {
             var executable = Environment.GetEnvironmentVariable("MULTIPLEXED_PYTHON_EXECUTABLE");
@@ -108,14 +157,14 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Python
         }
 
         internal static AiPipelinePublicationUpload Upload(AiPublicationEnvironment runtime, string revision = "1",
-            string? source = null)
+            string? source = null, IReadOnlyList<AiPublicationDependencyUpload>? dependencies = null)
         {
             source ??= "def run(inputs, context):\n    return {\"success\": True, \"payload\": {\"revision\": " + revision +
                 ", \"amount\": inputs[\"amount\"]}}\n";
             AiPublicationFunctionUpload Function(string name) => new(new(AiPublicationFunctionKind.Step, name),
                 runtime.Reference, "main.py", "run",
                 new[] { new AiPublicationFileUpload("main.py", Encoding.UTF8.GetBytes(source)) },
-                Array.Empty<AiPublicationDependencyUpload>());
+                dependencies ?? Array.Empty<AiPublicationDependencyUpload>());
             return new(PublicationTestSupport.Definition(revision, "python", secondLanguage: null),
                 new[] { Function("first"), Function("second") });
         }

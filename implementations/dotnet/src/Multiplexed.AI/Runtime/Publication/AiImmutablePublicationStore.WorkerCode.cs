@@ -74,7 +74,7 @@ namespace Multiplexed.AI.Runtime.Publication
             var sources = await Files(implementation.Sources).ConfigureAwait(false);
             var dependencies = new List<AiWorkerDependency>(environment.Dependencies.Count);
             foreach (var dependency in environment.Dependencies)
-                dependencies.Add(new(dependency.Name, dependency.Version, await Files(dependency.Files).ConfigureAwait(false)));
+                dependencies.Add(new AiWorkerDependency(dependency.Name, dependency.Version, await Files(dependency.Files).ConfigureAwait(false)) { Package = dependency.Package });
             guard.RequireCurrent(); token.ThrowIfCancellationRequested();
             return new(actual, environment.Runtime, implementation.EntryPointPath, implementation.EntryPointSymbol,
                 sources, dependencies.AsReadOnly()) { ExecutionDescriptor = environment.ExecutionDescriptor };

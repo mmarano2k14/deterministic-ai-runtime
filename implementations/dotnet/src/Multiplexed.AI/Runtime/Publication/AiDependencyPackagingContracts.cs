@@ -14,9 +14,9 @@ namespace Multiplexed.AI.Runtime.Publication
         AiDependencyPackageExecutionSupport Support);
 
     /// <summary>
-    /// Finite dependency-packaging capability matrix. Publication may capture a contract-defined
-    /// package before its worker consumption is implemented, but execution fails closed until the
-    /// corresponding capability is promoted to Hosted.
+    /// Finite dependency-packaging capability matrix. Publication captures exact package material;
+    /// contract-defined formats fail closed before launch while hosted formats may cross the existing
+    /// worker boundary only after language-specific validation.
     /// </summary>
     public static class AiDependencyPackagingContracts
     {
@@ -26,7 +26,7 @@ namespace Multiplexed.AI.Runtime.Publication
                 new AiDependencyPackageCapability(
                     AiPublicationDependencyPackageKind.PythonWheelBundle,
                     "python",
-                    AiDependencyPackageExecutionSupport.ContractDefined),
+                    AiDependencyPackageExecutionSupport.Hosted),
                 new AiDependencyPackageCapability(
                     AiPublicationDependencyPackageKind.NodeLockedBundle,
                     "typescript",
@@ -46,11 +46,15 @@ namespace Multiplexed.AI.Runtime.Publication
         internal static AiPublicationDependencyPackage? Capture(
             AiPublicationDependencyPackage? package,
             IReadOnlyList<AiPublicationFileUpload> files,
-            string executionLanguage)
+            AiPublicationEnvironment runtime,
+            string dependencyName,
+            string dependencyVersion)
         {
             if (package is null) return null;
-            Validate(package, files.Select(file => file.Path), executionLanguage);
-            return package with { };
+            Validate(package, files.Select(file => file.Path), runtime.ExecutionLanguage);
+            return package.Kind == AiPublicationDependencyPackageKind.PythonWheelBundle
+                ? AiPythonWheelPackaging.Capture(package, files, runtime, dependencyName, dependencyVersion)
+                : package with { };
         }
 
         internal static void Validate(
