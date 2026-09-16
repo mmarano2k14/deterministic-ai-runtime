@@ -4,6 +4,7 @@ using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using Multiplexed.Abstractions.AI.Invocation.Mcp;
 using Multiplexed.AI.Runtime.Invocation.Mcp;
+using Multiplexed.AI.Runtime.Invocation.Mcp.Durable;
 
 namespace Multiplexed.AI.McpServer.Invocation.Outbound
 {
@@ -12,7 +13,7 @@ namespace Multiplexed.AI.McpServer.Invocation.Outbound
     /// ModelContextProtocol 1.3.x and normalizes CallToolResult into the runtime envelope.
     /// No automatic business retry or endpoint discovery is introduced here.
     /// </summary>
-    internal sealed class AiOutboundMcpToolTransport : IAiMcpToolTransport
+    internal sealed class AiOutboundMcpToolTransport : IAiMcpDispatchBoundaryAwareTransport
     {
         private readonly AiOutboundMcpConnectionCatalog _catalog;
         private readonly AiOutboundMcpHttpClientPool _httpClients;
@@ -34,9 +35,24 @@ namespace Multiplexed.AI.McpServer.Invocation.Outbound
             _timeProvider = timeProvider ?? TimeProvider.System;
         }
 
-        public async Task<JsonElement> InvokeAsync(
+        public Task<JsonElement> InvokeAsync(
             AiMcpToolRequest request,
+            CancellationToken cancellationToken = default) =>
+            InvokeCoreAsync(request, boundary: null, cancellationToken);
+
+        public Task<JsonElement> InvokeAsync(
+            AiMcpToolRequest request,
+            IAiMcpDispatchBoundary boundary,
             CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(boundary);
+            return InvokeCoreAsync(request, boundary, cancellationToken);
+        }
+
+        private async Task<JsonElement> InvokeCoreAsync(
+            AiMcpToolRequest request,
+            IAiMcpDispatchBoundary? boundary,
+            CancellationToken cancellationToken)
         {
             ValidateRequest(request);
             cancellationToken.ThrowIfCancellationRequested();
@@ -92,6 +108,9 @@ namespace Multiplexed.AI.McpServer.Invocation.Outbound
                     arguments.Add(property.Name, property.Value.Clone());
                 }
 
+                // From this point forward the client is allowed to emit the business
+                // tools/call. Any failure after this mark is conservatively possibly-sent.
+                boundary?.MarkPossiblySent();
                 var result = await client.CallToolAsync(
                     target.Tool,
                     arguments,

@@ -4,16 +4,17 @@ using Multiplexed.Abstractions.AI.Invocation.Mcp;
 namespace Multiplexed.Abstractions.AI.Invocation.Mcp.Durable
 {
     /// <summary>
-    /// Durable lifecycle of one logical outbound MCP effect. Prepared means no external
-    /// emission authority has been recorded yet. Dispatching means an attempt was durably
-    /// fenced and the external outcome can no longer be assumed absent after host loss.
+    /// Durable lifecycle of one logical outbound MCP effect. Prepared means no physical
+    /// outbound attempt has been fenced yet. Dispatching means one attempt owns the
+    /// network boundary. NotSent is a confirmed no-emission outcome for that attempt.
     /// </summary>
     public enum AiMcpEffectEvidenceStatus
     {
         Prepared,
         Dispatching,
         Completed,
-        Uncertain
+        Uncertain,
+        NotSent
     }
 
     /// <summary>Tenant ownership used only to address durable effect evidence.</summary>
@@ -61,6 +62,14 @@ namespace Multiplexed.Abstractions.AI.Invocation.Mcp.Durable
         [property: JsonPropertyName("recordedAtUtc")] DateTimeOffset RecordedAtUtc);
 
     /// <summary>
+    /// Evidence that the selected physical attempt is confirmed not to have crossed the
+    /// business tools/call boundary. This is not itself retry authority.
+    /// </summary>
+    public sealed record AiMcpEffectNonEmissionEvidence(
+        [property: JsonPropertyName("reasonCode")] string ReasonCode,
+        [property: JsonPropertyName("recordedAtUtc")] DateTimeOffset RecordedAtUtc);
+
+    /// <summary>
     /// Authoritative durable evidence for one outbound MCP logical effect. Revision is a
     /// storage CAS fence; it is not the DAG claim version and not a worker lease epoch.
     /// </summary>
@@ -74,6 +83,7 @@ namespace Multiplexed.Abstractions.AI.Invocation.Mcp.Durable
         public AiMcpEffectDispatchAttempt? Attempt { get; init; }
         public AiMcpEffectResultEvidence? Result { get; init; }
         public AiMcpEffectUncertaintyEvidence? Uncertainty { get; init; }
+        public AiMcpEffectNonEmissionEvidence? NonEmission { get; init; }
         public required DateTimeOffset CreatedAtUtc { get; init; }
         public required DateTimeOffset UpdatedAtUtc { get; init; }
     }

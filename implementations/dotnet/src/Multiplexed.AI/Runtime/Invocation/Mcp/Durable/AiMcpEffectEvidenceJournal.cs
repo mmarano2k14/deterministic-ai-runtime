@@ -92,17 +92,22 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
 
         /// <summary>
         /// Persists one confirmed normalized response before it can be returned to the DAG.
-        /// A lost CAS is not interpreted as success by this journal.
+        /// Reconciliation may complete either Dispatching or Uncertain evidence for the
+        /// same immutable physical attempt.
         /// </summary>
         public async Task<AiMcpEffectEvidenceRecord?> TryCompleteAsync(
-            AiMcpEffectEvidenceRecord dispatching,
+            AiMcpEffectEvidenceRecord current,
             JsonElement response,
             CancellationToken cancellationToken = default)
         {
-            ArgumentNullException.ThrowIfNull(dispatching);
-            AiMcpEffectEvidenceValidation.ValidateRecord(dispatching);
-            if (dispatching.Status != AiMcpEffectEvidenceStatus.Dispatching || dispatching.Attempt is null)
-                throw new InvalidOperationException("Only Dispatching MCP effect evidence can accept a direct transport result.");
+            ArgumentNullException.ThrowIfNull(current);
+            AiMcpEffectEvidenceValidation.ValidateRecord(current);
+            if (current.Status is not (AiMcpEffectEvidenceStatus.Dispatching or AiMcpEffectEvidenceStatus.Uncertain) ||
+                current.Attempt is null)
+            {
+                throw new InvalidOperationException(
+                    "Only Dispatching or Uncertain MCP effect evidence can accept a confirmed transport result.");
+            }
 
             var detached = AiMcpToolJson.CopyResponse(response);
             if (detached.ValueKind != JsonValueKind.Object ||
@@ -110,7 +115,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
                 schemaVersion.ValueKind != JsonValueKind.Number || schemaVersion.GetInt32() != 1 ||
                 !detached.TryGetProperty("requestId", out var requestId) ||
                 requestId.ValueKind != JsonValueKind.String ||
-                !string.Equals(requestId.GetString(), dispatching.Attempt.RequestId, StringComparison.Ordinal) ||
+                !string.Equals(requestId.GetString(), current.Attempt.RequestId, StringComparison.Ordinal) ||
                 !detached.TryGetProperty("isError", out var isError) ||
                 isError.ValueKind is not (JsonValueKind.True or JsonValueKind.False) ||
                 !detached.TryGetProperty("content", out var content) ||
@@ -123,19 +128,21 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
 
             var responseJson = detached.GetRawText();
             var now = _timeProvider.GetUtcNow();
-            var completed = dispatching with
+            var completed = current with
             {
-                Revision = checked(dispatching.Revision + 1),
+                Revision = checked(current.Revision + 1),
                 Status = AiMcpEffectEvidenceStatus.Completed,
                 Result = new AiMcpEffectResultEvidence(
                     isError.GetBoolean(),
                     responseJson,
                     AiMcpEffectEvidenceValidation.ResponseSha256(responseJson),
                     now),
+                Uncertainty = null,
+                NonEmission = null,
                 UpdatedAtUtc = now
             };
-            AiMcpEffectEvidenceValidation.ValidateTransition(dispatching, completed);
-            return await _store.TryReplaceAsync(dispatching, completed, cancellationToken).ConfigureAwait(false)
+            AiMcpEffectEvidenceValidation.ValidateTransition(current, completed);
+            return await _store.TryReplaceAsync(current, completed, cancellationToken).ConfigureAwait(false)
                 ? completed
                 : null;
         }
@@ -153,8 +160,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
             AiMcpEffectEvidenceValidation.ValidateRecord(dispatching);
             if (dispatching.Status != AiMcpEffectEvidenceStatus.Dispatching)
                 throw new InvalidOperationException("Only Dispatching MCP effect evidence can become uncertain.");
-            if (string.IsNullOrWhiteSpace(reasonCode))
-                throw new ArgumentException("A bounded uncertainty reason is required.", nameof(reasonCode));
+            ValidateReasonCode(reasonCode);
 
             var now = _timeProvider.GetUtcNow();
             var uncertain = dispatching with
@@ -167,6 +173,36 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
             AiMcpEffectEvidenceValidation.ValidateTransition(dispatching, uncertain);
             return await _store.TryReplaceAsync(dispatching, uncertain, cancellationToken).ConfigureAwait(false)
                 ? uncertain
+                : null;
+        }
+
+        /// <summary>
+        /// Records authoritative evidence that the selected tools/call attempt did not
+        /// cross the business-effect boundary. This state does not schedule a redelivery.
+        /// </summary>
+        public async Task<AiMcpEffectEvidenceRecord?> TryMarkNotSentAsync(
+            AiMcpEffectEvidenceRecord current,
+            string reasonCode,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(current);
+            AiMcpEffectEvidenceValidation.ValidateRecord(current);
+            if (current.Status is not (AiMcpEffectEvidenceStatus.Dispatching or AiMcpEffectEvidenceStatus.Uncertain))
+                throw new InvalidOperationException("Only Dispatching or Uncertain MCP effect evidence can become NotSent.");
+            ValidateReasonCode(reasonCode);
+
+            var now = _timeProvider.GetUtcNow();
+            var notSent = current with
+            {
+                Revision = checked(current.Revision + 1),
+                Status = AiMcpEffectEvidenceStatus.NotSent,
+                Uncertainty = null,
+                NonEmission = new AiMcpEffectNonEmissionEvidence(reasonCode, now),
+                UpdatedAtUtc = now
+            };
+            AiMcpEffectEvidenceValidation.ValidateTransition(current, notSent);
+            return await _store.TryReplaceAsync(current, notSent, cancellationToken).ConfigureAwait(false)
+                ? notSent
                 : null;
         }
 
@@ -193,6 +229,15 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
                 !string.Equals(record.Intent.Tool, request.Tool, StringComparison.Ordinal))
             {
                 throw new InvalidOperationException("MCP request does not match the prepared durable effect intent.");
+            }
+        }
+
+        private static void ValidateReasonCode(string reasonCode)
+        {
+            if (string.IsNullOrWhiteSpace(reasonCode) || reasonCode.Length > 128 ||
+                reasonCode.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '.')))
+            {
+                throw new ArgumentException("A bounded MCP effect reason code is required.", nameof(reasonCode));
             }
         }
     }

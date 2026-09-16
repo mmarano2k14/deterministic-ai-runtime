@@ -7,7 +7,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
     /// <summary>
     /// Durable fence around one existing MCP transport. It grants at most one outbound
     /// attempt for a logical effect, replays confirmed evidence locally, and never turns
-    /// Dispatching or Uncertain evidence into blind re-emission authority.
+    /// unresolved evidence into blind re-emission authority.
     /// </summary>
     public sealed class AiDurableMcpToolTransport : IAiMcpToolTransport
     {
@@ -47,6 +47,10 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
                         throw new InvalidOperationException(
                             $"MCP effect '{effectId}' is {current.Status}; automatic outbound re-emission is forbidden.");
 
+                    case AiMcpEffectEvidenceStatus.NotSent:
+                        throw new InvalidOperationException(
+                            $"MCP effect '{effectId}' is confirmed NotSent; this evidence does not grant automatic redelivery authority.");
+
                     case AiMcpEffectEvidenceStatus.Prepared:
                         var dispatching = await _journal.TryBeginDispatchAsync(
                             current, request, cancellationToken).ConfigureAwait(false);
@@ -72,14 +76,30 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
             AiMcpToolRequest request,
             CancellationToken cancellationToken)
         {
+            var boundary = new DispatchBoundary();
             JsonElement response;
             try
             {
-                response = await _inner.InvokeAsync(request, cancellationToken).ConfigureAwait(false);
+                if (_inner is IAiMcpDispatchBoundaryAwareTransport classified)
+                {
+                    response = await classified.InvokeAsync(request, boundary, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    boundary.MarkPossiblySent();
+                    response = await _inner.InvokeAsync(request, cancellationToken).ConfigureAwait(false);
+                }
             }
             catch (Exception exception)
             {
-                await TryRecordUncertaintyAsync(dispatching, Reason(exception), cancellationToken).ConfigureAwait(false);
+                if (boundary.PossiblySent)
+                {
+                    await TryRecordUncertaintyAsync(dispatching, Reason(exception), cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await TryRecordNotSentAsync(dispatching, Reason(exception), cancellationToken).ConfigureAwait(false);
+                }
                 throw;
             }
 
@@ -118,8 +138,6 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
             string reasonCode,
             CancellationToken cancellationToken)
         {
-            // If the runtime cancellation token is already cancelled, the durable
-            // Dispatching record itself remains fail-closed and reconciliation-visible.
             if (cancellationToken.IsCancellationRequested) return;
             try
             {
@@ -130,6 +148,24 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
             {
                 // Never replace the original transport/protocol exception. A failed or
                 // ambiguous evidence update leaves Dispatching durable and fail-closed.
+            }
+        }
+
+        private async Task TryRecordNotSentAsync(
+            AiMcpEffectEvidenceRecord dispatching,
+            string reasonCode,
+            CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested) return;
+            try
+            {
+                _ = await _journal.TryMarkNotSentAsync(
+                    dispatching, reasonCode, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                // The original failure remains authoritative to the caller. If the
+                // no-emission evidence cannot be persisted, Dispatching stays fail-closed.
             }
         }
 
@@ -187,5 +223,12 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
             TimeoutException => "transport-timeout",
             _ => "transport-failure"
         };
+
+        private sealed class DispatchBoundary : IAiMcpDispatchBoundary
+        {
+            private int _possiblySent;
+            internal bool PossiblySent => Volatile.Read(ref _possiblySent) != 0;
+            public void MarkPossiblySent() => Interlocked.Exchange(ref _possiblySent, 1);
+        }
     }
 }

@@ -9,8 +9,9 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable.DI
     public static class AiMcpEffectEvidenceServiceCollectionExtensions
     {
         /// <summary>
-        /// Reuses the host IMongoDatabase and optional TimeProvider. This registration does
-        /// not alter outbound MCP execution until a later integration explicitly consumes it.
+        /// Reuses the host IMongoDatabase and optional TimeProvider. The outbound MCP
+        /// registration consumes the journal as a durable fence when both features are installed.
+        /// Reconciliation remains provider-explicit and performs no automatic scanning.
         /// </summary>
         public static IServiceCollection AddAiDurableMcpEffectEvidence(this IServiceCollection services)
         {
@@ -20,6 +21,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable.DI
             services.TryAddSingleton<AiMcpEffectEvidenceJournal>(provider => new AiMcpEffectEvidenceJournal(
                 provider.GetRequiredService<IAiMcpEffectEvidenceStore>(),
                 provider.GetService<TimeProvider>()));
+            services.TryAddTransient<AiMcpEffectReconciliationService>();
             return services;
         }
     }

@@ -42,6 +42,25 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.McpEffects.Durable
         }
 
         [McpEffectMongoFact]
+        public async Task Confirmed_NotSent_Evidence_Roundtrips_Through_Mongo()
+        {
+            await using var fixture = new MongoFixture();
+            var request = Request("attempt-a", "{\"value\":1}");
+            var journal = fixture.NewJournal();
+            var prepared = await journal.PrepareAsync(request);
+            var dispatching = await journal.TryBeginDispatchAsync(prepared, request);
+            Assert.NotNull(dispatching);
+            var notSent = await journal.TryMarkNotSentAsync(dispatching!, "transport-preflight-failure");
+            Assert.NotNull(notSent);
+
+            var restored = await fixture.NewJournal().GetAsync(notSent!.Scope, notSent.Intent.Effect.EffectId);
+            Assert.NotNull(restored);
+            Assert.Equal(AiMcpEffectEvidenceStatus.NotSent, restored.Status);
+            Assert.Equal("transport-preflight-failure", restored.NonEmission!.ReasonCode);
+            Assert.Equal("attempt-a", restored.Attempt!.RequestId);
+        }
+
+        [McpEffectMongoFact]
         public async Task Revision_Cas_And_Reconciliation_Discovery_Are_Tenant_Scoped()
         {
             await using var fixture = new MongoFixture();

@@ -53,6 +53,11 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable.Mongo
                 document.Add("uncertaintyReasonCode", record.Uncertainty.ReasonCode);
                 document.Add("uncertaintyRecordedAt", record.Uncertainty.RecordedAtUtc.ToUnixTimeMilliseconds());
             }
+            if (record.NonEmission is not null)
+            {
+                document.Add("nonEmissionReasonCode", record.NonEmission.ReasonCode);
+                document.Add("nonEmissionRecordedAt", record.NonEmission.RecordedAtUtc.ToUnixTimeMilliseconds());
+            }
             return document;
         }
 
@@ -105,6 +110,14 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable.Mongo
                     DateTimeOffset.FromUnixTimeMilliseconds(document["uncertaintyRecordedAt"].AsInt64));
             }
 
+            AiMcpEffectNonEmissionEvidence? nonEmission = null;
+            if (document.TryGetValue("nonEmissionReasonCode", out var nonEmissionReason) && !nonEmissionReason.IsBsonNull)
+            {
+                nonEmission = new AiMcpEffectNonEmissionEvidence(
+                    nonEmissionReason.AsString,
+                    DateTimeOffset.FromUnixTimeMilliseconds(document["nonEmissionRecordedAt"].AsInt64));
+            }
+
             var record = new AiMcpEffectEvidenceRecord
             {
                 SchemaVersion = document["schemaVersion"].AsInt32,
@@ -115,6 +128,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable.Mongo
                 Attempt = attempt,
                 Result = result,
                 Uncertainty = uncertainty,
+                NonEmission = nonEmission,
                 CreatedAtUtc = DateTimeOffset.FromUnixTimeMilliseconds(document["createdAt"].AsInt64),
                 UpdatedAtUtc = DateTimeOffset.FromUnixTimeMilliseconds(document["updatedAt"].AsInt64)
             };

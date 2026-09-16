@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.Invocation.Mcp;
 using Multiplexed.AI.McpServer.DependencyInjection;
 using Multiplexed.AI.McpServer.Invocation.Outbound;
+using Multiplexed.AI.Runtime.Invocation.Mcp.Durable;
 
 namespace Multiplexed.AI.Tests.Runtime.Invocation.OutboundMcp
 {
@@ -24,6 +25,40 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.OutboundMcp
             var structured = response.GetProperty("structuredContent");
             Assert.Equal("hello", Property(structured, "value").GetString());
             Assert.Equal("server", Property(structured, "source").GetString());
+        }
+
+        [Fact]
+        public async Task Real_Transport_Marks_The_Business_Boundary_Before_Tools_Call()
+        {
+            await using var server = await OutboundMcpTestServer.StartAsync();
+            using var provider = Provider(server.Endpoint, Tool("probe.echo"));
+            var transport = Assert.IsAssignableFrom<IAiMcpDispatchBoundaryAwareTransport>(
+                provider.GetRequiredService<IAiMcpToolTransport>());
+            var boundary = new BoundaryProbe();
+
+            var response = await transport.InvokeAsync(
+                Request("probe.echo", Json("""{"value":"boundary"}""")), boundary);
+
+            Assert.True(boundary.PossiblySent);
+            Assert.False(response.GetProperty("isError").GetBoolean());
+        }
+
+        [Fact]
+        public async Task Exact_Target_Rejection_Does_Not_Mark_The_Business_Boundary()
+        {
+            await using var server = await OutboundMcpTestServer.StartAsync();
+            using var provider = Provider(server.Endpoint, Tool("probe.echo"));
+            var transport = Assert.IsAssignableFrom<IAiMcpDispatchBoundaryAwareTransport>(
+                provider.GetRequiredService<IAiMcpToolTransport>());
+            var boundary = new BoundaryProbe();
+            var request = Request("probe.echo", Json("""{"value":"x"}""")) with
+            {
+                ConnectionRevision = "revision-2"
+            };
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                transport.InvokeAsync(request, boundary));
+            Assert.False(boundary.PossiblySent);
         }
 
         [Fact]
@@ -193,5 +228,12 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.OutboundMcp
         private static JsonElement Property(JsonElement value, string name) =>
             value.EnumerateObject().Single(property =>
                 string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)).Value;
+
+        private sealed class BoundaryProbe : IAiMcpDispatchBoundary
+        {
+            private int _possiblySent;
+            internal bool PossiblySent => Volatile.Read(ref _possiblySent) != 0;
+            public void MarkPossiblySent() => Interlocked.Exchange(ref _possiblySent, 1);
+        }
     }
 }

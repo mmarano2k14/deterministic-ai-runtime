@@ -41,28 +41,36 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
             {
                 case AiMcpEffectEvidenceStatus.Prepared:
                     Require(record.Revision == 0, "Prepared MCP effect evidence must start at revision zero.");
-                    Require(record.Attempt is null && record.Result is null && record.Uncertainty is null,
+                    Require(record.Attempt is null && record.Result is null && record.Uncertainty is null &&
+                        record.NonEmission is null,
                         "Prepared MCP effect evidence cannot contain dispatch or outcome evidence.");
                     break;
 
                 case AiMcpEffectEvidenceStatus.Dispatching:
                     ValidateAttempt(record.Attempt, record.CreatedAtUtc);
-                    Require(record.Result is null && record.Uncertainty is null,
+                    Require(record.Result is null && record.Uncertainty is null && record.NonEmission is null,
                         "Dispatching MCP effect evidence cannot already contain an outcome.");
                     break;
 
                 case AiMcpEffectEvidenceStatus.Completed:
                     ValidateAttempt(record.Attempt, record.CreatedAtUtc);
                     ValidateResult(record.Result, record.Attempt!);
-                    Require(record.Uncertainty is null,
-                        "Completed MCP effect evidence cannot retain uncertainty evidence.");
+                    Require(record.Uncertainty is null && record.NonEmission is null,
+                        "Completed MCP effect evidence cannot retain unresolved or non-emission evidence.");
                     break;
 
                 case AiMcpEffectEvidenceStatus.Uncertain:
                     ValidateAttempt(record.Attempt, record.CreatedAtUtc);
                     ValidateUncertainty(record.Uncertainty, record.Attempt!.StartedAtUtc);
-                    Require(record.Result is null,
-                        "Uncertain MCP effect evidence cannot contain a confirmed result.");
+                    Require(record.Result is null && record.NonEmission is null,
+                        "Uncertain MCP effect evidence cannot contain a confirmed outcome.");
+                    break;
+
+                case AiMcpEffectEvidenceStatus.NotSent:
+                    ValidateAttempt(record.Attempt, record.CreatedAtUtc);
+                    ValidateNonEmission(record.NonEmission, record.Attempt!.StartedAtUtc);
+                    Require(record.Result is null && record.Uncertainty is null,
+                        "NotSent MCP effect evidence cannot contain a remote result or uncertainty.");
                     break;
 
                 default:
@@ -91,7 +99,9 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
                 (AiMcpEffectEvidenceStatus.Prepared, AiMcpEffectEvidenceStatus.Dispatching) => true,
                 (AiMcpEffectEvidenceStatus.Dispatching, AiMcpEffectEvidenceStatus.Completed) => true,
                 (AiMcpEffectEvidenceStatus.Dispatching, AiMcpEffectEvidenceStatus.Uncertain) => true,
+                (AiMcpEffectEvidenceStatus.Dispatching, AiMcpEffectEvidenceStatus.NotSent) => true,
                 (AiMcpEffectEvidenceStatus.Uncertain, AiMcpEffectEvidenceStatus.Completed) => true,
+                (AiMcpEffectEvidenceStatus.Uncertain, AiMcpEffectEvidenceStatus.NotSent) => true,
                 _ => false
             };
             Require(legal, $"Illegal MCP effect evidence transition {expected.Status} -> {replacement.Status}.");
@@ -191,6 +201,16 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
             RequireSegment(uncertainty!.ReasonCode, nameof(uncertainty.ReasonCode), 128);
             Require(uncertainty.RecordedAtUtc >= startedAtUtc,
                 "MCP effect uncertainty cannot predate dispatch.");
+        }
+
+        private static void ValidateNonEmission(
+            AiMcpEffectNonEmissionEvidence? nonEmission,
+            DateTimeOffset startedAtUtc)
+        {
+            Require(nonEmission is not null, "NotSent MCP effect evidence requires a reason.");
+            RequireSegment(nonEmission!.ReasonCode, nameof(nonEmission.ReasonCode), 128);
+            Require(nonEmission.RecordedAtUtc >= startedAtUtc,
+                "MCP effect non-emission evidence cannot predate dispatch.");
         }
 
         private static JsonDocument ValidateResponseJson(string responseJson)
