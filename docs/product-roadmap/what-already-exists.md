@@ -858,6 +858,14 @@ This creates a bridge between AI tooling and runtime operations.
 
 The MCP control-plane direction also supports future dashboard and developer tooling because runtime commands can be exposed consistently.
 
+### Durable outbound MCP effect evidence
+
+Outbound MCP tool execution also has a separate opt-in durable evidence boundary. It preserves stable logical effect identity and immutable intent, commits a durable dispatch fence before `tools/call`, replays confirmed `Completed` responses locally, records confirmed pre-call non-emission as `NotSent`, keeps ambiguous outcomes fail-closed, and supports explicit provider/tool reconciliation without reissuing the original business call.
+
+This capability does not turn the MCP layer into a retry scheduler and does not claim generic exactly-once behavior in external providers. Provider-specific idempotency, query/reconciliation implementations, compensation, and operator workflows remain explicit integration concerns.
+
+See [Durable MCP Effect Evidence](../ai/durable-mcp-effect-evidence.md) and [Durable MCP Effect Evidence Validation](../ai/durable-mcp-effect-evidence-validation.md).
+
 ---
 
 ## 22. Runtime Control Plane Direction
@@ -1828,6 +1836,7 @@ The project already has strong foundations in the following areas:
 | Queue and run management | Direction exists |
 | Shared queue / multi-instance direction | Foundation exists |
 | MCP server / control-plane direction | Foundation exists |
+| Durable outbound MCP effect evidence | Implemented / bounded server capability |
 | Redis coordination direction | Foundation exists |
 | MongoDB audit/storage direction | Foundation exists |
 | Observability direction | Foundation exists |

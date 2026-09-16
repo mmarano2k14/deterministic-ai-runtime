@@ -76,7 +76,15 @@ The broad invocation/publication artifact contains 1,098 passing results and 54 
 
 Cold-restoration tests reconstruct services and serialized state; a real .NET worker produces the initial result in one case. This differs from an OS-level host kill. The HTTP/gRPC ProcessHostPool continuation scenarios have reported passing results, recorded separately because their final TRX/log is not included in the inspected evidence set.
 
-The earlier trusted-process capability-refusal and symbolic-link tests validate declared process-provider boundaries; they do not become sandbox evidence retroactively. A separate OCI isolation suite now validates the selected `SandboxedContainer` provider, including explicit real Docker/Linux enforcement tests. MCP identity/transport tests still validate authorized read-only/idempotent calls without claiming durable replay of external effects. The existing production harnesses and historical evidence below are unchanged.
+The earlier trusted-process capability-refusal and symbolic-link tests validate declared process-provider boundaries; they do not become sandbox evidence retroactively. A separate OCI isolation suite now validates the selected `SandboxedContainer` provider, including explicit real Docker/Linux enforcement tests. Historical MCP identity/transport tests likewise remain evidence for their original boundary; durable external-effect fencing/replay/reconciliation has a separate suite and must not be inferred from those older artifacts. The existing production harnesses and historical evidence below are unchanged.
+
+## Durable MCP Effect Evidence
+
+[Durable MCP Effect Evidence Validation](durable-mcp-effect-evidence-validation.md) separates three proof layers: deterministic durable-effect state/authority tests, the existing real outbound MCP boundary/compatibility suite, and opt-in MongoDB persistence/reconstruction tests.
+
+The deterministic layer proves immutable intent, pre-call dispatch fencing, same-effect concurrency, local `Completed` replay, conservative `NotSent`/`Uncertain` handling, explicit reconciliation, crash windows, restart behavior, and tenant scope. The outbound layer proves where the selected real transport crosses the `tools/call` boundary. MongoDB tests count only when a test connection string is configured and the tests actually execute; `SKIP` is not persistence evidence.
+
+The branch does not claim generic exactly-once external side effects, provider-specific idempotency, automatic redelivery, or a universal reconciliation mechanism.
 
 ## Hosted Worker Isolation Evidence
 

@@ -1,19 +1,19 @@
 # Hosted Multilanguage Execution
 
-**Status:** Implemented server-side foundation with targeted execution, persistence, authorization, restoration validation, and a selected OCI-backed `SandboxedContainer` provider. The external SDK library, Kubernetes sandbox-Pod provider, and broader hostile-code/platform guarantees remain separate deliverables.
+**Status:** Implemented server-side foundation with targeted execution, persistence, authorization, restoration validation, a selected OCI-backed `SandboxedContainer` provider, and an opt-in durable MCP external-effect evidence boundary. The external SDK library, Kubernetes sandbox-Pod provider, and broader hostile-code/platform guarantees remain separate deliverables.
 
 ## Purpose and scope
 
 Hosted execution allows the existing DAG runtime to invoke published Python, TypeScript, and .NET functions without giving those functions orchestration authority. The same language infrastructure also evaluates custom `Concurrency`, `Retry`, and `Delegation` policies at their existing family checkpoints. Outbound MCP is a separate invocation mode, not another language or a replacement for the inbound MCP control plane.
 
-This reference covers the implemented contracts and their limits. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the supplied language/publication evidence. [Hosted Worker Isolation](hosted-worker-isolation.md) documents the selected OCI provider, and [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) separates deterministic provider tests from real Docker/Linux enforcement evidence.
+This reference covers the implemented contracts and their limits. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the supplied language/publication evidence. [Hosted Worker Isolation](hosted-worker-isolation.md) documents the selected OCI provider, and [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) separates deterministic provider tests from real Docker/Linux enforcement evidence. [Durable MCP Effect Evidence](durable-mcp-effect-evidence.md) documents outbound-effect fencing/reconciliation, with validation boundaries in [Durable MCP Effect Evidence Validation](durable-mcp-effect-evidence-validation.md).
 
 | Capability | Current boundary |
 |---|---|
 | Published custom functions | Explicit DAG execution with immutable code, supplied dependencies, and a pinned environment. |
 | Hosted languages | Python source, TypeScript source compiled with a bundled toolchain, and precompiled .NET assemblies. |
 | Custom policies | `Concurrency`, `Retry`, and `Delegation`, each evaluated at its existing checkpoint with a distinct closed result contract. `Retention` remains native-only. |
-| Outbound MCP | Real Streamable HTTP transport, existing RBAC, server-owned connections, and logical-effect metadata. |
+| Outbound MCP | Real Streamable HTTP transport, existing RBAC, server-owned connections, logical-effect metadata, and optional durable effect evidence with pre-call fencing, confirmed replay, outcome classification, and explicit reconciliation. |
 | Isolation | Two explicit physical providers: approved `TrustedProcess` execution, plus a selected Linux/amd64 OCI `SandboxedContainer` path with fail-closed applied-state attestation. |
 | External SDK | Not delivered. Public models and clients must remain independent of engine DLLs and internal CLR contracts. |
 
@@ -238,11 +238,11 @@ Tool-reported errors are distinct from protocol, network, authorization, deadlin
 
 Claim replacement, worker replacement, or a new deadline does not create a new logical effect. Changed arguments or connection configuration change the request digest, not the effect identity. An intentional new action requires a distinct execution or call site under the current contract.
 
-Object property order does not change the canonical digest; array order does. Number spellings remain significant. The canonicalization is a versioned local contract, not a claim of RFC 8785 compliance. Internal request schema 2 requires coherent effect metadata; legacy schema 1 remains a compatibility path without equivalent effect evidence.
+Object property order does not change the canonical digest; array order does. Number spellings remain significant. The canonicalization is a versioned local contract, not a claim of RFC 8785 compliance. Internal request schema 2 requires coherent effect metadata. When the durable evidence decorator is active, effectless schema-1 envelopes are refused rather than silently executed outside the fence; without the durable journal, the historical direct outbound path remains unchanged.
 
-These fields are not a signature, authorization grant, persistence receipt, or provider-recognized idempotency key. They are not injected into tool arguments or HTTP headers. Without stored prior intent, recomputation cannot detect a historical intent conflict. Two explicit calls are not deduplicated merely because their effect metadata matches.
+The metadata fields alone are not a signature, authorization grant, provider-recognized idempotency key, or proof that a remote provider committed an action. They are not injected into tool arguments or HTTP headers. When durable effect evidence is configured, the runtime persists the frozen intent, rejects same-`EffectId` intent conflicts, durably transitions `Prepared -> Dispatching` before the physical transport, and records `Completed`, `NotSent`, or unresolved evidence according to the observed boundary.
 
-Durable outbound-effect storage, uncertain-outcome reconciliation, and audit replay without re-emission are not implemented by this transport. Read-only or explicitly idempotent tools define the current validation boundary. Successful local tool execution must not be presented as proof for irreversible external actions.
+A confirmed `Completed` response can be replayed locally without a second business call. A classified pre-`tools/call` failure can become `NotSent`; a possibly-sent failure becomes `Uncertain` or remains fail-closed `Dispatching` if evidence persistence cannot complete. Explicit reconciliation can resolve evidence through a provider/tool query contract without reissuing the original `tools/call`. None of this is a generic exactly-once guarantee, and `NotSent`, `Dispatching`, and `Uncertain` do not grant automatic redelivery authority. See [Durable MCP Effect Evidence](durable-mcp-effect-evidence.md).
 
 ## Compatibility and remaining scope
 
@@ -257,7 +257,7 @@ The following remain outside the implemented foundation:
 | Dependencies | Deterministic pure-Python wheel bundles, locked Node source bundles, and managed .NET assembly closures are implemented. Native Python extensions/namespace packages, Node native add-ons/general npm ecosystem installation, and .NET native dependency/package-manager resolution remain outside scope. |
 | Additional policies | `Retention` is native-only in the current matrix. Taxonomy values without an independent checkpoint are not hosted. Any further family requires its own existing checkpoint, request/response contract, authority analysis, and bounded validation. |
 | Published-child validation breadth | Broader provider/store failure matrices, operating-system host-kill proofs, and unlimited recursive-depth claims are not implied by the bounded published-child closure. |
-| External effects | Durable MCP evidence, reconciliation, schema pinning, connection-catalog lifecycle, and credential-provider integrations. |
+| External effects | Durable MCP evidence and generic explicit reconciliation contracts are implemented. Provider-specific idempotency/query adapters, compensation workflows, automatic reconciliation scanning, broader connection-catalog lifecycle, and credential-provider integrations remain separate scope. |
 
 Supported dependency bundles are captured and verified before publication; no arbitrary network package installation, implicit `latest` resolution, or tenant C# compilation belongs in the current execution path. A future SDK describes and publishes work; the platform hosts it and the runtime governs it. No direct or transitive engine-DLL dependency is required of that SDK.
 
@@ -287,6 +287,10 @@ These are server implementation points, not public SDK contracts.
 | Hosted Retry policy transport | [`AiHostedRetryPolicyTransport.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/Policies/AiHostedRetryPolicyTransport.cs) |
 | Hosted Delegation policy transport | [`AiHostedDelegationPolicyTransport.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Workers/Policies/AiHostedDelegationPolicyTransport.cs) |
 | MCP intent identity | [`AiMcpEffectIdentities.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Mcp/AiMcpEffectIdentities.cs) |
+| Durable MCP effect journal | [`AiMcpEffectEvidenceJournal.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Mcp/Durable/AiMcpEffectEvidenceJournal.cs) |
+| Durable MCP dispatch fence | [`AiDurableMcpToolTransport.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Mcp/Durable/AiDurableMcpToolTransport.cs) |
+| MCP effect reconciliation | [`AiMcpEffectReconciliation.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Mcp/Durable/AiMcpEffectReconciliation.cs) |
+| Mongo MCP effect evidence store | [`MongoAiMcpEffectEvidenceStore.cs`](../../implementations/dotnet/src/Multiplexed.AI/Runtime/Invocation/Mcp/Durable/Mongo/MongoAiMcpEffectEvidenceStore.cs) |
 | Outbound network boundary | [`AiOutboundMcpToolTransport.cs`](../../implementations/dotnet/src/Multiplexed.AI.McpServer/Invocation/Outbound/AiOutboundMcpToolTransport.cs) |
 
 ## Related documents

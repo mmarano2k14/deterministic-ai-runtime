@@ -39,7 +39,7 @@ The 152-result selection contains 24 lease tests, 31 DAG execution/continuation 
 
 Twelve cold-restoration cases use controlled transport across language bindings and success/failure/continuation states. A thirteenth produces the initial result with a real hosted .NET process. After reconstruction, preparation and transport calls are configured to fail if reused.
 
-These tests prove restoration from serialized state and interaction with the existing local DAG. They are not an operating-system kill of the runtime host, a database restart, or a complete distributed-queue recovery scenario. MCP-effect identity tests in this selection do not make MCP effects durable in the custom-function journal.
+These tests prove restoration from serialized state and interaction with the existing local DAG. They are not an operating-system kill of the runtime host, a database restart, or a complete distributed-queue recovery scenario. The MCP-effect identity tests in this historical selection do not themselves prove durable external-effect fencing or reconciliation; those capabilities are validated separately in [Durable MCP Effect Evidence Validation](durable-mcp-effect-evidence-validation.md).
 
 ## Authorization, execution requirements, and paths
 
@@ -55,7 +55,7 @@ The 185-result selection covers:
 
 All three symbolic-link cases ran and passed. The protocol-process case validates the explicitly trusted process profile; it is not execution of tenant functions in all three languages.
 
-These earlier trusted-process tests establish refusal of requirements that the process provider cannot enforce, consistent server-side environment binding, checked launch paths, and authorization before the outgoing tool call. They do not by themselves establish a container sandbox, enforced network denial, or a fully sealed filesystem. Those guarantees are covered by the separate isolated-provider evidence; durable remote-effect replay remains outside both test sets.
+These earlier trusted-process tests establish refusal of requirements that the process provider cannot enforce, consistent server-side environment binding, checked launch paths, and authorization before the outgoing tool call. They do not by themselves establish a container sandbox, enforced network denial, a fully sealed filesystem, or durable remote-effect replay. Container guarantees are covered by the isolated-provider evidence, while durable MCP effect fencing/replay/reconciliation is covered by the separate durable-effect evidence suite.
 
 ## Real language execution
 
@@ -121,7 +121,7 @@ The existing HTTP and gRPC ProcessHostPool `ContinuationConsume` scenarios were 
 
 The broad regression artifact also contains passing policy discovery/startup tests. Discovery compatibility matters because contextual adapters must not enter native singleton registration.
 
-Reported host success is recorded separately from inspected TRX results. Historical runtime-pool evidence remains documented in [Runtime Pool Production Validation](runtime-pool-production-validation.md) and is not recomputed here. That native host evidence is not used as proof for published custom Child DAG execution, hostile-code containment, or durable MCP external effects.
+Reported host success is recorded separately from inspected TRX results. Historical runtime-pool evidence remains documented in [Runtime Pool Production Validation](runtime-pool-production-validation.md) and is not recomputed here. That native host evidence is not used as proof for published custom Child DAG execution, hostile-code containment, or durable MCP external effects; the latter has its own dedicated validation boundary in [Durable MCP Effect Evidence Validation](durable-mcp-effect-evidence-validation.md).
 
 ## Published custom Child DAG branch evidence
 
@@ -164,7 +164,7 @@ SHA-256 identifies the exact supplied result files used for this summary.
 
 ## Interpretation limits
 
-The evidence supports the stated hosted-language and packaging boundaries, not a completed public SDK product. Deterministic package bundles are captured before publication; no general runtime package installer, new public publication endpoint, SDK package, or external-effect ledger is implied by these results. Container isolation is a separate implemented provider with its own evidence and limits.
+The evidence supports the stated hosted-language and packaging boundaries, not a completed public SDK product. Deterministic package bundles are captured before publication; no general runtime package installer, new public publication endpoint, SDK package, or durable external-effect guarantee is implied by these historical results. Container isolation and durable MCP effect evidence are separate implemented boundaries with their own dedicated evidence and limits.
 
 Dedicated reruns supplement the earlier regression artifact without changing its recorded outcomes. The available hosted-language evidence does not certify every runtime version, deployment topology, or failure mode. Published custom Child DAG evidence does not establish operating-system host-kill recovery, Redis/MongoDB restart or failover, Kubernetes sandbox-provider coverage, or unlimited recursive depth. Selected OCI container isolation is evidenced separately and must not be generalized beyond its tested provider/platform boundary.
 

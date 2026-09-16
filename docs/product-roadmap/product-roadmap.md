@@ -152,6 +152,7 @@ The project already contains the foundation for several major product capabiliti
 | Safe retention decisions | Foundation exists / active direction |
 | Execution control and state lifecycle | Foundation exists |
 | MCP server / control-plane direction | Foundation exists |
+| Durable outbound MCP effect evidence | Implemented / bounded server capability |
 | Redis coordination direction | Foundation exists |
 | MongoDB durable audit/history direction | Foundation exists |
 | Observability direction | Foundation exists |
@@ -510,6 +511,7 @@ MCP tools should progressively support:
 - inspecting runtime instances;
 - inspecting decision ledger events;
 - inspecting policy decisions;
+- inspecting durable external-effect evidence and reconciliation status;
 - inspecting retention lifecycle decisions;
 - inspecting memory/context decisions direction;
 - running diagnostics;

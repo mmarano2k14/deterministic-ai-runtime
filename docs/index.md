@@ -25,6 +25,8 @@ Focused AI runtime documentation is organized under:
 | [`ai/hosted-multilanguage-validation.md`](ai/hosted-multilanguage-validation.md) | Inspected language, durability, boundary and MongoDB/Redis results, with overlap, skipped-case and host-report limitations. |
 | [`ai/hosted-worker-isolation.md`](ai/hosted-worker-isolation.md) | Selected OCI hosted-worker isolation architecture: provider routing, exact-image admission, applied-state attestation, tenant-material release gate, lifecycle cleanup/quarantine, and orphan reconciliation. |
 | [`ai/hosted-worker-isolation-validation.md`](ai/hosted-worker-isolation-validation.md) | Final isolation evidence separating 86 deterministic provider/isolation tests from 2 explicit real Docker/Linux enforcement tests and their bounded guarantees. |
+| [`ai/durable-mcp-effect-evidence.md`](ai/durable-mcp-effect-evidence.md) | Durable outbound MCP effect identity, immutable intent, pre-call dispatch fencing, `Completed` replay, `NotSent`/`Uncertain` classification, explicit reconciliation, restart behavior, and authority boundaries. |
+| [`ai/durable-mcp-effect-evidence-validation.md`](ai/durable-mcp-effect-evidence-validation.md) | Validation layers for durable MCP effects: deterministic state/authority proofs, real outbound `tools/call` boundary tests, and opt-in MongoDB persistence/reconstruction evidence. |
 | [`ai/child-dag-composition.md`](ai/child-dag-composition.md) | Implemented / validated durable Child DAG composition with `WaitingForExternal`, deterministic continuation, native recursive Depth3 validation, published custom Child DAG integration, EventDriven recovery observation, warm reuse, replay, lifecycle, Ledger, trace, and Forensics evidence. |
 | [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | Multi-tenant control-plane isolation, RBAC execution-context propagation, durable `ExecutionContextSnapshot`, tenant-aware registry/capacity/admission, Shared/Dedicated/Hybrid runtime visibility, and tenant-aware scale-out. |
 | [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | End-to-end ASCII runtime flow explaining MCP/RBAC context resolution, durable `ExecutionContextSnapshot`, shared run persistence, tenant-aware admission, tenant-aware scale-out, shared queue dispatch, local runtime queue execution, DAG worker loop, execution control, finalization, and observability. |
@@ -232,7 +234,7 @@ This document explains:
 
 Server-side execution reference covering effective language selection, immutable publication and run pinning, deterministic dependency packaging, published custom Child DAG binding, worker lease/epoch authority, durable result application, actual Python/TypeScript/.NET execution, hosted custom policy families, execution requirements, and authorized outbound MCP.
 
-The hosted function worker is not a trusted runtime instance. Published custom Child DAGs and deterministic dependency bundles reuse the same immutable publication, durable journal, hosted worker and existing continuation authorities. Pure-Python wheels, locked Node source bundles, and managed .NET assembly closures are supported. Physical execution can remain an explicitly trusted process or use the selected Linux/amd64 OCI `SandboxedContainer` provider; native package ecosystems, the public SDK library, Kubernetes sandbox-Pod materialization, broader hostile-code/platform guarantees, and durable MCP external-effect evidence remain separate capabilities.
+The hosted function worker is not a trusted runtime instance. Published custom Child DAGs and deterministic dependency bundles reuse the same immutable publication, durable journal, hosted worker and existing continuation authorities. Pure-Python wheels, locked Node source bundles, and managed .NET assembly closures are supported. Physical execution can remain an explicitly trusted process or use the selected Linux/amd64 OCI `SandboxedContainer` provider. Durable outbound MCP effect evidence is now a separate opt-in server boundary with immutable intent, dispatch fencing, confirmed-result replay, conservative uncertainty handling, and explicit reconciliation; it does not create generic exactly-once semantics or retry authority. Native package ecosystems, the public SDK library, Kubernetes sandbox-Pod materialization, and broader hostile-code/platform guarantees remain separate capabilities.
 
 ### [`ai/hosted-multilanguage-validation.md`](ai/hosted-multilanguage-validation.md)
 
@@ -245,6 +247,14 @@ Physical execution reference for the selected OCI `SandboxedContainer` provider.
 ### [`ai/hosted-worker-isolation-validation.md`](ai/hosted-worker-isolation-validation.md)
 
 Validation reference separating deterministic engine-probe/provider tests from real Docker/Linux kernel/cgroup enforcement. Records the final 86-test deterministic target and 2-test real-engine target, together with the exact limitations of those results.
+
+### [`ai/durable-mcp-effect-evidence.md`](ai/durable-mcp-effect-evidence.md)
+
+Outbound MCP durable-effect reference covering stable logical identity, immutable intent, the pre-`tools/call` dispatch fence, `Completed` local replay, `NotSent`/`Uncertain` classification, explicit provider reconciliation, restart behavior, tenant-scoped evidence, and the no-blind-re-emission rule.
+
+### [`ai/durable-mcp-effect-evidence-validation.md`](ai/durable-mcp-effect-evidence-validation.md)
+
+Validation reference separating deterministic durable-effect proofs, the selected real outbound `tools/call` boundary tests, and opt-in MongoDB persistence/reconstruction tests. Skipped MongoDB tests are explicitly not counted as passing evidence.
 
 ---
 

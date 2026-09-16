@@ -163,6 +163,7 @@ This roadmap should not present the platform as idea-stage only.
 | ARN-inspired resource scoping | Foundation exists / active direction |
 | Runtime control through pause/resume/cancel | Foundation exists |
 | MCP control-plane foundation | Foundation exists |
+| Durable outbound MCP effect evidence | Implemented / bounded server capability |
 | Multiple runtime instances | Foundation exists / active direction |
 | Multiple workers | Foundation exists |
 | Shared queue and local queue model | Foundation exists |

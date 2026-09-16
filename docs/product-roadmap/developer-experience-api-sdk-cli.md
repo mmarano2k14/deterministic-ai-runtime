@@ -737,7 +737,8 @@ This project should keep that trust.
 | Hosted custom Delegation policies | Implemented at the existing pre-child-allocation checkpoint through `delegation/v1`; child lifecycle authority remains server-side |
 | Hosted custom Retention | Native-only in the current capability matrix |
 | Policy kinds without independent checkpoints | `Timeout`, `CircuitBreaker`, `RateLimit`, `Validation`, and `Routing` are not advertised as hosted families |
-| Outbound MCP transport and effect metadata | Implemented; durable external-effect evidence remains separate |
+| Outbound MCP transport and effect metadata | Implemented |
+| Durable MCP external-effect evidence | Implemented server-side as an opt-in boundary with immutable intent, dispatch fencing, confirmed replay, conservative uncertainty handling, explicit reconciliation, and tenant-scoped persistence; future SDK remains provider-agnostic and must not become retry authority |
 | API packaging | Productization target |
 | SDK | Productization target |
 | CLI | Productization target |

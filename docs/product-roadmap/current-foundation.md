@@ -60,6 +60,7 @@ The current architecture is built around the following core foundations:
 | Provider-Driven Architecture | Allow runtime hosting, storage, hot state, shared queue, registry, ledger, replay, observability, memory/context, and provider concerns to evolve behind abstractions. |
 | Control Plane | Operate the runtime through execution control, replay, diagnostics, and queue/instance visibility. |
 | MCP Direction | Expose runtime operations through a tool-based control surface. |
+| Durable MCP External Effect Evidence | **Implemented as an opt-in bounded server capability.** Stable logical effect identity and immutable intent feed a durable pre-`tools/call` dispatch fence; confirmed results replay locally, pre-call non-emission can be recorded as `NotSent`, ambiguous outcomes remain fail-closed, and explicit reconciliation can resolve evidence without reissuing the business call. No generic exactly-once or automatic-redelivery claim is made. |
 | Storage Direction | Use fast coordination storage and durable history storage according to responsibility. |
 | Retention / Eviction / Compaction / Snapshotting | Control how execution state, hot state, payloads, replay data, ledger data, claims, coordination records, snapshots, archives, memory/context evidence, and historical records are retained, compacted, archived, or evicted safely. |
 | Observability Direction | Expose logs, metrics, traces, runtime events, runtime telemetry, provider/transport telemetry, lifecycle telemetry, memory/context telemetry direction, and decision history. |

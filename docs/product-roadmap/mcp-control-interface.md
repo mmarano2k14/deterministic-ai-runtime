@@ -433,7 +433,7 @@ This is important because many AI workflows may include:
 - notifications;
 - business actions.
 
-The safe default for replay should be inspection, not uncontrolled re-execution.
+The safe default for replay should be inspection, not uncontrolled re-execution. For outbound MCP effects with durable evidence configured, a previously confirmed `Completed` result can be reused from stored evidence without reissuing the original business `tools/call`; `Dispatching`, `Uncertain`, and `NotSent` remain non-redeliverable by the evidence layer. Future MCP operational tools may expose these evidence states and reconciliation diagnostics, but should not turn them into implicit retry commands.
 
 ---
 

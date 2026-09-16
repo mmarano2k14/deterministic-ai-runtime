@@ -6,6 +6,181 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 0.0.9.1 - 2026-09-16 — urable MCP Effect Evidence
+
+## Durable Effect Evidence Foundation
+
+### Added
+
+- Add a durable outbound MCP effect evidence model separate from the hosted-function invocation journal and DAG state.
+- Persist one immutable logical intent per tenant-scoped `EffectId`, including the existing effect schema, request digest, trusted invocation context, exact connection reference/revision, tool and bounded resolved arguments.
+- Keep physical request id and deadline outside the immutable intent so claim replacement and host replacement do not create a new logical effect.
+- Add explicit evidence states for `Prepared`, `Dispatching`, `Completed` and `Uncertain` without granting any state authority to an MCP worker or remote tool.
+- Add explicit physical-attempt, confirmed-result and uncertainty evidence records.
+- Add a MongoDB persistence boundary with majority reads, majority journaled writes, tenant-scoped unique effect identity and revision CAS.
+- Add reconciliation discovery for uncertain records and old `Dispatching` records. Discovery grants no automatic re-emission authority.
+- Add explicit DI registration reusing the host `IMongoDatabase` and optional `TimeProvider`.
+
+### Behavior and Compatibility
+
+- Preserve the existing outbound MCP transport and step adapter behavior in this foundation delivery; no network request is gated or retried by the new store yet.
+- Preserve the existing `EffectId` and `RequestDigest` algorithms as the logical identity and canonical-intent authority.
+- Reject the same logical `EffectId` with different frozen intent instead of overwriting the first durable record.
+- Keep endpoint URIs, credentials, secret headers, worker identities, claim tokens and deadlines out of durable logical intent.
+- Keep confirmed MCP tool errors distinct from uncertain outcomes: a remote `isError` response is still a known result and can be stored as completed evidence.
+- Allow only the bounded evidence transitions `Prepared -> Dispatching`, `Dispatching -> Completed`, `Dispatching -> Uncertain`, and `Uncertain -> Completed`.
+- Do not introduce a scheduler, retry engine, DAG transition authority or provider-recognized idempotency claim.
+
+### Validation
+
+- Add pure preparation tests proving attempt/deadline changes do not change durable intent, changed intent under one effect identity is rejected, historical effectless envelopes cannot create stronger evidence, and tenant scope remains explicit.
+- Add opt-in MongoDB integration tests for concurrent unique preparation, conflicting-intent protection, revision CAS and tenant-scoped reconciliation discovery.
+
+### Limits
+
+- This foundation does not yet place the durable dispatch fence in front of the real outbound MCP network call.
+- It does not automatically retry or suppress existing MCP calls until the next integration delivery consumes the evidence lifecycle.
+- No claim of exactly-once external side effects is made. A remote system still requires its own idempotency or reconciliation capability for stronger guarantees.
+
+## Durable Dispatch Fence and Confirmed Result Replay
+
+### Added
+
+- Add `AiDurableMcpToolTransport` as a bounded decorator around the existing physical MCP transport.
+- Add a revision-CAS dispatch fence that transitions `Prepared -> Dispatching` before the physical `tools/call` boundary.
+- Add durable confirmed-result acceptance before a normalized MCP response is returned to the existing DAG path.
+- Add local replay of `Completed` evidence without a second external tool invocation while rebinding only the current internal physical request id.
+- Add explicit fail-closed handling for existing `Dispatching` and `Uncertain` evidence.
+- Add conditional host integration so the existing outbound MCP registration uses the durable decorator when an `AiMcpEffectEvidenceJournal` is installed.
+
+### Behavior and Compatibility
+
+- Preserve the existing physical MCP transport, server-owned connection catalog, RBAC path, DAG execution path and retry/recovery authorities.
+- Grant outbound network authority only to the caller that wins the `Prepared -> Dispatching` CAS.
+- Keep concurrent CAS losers from invoking the remote tool; they reload authoritative evidence and either replay `Completed` or fail closed.
+- Keep expired requests in `Prepared`; no dispatch attempt is recorded when the deadline has already elapsed before the durable fence.
+- Conservatively record post-fence physical transport failures as `Uncertain` when persistence remains available.
+- Leave evidence as `Dispatching` when runtime cancellation or evidence persistence prevents an uncertainty transition; both states forbid blind re-emission.
+- Refuse historical schema-1 effectless envelopes when the durable decorator is active instead of silently bypassing the fence.
+- Preserve the original physical attempt and response in durable evidence when a later logical replay uses a new request id.
+
+### Validation
+
+- Add deterministic tests proving the dispatch fence is visible before the substituted physical transport is entered.
+- Add completed-result replay proof showing two physical request ids produce one external invocation.
+- Add concurrent same-effect proof showing only one caller can cross the physical transport boundary.
+- Add transport-failure proof showing `Uncertain` blocks a later blind re-emission.
+- Add expired-deadline proof showing no dispatch authority and no physical invocation.
+- Add DI-selection proof showing the existing outbound MCP registration resolves the durable decorator when the journal is installed.
+
+### Limits
+
+- Physical transport failures are still classified conservatively after the durable fence; no distinction is yet made between definitively-not-sent and possibly-sent failures.
+- `Dispatching` and `Uncertain` records are not automatically reconciled or retried.
+- No provider idempotency-key, provider query or compensating-action contract is introduced by this change.
+
+## Physical Outcome Classification and Explicit Reconciliation
+
+### Added
+
+- Add a one-way MCP `tools/call` boundary contract that lets the durable wrapper distinguish a confirmed pre-call failure from a failure after the business call may have been emitted.
+- Make the real Streamable HTTP outbound transport mark the possibly-sent boundary immediately before `CallToolAsync`; target resolution, client/session setup and argument preparation remain before that mark.
+- Add durable `NotSent` evidence with a bounded non-emission reason for a physical attempt that is confirmed not to have crossed the business-call boundary.
+- Add `IAiMcpEffectReconciliationProvider` and `AiMcpEffectReconciliationService` for explicit provider/tool reconciliation without reissuing the original `tools/call`.
+- Add reconciliation outcomes for confirmed normalized result, confirmed non-emission and still-unknown state.
+- Register the reconciliation service with the existing durable evidence opt-in while keeping providers explicit.
+
+### Behavior and Compatibility
+
+- Preserve the existing `IAiMcpToolTransport` contract. Boundary classification is optional; transports without the richer boundary contract remain conservatively possibly-sent.
+- Preserve direct outbound MCP behavior when the durable decorator is not installed.
+- Record classified pre-`tools/call` failures as `NotSent` when the evidence store remains available.
+- Continue to record failures after the boundary mark as `Uncertain`; cancellation or evidence-store failure may leave `Dispatching`, which remains fail-closed.
+- Keep `Completed` replay local and prevent `NotSent`, `Dispatching` and `Uncertain` from granting automatic outbound redelivery.
+- Permit explicit reconciliation of `Dispatching` or `Uncertain` evidence to `Completed` or `NotSent`; an unknown reconciliation leaves or creates `Uncertain` evidence.
+- Require exactly one reconciliation provider for the frozen connection/tool intent. No provider and ambiguous provider selection fail without issuing a business call.
+- Keep the original physical attempt immutable across reconciliation.
+
+### Validation
+
+- Add deterministic classification tests proving failure before the business boundary becomes `NotSent`, failure after the boundary becomes `Uncertain`, and an unclassified transport remains conservative.
+- Add real outbound-transport boundary tests proving exact-target rejection occurs before the boundary mark and a real loopback `tools/call` crosses it.
+- Add reconciliation tests for confirmed result, confirmed non-emission, unknown outcome, unsupported provider and ambiguous provider selection.
+- Prove a reconciled completed result is replayed without invoking the physical transport again.
+- Add opt-in MongoDB roundtrip coverage for persisted `NotSent` evidence.
+
+### Limits
+
+- `NotSent` is evidence, not retry authority. This delivery does not automatically redeliver a confirmed non-emitted effect.
+- Reconciliation providers are explicit contracts; no universal provider-side idempotency, generic remote lookup or compensating action is invented.
+- No automatic reconciliation scanner is introduced. Candidate discovery remains separate from explicit reconciliation execution.
+- Real crash-after-send and provider-specific reconciliation failure injection remain for the adversarial validation delivery.
+
+## Recovery, Restart and Adversarial Validation
+
+### Added
+
+- Add deterministic crash-boundary proofs for a remote MCP result followed by a failed durable completion write.
+- Add ambiguous-write proof where completion is durably committed but the persistence acknowledgement is lost; a reconstructed runtime replays the committed result without a second outbound call.
+- Add restart proof for a process loss after `Prepared -> Dispatching` but before the physical business call.
+- Add concurrent reconciliation proof showing revision CAS converges multiple reconciliation attempts on one authoritative terminal record.
+- Add tenant-scope recovery isolation proof that a mismatched tenant group cannot observe or reconcile another scope's effect.
+- Add opt-in MongoDB restart tests using reconstructed store/journal instances over the same durable records.
+
+### Behavior and Compatibility
+
+- Preserve fail-closed behavior when a remote result exists but durable `Completed` evidence cannot be authoritatively confirmed. A restarted runtime does not infer success and does not re-emit from `Dispatching`.
+- Preserve local replay when `Completed` was committed even if the caller observed an ambiguous persistence failure.
+- Preserve `Dispatching` after a crash between durable dispatch authority and the physical call; restart alone does not grant a second attempt.
+- Preserve explicit reconciliation as evidence resolution only. A reconciled `NotSent` state remains non-redeliverable by the MCP evidence layer.
+- Preserve tenant and tenant-group scope as part of the durable evidence address during recovery.
+- Preserve the existing DAG, retry, recovery, journal lease/epoch and worker ownership authorities; no automatic reconciliation scanner or competing recovery scheduler is introduced.
+
+### Validation
+
+- Prove no second physical call after a completion write fails before commit.
+- Prove no second physical call when a completion write commits but its acknowledgement is lost.
+- Prove reconstructed journals keep `Dispatching` fail-closed until explicit reconciliation.
+- Prove concurrent reconciliation of the same confirmed result converges on one `Completed` revision.
+- Prove wrong-scope reconciliation fails before the provider is called.
+- Add opt-in MongoDB proofs that `Dispatching` remains a reconciliation candidate after journal reconstruction and `Completed` remains replayable without physical transport.
+
+### Limits
+
+- Crash safety is achieved by refusing blind re-emission, not by claiming generic exactly-once behavior in the external MCP provider.
+- A stranded `Dispatching` or `Uncertain` effect still requires an explicit provider/tool reconciliation contract or operator resolution.
+- `NotSent` remains evidence only and does not grant automatic retry authority.
+- This change does not add background scanning, provider-specific idempotency keys, compensation workflows or DAG recovery decisions.
+
+## Documentation and Branch Closure
+
+### Added
+
+- Add a final validation matrix covering logical effect identity, immutable intent, dispatch fencing, concurrency, confirmed replay, outcome classification, explicit reconciliation, restart behavior and tenant-scoped evidence access.
+- Add branch-closure documentation that separates deterministic runtime evidence, real outbound MCP boundary evidence and opt-in MongoDB persistence evidence.
+- Document final authority boundaries and the exact guarantees attached to `Completed`, `NotSent`, `Uncertain` and stale `Dispatching` states.
+
+### Behavior and Compatibility
+
+- Freeze the branch rule that durable MCP evidence never grants automatic redelivery authority for `NotSent`, `Dispatching` or `Uncertain` effects.
+- Preserve the existing DAG, retry, recovery, lease/epoch, publication and continuation authorities as external to the MCP evidence layer.
+- Preserve direct outbound MCP behavior when durable effect evidence is not configured.
+- Preserve explicit reconciliation as evidence resolution only; reconciliation cannot reissue the original business `tools/call`.
+
+### Validation
+
+- Define the deterministic durable-MCP suite as the primary branch validation.
+- Define the existing outbound MCP suite as compatibility and real transport-boundary validation.
+- Keep MongoDB persistence validation explicitly opt-in and do not count skipped or unconfigured infrastructure tests as passing evidence.
+
+### Limits
+
+- Do not claim generic exactly-once external side effects.
+- Do not claim provider-specific reconciliation, idempotency or compensation behavior without explicit provider/tool integration evidence.
+- Do not add a background reconciliation scanner, automatic MCP retry loop or competing recovery authority as part of branch closure.
+
+---
+
 ## 0.0.9.0 - 2026-09-16 — Multilanguage Hosted Worker Isolation
 
 ### Isolated Provider Contract and Admission
