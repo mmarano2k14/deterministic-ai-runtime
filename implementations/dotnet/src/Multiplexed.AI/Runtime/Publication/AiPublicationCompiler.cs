@@ -76,7 +76,21 @@ namespace Multiplexed.AI.Runtime.Publication
                         dependency.Name.Contains("..", StringComparison.Ordinal) || !names.Add(dependency.Name))
                         throw new InvalidOperationException("Invalid or duplicate dependency name.");
                     AiPublicationJson.Version(dependency.Version);
-                    dependencies.Add(dependency with { Files = CopyFiles(dependency.Files) });
+                    var dependencyFiles = CopyFiles(dependency.Files);
+                    if (dependency.Package is not null)
+                    {
+                        if (dependency.Package.SchemaVersion != 1 || !Enum.IsDefined(dependency.Package.Kind))
+                            throw new InvalidOperationException("Unsupported deterministic dependency package contract.");
+                        AiPublicationJson.Path(dependency.Package.ManifestPath);
+                        if (dependencyFiles.Count(file => string.Equals(
+                                file.Path, dependency.Package.ManifestPath, StringComparison.Ordinal)) != 1)
+                            throw new InvalidOperationException("The deterministic dependency package manifest must be present exactly once.");
+                    }
+                    dependencies.Add(dependency with
+                    {
+                        Files = dependencyFiles,
+                        Package = dependency.Package is null ? null : dependency.Package with { }
+                    });
                 }
                 functions.Add(function with { Sources = sources,
                     Dependencies = dependencies.OrderBy(d => d.Name, StringComparer.Ordinal).ToArray() });
@@ -112,7 +126,18 @@ namespace Multiplexed.AI.Runtime.Publication
                 AiPublicationJson.ValidateEnvironment(runtime);
                 if (runtime.Reference != source.EnvironmentRef || runtime.ExecutionLanguage != slot.Language)
                     throw new InvalidOperationException("Host environment does not match the declared reference and effective language.");
-                var dependencies = source.Dependencies.Select(d => new AiPublicationDependency(d.Name, d.Version, d.Files.Select(File).ToArray())).ToArray();
+                var dependencies = source.Dependencies.Select(dependency =>
+                {
+                    var package = AiDependencyPackagingContracts.Capture(
+                        dependency.Package, dependency.Files, slot.Language);
+                    return new AiPublicationDependency(
+                        dependency.Name,
+                        dependency.Version,
+                        dependency.Files.Select(File).ToArray())
+                    {
+                        Package = package
+                    };
+                }).ToArray();
                 var environment = Add("environment", AiPublicationExecutionDescriptors.Capture(runtime, dependencies, catalog));
                 var implementation = Add("implementation", new AiPublicationImplementation(1, slot.Language,
                     source.EntryPointPath, source.EntryPointSymbol, source.Sources.Select(File).ToArray(), environment));

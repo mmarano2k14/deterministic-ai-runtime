@@ -13,7 +13,14 @@ namespace Multiplexed.Abstractions.AI.Publication
     public sealed record AiPublicationFile(
         string Path, string ContentSha256, long SizeBytes, AiPublicationDocument Payload);
 
-    public sealed record AiPublicationDependency(string Name, string Version, IReadOnlyList<AiPublicationFile> Files);
+    public sealed record AiPublicationDependency(string Name, string Version, IReadOnlyList<AiPublicationFile> Files)
+    {
+        /// <summary>
+        /// Optional immutable package descriptor. Omitted for historical explicit-file dependencies.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public AiPublicationDependencyPackage? Package { get; init; }
+    }
 
     /// <summary>Exact host-approved runtime identity. A catalog entry is not proof of an available worker.</summary>
     public sealed record AiPublicationEnvironment(

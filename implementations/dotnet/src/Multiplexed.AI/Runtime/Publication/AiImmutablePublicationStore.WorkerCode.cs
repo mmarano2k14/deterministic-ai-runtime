@@ -54,6 +54,7 @@ namespace Multiplexed.AI.Runtime.Publication
             var environment = AiPublicationJson.Read<AiPublicationEnvironmentSnapshot>(
                 await DocumentAsync(function.Environment, "environment", guard, token).ConfigureAwait(false));
             AiPublicationExecutionDescriptors.RequirePinned(environment, actual.ExecutionLanguage, _catalog);
+            AiDependencyPackagingContracts.RequireExecutionSupported(environment.Dependencies, actual.ExecutionLanguage);
             async Task<IReadOnlyList<AiWorkerFile>> Files(IReadOnlyList<AiPublicationFile> files)
             {
                 var values = new List<AiWorkerFile>(files.Count);

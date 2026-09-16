@@ -26,7 +26,14 @@ namespace Multiplexed.Abstractions.AI.Publication
 
     /// <summary>An exact dependency label and the bytes supplied for that dependency, not a registry query.</summary>
     public sealed record AiPublicationDependencyUpload(
-        string Name, string Version, IReadOnlyList<AiPublicationFileUpload> Files);
+        string Name, string Version, IReadOnlyList<AiPublicationFileUpload> Files)
+    {
+        /// <summary>
+        /// Optional deterministic package descriptor. Null preserves the historical explicit-file dependency contract.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public AiPublicationDependencyPackage? Package { get; init; }
+    }
 
     /// <summary>Code attached to a declaration. The publisher generates implementation references.</summary>
     public sealed record AiPublicationFunctionUpload(
