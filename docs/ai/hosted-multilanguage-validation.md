@@ -164,7 +164,7 @@ SHA-256 identifies the exact supplied result files used for this summary.
 
 ## Interpretation limits
 
-The evidence supports the stated hosted-language and packaging boundaries, not a completed public SDK product. Deterministic package bundles are captured before publication; no general runtime package installer, new public publication endpoint, SDK package, or durable external-effect guarantee is implied by these historical results. Container isolation and durable MCP effect evidence are separate implemented boundaries with their own dedicated evidence and limits.
+The evidence in this document supports the stated hosted-language and packaging boundaries; it predates and does not itself validate the later public SDK boundary. Deterministic package bundles are captured before publication; no general runtime package installer, language-specific SDK client package, or durable external-effect guarantee is implied by these historical results. The public contract/server boundary, container isolation, and durable MCP effect evidence are separate implemented boundaries with their own dedicated evidence and limits.
 
 Dedicated reruns supplement the earlier regression artifact without changing its recorded outcomes. The available hosted-language evidence does not certify every runtime version, deployment topology, or failure mode. Published custom Child DAG evidence does not establish operating-system host-kill recovery, Redis/MongoDB restart or failover, Kubernetes sandbox-provider coverage, or unlimited recursive depth. Selected OCI container isolation is evidenced separately and must not be generalized beyond its tested provider/platform boundary.
 

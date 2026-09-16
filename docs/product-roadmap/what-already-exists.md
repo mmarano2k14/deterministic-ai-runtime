@@ -51,7 +51,7 @@ The current foundation already covers several critical areas required for produc
 - observability direction through logs, metrics, traces, telemetry, provider/transport signals, lifecycle events, memory/context events, and decision history;
 - integration and reliability testing direction;
 - security and encryption hardening direction;
-- developer experience, API, SDK, and CLI direction;
+- an implemented portable public SDK contract/server boundary plus remaining external SDK/CLI productization direction;
 - memory, context, and reasoning lifecycle direction;
 - Kubernetes-ready architecture direction.
 
@@ -1703,10 +1703,10 @@ The current foundation enables several future product layers.
 
 ### Developer Product
 
-The runtime can become a developer-facing platform with:
+The runtime already has a portable public SDK contract/server boundary and can continue becoming a developer-facing platform with:
 
 - quickstart;
-- SDK/API surface;
+- language-specific SDK/API packaging on the implemented boundary;
 - CLI direction;
 - workflow execution;
 - replay API;
@@ -1843,7 +1843,8 @@ The project already has strong foundations in the following areas:
 | Runtime telemetry direction | Foundation exists / active direction |
 | Integration and reliability testing | Foundation exists |
 | Testing and reliability strategy | Foundation exists / active direction |
-| Developer experience / API / SDK / CLI | Productization target |
+| Public SDK contract/server boundary | Implemented / validated foundation |
+| External SDK client libraries / CLI | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |
 | Memory decay policy direction | Productization target |

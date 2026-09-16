@@ -280,7 +280,7 @@ Hosted execution is enabled family by family rather than through a universal rem
 
 Hosted code supplies only family-specific decision evidence. The existing runtime checkpoint remains authoritative: concurrency admission and native guards remain in the concurrency engine; retry budget/backoff/jitter/state transitions remain in the Retry engine; delegation relation persistence, child allocation/dispatch, continuation, and recovery remain in Child DAG orchestration. Technical worker failure cannot become implicit `Allow`, `Retry`, or `Approve`.
 
-`retry.timeout.default` and `retry.rate-limit.default` are native policies of the `Retry` family; they do not imply independent `Timeout` or `RateLimit` engines. Public SDK exposure remains a later product boundary: client libraries may eventually declare these policy contracts, but they do not execute policy authority locally.
+`retry.timeout.default` and `retry.rate-limit.default` are native policies of the `Retry` family; they do not imply independent `Timeout` or `RateLimit` engines. The public SDK boundary is now implemented, but the current portable surface does not move policy authority into clients. Future language SDK conveniences may declare supported policy contracts while the server remains authoritative over policy checkpoints and outcomes.
 
 ---
 

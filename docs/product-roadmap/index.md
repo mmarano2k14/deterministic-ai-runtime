@@ -185,7 +185,8 @@ This roadmap should not present the platform as idea-stage only.
 | Runtime telemetry and diagnostics | Foundation exists |
 | Execution control and state lifecycle | Foundation exists |
 | Testing and reliability strategy | Foundation exists |
-| Developer experience and API packaging | Productization target |
+| Public SDK contract/server boundary | Implemented / validated foundation |
+| External SDK libraries, CLI, and broader API packaging | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |
 | Memory decay policy direction | Productization target |
@@ -237,7 +238,7 @@ The platform is evolving toward a complete LLMOps execution infrastructure compo
 - runtime telemetry and diagnostics;
 - execution control and state lifecycle;
 - testing and reliability strategy;
-- developer API, SDK, and CLI direction;
+- implemented public SDK boundary plus external SDK/CLI direction;
 - security and encryption hardening;
 - memory, context, and reasoning lifecycle;
 - memory decay and freshness direction.
@@ -764,9 +765,9 @@ Developer experience turns the runtime into an adoptable platform.
 
 This pillar covers:
 
-- public API surface;
-- RunId / ExecutionId clarity;
-- SDK direction;
+- implemented portable public publication/execution contracts and server boundary;
+- public `ExecutionId` semantics with private scheduling identities kept server-side;
+- external SDK client-library direction;
 - CLI direction;
 - local setup;
 - examples;

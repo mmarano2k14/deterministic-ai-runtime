@@ -6,7 +6,76 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
-## 0.0.9.1 - 2026-09-16 — urable MCP Effect Evidence
+## 0.0.9.2 - 2026-09-16 - Public SDK Boundary
+
+
+- Added a dedicated `Multiplexed.AI.Sdk.Contracts` assembly as the public SDK wire-contract boundary.
+- Kept the public contract assembly independent from runtime, control-plane, persistence, transport, hosting and infrastructure projects.
+- Added a build-time dependency firewall that rejects repository project references and package references from the public contract assembly.
+- Added boundary tests that reject engine/infrastructure assembly coupling and keep exported contract types under the public SDK contract namespace.
+- Added the public contract and boundary-test projects to the main .NET solution under the existing `src` and `Tests` solution folders.
+- Added versioned portable pipeline, step, execution and invocation wire models without reusing engine CLR models.
+- Added versioned public pipeline publication request and response contracts.
+- Added portable custom declaration call-site identity including nested Child DAG definition paths and ordered policy indices.
+- Added deterministic dependency-package descriptors for Python wheel, Node locked-source and .NET managed-assembly closures.
+- Represented public source/dependency content as explicit Base64 text rather than CLR byte arrays.
+- Represented extensible pipeline input/config values as JSON values rather than arbitrary CLR objects.
+- Added JSON roundtrip and reflection validation for stable property names, string enum values and public CLR leakage prevention.
+- Added versioned public execution submission request/response contracts using immutable publication references and durable execution identity.
+- Added caller idempotency and correlation fields without exposing shared/local run identifiers or runtime placement.
+- Added portable execution observation and step-observation contracts with independent string lifecycle enums.
+- Added portable terminal execution result and sanitized failure contracts using JSON values rather than arbitrary CLR objects.
+- Added cooperative cancellation request/response contracts that distinguish cancellation request acceptance from terminal execution cancellation.
+- Added reflection and JSON validation preventing worker, runtime-instance, claim, lease and epoch identities from entering the new public contract areas.
+
+## Compatibility
+
+- No existing runtime, publication, DAG, recovery, worker, MCP or control-plane contract is changed by this branch.
+- Existing `Multiplexed.Abstractions` remains a server/runtime abstraction assembly and is not promoted to an SDK dependency.
+- Public pipeline and publication models have independent schema versions and explicit JSON property names.
+- Internal enum numeric values, storage identities and runtime implementation details are not part of the public wire contract.
+- Submission, observation, result and cancellation wire contracts are transport-neutral; no HTTP or gRPC endpoint is introduced yet.
+
+## Validation
+
+- The public contract project remains BCL-only with no project/package references.
+- The dependency firewall remains enforced during project build.
+- Boundary tests validate the compiled assembly reference graph independently of the MSBuild guard.
+- Pipeline tests validate roundtrip of DAG mode, invocation descriptors, dependencies and JSON config/input.
+- Publication tests validate nested call-sites, deterministic package descriptors, explicit Base64 content and stable publication responses.
+- Reflection tests reject public `object` and `byte[]` properties from the new portable contract areas.
+- Execution-contract tests validate idempotency/correlation roundtrips, JSON input/output, string lifecycle statuses and absence of shared/local/runtime placement identifiers.
+- Observation tests validate stable step progress while rejecting distributed claim, lease and recovery metadata.
+- Cancellation tests validate asynchronous/cooperative semantics without exposing server ownership fields.
+
+## Limitations
+
+- External .NET, TypeScript and Python SDK client libraries remain outside this branch.
+- Generated HTTP/gRPC client surfaces are not introduced by this branch.
+- Public runtime-instance, worker, lease/epoch, recovery and infrastructure administration remain intentionally excluded.
+
+### Server boundary and compatibility
+
+- Add explicit server-side mapping from dependency-free SDK publication/pipeline contracts into existing engine publication contracts.
+- Add public MCP operations for immutable publication, published execution submission, logical observation and cooperative cancellation.
+- Derive tenant/control-plane scope from the authenticated server context; public request bodies do not carry tenant ownership or runtime placement.
+- Route execution submission through the existing published-run pinning service and shared runtime controller rather than introducing a queue or scheduler.
+- Project logical execution and step status without exposing shared/local run ids, runtime instance ids, worker ids, claims, leases or epochs.
+- Reject unsupported public schema versions and malformed Base64 input explicitly before invoking server publication.
+- Exposed authorized publication-definition and immutable run-pin reads through the existing publication services for the public server adapter.
+
+### Boundary closure
+
+- Add closure reflection tests that reject server-owned identity names from exported SDK contract properties.
+- Add closure validation that exported SDK property types remain portable and do not expose `object`, `byte[]`, `Exception` or `Type`.
+- Add server-boundary reflection tests that keep the public adapter interface limited to SDK contract types, strings and cancellation tokens.
+- Add MCP boundary validation for the existing submit, read and cancel capability gates.
+- Add explicit closure documentation and a validation matrix covering dependency isolation, wire compatibility, publication authorization and immutable submission semantics.
+- Keep immutable submission convergence/conflict behavior delegated to the existing published-run pinning authority rather than duplicating idempotency logic in the public boundary.
+
+---
+
+## 0.0.9.1 - 2026-09-16 — Durable MCP Effect Evidence
 
 ## Durable Effect Evidence Foundation
 

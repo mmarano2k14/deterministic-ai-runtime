@@ -258,7 +258,7 @@ Local durable evidence cannot prove what an arbitrary external system committed 
 
 ## SDK boundary
 
-The future public SDK should expose portable effect semantics without depending on engine DLLs or internal CLR contracts. It must not turn uncertain external effects into client-side retry authority.
+The public SDK contract/server boundary is now implemented without depending on engine DLLs or internal CLR contracts. Durable MCP effect state remains server-owned and is not promoted into client-side retry authority: external client libraries must preserve the same rule that uncertain effects are not blindly re-emitted.
 
 ## Related documentation
 
@@ -267,4 +267,5 @@ The future public SDK should expose portable effect semantics without depending 
 - [MCP Server Control Plane](mcp-server-control-plane.md)
 - [Replay and Audit](replay-and-audit.md)
 - [Testing Strategy](testing-strategy.md)
+- [Public SDK Boundary](public-sdk-boundary.md)
 - [Architecture Overview](architecture-overview.md)

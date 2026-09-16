@@ -61,7 +61,7 @@ The engine only needs to know how to safely run a step.
 
 Assembly registration in this document concerns native plugins. Published Python/TypeScript functions and .NET assemblies use contextual hosted adapters, not native discovery of tenant code. An outbound MCP invocation uses a separate tool adapter. Both paths remain under the existing runtime's orchestration and authorization.
 
-A missing hosted or MCP capability fails explicitly rather than selecting a native executor with the same key. Contextual step adapters are not discovered as attributed native plugins. The runtime-side adapter contract does not require the future external SDK or the published function to reference engine DLLs.
+A missing hosted or MCP capability fails explicitly rather than selecting a native executor with the same key. Contextual step adapters are not discovered as attributed native plugins. The runtime-side adapter contract does not require the public SDK contract assembly, external SDK clients, or the published function to reference engine DLLs.
 
 Hosted custom functions use immutable publication, run pinning, the durable invocation journal, and the existing DAG continuation path. Actual language loaders, execution requirements, supported dependencies, and limits are documented in [Hosted Multilanguage Execution](hosted-multilanguage-execution.md).
 

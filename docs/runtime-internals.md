@@ -6367,25 +6367,22 @@ They should not introduce execution logic into the runtime.
 
 The implemented server-side extension for published Python, TypeScript, and .NET functions is documented in [Hosted Multilanguage Execution](ai/hosted-multilanguage-execution.md). It covers immutable publication, whole-run pinning, durable result application, contextual custom `Concurrency` policies, execution requirements, and outgoing MCP without replacing the existing DAG, RBAC, or runtime-instance model.
 
-The external SDK remains a separate library/API deliverable with no engine-DLL dependency. The trusted hosted-process provider is not a hostile-code sandbox; a separate selected Linux/amd64 OCI `SandboxedContainer` provider now supplies a bounded physical isolation path with applied-state attestation, cleanup/quarantine, and explicit real-engine validation. This does not imply a Kubernetes sandbox-Pod provider or universal hostile-code safety. Outbound MCP also has an opt-in durable effect-evidence boundary with immutable intent, pre-call dispatch fencing, confirmed-result replay, conservative uncertainty states, explicit reconciliation, and tenant-scoped persistence; this does not imply generic exactly-once provider behavior or automatic redelivery. [Hosted Multilanguage Validation](ai/hosted-multilanguage-validation.md), [Hosted Worker Isolation Validation](ai/hosted-worker-isolation-validation.md), and [Durable MCP Effect Evidence Validation](ai/durable-mcp-effect-evidence-validation.md) record the separate validation boundaries. Existing technical sections below remain the reference for native runtime behavior.
+The portable public SDK contract/server boundary is implemented with no engine-DLL dependency in the contract assembly; language-specific external client libraries remain a separate deliverable. The trusted hosted-process provider is not a hostile-code sandbox; a separate selected Linux/amd64 OCI `SandboxedContainer` provider now supplies a bounded physical isolation path with applied-state attestation, cleanup/quarantine, and explicit real-engine validation. This does not imply a Kubernetes sandbox-Pod provider or universal hostile-code safety. Outbound MCP also has an opt-in durable effect-evidence boundary with immutable intent, pre-call dispatch fencing, confirmed-result replay, conservative uncertainty states, explicit reconciliation, and tenant-scoped persistence; this does not imply generic exactly-once provider behavior or automatic redelivery. [Hosted Multilanguage Validation](ai/hosted-multilanguage-validation.md), [Hosted Worker Isolation Validation](ai/hosted-worker-isolation-validation.md), and [Durable MCP Effect Evidence Validation](ai/durable-mcp-effect-evidence-validation.md) record the separate validation boundaries. Existing technical sections below remain the reference for native runtime behavior.
 
 ---
 
-### Client / SDK (Future Direction)
+### Client / SDK Boundary
 
-Client layers are intended to provide a simplified interface to the runtime.
+The repository now contains an independent public contract assembly and an explicit server adapter for publication, execution submission, observation, result retrieval, and cancellation.
 
-They may include:
+The boundary:
 
-- APIs to start executions
-- tools to monitor workflows
-- utilities to retrieve results
+- exposes portable wire models rather than internal CLR runtime contracts;
+- keeps engine DLLs and infrastructure dependencies out of the public contract assembly;
+- exposes `ExecutionId` as the durable public execution handle while keeping queue/worker/lease/epoch identities server-private;
+- maps explicitly into existing publication, shared submission, execution state, authorization, and cancellation services.
 
-These clients should:
-
-- abstract internal complexity
-- provide clean entry points
-- remain thin wrappers around the runtime
+Language-specific client packages remain thin wrappers to be built on top of this boundary. They must not embed execution, retry, recovery, or scheduling authority.
 
 ---
 
@@ -6681,22 +6678,25 @@ This console will make the runtime more accessible and easier to operate in prod
 
 ---
 
-### SDKs (Future Direction)
+### External SDK Libraries (Next Direction)
 
-Future SDKs may be introduced to simplify integration.
+The public contract/server boundary is implemented. The next SDK layer is language-specific client packaging and convenience APIs.
 
 Possible directions include:
 
-- .NET SDK
-- JavaScript SDK
-- CLI tools
+- .NET client SDK;
+- TypeScript/JavaScript client SDK;
+- Python client SDK;
+- CLI tools.
 
-These would allow developers to:
+These clients can:
 
-- trigger executions programmatically
-- retrieve results
-- integrate workflows into applications
-- automate system interactions
+- publish pipelines and deterministic dependency material;
+- submit executions;
+- observe execution/step state;
+- retrieve terminal results;
+- request cancellation;
+- add polling/waiting and ergonomic builders without depending on engine DLLs.
 
 ---
 
@@ -6720,7 +6720,7 @@ The Client / SDK layer provides:
 
 - a clean interface to interact with the system
 - administrative tools for RBAC
-- a foundation for future runtime consoles and SDKs
+- an implemented portable SDK contract/server boundary and a foundation for external client libraries and future runtime consoles
 
 It ensures that the system can be used effectively while keeping the runtime architecture clean and focused.
 

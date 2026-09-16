@@ -234,7 +234,7 @@ This document explains:
 
 Server-side execution reference covering effective language selection, immutable publication and run pinning, deterministic dependency packaging, published custom Child DAG binding, worker lease/epoch authority, durable result application, actual Python/TypeScript/.NET execution, hosted custom policy families, execution requirements, and authorized outbound MCP.
 
-The hosted function worker is not a trusted runtime instance. Published custom Child DAGs and deterministic dependency bundles reuse the same immutable publication, durable journal, hosted worker and existing continuation authorities. Pure-Python wheels, locked Node source bundles, and managed .NET assembly closures are supported. Physical execution can remain an explicitly trusted process or use the selected Linux/amd64 OCI `SandboxedContainer` provider. Durable outbound MCP effect evidence is now a separate opt-in server boundary with immutable intent, dispatch fencing, confirmed-result replay, conservative uncertainty handling, and explicit reconciliation; it does not create generic exactly-once semantics or retry authority. Native package ecosystems, the public SDK library, Kubernetes sandbox-Pod materialization, and broader hostile-code/platform guarantees remain separate capabilities.
+The hosted function worker is not a trusted runtime instance. Published custom Child DAGs and deterministic dependency bundles reuse the same immutable publication, durable journal, hosted worker and existing continuation authorities. Pure-Python wheels, locked Node source bundles, and managed .NET assembly closures are supported. Physical execution can remain an explicitly trusted process or use the selected Linux/amd64 OCI `SandboxedContainer` provider. Durable outbound MCP effect evidence is a separate opt-in server boundary with immutable intent, dispatch fencing, confirmed-result replay, conservative uncertainty handling, and explicit reconciliation; it does not create generic exactly-once semantics or retry authority. A portable public SDK contract/server boundary is also implemented for publication and execution lifecycle operations without exposing engine DLLs or runtime ownership identities. Native package ecosystems, language-specific external SDK libraries, Kubernetes sandbox-Pod materialization, and broader hostile-code/platform guarantees remain separate capabilities.
 
 ### [`ai/hosted-multilanguage-validation.md`](ai/hosted-multilanguage-validation.md)
 
@@ -255,6 +255,14 @@ Outbound MCP durable-effect reference covering stable logical identity, immutabl
 ### [`ai/durable-mcp-effect-evidence-validation.md`](ai/durable-mcp-effect-evidence-validation.md)
 
 Validation reference separating deterministic durable-effect proofs, the selected real outbound `tools/call` boundary tests, and opt-in MongoDB persistence/reconstruction tests. Skipped MongoDB tests are explicitly not counted as passing evidence.
+
+### [`ai/public-sdk-boundary.md`](ai/public-sdk-boundary.md)
+
+Portable public publication/pipeline and execution/observation/control contracts, engine-dependency firewall, public execution identity, idempotent submission model, and the explicit server-adapter boundary.
+
+### [`ai/public-sdk-boundary-validation.md`](ai/public-sdk-boundary-validation.md)
+
+Validation reference for the dependency firewall, private-identity exclusion, public server interface, existing run-pinning/authorization compatibility, and branch-closure limits.
 
 ---
 
@@ -883,7 +891,9 @@ The project roadmap organized into phases:
 | [`ai/config-driven-runtime.md`](ai/config-driven-runtime.md) | How pipeline definitions and structured configuration drive runtime behavior, with tenant runtime settings moving toward config/database-backed resolution. |
 | [`ai/policy-driven-execution.md`](ai/policy-driven-execution.md) | Shared policy model used by retry, retention, concurrency, throttling, admission control, and future tenant-specific governance. |
 | [`ai/context-resolution-and-helpers.md`](ai/context-resolution-and-helpers.md) | Input resolution, step context building, payload rehydration, provider metadata, policy context, helper services, and durable execution context snapshot propagation. |
-| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Native/custom/MCP binding, published code and deterministic dependency bundles, language workers, execution requirements, and the external SDK boundary. |
+| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Native/custom/MCP binding, published code and deterministic dependency bundles, language workers, execution requirements, and their relationship to the public SDK boundary. |
+| [`ai/public-sdk-boundary.md`](ai/public-sdk-boundary.md) | Portable publication/execution contracts, dependency firewall, public identity model, and explicit mapping into existing server authorities. |
+| [`ai/public-sdk-boundary-validation.md`](ai/public-sdk-boundary-validation.md) | Validation and limits for the public contract/server boundary. |
 | [`ai/deterministic-dependency-packaging.md`](ai/deterministic-dependency-packaging.md) | Supported immutable package forms, package-manifest integrity, republish pinning, worker revalidation, and unsupported package-manager/native dependency boundaries. |
 | [`ai/step-plugins.md`](ai/step-plugins.md) | Step keys, registered executors, class attributes, assembly scanning, provider abstractions, and plugin-style runtime extension. |
 | [`ai/rag-pipelines.md`](ai/rag-pipelines.md) | RAG retrieval, merge, compose, provider-oriented workflow execution, auto-registered RAG steps, and deterministic RAG pipelines. |

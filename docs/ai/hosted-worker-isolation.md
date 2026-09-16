@@ -181,7 +181,7 @@ The current isolated provider is an OCI/container-engine implementation for the 
 
 A future Kubernetes physical provider can materialize the same logical isolation requirement as an ephemeral worker Pod using Kubernetes-native security/resource/network controls. That provider must remain behind the same hosted-worker boundary and preserve the same journal, lease/epoch, result-acceptance, DAG, and recovery authorities.
 
-The external SDK should remain provider-agnostic: it describes the required execution/isolation contract; server infrastructure decides how that contract is physically supplied.
+The implemented public SDK boundary remains provider-agnostic: portable publication/execution contracts describe the required work while server infrastructure decides how hosted isolation is physically supplied. Language-specific SDK clients must preserve that separation.
 
 ## Validation boundary
 

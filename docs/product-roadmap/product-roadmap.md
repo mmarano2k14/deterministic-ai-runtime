@@ -110,7 +110,7 @@ The roadmap is organized into several product tracks.
 | Enterprise Dashboard | Make executions, runs, queues, workers, ledger, replay, policy, memory/context, lifecycle, security, and observability visible. |
 | Pipeline Builder | Allow visual design of deterministic AI workflows. |
 | Observability and Runtime Telemetry | Export logs, metrics, traces, ledger events, provider/transport telemetry, lifecycle telemetry, memory/context telemetry, and runtime health signals. |
-| Developer Experience / API / SDK / CLI | Improve quickstart, examples, API packaging, SDK direction, CLI direction, diagnostics, and error model. |
+| Developer Experience / API / SDK / CLI | Build external client libraries, CLI, examples, diagnostics, and broader API packaging on the implemented public SDK contract/server boundary. |
 | Testing and Reliability | Prove runtime guarantees through unit, integration, distributed, provider, MCP, replay, lifecycle, and chaos-style tests. |
 | Security and Encryption Hardening | Improve RBAC-aware access, replay/ledger/MCP/dashboard security, redaction, payload protection, encrypted retention archive direction, and access-control direction. |
 | Runtime Pool and Failure Recovery | Reuse warm runtime capacity, route to exact child instances, isolate child failures, claim assigned work deterministically, and extend the model into Kubernetes Pool Pods. |
@@ -160,7 +160,8 @@ The project already contains the foundation for several major product capabiliti
 | Provider-based hosting direction | Foundation exists |
 | Runtime provider and transport model | Foundation exists |
 | Testing and reliability strategy | Foundation exists / active direction |
-| Developer experience / API / SDK / CLI | Productization target |
+| Public SDK contract/server boundary | Implemented / validated foundation |
+| External SDK libraries / CLI / broader API productization | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |
 | Memory decay policy direction | Productization target |
@@ -1328,7 +1329,7 @@ The system exposes runtime behavior visually.
 
 ## Level 6 — Developer Experience and Runtime Tooling
 
-The system exposes clear APIs, SDK direction, CLI direction, quickstart, examples, diagnostics, and local setup.
+The system has a portable public SDK contract/server boundary and continues toward language-specific client libraries, CLI tooling, quickstart, examples, diagnostics, and local setup.
 
 ## Level 7 — Visual Workflow Product
 
@@ -1382,7 +1383,7 @@ The expected product outcome is a platform where users can:
 
 The product roadmap is ambitious but should be executed progressively.
 
-The platform already has important foundations around deterministic execution, replay, audit, decision ledger, configuration-driven behavior, context-driven execution, policy-driven decisions, policy engine foundation, provider-driven architecture, retention/eviction/compaction, automatic snapshot direction, execution control and lifecycle direction, workers, queues, MCP direction, distributed runtime direction, observability/runtime telemetry direction, testing reliability direction, security hardening direction, developer experience/API/SDK/CLI direction, and memory/context direction.
+The platform already has important foundations around deterministic execution, replay, audit, decision ledger, configuration-driven behavior, context-driven execution, policy-driven decisions, policy engine foundation, provider-driven architecture, retention/eviction/compaction, automatic snapshot direction, execution control and lifecycle direction, workers, queues, MCP direction, distributed runtime direction, observability/runtime telemetry direction, testing reliability direction, security hardening direction, an implemented public SDK contract/server boundary plus external SDK/CLI direction, and memory/context direction.
 
 The next stage is productization.
 

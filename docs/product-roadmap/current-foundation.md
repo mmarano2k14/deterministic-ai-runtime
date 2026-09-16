@@ -66,10 +66,10 @@ The current architecture is built around the following core foundations:
 | Observability Direction | Expose logs, metrics, traces, runtime events, runtime telemetry, provider/transport telemetry, lifecycle telemetry, memory/context telemetry direction, and decision history. |
 | Execution Control and State Lifecycle | Support run lifecycle, execution lifecycle, step lifecycle, pause, resume, cancel, retry, waiting-for-input direction, claims, and finalization. |
 | Testing and Reliability Strategy | Prove runtime behavior through tests for execution, replay, ledger, policy, MCP, providers, queues, lifecycle, observability, and distributed execution. |
-| Developer Experience / API / SDK / CLI | Prepare quickstart, public API surface, SDK direction, CLI direction, examples, diagnostics, and onboarding. |
+| Developer Experience / API / SDK / CLI | Public SDK contract/server boundary implemented; continue with external client libraries, CLI, examples, diagnostics, and onboarding. |
 | Security and Encryption Hardening | Prepare RBAC-aware access control, redaction, sensitive payload protection, encrypted ledger payload direction, encrypted retention archive direction, and secure operational surfaces. |
 | Memory / Context / Reasoning Lifecycle | Prepare scoped memory, context injection, memory decay, freshness, runtime reasoning evidence, memory replay, and policy-driven memory governance. |
-| Productization Direction | Prepare dashboard, pipeline builder, hosting, API/SDK/CLI, security hardening, memory/context governance, and enterprise readiness. |
+| Productization Direction | Continue dashboard, pipeline builder, hosting, external SDK/CLI packaging, security hardening, memory/context governance, and enterprise readiness on top of the implemented public boundary. |
 
 ---
 
@@ -1342,7 +1342,7 @@ This means the product can evolve from a developer-defined runtime into a visual
 
 ## 30. Developer Experience, API, SDK, and CLI Foundation
 
-The project already has the runtime foundation required for better developer experience and public API packaging.
+The project now has both the runtime foundation and an implemented public SDK contract/server boundary for the first developer-facing publication/execution surface.
 
 The developer experience direction can build on:
 
@@ -1356,15 +1356,18 @@ The developer experience direction can build on:
 - policy engine foundation;
 - retention lifecycle foundation;
 - observability direction;
-- integration testing direction.
+- integration testing direction;
+- portable public publication/pipeline contracts;
+- portable execution/observation/control contracts;
+- an authorized MCP server adapter that maps those contracts into existing runtime authorities.
 
 The productization direction includes:
 
 - quickstart;
 - local setup;
 - API documentation;
-- RunId / ExecutionId clarity;
-- SDK direction;
+- public `ExecutionId` semantics without exposing scheduling/placement identities;
+- external language SDK packaging;
 - CLI direction;
 - examples;
 - diagnostics;
@@ -1688,7 +1691,8 @@ It is the foundation for a complete AI workflow execution platform.
 | Correlation | Foundation exists |
 | Execution control and state lifecycle | Foundation exists |
 | Testing and reliability strategy | Foundation exists / active direction |
-| Developer experience / API / SDK / CLI | Productization target |
+| Public SDK contract/server boundary | Implemented / validated foundation |
+| External SDK libraries / CLI / broader API productization | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |
 | Memory decay policy direction | Productization target |

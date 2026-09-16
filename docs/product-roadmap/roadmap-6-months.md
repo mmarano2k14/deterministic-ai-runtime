@@ -69,7 +69,7 @@ This means the roadmap should prioritize:
 - retention lifecycle diagnostics;
 - memory/context model direction;
 - security hardening direction;
-- developer experience and API/SDK/CLI direction;
+- developer experience with the public SDK contract/server boundary now available and external SDK/CLI packaging still in scope;
 - testing reliability visibility;
 - multi-instance runtime demonstration;
 - observability and runtime telemetry;
@@ -107,7 +107,7 @@ However, productization requires:
 - stronger demos;
 - easier local setup;
 - better developer experience;
-- API/SDK/CLI direction;
+- external SDK/CLI and broader API productization on top of the implemented public boundary;
 - security hardening;
 - retention lifecycle diagnostics;
 - memory/context governance direction;
@@ -522,7 +522,7 @@ Observability should include:
 - replay/audit after distributed execution;
 - documentation for running the demo;
 - improved developer quickstart;
-- API/SDK/CLI direction notes.
+- public SDK boundary usage notes plus external SDK/CLI direction.
 
 ## Success Criteria
 

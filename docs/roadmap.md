@@ -535,23 +535,34 @@ See:
 
 ## Phase 5 — Public API / SDK Polish
 
-**Status:** Planned
+**Status:** Foundation available / in progress
 
 Goal: make the runtime easier to consume from external applications.
 
-Possible work:
+Implemented foundation:
 
-- cleaner execution API
-- stable request/response contracts
-- SDK-friendly abstractions
-- clearer controller APIs
+- independent `Multiplexed.AI.Sdk.Contracts` dependency firewall;
+- portable publication/pipeline wire models;
+- execution submission, observation, result, and cancellation wire contracts;
+- authorized server adapter and MCP public operations;
+- explicit mapping to existing immutable publication, run pinning, shared submission, authorization, and execution control.
+
+Remaining productization work:
+
+- language-specific external SDK client libraries;
+- CLI packaging;
+- broader HTTP/Gateway packaging where useful;
+- replay/ledger/forensics public client surfaces;
+- generated API documentation and compatibility/deprecation policy;
+- better examples;
+- public helper/context resolver documentation.
+
+Additional controller/API work may still include:
+
 - replay controller contracts
 - recovery incident query contracts
 - forensics query contracts
 - control-plane causal-chain query contracts
-- better examples
-- public helper/context resolver documentation
-- CLI or developer utilities
 
 The runtime internals should remain powerful, but the external entry points should become simpler.
 

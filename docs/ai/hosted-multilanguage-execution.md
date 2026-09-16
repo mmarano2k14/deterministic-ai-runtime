@@ -1,6 +1,6 @@
 # Hosted Multilanguage Execution
 
-**Status:** Implemented server-side foundation with targeted execution, persistence, authorization, restoration validation, a selected OCI-backed `SandboxedContainer` provider, and an opt-in durable MCP external-effect evidence boundary. The external SDK library, Kubernetes sandbox-Pod provider, and broader hostile-code/platform guarantees remain separate deliverables.
+**Status:** Implemented server-side foundation with targeted execution, persistence, authorization, restoration validation, a selected OCI-backed `SandboxedContainer` provider, an opt-in durable MCP external-effect evidence boundary, and a portable public SDK contract/server boundary. Language-specific external SDK libraries, Kubernetes sandbox-Pod provider, and broader hostile-code/platform guarantees remain separate deliverables.
 
 ## Purpose and scope
 
@@ -15,7 +15,7 @@ This reference covers the implemented contracts and their limits. [Hosted Multil
 | Custom policies | `Concurrency`, `Retry`, and `Delegation`, each evaluated at its existing checkpoint with a distinct closed result contract. `Retention` remains native-only. |
 | Outbound MCP | Real Streamable HTTP transport, existing RBAC, server-owned connections, logical-effect metadata, and optional durable effect evidence with pre-call fencing, confirmed replay, outcome classification, and explicit reconciliation. |
 | Isolation | Two explicit physical providers: approved `TrustedProcess` execution, plus a selected Linux/amd64 OCI `SandboxedContainer` path with fail-closed applied-state attestation. |
-| External SDK | Not delivered. Public models and clients must remain independent of engine DLLs and internal CLR contracts. |
+| Public SDK boundary | Implemented portable publication/execution contracts and authorized server adapter with no engine-DLL dependency in the contract assembly. Language-specific client libraries remain separate. |
 
 Registration is opt-in. Existing hosts do not automatically activate every hosted capability. Internal publication/run services are not a new public upload API, and run creation alone does not enqueue or start execution.
 
@@ -252,18 +252,18 @@ The following remain outside the implemented foundation:
 
 | Area | Remaining scope |
 |---|---|
-| Public integration | Independent SDK libraries, public publication/submission models, and Gateway/API productization. |
+| Public integration | Portable publication/submission/observation/result/cancellation models and server boundary are implemented. Independent .NET/TypeScript/Python client libraries, CLI packaging, and broader Gateway/API productization remain separate. |
 | Isolation breadth | The selected Linux/amd64 OCI provider implements bounded container isolation, resource limits, denied egress, descendant containment, verified cleanup/quarantine, and restart orphan reconciliation. This is not a universal hostile-code guarantee and is not yet a Kubernetes sandbox-Pod provider. |
 | Dependencies | Deterministic pure-Python wheel bundles, locked Node source bundles, and managed .NET assembly closures are implemented. Native Python extensions/namespace packages, Node native add-ons/general npm ecosystem installation, and .NET native dependency/package-manager resolution remain outside scope. |
 | Additional policies | `Retention` is native-only in the current matrix. Taxonomy values without an independent checkpoint are not hosted. Any further family requires its own existing checkpoint, request/response contract, authority analysis, and bounded validation. |
 | Published-child validation breadth | Broader provider/store failure matrices, operating-system host-kill proofs, and unlimited recursive-depth claims are not implied by the bounded published-child closure. |
 | External effects | Durable MCP evidence and generic explicit reconciliation contracts are implemented. Provider-specific idempotency/query adapters, compensation workflows, automatic reconciliation scanning, broader connection-catalog lifecycle, and credential-provider integrations remain separate scope. |
 
-Supported dependency bundles are captured and verified before publication; no arbitrary network package installation, implicit `latest` resolution, or tenant C# compilation belongs in the current execution path. A future SDK describes and publishes work; the platform hosts it and the runtime governs it. No direct or transitive engine-DLL dependency is required of that SDK.
+Supported dependency bundles are captured and verified before publication; no arbitrary network package installation, implicit `latest` resolution, or tenant C# compilation belongs in the current execution path. The implemented public SDK boundary describes publication and execution through portable contracts while the platform hosts the work and the runtime governs it. The contract assembly has no direct or transitive engine-DLL dependency; language-specific client libraries remain a separate deliverable.
 
 ## Implementation references
 
-These are server implementation points, not public SDK contracts.
+These are server implementation points, not the portable public SDK contracts. See [Public SDK Boundary](public-sdk-boundary.md) for the external contract/server-adapter separation.
 
 | Boundary | Source |
 |---|---|
@@ -303,4 +303,6 @@ These are server implementation points, not public SDK contracts.
 - [Replay and Audit](replay-and-audit.md)
 - [Durable Child DAG Composition](child-dag-composition.md)
 - [Hosted Multilanguage Validation](hosted-multilanguage-validation.md)
+- [Public SDK Boundary](public-sdk-boundary.md)
+- [Public SDK Boundary Validation](public-sdk-boundary-validation.md)
 - [Developer Experience, API, SDK, and CLI](../product-roadmap/developer-experience-api-sdk-cli.md)
