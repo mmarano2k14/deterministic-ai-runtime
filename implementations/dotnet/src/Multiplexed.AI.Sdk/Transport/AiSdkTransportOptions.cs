@@ -7,6 +7,12 @@ namespace Multiplexed.AI.Sdk.Transport
     {
         public IAiSdkCredentialProvider? CredentialProvider { get; init; }
 
+        /// <summary>
+        /// Additional transport headers required by the public server boundary, such as an access-context handle.
+        /// Authorization remains owned by <see cref="CredentialProvider"/> and cannot be overridden here.
+        /// </summary>
+        public IReadOnlyDictionary<string, string>? AdditionalHeaders { get; init; }
+
         /// <summary>Total attempts allowed for operations explicitly marked as safe reads.</summary>
         public int SafeReadMaxAttempts { get; init; } = 2;
 

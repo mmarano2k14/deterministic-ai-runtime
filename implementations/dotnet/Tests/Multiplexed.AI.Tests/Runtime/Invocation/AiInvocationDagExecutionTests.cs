@@ -76,6 +76,9 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation
             Assert.Same(adapter.Metadata!.Binding, context.InvocationBinding);
             Assert.Equal(source.Name, context.StepName);
             Assert.Equal("same-key", context.StepKey);
+            Assert.Equal(AiStepExecutionStatus.Running, context.StepState.Status);
+            Assert.Equal("runtime-1", context.StepState.ClaimedBy);
+            Assert.Equal("claim-1", context.StepState.ClaimToken);
             Assert.Equal("value", result.Value);
             Assert.Equal("output", result.Output);
             Assert.Equal(42, result.Data["result"]);

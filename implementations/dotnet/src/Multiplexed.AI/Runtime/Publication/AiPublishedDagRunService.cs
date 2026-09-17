@@ -1,6 +1,7 @@
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Invocation.Durable;
+using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.Abstractions.AI.Publication;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Execution.Engine.Creation;
@@ -24,6 +25,15 @@ namespace Multiplexed.AI.Runtime.Publication
 
         public async Task<AiExecutionRecord> CreateAsync(AiDurableInvocationScope scope, string runKey,
             string publicationRef, string inputsJson, CancellationToken cancellationToken = default)
+        {
+            var result = await CreateWithDefinitionAsync(
+                scope, runKey, publicationRef, inputsJson, cancellationToken).ConfigureAwait(false);
+            return result.Record;
+        }
+
+        public async Task<(AiExecutionRecord Record, AiPipelineDefinition Definition)> CreateWithDefinitionAsync(
+            AiDurableInvocationScope scope, string runKey, string publicationRef, string inputsJson,
+            CancellationToken cancellationToken = default)
         {
             AiPublicationJson.Text(runKey, nameof(runKey));
             var inputs = AiDurableInvocationJson.Normalize(inputsJson, true);
@@ -61,14 +71,14 @@ namespace Multiplexed.AI.Runtime.Publication
                     !existing.Steps.SequenceEqual(frozen.Definition.Steps.OrderBy(s => s.Order).Select(s => s.Name), StringComparer.Ordinal))
                     throw new InvalidOperationException("Existing published execution record/state pair is inconsistent.");
                 // Do not reseed the RBAC context or reinitialize state for an idempotent admission.
-                return existing;
+                return (existing, frozen.Definition);
             }
             var record = await new AiDagExecutionCreator(_engine).CreateIfAbsentAsync(executionId, frozen.Definition,
                 AiStoredPayload.Artifact(descriptor.Key, descriptor.Sha256, descriptor.SizeBytes, "application/json"),
                 AiPublicationJson.Read<Dictionary<string, object?>>(inputs), cancellationToken).ConfigureAwait(false);
             guard.RequireCurrent(); cancellationToken.ThrowIfCancellationRequested();
             RequireRecord(record, pin);
-            return record;
+            return (record, frozen.Definition);
         }
 
         public async Task<AiPublicationRunPin> ReadPinAsync(

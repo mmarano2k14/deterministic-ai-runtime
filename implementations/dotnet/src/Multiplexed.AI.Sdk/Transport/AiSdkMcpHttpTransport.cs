@@ -175,9 +175,27 @@ namespace Multiplexed.AI.Sdk.Transport
         private async Task<(Dictionary<string, string>? Headers, AiSdkError? Error)> CreateHeadersAsync(
             CancellationToken cancellationToken)
         {
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in _options.AdditionalHeaders ?? new Dictionary<string, string>())
+            {
+                if (string.IsNullOrWhiteSpace(item.Key) || string.IsNullOrWhiteSpace(item.Value) ||
+                    item.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase) ||
+                    item.Key.Any(character => char.IsControl(character) || character == ':') ||
+                    item.Value.Any(character => character is '\r' or '\n'))
+                {
+                    return (null, new AiSdkError
+                    {
+                        Kind = AiSdkErrorKind.InvalidRequest,
+                        Code = "invalid_transport_header",
+                        Message = "Additional transport headers must be non-empty, single-line headers and cannot override Authorization."
+                    });
+                }
+                headers.Add(item.Key, item.Value);
+            }
+
             if (_options.CredentialProvider is null)
             {
-                return (null, null);
+                return (headers.Count == 0 ? null : headers, null);
             }
 
             AiSdkCredential? credential;
@@ -205,7 +223,7 @@ namespace Multiplexed.AI.Sdk.Transport
 
             if (credential is null)
             {
-                return (null, null);
+                return (headers.Count == 0 ? null : headers, null);
             }
 
             if (string.IsNullOrWhiteSpace(credential.Scheme) || string.IsNullOrWhiteSpace(credential.Value))
@@ -220,12 +238,8 @@ namespace Multiplexed.AI.Sdk.Transport
                     });
             }
 
-            return (
-                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["Authorization"] = $"{credential.Scheme} {credential.Value}"
-                },
-                null);
+            headers["Authorization"] = $"{credential.Scheme} {credential.Value}";
+            return (headers, null);
         }
 
         private static bool IsRetryableTransportFailure(Exception exception)

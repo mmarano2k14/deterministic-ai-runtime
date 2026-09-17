@@ -41,7 +41,16 @@
       "id": "core-dotnet-client-dotnet-worker",
       "clientLanguage": "dotnet",
       "workerLanguage": "dotnet",
-      "executor": null,
+      "executor": {
+        "kind": "dotnet",
+        "command": [
+          "dotnet",
+          "run",
+          "--project",
+          "implementations/matrix/clients/dotnet/Multiplexed.AI.Matrix.DotNetClient/Multiplexed.AI.Matrix.DotNetClient.csproj",
+          "--"
+        ]
+      },
       "requiredEvidence": [
         "publish",
         "submit",
@@ -54,7 +63,16 @@
       "id": "core-dotnet-client-typescript-worker",
       "clientLanguage": "dotnet",
       "workerLanguage": "typescript",
-      "executor": null,
+      "executor": {
+        "kind": "dotnet",
+        "command": [
+          "dotnet",
+          "run",
+          "--project",
+          "implementations/matrix/clients/dotnet/Multiplexed.AI.Matrix.DotNetClient/Multiplexed.AI.Matrix.DotNetClient.csproj",
+          "--"
+        ]
+      },
       "requiredEvidence": [
         "publish",
         "submit",
@@ -67,7 +85,16 @@
       "id": "core-dotnet-client-python-worker",
       "clientLanguage": "dotnet",
       "workerLanguage": "python",
-      "executor": null,
+      "executor": {
+        "kind": "dotnet",
+        "command": [
+          "dotnet",
+          "run",
+          "--project",
+          "implementations/matrix/clients/dotnet/Multiplexed.AI.Matrix.DotNetClient/Multiplexed.AI.Matrix.DotNetClient.csproj",
+          "--"
+        ]
+      },
       "requiredEvidence": [
         "publish",
         "submit",
@@ -80,7 +107,13 @@
       "id": "core-typescript-client-dotnet-worker",
       "clientLanguage": "typescript",
       "workerLanguage": "dotnet",
-      "executor": null,
+      "executor": {
+        "kind": "typescript",
+        "command": [
+          "node",
+          "implementations/matrix/clients/typescript/run.mjs"
+        ]
+      },
       "requiredEvidence": [
         "publish",
         "submit",
@@ -93,7 +126,13 @@
       "id": "core-typescript-client-typescript-worker",
       "clientLanguage": "typescript",
       "workerLanguage": "typescript",
-      "executor": null,
+      "executor": {
+        "kind": "typescript",
+        "command": [
+          "node",
+          "implementations/matrix/clients/typescript/run.mjs"
+        ]
+      },
       "requiredEvidence": [
         "publish",
         "submit",
@@ -106,7 +145,13 @@
       "id": "core-typescript-client-python-worker",
       "clientLanguage": "typescript",
       "workerLanguage": "python",
-      "executor": null,
+      "executor": {
+        "kind": "typescript",
+        "command": [
+          "node",
+          "implementations/matrix/clients/typescript/run.mjs"
+        ]
+      },
       "requiredEvidence": [
         "publish",
         "submit",
@@ -119,7 +164,13 @@
       "id": "core-python-client-dotnet-worker",
       "clientLanguage": "python",
       "workerLanguage": "dotnet",
-      "executor": null,
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/run.py"
+        ]
+      },
       "requiredEvidence": [
         "publish",
         "submit",
@@ -132,7 +183,13 @@
       "id": "core-python-client-typescript-worker",
       "clientLanguage": "python",
       "workerLanguage": "typescript",
-      "executor": null,
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/run.py"
+        ]
+      },
       "requiredEvidence": [
         "publish",
         "submit",
@@ -145,7 +202,13 @@
       "id": "core-python-client-python-worker",
       "clientLanguage": "python",
       "workerLanguage": "python",
-      "executor": null,
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/run.py"
+        ]
+      },
       "requiredEvidence": [
         "publish",
         "submit",

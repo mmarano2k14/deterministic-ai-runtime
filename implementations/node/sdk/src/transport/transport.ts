@@ -22,6 +22,8 @@ export type AiSdkTransportResponse =
 
 export interface AiSdkTransportOptions {
   readonly credentialProvider?: AiSdkCredentialProvider;
+  /** Additional public-boundary headers. Authorization remains credential-provider owned. */
+  readonly additionalHeaders?: Readonly<Record<string, string>>;
   readonly safeReadMaxAttempts?: number;
   readonly safeReadRetryDelayMs?: number;
   readonly clientName?: string;

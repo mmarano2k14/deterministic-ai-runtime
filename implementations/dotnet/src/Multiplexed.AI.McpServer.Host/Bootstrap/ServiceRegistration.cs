@@ -182,6 +182,14 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                         $"Unsupported host mode '{hostOptions.Mode}'.");
             }
 
+            HostedInvocationHostRegistration.Configure(
+                services,
+                configuration);
+
+            MatrixHarnessRegistration.Configure(
+                services,
+                configuration);
+
             LogHostedServiceRegistrations(
                 services,
                 $"[SERVICE REGISTRATION][AFTER MODE {hostOptions.Mode}]");

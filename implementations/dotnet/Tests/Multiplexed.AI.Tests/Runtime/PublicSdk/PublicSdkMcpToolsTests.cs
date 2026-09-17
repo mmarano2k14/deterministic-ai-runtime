@@ -30,6 +30,9 @@ namespace Multiplexed.AI.Tests.Runtime.PublicSdk
             Assert.Equal(5, methods.Length);
             foreach (var method in methods)
             {
+                var attribute = method.GetCustomAttribute<McpServerToolAttribute>();
+                Assert.NotNull(attribute);
+                Assert.True(attribute.UseStructuredContent);
                 Assert.All(method.GetParameters().Where(parameter => parameter.ParameterType != typeof(CancellationToken)), parameter =>
                     Assert.True(parameter.ParameterType == typeof(string) || parameter.ParameterType.Namespace?.StartsWith("Multiplexed.AI.Sdk.Contracts", StringComparison.Ordinal) == true));
             }

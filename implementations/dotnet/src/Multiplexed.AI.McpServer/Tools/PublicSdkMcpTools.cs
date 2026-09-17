@@ -18,30 +18,30 @@ namespace Multiplexed.AI.McpServer.Tools
         private readonly IServiceScopeFactory _scopeFactory;
         public PublicSdkMcpTools(IServiceScopeFactory scopeFactory) => _scopeFactory = scopeFactory;
 
-        [McpServerTool(Name = AiSdkOperationNames.PublishPipeline)]
+        [McpServerTool(Name = AiSdkOperationNames.PublishPipeline, UseStructuredContent = true)]
         [Description("Publishes one immutable pipeline using the versioned public SDK contract.")]
         public Task<AiSdkPipelinePublicationResponse> PublishPipelineAsync(AiSdkPipelinePublicationRequest request, CancellationToken cancellationToken = default) =>
             InScopeAsync(boundary => boundary.PublishAsync(request, cancellationToken));
 
-        [McpServerTool(Name = AiSdkOperationNames.SubmitExecution)]
+        [McpServerTool(Name = AiSdkOperationNames.SubmitExecution, UseStructuredContent = true)]
         [Description("Creates and submits one published execution through the existing shared submission path.")]
         [RequireCapability("shared-run", "execution", "submit")]
         public Task<AiSdkExecutionSubmissionResponse> SubmitExecutionAsync(AiSdkExecutionSubmissionRequest request, CancellationToken cancellationToken = default) =>
             InScopeAsync(boundary => boundary.SubmitAsync(request, cancellationToken));
 
-        [McpServerTool(Name = AiSdkOperationNames.ObserveExecution)]
+        [McpServerTool(Name = AiSdkOperationNames.ObserveExecution, UseStructuredContent = true)]
         [Description("Returns the logical state of one published execution without exposing runtime placement or leases.")]
         [RequireCapability("execution", "control", "read")]
         public Task<AiSdkExecutionObservation> ObserveExecutionAsync(string executionId, CancellationToken cancellationToken = default) =>
             InScopeAsync(boundary => boundary.ObserveAsync(executionId, cancellationToken));
 
-        [McpServerTool(Name = AiSdkOperationNames.GetExecutionResult)]
+        [McpServerTool(Name = AiSdkOperationNames.GetExecutionResult, UseStructuredContent = true)]
         [Description("Returns the sanitized terminal result of one published execution.")]
         [RequireCapability("execution", "control", "read")]
         public Task<AiSdkExecutionResult> GetExecutionResultAsync(string executionId, CancellationToken cancellationToken = default) =>
             InScopeAsync(boundary => boundary.GetResultAsync(executionId, cancellationToken));
 
-        [McpServerTool(Name = AiSdkOperationNames.CancelExecution)]
+        [McpServerTool(Name = AiSdkOperationNames.CancelExecution, UseStructuredContent = true)]
         [Description("Requests cooperative cancellation of one published execution.")]
         [RequireCapability("execution", "control", "cancel")]
         public Task<AiSdkExecutionCancellationResponse> CancelExecutionAsync(string executionId, AiSdkExecutionCancellationRequest request, CancellationToken cancellationToken = default) =>

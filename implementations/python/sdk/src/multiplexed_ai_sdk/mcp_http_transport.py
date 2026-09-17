@@ -84,9 +84,10 @@ class AiSdkMcpHttpTransport:
         return AiSdkTransportResponse(result=result.structured_content)
 
     async def _create_headers(self) -> dict[str, str] | AiSdkError | None:
+        headers = dict(self._options.additional_headers or {})
         provider = self._options.credential_provider
         if provider is None:
-            return None
+            return headers or None
         try:
             credential = await provider.get_credential()
         except asyncio.CancelledError:
@@ -100,14 +101,15 @@ class AiSdkMcpHttpTransport:
             )
 
         if credential is None:
-            return None
+            return headers or None
         if not credential.scheme.strip() or not credential.value.strip():
             return AiSdkError(
                 kind="authentication",
                 code="invalid_credential",
                 message="The SDK credential provider returned an invalid credential.",
             )
-        return {"Authorization": f"{credential.scheme} {credential.value}"}
+        headers["Authorization"] = f"{credential.scheme} {credential.value}"
+        return headers
 
 
 def _is_retryable_transport_failure(exc: Exception) -> bool:

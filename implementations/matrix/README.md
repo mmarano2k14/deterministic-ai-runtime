@@ -1,110 +1,86 @@
 # Multilanguage Runtime Matrix
 
-This directory is the executable validation surface for the external SDK-to-runtime matrix.
+This matrix validates the independently consumable .NET, TypeScript and Python SDKs through the same public MCP boundary and the existing runtime authorities.
 
-It does not introduce a scheduler, queue, recovery authority, result-acceptance path, publication authority, or worker transition authority. The matrix drives the public SDK boundary and records evidence from the runtime authorities that already own those concerns.
+## Core matrix
 
-## Stable layout
-
-```text
-implementations/matrix/
-├── multilanguage-runtime-matrix-v1.json
-├── matrix_plan.py
-├── matrix_cli.py
-├── README.md
-├── clients/       # language-specific executable consumers are added here
-├── fixtures/      # immutable publication/dependency fixtures are added here
-├── scenarios/     # live scenario adapters are added here
-├── evidence/      # explicit executed-run evidence is added here
-└── tests/
-```
-
-The directories listed above are the intended final layout. Later validation work should fill these locations rather than moving the matrix foundation.
-
-## Core cross-language matrix
-
-The core matrix is an exact 3 x 3 cross-product:
+The core matrix contains nine live combinations:
 
 ```text
-.NET client       -> .NET worker
-.NET client       -> TypeScript worker
-.NET client       -> Python worker
-TypeScript client -> .NET worker
-TypeScript client -> TypeScript worker
-TypeScript client -> Python worker
-Python client     -> .NET worker
-Python client     -> TypeScript worker
-Python client     -> Python worker
+3 external client languages x 3 hosted execution languages
 ```
 
-Each core scenario must eventually produce evidence for:
+Each scenario must prove publication, submission, observation, terminal result and public execution identity. Evidence is written only after the real SDK call path completes.
 
-```text
-publish
-submit
-observe
-terminal result
-public executionId
+## Supported topologies
+
+### Docker / ProcessHostPool - canonical reproducible validation
+
+This is the canonical third-party path. The only host prerequisite is Docker with Compose support. .NET, Node, Python, MongoDB, Redis and the runtime are all supplied by containers or container build stages.
+
+From any directory inside the repository on Windows PowerShell:
+
+```powershell
+& (Join-Path (git rev-parse --show-toplevel) "implementations\matrix\runtime\docker\run-matrix.ps1")
 ```
 
-An executor being present in the plan does not make the scenario passed. Pass/fail/skipped outcomes belong only to executed evidence.
+The runner performs a clean build/run, waits for the terminal verifier, prints the client/verifier exit states and the final `9/9` verifier result, and writes the complete Docker output to `matrix-full.log` at the repository root. It deliberately does not use Compose `--abort-on-container-exit` / `--exit-code-from`, because the three SDK clients are expected one-shot services and their successful exit must not terminate the runtime before the verifier runs.
 
-## Targeted coverage
-
-The plan separately requires coverage for:
-
-```text
-immutable publication/run pinning
-PythonWheelBundle / NodeLockedBundle / DotNetAssemblyClosure
-hosted concurrency / retry / delegation policy families
-nested Child DAGs
-explicit durable cancellation from all three SDKs
-in-flight recovery and local-queued redispatch
-MCP durable effect evidence
-journal result acceptance and duplicate convergence
-trusted-process and sandboxed-container isolation profiles
-HostRuntime and OciImage artifact selection
-external-client engine dependency firewalls
-```
-
-Feature scenarios are intentionally bound later, after the exact supported combination is proven. Unsupported combinations must not be inferred merely to make the matrix rectangular.
-
-## Validation commands
-
-From the repository root:
+Cleanup including persisted test data:
 
 ```cmd
-python .\implementations\matrix\matrix_cli.py validate
+docker compose -f .\implementations\matrix\runtime\docker\docker-compose.yml down -v --remove-orphans
 ```
 
-List the planned scenarios:
+The stack runs real MongoDB and Redis services, the real MCP runtime host, three external SDK client containers and the real hosted .NET, TypeScript and Python process workers. Client containers have no engine/runtime project reference and communicate with the runtime only over MCP HTTP.
 
-```cmd
-python .\implementations\matrix\matrix_cli.py list
+### Local / ProcessHostPool - developer topology
+
+The local topology exercises the same scenarios and SDK clients but uses local MongoDB, Redis, runtime, .NET, Node and Python installations.
+
+PowerShell orchestration:
+
+```powershell
+.\implementations\matrix\runtime\local\run.ps1
 ```
 
-Inspect required coverage:
+If MongoDB and Redis are already running on their default local ports:
 
-```cmd
-python .\implementations\matrix\matrix_cli.py coverage
+```powershell
+.\implementations\matrix\runtime\local\run.ps1 -InfrastructureAlreadyRunning
 ```
 
-Run the foundation tests:
+The local orchestrator publishes the real runtime and .NET worker, stages the same worker-fixture layout used by Docker, starts the runtime with exact installed runtime identities, waits for the matrix manifest and then executes the same 3 x 3 core matrix.
 
-```cmd
-python -m unittest discover -s .\implementations\matrix\tests -p "test_*.py" -v
-```
+## Runtime manifest
 
-These commands validate the matrix definition only. They do not claim that a live runtime scenario has executed.
-
-## Execution evidence rule
-
-The final matrix must record exactly what ran. A live result must distinguish at least:
+No environment reference is typed manually. The running host computes the exact executable/loader identities, registers the three approved publication environments and writes a runtime manifest containing:
 
 ```text
-passed
-failed
-skipped
+endpoint
+access-context handle
+a harness bearer token
+exact .NET environment ref
+exact TypeScript environment ref
+exact Python environment ref
+topology
+provider
 ```
 
-A skipped scenario is not a pass. The evidence must identify the exact client language, worker language, scenario capability, provider/profile where relevant, and command that produced the outcome.
+The manifest is harness-local evidence and is not a new public runtime API.
+
+## Authentication and RBAC
+
+The matrix keeps the normal MCP authentication/context middleware in the path. An explicit harness-only static bearer scheme and an isolated RBAC context are enabled only when `AiMatrixHarness:Enabled=true`.
+
+Context rotation is disabled only in this harness because the current public SDK transport carries an access-context handle but does not yet negotiate rotated handles across MCP exchanges. This limitation is recorded rather than hidden.
+
+## Provider semantics
+
+This pack validates only:
+
+```text
+ProcessHostPool / HostRuntime / TrustedProcess / HostNetwork / ValidatedPaths
+```
+
+It does not claim sandboxed-container enforcement. OCI isolated workers are a separate matrix target and must be executed independently before being marked covered.

@@ -53,6 +53,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
             using var slot = _capacity.TryEnter();
             if (slot is null) return new(AiWorkerDispatchDisposition.Busy, current.OperationId);
             AiDurableInvocationRecord? leased = null;
+            var failurePhase = "acquire-worker-lease";
             try
             {
                 // A new physical worker identity never changes the logical operation/effect identities.
@@ -66,6 +67,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
                 using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, guard.LostToken, deadline.Token);
                 try
                 {
+                    failurePhase = "prepare-worker-code";
                     var code = await _preparer.PrepareAsync(leased, stop.Token).ConfigureAwait(false);
                     if (code.Target != leased.Definition.Target) throw new InvalidOperationException("Worker preparation substituted an immutable target.");
                     stop.Token.ThrowIfCancellationRequested();
@@ -77,11 +79,14 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
                         Activity.Current?.IdFormat == ActivityIdFormat.W3C ? Activity.Current.Id : null,
                         inputs.RootElement.Clone(), code);
                     // Materialization can consume time. No process may start after the safety deadline.
+                    failurePhase = "pre-launch-heartbeat";
                     await guard.HeartbeatAsync(stop.Token).ConfigureAwait(false);
                     _logger.LogDebug("Worker dispatch started. OperationId={OperationId}, Epoch={Epoch}, Language={Language}.",
                         leased.OperationId, leased.Lease.Epoch, code.Target.ExecutionLanguage);
+                    failurePhase = "invoke-worker-transport";
                     var result = await _transport.InvokeAsync(request, guard.HeartbeatAsync, stop.Token).ConfigureAwait(false);
                     stop.Token.ThrowIfCancellationRequested();
+                    failurePhase = "complete-journal-result";
                     var completion = await _journal.CompleteAsync(scope, identity, guard.Lease, result, stop.Token).ConfigureAwait(false);
                     var disposition = completion switch
                     {
@@ -112,8 +117,8 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
                 return new(AiWorkerDispatchDisposition.TechnicalFailure, current.OperationId, leased?.Lease?.Epoch, exception.GetType().FullName);
             }
             void LogFailure(Exception exception) => _logger.LogWarning(
-                "Worker dispatch retained for reconciliation. OperationId={OperationId}, Epoch={Epoch}, ExceptionType={ExceptionType}.",
-                current.OperationId, leased?.Lease?.Epoch, exception.GetType().FullName);
+                "Worker dispatch retained for reconciliation. OperationId={OperationId}, Epoch={Epoch}, Phase={Phase}, ExceptionType={ExceptionType}.",
+                current.OperationId, leased?.Lease?.Epoch, failurePhase, exception.GetType().FullName);
         }
     }
 }

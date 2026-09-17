@@ -21,7 +21,7 @@ namespace Multiplexed.AI.McpServer.PublicSdk
         private readonly AiPipelinePublicationService _publications;
         private readonly AiPublishedDagRunService _runs;
         private readonly IAiSharedRuntimeController _controller;
-        private readonly IAiExecutionStore _executions;
+        private readonly IAiDagExecutionStore _dagExecutions;
         private readonly IAiExecutionControlService _control;
         private readonly IExecutionContextSnapshotProvider _context;
         private readonly IAiControlPlaneIdResolver _controlPlane;
@@ -30,7 +30,7 @@ namespace Multiplexed.AI.McpServer.PublicSdk
             AiPipelinePublicationService publications,
             AiPublishedDagRunService runs,
             IAiSharedRuntimeController controller,
-            IAiExecutionStore executions,
+            IAiDagExecutionStore dagExecutions,
             IAiExecutionControlService control,
             IExecutionContextSnapshotProvider context,
             IAiControlPlaneIdResolver controlPlane)
@@ -38,7 +38,7 @@ namespace Multiplexed.AI.McpServer.PublicSdk
             _publications = publications;
             _runs = runs;
             _controller = controller;
-            _executions = executions;
+            _dagExecutions = dagExecutions;
             _control = control;
             _context = context;
             _controlPlane = controlPlane;
@@ -68,7 +68,9 @@ namespace Multiplexed.AI.McpServer.PublicSdk
                 ? Guid.NewGuid().ToString("N")
                 : request.IdempotencyKey;
             var inputJson = request.Input?.GetRawText() ?? "{}";
-            var record = await _runs.CreateAsync(scope, runKey!, request.PublicationRef, inputJson, cancellationToken).ConfigureAwait(false);
+            var admission = await _runs.CreateWithDefinitionAsync(
+                scope, runKey!, request.PublicationRef, inputJson, cancellationToken).ConfigureAwait(false);
+            var record = admission.Record;
             var result = await _controller.SubmitRunAsync(new AiSharedRuntimeControllerRequest
             {
                 Operation = AiSharedRuntimeControllerOperation.SubmitRun,
@@ -84,6 +86,7 @@ namespace Multiplexed.AI.McpServer.PublicSdk
                     RequestedExecutionId = record.ExecutionId,
                     PipelineDefinitionSnapshot = record.PipelineDefinitionSnapshot
                         ?? throw new InvalidOperationException("Published execution has no immutable definition snapshot."),
+                    PipelineDefinition = admission.Definition,
                     Input = inputJson,
                     Metadata = request.Metadata
                 }
@@ -108,9 +111,9 @@ namespace Multiplexed.AI.McpServer.PublicSdk
             var scope = await ResolveScopeAsync(cancellationToken).ConfigureAwait(false);
             var pin = await _runs.ReadPinAsync(scope, executionId, cancellationToken).ConfigureAwait(false);
             var definition = await _publications.ReadDefinitionAsync(scope, pin.PublicationRef, cancellationToken).ConfigureAwait(false);
-            var record = await _executions.GetRecordAsync(executionId, cancellationToken).ConfigureAwait(false)
+            var record = await _dagExecutions.GetRecordAsync(executionId, cancellationToken).ConfigureAwait(false)
                 ?? throw new KeyNotFoundException($"Execution '{executionId}' was not found.");
-            var state = await _executions.GetStateAsync(executionId, cancellationToken).ConfigureAwait(false);
+            var state = await _dagExecutions.GetStateAsync(executionId, cancellationToken).ConfigureAwait(false);
             RequireOwner(record, scope);
             var stepKeys = definition.Steps.ToDictionary(step => step.Name, step => step.StepKey, StringComparer.Ordinal);
             return new AiSdkExecutionObservation
@@ -147,9 +150,9 @@ namespace Multiplexed.AI.McpServer.PublicSdk
             ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
             var scope = await ResolveScopeAsync(cancellationToken).ConfigureAwait(false);
             _ = await _runs.ReadPinAsync(scope, executionId, cancellationToken).ConfigureAwait(false);
-            var record = await _executions.GetRecordAsync(executionId, cancellationToken).ConfigureAwait(false)
+            var record = await _dagExecutions.GetRecordAsync(executionId, cancellationToken).ConfigureAwait(false)
                 ?? throw new KeyNotFoundException($"Execution '{executionId}' was not found.");
-            var state = await _executions.GetStateAsync(executionId, cancellationToken).ConfigureAwait(false)
+            var state = await _dagExecutions.GetStateAsync(executionId, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException("Execution state was not found.");
             RequireOwner(record, scope);
             if (!record.IsTerminal)
@@ -179,7 +182,7 @@ namespace Multiplexed.AI.McpServer.PublicSdk
             if (request.SchemaVersion != 1) throw new NotSupportedException($"Execution cancellation schema version '{request.SchemaVersion}' is not supported.");
             var scope = await ResolveScopeAsync(cancellationToken).ConfigureAwait(false);
             _ = await _runs.ReadPinAsync(scope, executionId, cancellationToken).ConfigureAwait(false);
-            var record = await _executions.GetRecordAsync(executionId, cancellationToken).ConfigureAwait(false)
+            var record = await _dagExecutions.GetRecordAsync(executionId, cancellationToken).ConfigureAwait(false)
                 ?? throw new KeyNotFoundException($"Execution '{executionId}' was not found.");
             RequireOwner(record, scope);
             var snapshot = _context.MapToSnapshot();

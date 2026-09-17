@@ -21,7 +21,7 @@ export class AiSdkMcpHttpTransport implements AiSdkTransport {
   readonly #endpoint: URL;
   readonly #options: Required<
     Pick<AiSdkTransportOptions, "safeReadMaxAttempts" | "safeReadRetryDelayMs" | "clientName" | "clientVersion">
-  > & Pick<AiSdkTransportOptions, "credentialProvider">;
+  > & Pick<AiSdkTransportOptions, "credentialProvider" | "additionalHeaders">;
 
   public constructor(endpoint: URL, options: AiSdkTransportOptions = {}) {
     if (!(endpoint instanceof URL) || !["http:", "https:"].includes(endpoint.protocol)) {
@@ -44,6 +44,9 @@ export class AiSdkMcpHttpTransport implements AiSdkTransport {
       ...(options.credentialProvider === undefined
         ? {}
         : { credentialProvider: options.credentialProvider }),
+      ...(options.additionalHeaders === undefined
+        ? {}
+        : { additionalHeaders: validateAdditionalHeaders(options.additionalHeaders) }),
       safeReadMaxAttempts,
       safeReadRetryDelayMs,
       clientName: options.clientName ?? DEFAULT_CLIENT_NAME,
@@ -164,8 +167,9 @@ export class AiSdkMcpHttpTransport implements AiSdkTransport {
   async #createHeaders(
     signal?: AbortSignal,
   ): Promise<{ readonly value?: Readonly<Record<string, string>> } | { readonly error: ReturnType<typeof createAiSdkError> }> {
+    const headers: Record<string, string> = { ...(this.#options.additionalHeaders ?? {}) };
     if (this.#options.credentialProvider === undefined) {
-      return {};
+      return Object.keys(headers).length === 0 ? {} : { value: headers };
     }
 
     try {
@@ -173,7 +177,7 @@ export class AiSdkMcpHttpTransport implements AiSdkTransport {
       signal?.throwIfAborted();
 
       if (credential === null) {
-        return {};
+        return Object.keys(headers).length === 0 ? {} : { value: headers };
       }
 
       if (credential.scheme.trim().length === 0 || credential.value.trim().length === 0) {
@@ -186,11 +190,8 @@ export class AiSdkMcpHttpTransport implements AiSdkTransport {
         };
       }
 
-      return {
-        value: {
-          Authorization: `${credential.scheme} ${credential.value}`,
-        },
-      };
+      headers.Authorization = `${credential.scheme} ${credential.value}`;
+      return { value: headers };
     } catch (error) {
       if (signal?.aborted === true) {
         signal.throwIfAborted();
@@ -207,6 +208,19 @@ export class AiSdkMcpHttpTransport implements AiSdkTransport {
       };
     }
   }
+}
+
+function validateAdditionalHeaders(headers: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
+  const validated: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.trim().length === 0 || value.trim().length === 0 ||
+        name.toLowerCase() === "authorization" || name.includes("\r") || name.includes("\n") ||
+        name.includes(":") || value.includes("\r") || value.includes("\n")) {
+      throw new TypeError("Additional transport headers must be non-empty, single-line headers and cannot override Authorization.");
+    }
+    validated[name] = value;
+  }
+  return Object.freeze(validated);
 }
 
 async function closeMcpClient(

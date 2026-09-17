@@ -1,0 +1,94 @@
+name: multiplexed-ai-matrix
+
+services:
+  mongo:
+    image: mongo:8.0
+    command: ["mongod", "--bind_ip_all", "--quiet"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - mongo-data:/data/db
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  runtime:
+    build:
+      context: ../../../..
+      dockerfile: implementations/matrix/runtime/docker/runtime.Dockerfile
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+    volumes:
+      - matrix-state:/matrix/state
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /matrix/state/runtime-manifest.json && python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()\""]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 10s
+
+  client-dotnet:
+    build:
+      context: ../../../..
+      dockerfile: implementations/matrix/runtime/docker/dotnet-client.Dockerfile
+    depends_on:
+      runtime:
+        condition: service_healthy
+    volumes:
+      - matrix-state:/matrix/state:ro
+      - matrix-evidence:/matrix/evidence
+
+  client-typescript:
+    build:
+      context: ../../../..
+      dockerfile: implementations/matrix/runtime/docker/typescript-client.Dockerfile
+    depends_on:
+      runtime:
+        condition: service_healthy
+    volumes:
+      - matrix-state:/matrix/state:ro
+      - matrix-evidence:/matrix/evidence
+
+  client-python:
+    build:
+      context: ../../../..
+      dockerfile: implementations/matrix/runtime/docker/python-client.Dockerfile
+    depends_on:
+      runtime:
+        condition: service_healthy
+    volumes:
+      - matrix-state:/matrix/state:ro
+      - matrix-evidence:/matrix/evidence
+
+  matrix-verifier:
+    build:
+      context: ../../../..
+      dockerfile: implementations/matrix/runtime/docker/verifier.Dockerfile
+    depends_on:
+      client-dotnet:
+        condition: service_completed_successfully
+      client-typescript:
+        condition: service_completed_successfully
+      client-python:
+        condition: service_completed_successfully
+    volumes:
+      - matrix-evidence:/matrix/evidence:ro
+
+volumes:
+  mongo-data:
+  matrix-state:
+  matrix-evidence:
