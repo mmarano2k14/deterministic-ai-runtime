@@ -6,8 +6,15 @@ build-backend = "setuptools.build_meta"
 name = "multiplexed-ai-sdk"
 version = "0.0.0.dev0"
 description = "External Python SDK for the Multiplexed AI public execution boundary."
+readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "mcp>=2.0.0,<3",
+    "httpx2>=2.5.0,<3",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+multiplexed_ai_sdk = ["py.typed"]

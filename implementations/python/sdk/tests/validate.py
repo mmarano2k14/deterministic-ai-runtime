@@ -14,9 +14,11 @@ from multiplexed_ai_sdk import (  # noqa: E402
     AI_SDK_OPERATION_RETRY,
     AI_SDK_OPERATIONS,
     AI_SDK_PROTOCOL_VERSION,
-    AiSdkError,
-    AiSdkTransportRequest,
-    AiSdkTransportResponse,
+    AiSdkExecutionMode,
+    AiSdkExecutionStatus,
+    AiSdkInvocationKind,
+    AiSdkPublicationDependencyPackageKind,
+    AiSdkPublicationFunctionKind,
 )
 
 manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
@@ -28,11 +30,28 @@ assert AI_SDK_OPERATION_RETRY["sdk.execution.result"] == "safe-read"
 for name in ("sdk.publish_pipeline", "sdk.execution.submit", "sdk.execution.cancel"):
     assert AI_SDK_OPERATION_RETRY[name] == "never"
 
-request = AiSdkTransportRequest(operation="sdk.execution.observe", arguments={"executionId": "execution-1"})
-assert request.protocol_version == 1
-success = AiSdkTransportResponse(result={"status": "Running"})
-assert success.is_success
-failure = AiSdkTransportResponse(error=AiSdkError(kind="transport", code="transport_failure", message="failed"))
-assert not failure.is_success
+assert [item.value for item in AiSdkExecutionMode] == ["Sequential", "Dag"]
+assert [item.value for item in AiSdkInvocationKind] == ["Native", "Custom", "Mcp"]
+assert [item.value for item in AiSdkExecutionStatus] == [
+    "Pending", "Running", "Waiting", "Completed", "Failed", "Cancelled"
+]
+assert [item.value for item in AiSdkPublicationFunctionKind] == [
+    "Step", "ConcurrencyPolicy", "RetryPolicy", "DelegationPolicy"
+]
+assert [item.value for item in AiSdkPublicationDependencyPackageKind] == [
+    "PythonWheelBundle", "NodeLockedBundle", "DotNetAssemblyClosure"
+]
 
-print(f"Python SDK foundation validated: {len(expected_operations)} operations.")
+for forbidden in (
+    "Multiplexed.AI",
+    "MongoDB",
+    "StackExchange.Redis",
+    "RuntimeInstanceId",
+    "WorkerId",
+    "ClaimToken",
+    "AssignmentEpoch",
+):
+    for path in SRC_ROOT.rglob("*.py"):
+        assert forbidden not in path.read_text(encoding="utf-8"), f"Forbidden token {forbidden} in {path}"
+
+print(f"Python external SDK validated: {len(expected_operations)} operations.")

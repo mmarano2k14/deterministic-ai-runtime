@@ -29,9 +29,17 @@ class AiSdkTransportResponse:
 @dataclass(frozen=True)
 class AiSdkTransportOptions:
     credential_provider: AiSdkCredentialProvider | None = None
+    safe_read_max_attempts: int = 2
+    safe_read_retry_delay_seconds: float = 0.1
+
+    def __post_init__(self) -> None:
+        if self.safe_read_max_attempts < 1:
+            raise ValueError("safe_read_max_attempts must be at least 1")
+        if self.safe_read_retry_delay_seconds < 0:
+            raise ValueError("safe_read_retry_delay_seconds cannot be negative")
 
 
 class AiSdkTransport(Protocol):
     async def invoke(self, request: AiSdkTransportRequest) -> AiSdkTransportResponse:
-        """Cancel the awaiting task to cancel only the in-flight transport call."""
+        """Cancelling the awaiting task cancels only the in-flight client call."""
         ...
