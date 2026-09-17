@@ -1,6 +1,6 @@
 # Public SDK Boundary Validation
 
-**Status:** Branch-closure validation completed for the public contract and server boundary. This evidence does not claim that external language-specific SDK packages have been released.
+**Status:** Branch-closure validation completed for the public contract and server boundary. This evidence is scoped to that boundary; the later .NET, TypeScript/JavaScript, and Python SDK libraries have their own closure evidence in [External SDK Libraries Validation](external-sdk-libraries-validation.md).
 
 ## Validation scope
 
@@ -113,7 +113,7 @@ The validation supports these bounded statements:
 
 This validation does **not** prove:
 
-- that .NET, TypeScript, Python, or other external SDK client packages have been published;
+- that external SDK packages have been published to public NuGet/npm/Python registries;
 - that a CLI is complete;
 - that every future public API is backward-compatible forever;
 - that replay, ledger, forensics, dashboard, or all control-plane capabilities are already exposed through the SDK boundary;
@@ -125,6 +125,8 @@ Those remain separate capabilities and validation scopes.
 ## Related documentation
 
 - [Public SDK Boundary](public-sdk-boundary.md)
+- [External SDK Libraries](external-sdk-libraries.md)
+- [External SDK Libraries Validation](external-sdk-libraries-validation.md)
 - [Developer Experience, API, SDK, and CLI](../product-roadmap/developer-experience-api-sdk-cli.md)
 - [Architecture Overview](architecture-overview.md)
 - [Testing Strategy](testing-strategy.md)

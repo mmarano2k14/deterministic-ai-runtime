@@ -161,7 +161,8 @@ The project already contains the foundation for several major product capabiliti
 | Runtime provider and transport model | Foundation exists |
 | Testing and reliability strategy | Foundation exists / active direction |
 | Public SDK contract/server boundary | Implemented / validated foundation |
-| External SDK libraries / CLI / broader API productization | Productization target |
+| External SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python |
+| CLI / public SDK registry distribution / broader API productization | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |
 | Memory decay policy direction | Productization target |
@@ -1383,7 +1384,7 @@ The expected product outcome is a platform where users can:
 
 The product roadmap is ambitious but should be executed progressively.
 
-The platform already has important foundations around deterministic execution, replay, audit, decision ledger, configuration-driven behavior, context-driven execution, policy-driven decisions, policy engine foundation, provider-driven architecture, retention/eviction/compaction, automatic snapshot direction, execution control and lifecycle direction, workers, queues, MCP direction, distributed runtime direction, observability/runtime telemetry direction, testing reliability direction, security hardening direction, an implemented public SDK contract/server boundary plus external SDK/CLI direction, and memory/context direction.
+The platform already has important foundations around deterministic execution, replay, audit, decision ledger, configuration-driven behavior, context-driven execution, policy-driven decisions, policy engine foundation, provider-driven architecture, retention/eviction/compaction, automatic snapshot direction, execution control and lifecycle direction, workers, queues, MCP direction, distributed runtime direction, observability/runtime telemetry direction, testing reliability direction, security hardening direction, an implemented public SDK contract/server boundary plus implemented .NET/TypeScript/Python SDK clients and remaining CLI/public-distribution direction, and memory/context direction.
 
 The next stage is productization.
 

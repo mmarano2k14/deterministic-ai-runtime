@@ -186,7 +186,8 @@ This roadmap should not present the platform as idea-stage only.
 | Execution control and state lifecycle | Foundation exists |
 | Testing and reliability strategy | Foundation exists |
 | Public SDK contract/server boundary | Implemented / validated foundation |
-| External SDK libraries, CLI, and broader API packaging | Productization target |
+| External SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python |
+| CLI, public SDK registry distribution, and broader API packaging | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |
 | Memory decay policy direction | Productization target |
@@ -238,7 +239,7 @@ The platform is evolving toward a complete LLMOps execution infrastructure compo
 - runtime telemetry and diagnostics;
 - execution control and state lifecycle;
 - testing and reliability strategy;
-- implemented public SDK boundary plus external SDK/CLI direction;
+- implemented public SDK boundary plus .NET/TypeScript/Python clients and remaining CLI/public-distribution direction;
 - security and encryption hardening;
 - memory, context, and reasoning lifecycle;
 - memory decay and freshness direction.
@@ -767,7 +768,8 @@ This pillar covers:
 
 - implemented portable public publication/execution contracts and server boundary;
 - public `ExecutionId` semantics with private scheduling identities kept server-side;
-- external SDK client-library direction;
+- implemented external .NET/TypeScript/Python SDK clients;
+- public SDK registry distribution and CLI direction;
 - CLI direction;
 - local setup;
 - examples;

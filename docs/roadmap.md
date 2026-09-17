@@ -535,7 +535,7 @@ See:
 
 ## Phase 5 — Public API / SDK Polish
 
-**Status:** Foundation available / in progress
+**Status:** External SDK foundation completed / broader public API productization in progress
 
 Goal: make the runtime easier to consume from external applications.
 
@@ -545,11 +545,14 @@ Implemented foundation:
 - portable publication/pipeline wire models;
 - execution submission, observation, result, and cancellation wire contracts;
 - authorized server adapter and MCP public operations;
-- explicit mapping to existing immutable publication, run pinning, shared submission, authorization, and execution control.
+- explicit mapping to existing immutable publication, run pinning, shared submission, authorization, and execution control;
+- independent .NET, TypeScript/JavaScript, and Python external SDK clients;
+- shared protocol manifest and cross-language parity fixtures;
+- local NuGet/npm/wheel build-install-import smoke validation.
 
 Remaining productization work:
 
-- language-specific external SDK client libraries;
+- public registry distribution/versioning for external SDK packages;
 - CLI packaging;
 - broader HTTP/Gateway packaging where useful;
 - replay/ledger/forensics public client surfaces;

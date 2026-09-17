@@ -6,6 +6,120 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 0.0.9.3 - 2026-09-17 - External SDK protocol and package foundation
+
+### Added
+
+- Added a canonical language-neutral protocol manifest for the external SDK operation surface.
+- Added stable public operation-name constants for pipeline publication, execution submission, observation, result retrieval and cancellation.
+- Added protocol-version metadata with fail-closed schema-version behavior and no implicit downgrade.
+- Established permanent package roots for the .NET, TypeScript and Python external SDKs.
+- Added transport abstractions that keep physical connection details outside public publication and execution payloads.
+- Added credential-provider boundaries so authentication is injected by the transport rather than serialized into business requests.
+- Added a common client-normalized error taxonomy without exposing runtime or infrastructure exception types.
+- Restricted automatic transport retry to read-only observation and result operations; publication, submission and cancellation remain non-retryable at the SDK transport layer.
+- Defined request cancellation as cancellation of the in-flight client call only; durable execution cancellation remains an explicit server operation.
+- Added an external .NET SDK dependency firewall that permits only the public SDK contracts project from the repository.
+- Added lightweight TypeScript and Python foundation validation against the canonical operation protocol.
+
+## .NET external SDK
+
+### Added
+
+- Added the typed `IAiSdkClient` and `AiSdkClient` surface for publication, submission, observation, result retrieval and cooperative cancellation.
+- Added fail-closed request and response schema-version validation around the portable public contracts.
+- Added Streamable HTTP MCP transport support using the existing public MCP tool boundary.
+- Added authorization credential injection through the transport without adding credentials to business payloads.
+- Added a static credential provider for simple external client scenarios.
+- Added bounded automatic retry for transport failures on safe-read operations only.
+- Added client-side normalization for authentication, authorization, transport, remote-tool and invalid-response failures.
+- Added package README and NuGet package metadata for independent .NET SDK consumption.
+- Added focused client and transport tests that do not depend on runtime or server assemblies.
+
+### Server compatibility
+
+- Replaced duplicated MCP tool-name literals with constants from the portable public contract assembly.
+- Existing publication, submission, observation, result, cancellation, queue, recovery, journal and execution authorities are unchanged.
+- The .NET SDK invokes the existing MCP public boundary and does not add an HTTP/REST execution boundary.
+
+## TypeScript external SDK
+
+### Added
+
+- Added portable TypeScript contract models for publication, pipeline, execution, observation and cancellation documents.
+- Added a typed `AiSdkClient` surface for publication, submission, observation, result retrieval and cooperative cancellation.
+- Added deterministic materialization of wire defaults so TypeScript requests preserve the public contract defaults used by the .NET SDK.
+- Added fail-closed response schema-version validation and normalized SDK exceptions for transport-returned errors.
+- Added a Streamable HTTP MCP transport over the existing public MCP tool boundary.
+- Pinned the official `@modelcontextprotocol/client` transport dependency to `2.0.0`.
+- Added transport-owned authorization credential injection without serializing credentials into business payloads.
+- Added a static credential provider for simple TypeScript client scenarios.
+- Restricted automatic transport retry to observation and result safe-read operations.
+- Added `AbortSignal` propagation for cancellation of the in-flight MCP call without changing durable execution cancellation semantics.
+- Added a Node.js `>=20` runtime floor derived from the MCP client dependency, without an artificial Node 22/24 restriction or experimental TypeScript runtime flags.
+- Added focused TypeScript client and transport tests plus source/protocol dependency-boundary validation.
+
+### Compatibility
+
+- TypeScript enum literals preserve the existing public JSON string values.
+- Optional public fields remain omitted when absent, while contract-defined collection/default fields are materialized before transport dispatch.
+- The SDK remains independent from runtime, control-plane, persistence, worker, queue, lease, epoch and journal implementation types.
+- The TypeScript SDK invokes the existing MCP public boundary and does not add an HTTP/REST execution boundary.
+
+### Current limitations
+
+- Live external .NET and TypeScript client-to-server MCP integration remains to be exercised in the multi-language validation matrix.
+- Package publication, install smoke tests and cross-language JSON parity remain to be validated before branch closure.
+
+## Python external SDK
+
+### Added
+
+- Added portable Python dataclass contract models for publication, pipeline, execution, observation and cancellation documents.
+- Added typed string enums that preserve the public JSON enum literals shared by the .NET and TypeScript SDKs.
+- Added a typed asynchronous `AiSdkClient` surface for publication, submission, observation, result retrieval and cooperative cancellation.
+- Added deterministic wire-model serialization with camel-case field names, omission of absent optional values and materialization of contract defaults.
+- Added fail-closed request and response schema-version validation, including rejection of responses that omit `schemaVersion`.
+- Added a Streamable HTTP MCP transport over the existing public MCP tool boundary.
+- Added transport-owned authorization credential injection without serializing credentials into business payloads.
+- Added a static credential provider for simple Python client scenarios.
+- Restricted automatic transport retry to observation and result safe-read operations.
+- Preserved task cancellation as cancellation of the in-flight client call only; durable execution cancellation remains an explicit SDK operation.
+- Added focused Python client, transport and protocol/dependency-boundary validation using the standard-library test runner.
+- Added Python package metadata for independent installation on Python 3.10 or later.
+
+### Compatibility
+
+- Python enum values and camel-case wire names preserve the existing public JSON contract.
+- Optional public fields are omitted when absent, while contract-defined collection/default fields are serialized explicitly.
+- The SDK remains independent from runtime, control-plane, persistence, worker, queue, lease, epoch and journal implementation types.
+- The Python SDK invokes the existing MCP public boundary and does not add an HTTP/REST execution boundary.
+
+## Cross-language contract parity
+
+### Added
+
+- Added one language-neutral parity fixture consumed by the .NET, TypeScript and Python SDK validation suites.
+- Added cross-language checks for protocol version, operation names, schema versions, enum literals, full request wire shapes, minimal defaults and response models.
+- Added structural JSON parity checks that ignore object-property order while preserving exact field names, values and omission behavior.
+- Added normalized error-semantics parity checks across the three SDK clients.
+- Expanded external SDK source firewalls to cover tenant, run, runtime-instance, worker, claim, assignment-epoch and control-plane identity terms.
+- Added canonical parity validation documentation and an isolated package build/install/import smoke runner for .NET, TypeScript and Python artifacts.
+
+### Fixed
+
+- Aligned TypeScript optional execution-input handling with .NET and Python so a top-level `null` input is omitted rather than emitted as a distinct request shape.
+- Clarified canonical null handling: absent optional contract fields are omitted, while explicit JSON payload objects may contain JSON `null` values.
+- Fixed the generated .NET package-smoke consumer to import `System` explicitly instead of relying on implicit global usings.
+
+### Compatibility
+
+- No scheduler, queue, recovery, journal, lease/epoch, publication-pinning or result-acceptance authority was added or changed.
+- External SDKs continue to target the existing MCP public boundary and remain independent from runtime/control-plane implementation contracts.
+- Live client-to-server transport combinations remain intentionally outside this branch closure and are validated by the multi-language runtime matrix.
+
+---
+
 ## 0.0.9.2 - 2026-09-16 - Public SDK Boundary
 
 

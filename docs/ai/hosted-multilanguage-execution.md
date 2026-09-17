@@ -1,6 +1,6 @@
 # Hosted Multilanguage Execution
 
-**Status:** Implemented server-side foundation with targeted execution, persistence, authorization, restoration validation, a selected OCI-backed `SandboxedContainer` provider, an opt-in durable MCP external-effect evidence boundary, and a portable public SDK contract/server boundary. Language-specific external SDK libraries, Kubernetes sandbox-Pod provider, and broader hostile-code/platform guarantees remain separate deliverables.
+**Status:** Implemented server-side foundation with targeted execution, persistence, authorization, restoration validation, a selected OCI-backed `SandboxedContainer` provider, an opt-in durable MCP external-effect evidence boundary, a portable public SDK contract/server boundary, and independently consumable .NET, TypeScript/JavaScript, and Python external SDKs. Kubernetes sandbox-Pod provider and broader hostile-code/platform guarantees remain separate deliverables.
 
 ## Purpose and scope
 
@@ -15,7 +15,7 @@ This reference covers the implemented contracts and their limits. [Hosted Multil
 | Custom policies | `Concurrency`, `Retry`, and `Delegation`, each evaluated at its existing checkpoint with a distinct closed result contract. `Retention` remains native-only. |
 | Outbound MCP | Real Streamable HTTP transport, existing RBAC, server-owned connections, logical-effect metadata, and optional durable effect evidence with pre-call fencing, confirmed replay, outcome classification, and explicit reconciliation. |
 | Isolation | Two explicit physical providers: approved `TrustedProcess` execution, plus a selected Linux/amd64 OCI `SandboxedContainer` path with fail-closed applied-state attestation. |
-| Public SDK boundary | Implemented portable publication/execution contracts and authorized server adapter with no engine-DLL dependency in the contract assembly. Language-specific client libraries remain separate. |
+| Public SDK and clients | Portable publication/execution contracts and authorized server adapter are implemented with no engine-DLL dependency in the contract assembly. Independent .NET, TypeScript/JavaScript, and Python SDK clients are also implemented over the same MCP public boundary. |
 
 Registration is opt-in. Existing hosts do not automatically activate every hosted capability. Internal publication/run services are not a new public upload API, and run creation alone does not enqueue or start execution.
 

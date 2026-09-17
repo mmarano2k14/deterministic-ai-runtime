@@ -1,6 +1,6 @@
 # Public SDK Boundary
 
-**Status:** Implemented public contract and server-adapter boundary. Language-specific external SDK libraries and CLI packaging remain separate deliverables.
+**Status:** Implemented public contract and server-adapter boundary. Independent .NET, TypeScript/JavaScript, and Python SDK libraries are now implemented on top of this boundary; CLI packaging remains separate.
 
 ## Purpose
 
@@ -9,7 +9,7 @@ The public SDK boundary gives external applications a stable, portable way to de
 The boundary is deliberately split into two layers:
 
 ```text
-External application / future language SDK
+External application / language SDK
         |
         v
 Multiplexed.AI.Sdk.Contracts
@@ -177,20 +177,18 @@ Outbound MCP durable evidence remains a server concern. `Completed`, `NotSent`, 
 
 ## What is not delivered by this boundary
 
-This implementation does **not** yet mean that complete language SDK products have shipped.
+This document describes the contract/server boundary itself. The external .NET, TypeScript/JavaScript, and Python clients are implemented as a separate layer on top of it and are documented in [External SDK Libraries](external-sdk-libraries.md).
 
-Still separate:
+Still separate from this boundary:
 
-- external .NET client library packaging;
-- TypeScript/JavaScript client library;
-- Python client library;
-- CLI packaging;
+- standalone CLI packaging;
+- public NuGet/npm/Python-registry publication;
 - broader HTTP/Gateway productization where desired;
 - replay/ledger/forensics client surfaces beyond the implemented publication/execution boundary;
-- generated API documentation and versioned distribution packages;
+- generated API documentation and long-term compatibility/deprecation policy;
 - Kubernetes-native hosted sandbox-Pod materialization.
 
-The next SDK work can build these libraries on top of the stable portable contracts without introducing engine-DLL dependencies.
+The external clients remain thin wrappers over the stable portable contracts and do not introduce engine-DLL dependencies or runtime execution authority.
 
 ## Implementation references
 
@@ -200,6 +198,8 @@ The next SDK work can build these libraries on top of the stable portable contra
 ## Related documentation
 
 - [Public SDK Boundary Validation](public-sdk-boundary-validation.md)
+- [External SDK Libraries](external-sdk-libraries.md)
+- [External SDK Libraries Validation](external-sdk-libraries-validation.md)
 - [Hosted Multilanguage Execution](hosted-multilanguage-execution.md)
 - [Hosted Worker Isolation](hosted-worker-isolation.md)
 - [Durable MCP Effect Evidence](durable-mcp-effect-evidence.md)

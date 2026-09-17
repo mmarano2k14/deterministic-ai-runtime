@@ -69,7 +69,7 @@ This means the roadmap should prioritize:
 - retention lifecycle diagnostics;
 - memory/context model direction;
 - security hardening direction;
-- developer experience with the public SDK contract/server boundary now available and external SDK/CLI packaging still in scope;
+- developer experience with the public SDK contract/server boundary and .NET/TypeScript/Python clients now available, while CLI and public registry distribution remain in scope;
 - testing reliability visibility;
 - multi-instance runtime demonstration;
 - observability and runtime telemetry;
@@ -107,7 +107,7 @@ However, productization requires:
 - stronger demos;
 - easier local setup;
 - better developer experience;
-- external SDK/CLI and broader API productization on top of the implemented public boundary;
+- CLI, public SDK registry distribution, and broader API productization on top of the implemented public boundary and external clients;
 - security hardening;
 - retention lifecycle diagnostics;
 - memory/context governance direction;
@@ -522,7 +522,7 @@ Observability should include:
 - replay/audit after distributed execution;
 - documentation for running the demo;
 - improved developer quickstart;
-- public SDK boundary usage notes plus external SDK/CLI direction.
+- public SDK boundary usage notes, external SDK command-line/package guidance, plus CLI direction.
 
 ## Success Criteria
 

@@ -2333,7 +2333,7 @@ This is especially important for:
 - durable decision ledger
 - observability dashboard
 - cluster autoscaling/HPA and production deployment packaging
-- external SDK client-library / CLI polish beyond the implemented public contract and server boundary
+- public SDK registry distribution, CLI polish, and live client/runtime matrix coverage beyond the implemented external .NET/TypeScript/Python libraries
 - cost governance
 
 ---

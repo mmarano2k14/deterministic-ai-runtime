@@ -6367,7 +6367,7 @@ They should not introduce execution logic into the runtime.
 
 The implemented server-side extension for published Python, TypeScript, and .NET functions is documented in [Hosted Multilanguage Execution](ai/hosted-multilanguage-execution.md). It covers immutable publication, whole-run pinning, durable result application, contextual custom `Concurrency` policies, execution requirements, and outgoing MCP without replacing the existing DAG, RBAC, or runtime-instance model.
 
-The portable public SDK contract/server boundary is implemented with no engine-DLL dependency in the contract assembly; language-specific external client libraries remain a separate deliverable. The trusted hosted-process provider is not a hostile-code sandbox; a separate selected Linux/amd64 OCI `SandboxedContainer` provider now supplies a bounded physical isolation path with applied-state attestation, cleanup/quarantine, and explicit real-engine validation. This does not imply a Kubernetes sandbox-Pod provider or universal hostile-code safety. Outbound MCP also has an opt-in durable effect-evidence boundary with immutable intent, pre-call dispatch fencing, confirmed-result replay, conservative uncertainty states, explicit reconciliation, and tenant-scoped persistence; this does not imply generic exactly-once provider behavior or automatic redelivery. [Hosted Multilanguage Validation](ai/hosted-multilanguage-validation.md), [Hosted Worker Isolation Validation](ai/hosted-worker-isolation-validation.md), and [Durable MCP Effect Evidence Validation](ai/durable-mcp-effect-evidence-validation.md) record the separate validation boundaries. Existing technical sections below remain the reference for native runtime behavior.
+The portable public SDK contract/server boundary is implemented with no engine-DLL dependency in the contract assembly. Independent .NET, TypeScript/JavaScript, and Python clients now consume that boundary and preserve the same authority separation. The trusted hosted-process provider is not a hostile-code sandbox; a separate selected Linux/amd64 OCI `SandboxedContainer` provider now supplies a bounded physical isolation path with applied-state attestation, cleanup/quarantine, and explicit real-engine validation. This does not imply a Kubernetes sandbox-Pod provider or universal hostile-code safety. Outbound MCP also has an opt-in durable effect-evidence boundary with immutable intent, pre-call dispatch fencing, confirmed-result replay, conservative uncertainty states, explicit reconciliation, and tenant-scoped persistence; this does not imply generic exactly-once provider behavior or automatic redelivery. [Hosted Multilanguage Validation](ai/hosted-multilanguage-validation.md), [Hosted Worker Isolation Validation](ai/hosted-worker-isolation-validation.md), and [Durable MCP Effect Evidence Validation](ai/durable-mcp-effect-evidence-validation.md) record the separate validation boundaries. Existing technical sections below remain the reference for native runtime behavior.
 
 ---
 
@@ -6382,7 +6382,7 @@ The boundary:
 - exposes `ExecutionId` as the durable public execution handle while keeping queue/worker/lease/epoch identities server-private;
 - maps explicitly into existing publication, shared submission, execution state, authorization, and cancellation services.
 
-Language-specific client packages remain thin wrappers to be built on top of this boundary. They must not embed execution, retry, recovery, or scheduling authority.
+Language-specific .NET, TypeScript/JavaScript, and Python client packages are implemented as thin wrappers on top of this boundary. They do not embed execution, business retry, recovery, queue, or scheduling authority.
 
 ---
 
@@ -6645,11 +6645,14 @@ It provides a clean interface for applications and tools.
 
 ---
 
-### Current State: RBAC Runtime Console
+### Current Client-Facing Surfaces
 
-At the moment, the only implemented client-facing component is the **RBAC Runtime Console**.
+The repository now has two different client-facing directions:
 
-This console is used to:
+- the **RBAC Runtime Console** for RBAC administration;
+- independent **.NET, TypeScript/JavaScript, and Python external SDKs** for the AI runtime publication/execution boundary.
+
+The RBAC console is used to:
 
 - manage roles and permissions
 - define authorization policies
@@ -6678,16 +6681,15 @@ This console will make the runtime more accessible and easier to operate in prod
 
 ---
 
-### External SDK Libraries (Next Direction)
+### External SDK Libraries (Implemented)
 
-The public contract/server boundary is implemented. The next SDK layer is language-specific client packaging and convenience APIs.
+The public contract/server boundary and the language-specific client packages are implemented. The current clients are:
 
-Possible directions include:
+- `Multiplexed.AI.Sdk` for .NET;
+- `@multiplexed/ai-sdk` for TypeScript/JavaScript;
+- `multiplexed-ai-sdk` for Python.
 
-- .NET client SDK;
-- TypeScript/JavaScript client SDK;
-- Python client SDK;
-- CLI tools.
+The standalone runtime CLI remains separate future productization.
 
 These clients can:
 
@@ -6720,7 +6722,9 @@ The Client / SDK layer provides:
 
 - a clean interface to interact with the system
 - administrative tools for RBAC
-- an implemented portable SDK contract/server boundary and a foundation for external client libraries and future runtime consoles
+- an implemented portable SDK contract/server boundary;
+- implemented external .NET, TypeScript/JavaScript, and Python clients;
+- a foundation for future runtime consoles and CLI tooling
 
 It ensures that the system can be used effectively while keeping the runtime architecture clean and focused.
 

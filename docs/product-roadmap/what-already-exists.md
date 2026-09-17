@@ -51,7 +51,7 @@ The current foundation already covers several critical areas required for produc
 - observability direction through logs, metrics, traces, telemetry, provider/transport signals, lifecycle events, memory/context events, and decision history;
 - integration and reliability testing direction;
 - security and encryption hardening direction;
-- an implemented portable public SDK contract/server boundary plus remaining external SDK/CLI productization direction;
+- an implemented portable public SDK contract/server boundary plus independent .NET, TypeScript/JavaScript, and Python SDK clients, with public registry distribution and CLI productization still separate;
 - memory, context, and reasoning lifecycle direction;
 - Kubernetes-ready architecture direction.
 
@@ -1844,7 +1844,8 @@ The project already has strong foundations in the following areas:
 | Integration and reliability testing | Foundation exists |
 | Testing and reliability strategy | Foundation exists / active direction |
 | Public SDK contract/server boundary | Implemented / validated foundation |
-| External SDK client libraries / CLI | Productization target |
+| External SDK client libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python |
+| CLI and public SDK registry distribution | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |
 | Memory decay policy direction | Productization target |

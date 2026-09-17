@@ -85,7 +85,7 @@ These include:
 
 The server-side foundation also implements immutable code publication and whole-run pinning, durable hosted-function invocation, real Python/TypeScript/.NET execution, custom `Concurrency` policies, and outbound MCP integration. These capabilities and their current limits are documented in [Hosted Multilanguage Execution](../ai/hosted-multilanguage-execution.md).
 
-The public SDK contract/server boundary is now implemented separately from the hosted-execution internals. Publication services remain server components, but portable public contracts and an authorized MCP server adapter now expose publication plus execution submit/observe/result/cancel operations. Language-specific external SDK client packages and CLI distribution remain separate productization work. [Public SDK Boundary](../ai/public-sdk-boundary.md) and [Public SDK Boundary Validation](../ai/public-sdk-boundary-validation.md) document that boundary.
+The public SDK contract/server boundary is implemented separately from the hosted-execution internals. Publication services remain server components, while portable public contracts and an authorized MCP server adapter expose publication plus execution submit/observe/result/cancel operations. Independent .NET, TypeScript/JavaScript, and Python SDK clients are now implemented on top of that boundary. CLI distribution and public package-registry release remain separate productization work. [Public SDK Boundary](../ai/public-sdk-boundary.md), [External SDK Libraries](../ai/external-sdk-libraries.md), and their validation references document these layers.
 
 The roadmap is not to invent developer experience from zero.
 
@@ -174,7 +174,7 @@ This prevents clients from becoming coupled to scheduling, placement, claim, or 
 
 # 2. SDK Direction
 
-The public SDK boundary now provides the stable portable contracts and server adapter on which external client libraries can be built.
+The public SDK boundary provides the stable portable contracts and server adapter used by the implemented .NET, TypeScript/JavaScript, and Python external client libraries.
 
 Implemented boundary capabilities include:
 
@@ -188,7 +188,7 @@ Implemented boundary capabilities include:
 - submission idempotency keys;
 - dependency isolation from engine DLLs.
 
-The next layer is language-specific client packaging and convenience APIs. Those clients can later add replay, ledger, diagnostics, richer polling/wait helpers, and CLI workflows without moving runtime authority into the client.
+The language-specific client packaging layer is now implemented for .NET, TypeScript/JavaScript, and Python. Future client evolution can add replay, ledger, diagnostics, richer polling/wait helpers, and CLI workflows only as corresponding public server capabilities are exposed, without moving runtime authority into the client.
 
 The SDK should not hide the runtime model too much. It should make the important concepts easier to use while preserving server ownership of execution.
 
@@ -202,13 +202,13 @@ The platform hosts approved execution environments. The runtime retains authoriz
 
 Language defaults and local overrides describe function execution, not the programming language used to build the SDK client. Native primitives remain native and MCP remains a distinct invocation mode. SDK conveniences must not override immutable run pins or turn uncertain external effects into automatic retries.
 
-What remains separate is the packaging of external .NET/TypeScript/Python client libraries, CLI tooling, and any broader HTTP/Gateway product surface desired around the same contracts.
+The external .NET/TypeScript/Python client packages are implemented. What remains separate is public registry release/versioning, CLI tooling, and any broader HTTP/Gateway product surface desired around the same contracts.
 
 ---
 
 ## SDK Responsibilities
 
-The implemented contract/server boundary already standardizes request/response shapes. External client libraries can build on it to help developers with:
+The implemented contract/server boundary standardizes request/response shapes, and the external client libraries now provide the publication/execution operations over that boundary. Future convenience layers can additionally help developers with:
 
 - request creation;
 - response parsing;
@@ -732,7 +732,7 @@ This project should keep that trust.
 | Outbound MCP transport and effect metadata | Implemented |
 | Durable MCP external-effect evidence | Implemented server-side as an opt-in boundary with immutable intent, dispatch fencing, confirmed replay, conservative uncertainty handling, explicit reconciliation, and tenant-scoped persistence; public SDK clients remain provider-agnostic and must not become retry authority |
 | Public SDK contracts + server boundary | Implemented and validated for publication, submission, observation, result, and cancellation; contract assembly is engine-independent |
-| External SDK client libraries | Productization target (.NET/TypeScript/Python packaging and conveniences) |
+| External SDK client libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python with shared protocol/parity fixtures and local package smoke |
 | Broader API packaging | Productization target beyond the implemented MCP public boundary |
 | CLI | Productization target |
 | Quickstart documentation | Productization target |
@@ -796,15 +796,21 @@ Prepare initial commands for:
 
 ## Milestone 5 — External SDK Libraries
 
-Build language-specific client libraries on the implemented public contract/server boundary, with helpers for:
+**Status:** Implemented / validated foundation.
 
-- publication and execution submission;
-- status polling and waiting;
+Language-specific .NET, TypeScript/JavaScript, and Python client libraries now exist on the public contract/server boundary, with support for:
+
+- pipeline publication;
+- execution submission;
+- execution observation;
 - terminal result retrieval;
-- cancellation;
-- replay/diagnostic surfaces as they are added publicly;
-- error handling;
-- correlation propagation.
+- explicit cancellation requests;
+- normalized client errors;
+- transport-owned authentication;
+- correlation fields already present in the public contracts;
+- shared protocol/parity validation and local package smoke.
+
+Polling/wait helpers, replay/diagnostic client surfaces, and richer convenience builders remain future SDK conveniences and require corresponding public server capabilities where applicable. Command-line build, test, pack, install, and validation examples for all three languages are documented in [External SDK Libraries](../ai/external-sdk-libraries.md).
 
 ---
 
@@ -818,7 +824,7 @@ Developer experience should continue improving through:
 - MCP tool docs;
 - examples;
 - configuration samples;
-- external SDK library packaging;
+- public SDK registry distribution/versioning;
 - CLI direction;
 - diagnostics;
 - error model;

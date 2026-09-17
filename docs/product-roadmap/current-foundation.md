@@ -66,10 +66,10 @@ The current architecture is built around the following core foundations:
 | Observability Direction | Expose logs, metrics, traces, runtime events, runtime telemetry, provider/transport telemetry, lifecycle telemetry, memory/context telemetry direction, and decision history. |
 | Execution Control and State Lifecycle | Support run lifecycle, execution lifecycle, step lifecycle, pause, resume, cancel, retry, waiting-for-input direction, claims, and finalization. |
 | Testing and Reliability Strategy | Prove runtime behavior through tests for execution, replay, ledger, policy, MCP, providers, queues, lifecycle, observability, and distributed execution. |
-| Developer Experience / API / SDK / CLI | Public SDK contract/server boundary implemented; continue with external client libraries, CLI, examples, diagnostics, and onboarding. |
+| Developer Experience / API / SDK / CLI | Public SDK boundary plus .NET, TypeScript/JavaScript, and Python clients implemented; continue with CLI, public registry distribution, examples, diagnostics, and onboarding. |
 | Security and Encryption Hardening | Prepare RBAC-aware access control, redaction, sensitive payload protection, encrypted ledger payload direction, encrypted retention archive direction, and secure operational surfaces. |
 | Memory / Context / Reasoning Lifecycle | Prepare scoped memory, context injection, memory decay, freshness, runtime reasoning evidence, memory replay, and policy-driven memory governance. |
-| Productization Direction | Continue dashboard, pipeline builder, hosting, external SDK/CLI packaging, security hardening, memory/context governance, and enterprise readiness on top of the implemented public boundary. |
+| Productization Direction | Continue dashboard, pipeline builder, hosting, SDK public distribution/CLI packaging, security hardening, memory/context governance, and enterprise readiness on top of the implemented public boundary and clients. |
 
 ---
 
@@ -1692,7 +1692,8 @@ It is the foundation for a complete AI workflow execution platform.
 | Execution control and state lifecycle | Foundation exists |
 | Testing and reliability strategy | Foundation exists / active direction |
 | Public SDK contract/server boundary | Implemented / validated foundation |
-| External SDK libraries / CLI / broader API productization | Productization target |
+| External SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python |
+| CLI / public SDK registry distribution / broader API productization | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |
 | Memory decay policy direction | Productization target |
