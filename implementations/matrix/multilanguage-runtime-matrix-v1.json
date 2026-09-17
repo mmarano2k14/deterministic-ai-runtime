@@ -1,0 +1,283 @@
+{
+  "schemaVersion": 1,
+  "matrixId": "multilanguage-runtime-v1",
+  "purpose": "Validate the external SDKs through the shared public server boundary into the existing deterministic runtime without introducing a parallel execution authority.",
+  "languages": {
+    "clients": [
+      "dotnet",
+      "typescript",
+      "python"
+    ],
+    "workers": [
+      "dotnet",
+      "typescript",
+      "python"
+    ]
+  },
+  "dependencyPackageByWorker": {
+    "dotnet": "DotNetAssemblyClosure",
+    "typescript": "NodeLockedBundle",
+    "python": "PythonWheelBundle"
+  },
+  "customPolicyFamilies": [
+    "concurrency",
+    "retry",
+    "delegation"
+  ],
+  "invariants": [
+    "same-public-server-boundary",
+    "existing-publication-authority",
+    "existing-queue-and-scheduler-authority",
+    "existing-recovery-authority",
+    "existing-journal-result-acceptance-authority",
+    "immutable-publication-run-pinning",
+    "no-engine-dependency-in-external-clients",
+    "no-worker-authority-over-dag-transitions",
+    "no-runtime-package-installation",
+    "no-silent-custom-to-native-fallback"
+  ],
+  "coreScenarios": [
+    {
+      "id": "core-dotnet-client-dotnet-worker",
+      "clientLanguage": "dotnet",
+      "workerLanguage": "dotnet",
+      "executor": null,
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-dotnet-client-typescript-worker",
+      "clientLanguage": "dotnet",
+      "workerLanguage": "typescript",
+      "executor": null,
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-dotnet-client-python-worker",
+      "clientLanguage": "dotnet",
+      "workerLanguage": "python",
+      "executor": null,
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-typescript-client-dotnet-worker",
+      "clientLanguage": "typescript",
+      "workerLanguage": "dotnet",
+      "executor": null,
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-typescript-client-typescript-worker",
+      "clientLanguage": "typescript",
+      "workerLanguage": "typescript",
+      "executor": null,
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-typescript-client-python-worker",
+      "clientLanguage": "typescript",
+      "workerLanguage": "python",
+      "executor": null,
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-python-client-dotnet-worker",
+      "clientLanguage": "python",
+      "workerLanguage": "dotnet",
+      "executor": null,
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-python-client-typescript-worker",
+      "clientLanguage": "python",
+      "workerLanguage": "typescript",
+      "executor": null,
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-python-client-python-worker",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "executor": null,
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    }
+  ],
+  "coverageTargets": [
+    {
+      "id": "publication-pinning",
+      "minimumExecutedScenarios": 3,
+      "requiredWorkerLanguages": [
+        "dotnet",
+        "typescript",
+        "python"
+      ],
+      "requiredValues": [],
+      "notes": "Each hosted language must prove that an already submitted execution remains bound to its immutable publication after a later publication is created."
+    },
+    {
+      "id": "deterministic-dependency-packaging",
+      "minimumExecutedScenarios": 3,
+      "requiredWorkerLanguages": [
+        "dotnet",
+        "typescript",
+        "python"
+      ],
+      "requiredValues": [
+        "DotNetAssemblyClosure",
+        "NodeLockedBundle",
+        "PythonWheelBundle"
+      ],
+      "notes": "Package coverage follows the supported package kind for the hosted execution language; no runtime package installation is permitted."
+    },
+    {
+      "id": "custom-policy-family",
+      "minimumExecutedScenarios": 3,
+      "requiredWorkerLanguages": [],
+      "requiredValues": [
+        "concurrency",
+        "retry",
+        "delegation"
+      ],
+      "notes": "Only the hosted policy families already supported by the runtime are in scope. No other policy family is implied."
+    },
+    {
+      "id": "nested-child-dag",
+      "minimumExecutedScenarios": 3,
+      "requiredWorkerLanguages": [
+        "dotnet",
+        "typescript",
+        "python"
+      ],
+      "requiredValues": [],
+      "notes": "Exercise published custom declarations inside nested Child DAGs while preserving the existing parent continuation authority."
+    },
+    {
+      "id": "cancellation",
+      "minimumExecutedScenarios": 3,
+      "requiredClientLanguages": [
+        "dotnet",
+        "typescript",
+        "python"
+      ],
+      "requiredWorkerLanguages": [],
+      "requiredValues": [],
+      "notes": "Each external SDK must exercise the explicit durable cancellation operation. Transport cancellation alone does not satisfy this target."
+    },
+    {
+      "id": "recovery",
+      "minimumExecutedScenarios": 2,
+      "requiredWorkerLanguages": [],
+      "requiredValues": [
+        "in-flight-resume",
+        "local-queued-redispatch"
+      ],
+      "notes": "Use the existing recovery authorities and record the exact recovery path exercised."
+    },
+    {
+      "id": "mcp-effect-evidence",
+      "minimumExecutedScenarios": 2,
+      "requiredWorkerLanguages": [],
+      "requiredValues": [
+        "completed-local-replay",
+        "uncertain-blocks-blind-resend"
+      ],
+      "notes": "The matrix proves durable effect evidence behavior without claiming generic exactly-once delivery."
+    },
+    {
+      "id": "journal-result-acceptance",
+      "minimumExecutedScenarios": 2,
+      "requiredWorkerLanguages": [],
+      "requiredValues": [
+        "accepted-result-replay",
+        "duplicate-delivery-convergence"
+      ],
+      "notes": "Result acceptance remains owned by the existing durable invocation journal and epoch rules."
+    },
+    {
+      "id": "worker-isolation-provider",
+      "minimumExecutedScenarios": 2,
+      "requiredWorkerLanguages": [],
+      "requiredValues": [
+        "trusted-process",
+        "sandboxed-container"
+      ],
+      "notes": "A trusted process and an applied sandboxed container are separate profiles; neither may be reported as the other."
+    },
+    {
+      "id": "isolation-artifact-selection",
+      "minimumExecutedScenarios": 2,
+      "requiredWorkerLanguages": [],
+      "requiredValues": [
+        "HostRuntime",
+        "OciImage"
+      ],
+      "notes": "The SDK expresses execution requirements while the server selects the physical provider."
+    },
+    {
+      "id": "external-client-dependency-firewall",
+      "minimumExecutedScenarios": 3,
+      "requiredClientLanguages": [
+        "dotnet",
+        "typescript",
+        "python"
+      ],
+      "requiredWorkerLanguages": [],
+      "requiredValues": [],
+      "notes": "Validate that each external client remains free of engine/runtime dependencies."
+    }
+  ],
+  "featureScenarios": []
+}

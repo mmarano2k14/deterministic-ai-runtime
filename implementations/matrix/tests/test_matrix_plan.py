@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+import copy
+import sys
+import unittest
+from itertools import product
+from pathlib import Path
+
+MATRIX_ROOT = Path(__file__).resolve().parents[1]
+if str(MATRIX_ROOT) not in sys.path:
+    sys.path.insert(0, str(MATRIX_ROOT))
+
+from matrix_plan import (  # noqa: E402
+    CLIENT_LANGUAGES,
+    CUSTOM_POLICY_FAMILIES,
+    DEPENDENCY_PACKAGE_BY_WORKER,
+    REQUIRED_COVERAGE_TARGETS,
+    WORKER_LANGUAGES,
+    load_plan,
+    validate_plan,
+)
+
+
+class MatrixPlanTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.plan = load_plan()
+
+    def test_plan_is_valid(self) -> None:
+        self.assertEqual([], validate_plan(self.plan))
+
+    def test_core_matrix_is_exact_three_by_three_cross_product(self) -> None:
+        expected = set(product(CLIENT_LANGUAGES, WORKER_LANGUAGES))
+        actual = {
+            (scenario["clientLanguage"], scenario["workerLanguage"])
+            for scenario in self.plan["coreScenarios"]
+        }
+        self.assertEqual(expected, actual)
+        self.assertEqual(9, len(self.plan["coreScenarios"]))
+
+    def test_dependency_package_mapping_is_language_specific_and_complete(self) -> None:
+        self.assertEqual(DEPENDENCY_PACKAGE_BY_WORKER, self.plan["dependencyPackageByWorker"])
+
+    def test_only_supported_hosted_policy_families_are_required(self) -> None:
+        self.assertEqual(list(CUSTOM_POLICY_FAMILIES), self.plan["customPolicyFamilies"])
+        target = next(item for item in self.plan["coverageTargets"] if item["id"] == "custom-policy-family")
+        self.assertEqual(list(CUSTOM_POLICY_FAMILIES), target["requiredValues"])
+
+    def test_all_final_roadmap_coverage_targets_are_explicit(self) -> None:
+        self.assertEqual(REQUIRED_COVERAGE_TARGETS, {item["id"] for item in self.plan["coverageTargets"]})
+
+    def test_plan_does_not_claim_live_execution_results(self) -> None:
+        for scenario in [*self.plan["coreScenarios"], *self.plan["featureScenarios"]]:
+            self.assertFalse({"status", "passed", "executed", "skipped"}.intersection(scenario))
+
+    def test_missing_core_pair_fails_closed(self) -> None:
+        invalid = copy.deepcopy(self.plan)
+        invalid["coreScenarios"].pop()
+        errors = validate_plan(invalid)
+        self.assertTrue(any("3 x 3" in error or "missing client/worker pairs" in error for error in errors))
+
+    def test_unknown_policy_family_fails_closed(self) -> None:
+        invalid = copy.deepcopy(self.plan)
+        invalid["customPolicyFamilies"].append("routing")
+        errors = validate_plan(invalid)
+        self.assertTrue(any("customPolicyFamilies" in error for error in errors))
+
+    def test_unknown_feature_binding_fails_closed(self) -> None:
+        invalid = copy.deepcopy(self.plan)
+        invalid["featureScenarios"].append(
+            {
+                "id": "invalid",
+                "coverageTarget": "not-real",
+                "clientLanguage": "dotnet",
+                "workerLanguage": "python",
+                "coverageValues": [],
+                "executor": None,
+            }
+        )
+        errors = validate_plan(invalid)
+        self.assertTrue(any("coverageTarget is unsupported" in error for error in errors))
+
+
+if __name__ == "__main__":
+    unittest.main()
