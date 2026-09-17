@@ -46,10 +46,15 @@ for forbidden in (
     "Multiplexed.AI",
     "MongoDB",
     "StackExchange.Redis",
+    "TenantId",
+    "TenantGroupId",
+    "SharedRunId",
+    "LocalRunId",
     "RuntimeInstanceId",
     "WorkerId",
     "ClaimToken",
     "AssignmentEpoch",
+    "ControlPlaneId",
 ):
     for path in SRC_ROOT.rglob("*.py"):
         assert forbidden not in path.read_text(encoding="utf-8"), f"Forbidden token {forbidden} in {path}"

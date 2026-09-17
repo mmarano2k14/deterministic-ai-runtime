@@ -7,7 +7,7 @@
     "enumValues": "strings",
     "timestamps": "RFC3339/ISO-8601 UTC",
     "binaryPayloads": "base64 strings in explicit contract fields",
-    "nullHandling": "contract-defined",
+    "nullHandling": "optional contract fields are omitted when absent; explicit JSON payload objects may contain null values",
     "unknownInternalIdentity": "forbidden"
   },
   "schemaNegotiation": {

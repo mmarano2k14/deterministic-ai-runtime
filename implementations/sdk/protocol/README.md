@@ -18,7 +18,7 @@ The SDK transport owns physical connection details and authentication injection.
 
 ## Serialization
 
-Public documents use JSON, camel-case property names, string enum values and explicit `schemaVersion` fields. Binary publication material remains Base64 text in the fields already defined by the public contracts. Unsupported schema versions fail closed; there is no implicit downgrade.
+Public documents use JSON, camel-case property names, string enum values and explicit `schemaVersion` fields. Binary publication material remains Base64 text in the fields already defined by the public contracts. Unsupported schema versions fail closed; there is no implicit downgrade. Optional contract fields are omitted when absent. Explicit JSON payload objects may still contain JSON `null` values; a top-level optional execution input of `null` is treated as absent consistently by all SDKs.
 
 ## Retry safety
 

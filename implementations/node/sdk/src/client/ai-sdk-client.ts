@@ -247,7 +247,7 @@ function normalizeSubmissionRequest(request: AiSdkExecutionSubmissionRequest): V
     schemaVersion: request.schemaVersion ?? AI_SDK_SCHEMA_VERSIONS.executionSubmissionRequest,
     publicationRef: request.publicationRef,
     ...(request.idempotencyKey === undefined ? {} : { idempotencyKey: request.idempotencyKey }),
-    ...(request.input === undefined ? {} : { input: request.input }),
+    ...(request.input == null ? {} : { input: request.input }),
     metadata: request.metadata ?? {},
     ...(request.correlationId === undefined ? {} : { correlationId: request.correlationId }),
   };

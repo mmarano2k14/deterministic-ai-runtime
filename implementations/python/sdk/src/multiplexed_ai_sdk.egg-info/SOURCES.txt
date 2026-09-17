@@ -49,4 +49,5 @@ src/multiplexed_ai_sdk/contracts/publication/publication_file_upload.py
 src/multiplexed_ai_sdk/contracts/publication/publication_function_kind.py
 src/multiplexed_ai_sdk/contracts/publication/publication_function_upload.py
 tests/test_client.py
+tests/test_parity.py
 tests/test_transport.py

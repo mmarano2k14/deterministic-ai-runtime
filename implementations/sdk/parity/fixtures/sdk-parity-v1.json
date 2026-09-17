@@ -1,0 +1,331 @@
+{
+  "protocolVersion": 1,
+  "operations": {
+    "publishPipeline": "sdk.publish_pipeline",
+    "submitExecution": "sdk.execution.submit",
+    "observeExecution": "sdk.execution.observe",
+    "getExecutionResult": "sdk.execution.result",
+    "cancelExecution": "sdk.execution.cancel"
+  },
+  "schemaVersions": {
+    "pipelineDefinition": 1,
+    "pipelinePublicationRequest": 1,
+    "pipelinePublicationResponse": 1,
+    "executionSubmissionRequest": 1,
+    "executionSubmissionResponse": 1,
+    "executionObservation": 1,
+    "executionResult": 1,
+    "executionCancellationRequest": 1,
+    "executionCancellationResponse": 1
+  },
+  "enumValues": {
+    "executionMode": [
+      "Sequential",
+      "Dag"
+    ],
+    "invocationKind": [
+      "Native",
+      "Custom",
+      "Mcp"
+    ],
+    "publicationFunctionKind": [
+      "Step",
+      "ConcurrencyPolicy",
+      "RetryPolicy",
+      "DelegationPolicy"
+    ],
+    "publicationDependencyPackageKind": [
+      "PythonWheelBundle",
+      "NodeLockedBundle",
+      "DotNetAssemblyClosure"
+    ],
+    "executionStatus": [
+      "Pending",
+      "Running",
+      "Waiting",
+      "Completed",
+      "Failed",
+      "Cancelled"
+    ],
+    "executionStepStatus": [
+      "Pending",
+      "Ready",
+      "Running",
+      "WaitingForRetry",
+      "WaitingForExternal",
+      "Completed",
+      "Failed"
+    ]
+  },
+  "errorKinds": [
+    "transport",
+    "authentication",
+    "authorization",
+    "invalid_request",
+    "unsupported_schema",
+    "not_found",
+    "conflict",
+    "result_unavailable",
+    "remote_failure",
+    "invalid_response",
+    "cancelled"
+  ],
+  "requests": {
+    "publish": {
+      "operation": "sdk.publish_pipeline",
+      "arguments": {
+        "request": {
+          "schemaVersion": 1,
+          "definition": {
+            "schemaVersion": 1,
+            "name": "parity-demo",
+            "version": "2026.09",
+            "executionLanguage": "python",
+            "executionMode": "Dag",
+            "steps": [
+              {
+                "name": "prepare",
+                "stepKey": "prepare",
+                "executionLanguage": "python",
+                "invocation": {
+                  "kind": "Custom",
+                  "implementationRef": "impl-prepare"
+                },
+                "order": 0,
+                "dependsOn": [],
+                "input": {
+                  "asset": "ETH",
+                  "nullable": null
+                },
+                "config": {
+                  "limit": 3
+                },
+                "execution": {
+                  "maxRetries": 2,
+                  "retryDelayMs": 250
+                }
+              },
+              {
+                "name": "notify",
+                "stepKey": "notify",
+                "invocation": {
+                  "kind": "Mcp",
+                  "connectionRef": "market-mcp",
+                  "tool": "quotes/get"
+                },
+                "order": 1,
+                "dependsOn": [
+                  "prepare"
+                ],
+                "input": {},
+                "config": {}
+              }
+            ],
+            "config": {
+              "mode": "paper",
+              "threshold": 0.75
+            }
+          },
+          "functions": [
+            {
+              "site": {
+                "kind": "Step",
+                "stepName": "prepare",
+                "definitionPath": "root/child"
+              },
+              "environmentRef": "env-python-1",
+              "entryPointPath": "src/prepare.py",
+              "entryPointSymbol": "run",
+              "sources": [
+                {
+                  "path": "src/prepare.py",
+                  "contentBase64": "cHJpbnQoJ29rJyk="
+                }
+              ],
+              "dependencies": [
+                {
+                  "name": "analysis",
+                  "version": "1.0.0",
+                  "files": [
+                    {
+                      "path": "wheels/analysis.whl",
+                      "contentBase64": "AAE="
+                    }
+                  ],
+                  "package": {
+                    "schemaVersion": 1,
+                    "kind": "PythonWheelBundle",
+                    "manifestPath": "manifest.json"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "submit": {
+      "operation": "sdk.execution.submit",
+      "arguments": {
+        "request": {
+          "schemaVersion": 1,
+          "publicationRef": "pub-parity",
+          "idempotencyKey": "run-parity",
+          "input": {
+            "asset": "ETH",
+            "limit": 5,
+            "nullable": null
+          },
+          "metadata": {
+            "source": "parity"
+          },
+          "correlationId": "corr-parity"
+        }
+      }
+    },
+    "observe": {
+      "operation": "sdk.execution.observe",
+      "arguments": {
+        "executionId": "exec-parity"
+      }
+    },
+    "result": {
+      "operation": "sdk.execution.result",
+      "arguments": {
+        "executionId": "exec-parity"
+      }
+    },
+    "cancel": {
+      "operation": "sdk.execution.cancel",
+      "arguments": {
+        "executionId": "exec-parity",
+        "request": {
+          "schemaVersion": 1,
+          "reason": "operator",
+          "correlationId": "corr-cancel"
+        }
+      }
+    }
+  },
+  "minimalRequests": {
+    "publish": {
+      "operation": "sdk.publish_pipeline",
+      "arguments": {
+        "request": {
+          "schemaVersion": 1,
+          "definition": {
+            "schemaVersion": 1,
+            "name": "minimal",
+            "executionMode": "Sequential",
+            "steps": [],
+            "config": {}
+          },
+          "functions": []
+        }
+      }
+    },
+    "submit": {
+      "operation": "sdk.execution.submit",
+      "arguments": {
+        "request": {
+          "schemaVersion": 1,
+          "publicationRef": "pub-minimal",
+          "metadata": {}
+        }
+      }
+    },
+    "cancel": {
+      "operation": "sdk.execution.cancel",
+      "arguments": {
+        "executionId": "exec-minimal",
+        "request": {
+          "schemaVersion": 1
+        }
+      }
+    }
+  },
+  "responses": {
+    "publish": {
+      "schemaVersion": 1,
+      "publicationRef": "pub-parity",
+      "publicationSha256": "0123456789abcdef",
+      "pipelineName": "parity-demo",
+      "pipelineVersion": "2026.09"
+    },
+    "submit": {
+      "schemaVersion": 1,
+      "executionId": "exec-parity",
+      "publicationRef": "pub-parity",
+      "status": "Pending",
+      "acceptedAtUtc": "2026-09-17T00:00:00+00:00",
+      "idempotencyKey": "run-parity",
+      "correlationId": "corr-parity"
+    },
+    "observe": {
+      "schemaVersion": 1,
+      "executionId": "exec-parity",
+      "publicationRef": "pub-parity",
+      "pipelineName": "parity-demo",
+      "pipelineVersion": "2026.09",
+      "status": "Running",
+      "createdAtUtc": "2026-09-17T00:00:00+00:00",
+      "updatedAtUtc": "2026-09-17T00:00:01+00:00",
+      "steps": [
+        {
+          "name": "prepare",
+          "stepKey": "prepare",
+          "status": "Completed",
+          "startedAtUtc": "2026-09-17T00:00:00+00:00",
+          "updatedAtUtc": "2026-09-17T00:00:01+00:00",
+          "completedAtUtc": "2026-09-17T00:00:01+00:00"
+        },
+        {
+          "name": "notify",
+          "stepKey": "notify",
+          "status": "Ready"
+        }
+      ]
+    },
+    "result": {
+      "schemaVersion": 1,
+      "executionId": "exec-parity",
+      "status": "Completed",
+      "output": {
+        "decision": "hold",
+        "score": 0.8,
+        "nullable": null
+      },
+      "completedAtUtc": "2026-09-17T00:00:02+00:00"
+    },
+    "failedResult": {
+      "schemaVersion": 1,
+      "executionId": "exec-failed",
+      "status": "Failed",
+      "failure": {
+        "code": "step_failed",
+        "message": "Step failed.",
+        "details": {
+          "step": "prepare"
+        }
+      },
+      "completedAtUtc": "2026-09-17T00:00:03+00:00"
+    },
+    "cancel": {
+      "schemaVersion": 1,
+      "executionId": "exec-parity",
+      "cancellationRequested": true,
+      "status": "Running",
+      "requestedAtUtc": "2026-09-17T00:00:04+00:00",
+      "correlationId": "corr-cancel"
+    }
+  },
+  "normalizedError": {
+    "kind": "authorization",
+    "code": "authorization_failed",
+    "message": "Denied.",
+    "retryable": false,
+    "details": {
+      "scope": "sdk"
+    }
+  }
+}

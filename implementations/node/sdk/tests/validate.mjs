@@ -67,10 +67,15 @@ const forbidden = [
   "Multiplexed.Abstractions",
   "MongoDB",
   "StackExchange.Redis",
+  "TenantId",
+  "TenantGroupId",
+  "SharedRunId",
+  "LocalRunId",
   "RuntimeInstanceId",
   "WorkerId",
   "ClaimToken",
   "AssignmentEpoch",
+  "ControlPlaneId",
 ];
 for (const file of sourceFiles) {
   const source = fs.readFileSync(file, "utf8");
