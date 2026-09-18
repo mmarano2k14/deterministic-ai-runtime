@@ -1,6 +1,12 @@
-﻿using Microsoft.Extensions.Options;
+using System.Text.Json;
+using Microsoft.Extensions.Options;
+using Multiplexed.Abstractions.AI.Invocation.Mcp;
+using Multiplexed.Abstractions.AI.Invocation.Mcp.Durable;
 using Multiplexed.AI.McpServer.Host.Configuration;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.InPod;
+using Multiplexed.AI.Runtime.Invocation.Mcp;
+using Multiplexed.AI.Runtime.Invocation.Mcp.Durable;
+using Multiplexed.AI.Stores;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Grpc;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Routing.Http;
@@ -29,6 +35,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     .Value;
 
             app.MapHealthChecks("/health");
+            ConfigureMatrixMcpEffectEvidenceEndpoint(app);
 
             switch (hostOptions.Mode)
             {
@@ -60,6 +67,81 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     throw new InvalidOperationException(
                         $"Unsupported MCP host mode '{hostOptions.Mode}'.");
             }
+        }
+
+
+        /// <summary>
+        /// Exposes bounded matrix-only diagnostics for durable MCP effect evidence.
+        /// It is disabled in every normal host and returns no endpoint, credential or secret header material.
+        /// </summary>
+        private static void ConfigureMatrixMcpEffectEvidenceEndpoint(WebApplication app)
+        {
+            var matrix = app.Configuration.GetSection("AiMatrixHarness").Get<AiMatrixHarnessOptions>()
+                ?? new AiMatrixHarnessOptions();
+            if (!matrix.Enabled)
+            {
+                return;
+            }
+
+            app.MapGet(
+                "/matrix/mcp-effect-evidence/{executionId}/{stepName}",
+                async (
+                    string executionId,
+                    string stepName,
+                    AiMcpEffectEvidenceJournal journal,
+                    IAiDagExecutionStore dagStore,
+                    CancellationToken cancellationToken) =>
+                {
+                    ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+                    ArgumentException.ThrowIfNullOrWhiteSpace(stepName);
+
+                    var arguments = JsonSerializer.SerializeToElement(new Dictionary<string, string>());
+                    var probe = new AiMcpToolRequest(
+                        AiMcpEffectIdentities.RequestSchemaVersion,
+                        "matrix-diagnostic",
+                        DateTimeOffset.UtcNow.AddMinutes(1),
+                        new AiMcpToolInvocationContext(
+                            matrix.TenantId,
+                            matrix.TenantGroupId,
+                            executionId,
+                            "matrix-diagnostic",
+                            null,
+                            stepName,
+                            "mcp.tool"),
+                        "matrix-effect-probe",
+                        "v1",
+                        "probe.fail-count",
+                        arguments);
+                    var effectIdentity = AiMcpEffectIdentities.Create(probe);
+                    probe = probe with { Effect = effectIdentity };
+
+                    var scope = new AiMcpEffectEvidenceScope(matrix.TenantId, matrix.TenantGroupId);
+                    var effect = await journal.GetAsync(
+                        scope,
+                        effectIdentity.EffectId,
+                        cancellationToken).ConfigureAwait(false);
+                    if (effect is null)
+                    {
+                        return Results.NotFound();
+                    }
+
+                    var state = await dagStore.GetStateAsync(executionId, cancellationToken).ConfigureAwait(false);
+                    var step = state is not null && state.Steps.TryGetValue(stepName, out var candidate)
+                        ? candidate
+                        : null;
+
+                    return Results.Ok(new
+                    {
+                        effectId = effect.Intent.Effect.EffectId,
+                        status = effect.Status.ToString(),
+                        revision = effect.Revision,
+                        attemptRequestId = effect.Attempt?.RequestId,
+                        resultIsError = effect.Result?.IsError,
+                        uncertaintyReasonCode = effect.Uncertainty?.ReasonCode,
+                        retryCount = step?.RetryState?.RetryCount,
+                        stepStatus = step?.Status.ToString()
+                    });
+                });
         }
 
         /// <summary>

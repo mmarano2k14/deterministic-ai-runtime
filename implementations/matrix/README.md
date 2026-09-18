@@ -50,7 +50,7 @@ If MongoDB and Redis are already running on their default local ports:
 .\implementations\matrix\runtime\local\run.ps1 -InfrastructureAlreadyRunning
 ```
 
-The local orchestrator publishes the real runtime and .NET worker, stages the same worker-fixture layout used by Docker, starts the runtime with exact installed runtime identities, waits for the matrix manifest, executes the 3 x 3 core matrix, and then executes the twelve currently bound feature scenarios.
+The local orchestrator publishes the real runtime and .NET worker, stages the same worker-fixture layout used by Docker, starts the runtime with exact installed runtime identities, waits for the matrix manifest, executes the 3 x 3 core matrix, and then executes the fourteen currently bound feature scenarios.
 
 ## Runtime manifest
 
@@ -95,7 +95,7 @@ Deterministic dependency packaging is exercised once against each hosted worker 
 
 The Docker verifier preserves the original nine core scenarios and additionally requires all six bound feature evidence documents. A successful live run must therefore report both `9/9 production-like Docker ProcessHostPool scenarios passed.` and `6/6 publication-pinning/dependency-package ProcessHostPool feature scenarios passed.`. Until that live run is executed, the feature scenarios remain planned/bound evidence rather than a green claim.
 
-The current ProcessHost coverage remains limited to ProcessHostPool / HostRuntime / TrustedProcess execution. Durable MCP effect evidence, cancellation, recovery, replay/result acceptance, and OCI/container-provider isolation remain outside the currently bound scenarios.
+The current ProcessHost coverage remains limited to ProcessHostPool / HostRuntime / TrustedProcess execution. Cancellation, recovery, replay/result acceptance, and OCI/container-provider isolation remain outside the currently bound scenarios.
 
 ### Hosted custom policy family scenarios
 
@@ -115,4 +115,16 @@ The custom leaf is bound through the immutable publication call site `/invoke-ch
 
 The evidence is intentionally bounded to what the live public path proves: immutable nested publication, root submission, nested child dispatch, hosted grandchild custom declaration execution, parent continuation, terminal observation, and `Completed` root result. It does not claim recovery or failure-injection coverage for nested Child DAGs; those remain separate roadmap targets.
 
-The Docker verifier therefore requires nine core scenarios, six publication/dependency scenarios, three hosted custom-policy scenarios, and three nested Child DAG scenarios. A successful live run must report all four bounded verifier summaries before the matrix runner can return GREEN. The resulting gate is 21/21 executed scenarios.
+The Docker verifier therefore requires nine core scenarios, six publication/dependency scenarios, three hosted custom-policy scenarios, and three nested Child DAG scenarios before durable MCP effect evidence is added below.
+
+### Durable MCP effect evidence scenarios
+
+The process matrix binds two language-free MCP effect scenarios through the external Python SDK client and the public `Mcp` invocation contract. A matrix-only loopback MCP probe is server-owned and configured through the normal outbound connection catalog; pipeline input never supplies an endpoint, credential or connection revision.
+
+`completed-local-replay` executes a tool that records one physical `tools/call` and returns an explicit MCP tool error. The durable transport persists that confirmed remote result as `Completed`. The DAG then performs its configured logical retry for the same execution/step identity, and the durable fence must replay the stored result locally. The probe must still report exactly one physical call.
+
+`uncertain-blocks-blind-resend` executes a tool that records one physical `tools/call` and then exceeds the server-owned invocation deadline after the dispatch boundary has been crossed. The durable evidence must become `Uncertain`. The DAG performs one configured logical retry, but the durable fence must reject that retry before a second physical emission. The probe must still report exactly one physical call.
+
+Matrix-only diagnostics expose the durable evidence status and retained DAG retry count without exposing endpoint or credential material. These diagnostics are disabled with the matrix harness and are not public runtime APIs. The scenarios prove bounded durable effect evidence behavior only; they do not claim generic exactly-once delivery or automatic reconciliation of uncertain effects.
+
+The Docker verifier now requires nine core scenarios, six publication/dependency scenarios, three hosted custom-policy scenarios, three nested Child DAG scenarios, and two durable MCP effect evidence scenarios. A successful live run must report all five bounded verifier summaries before the matrix runner can return GREEN. The resulting gate is 23/23 executed scenarios.

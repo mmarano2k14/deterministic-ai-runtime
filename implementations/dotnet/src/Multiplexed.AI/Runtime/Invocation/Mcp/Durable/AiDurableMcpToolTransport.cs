@@ -94,11 +94,11 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
             {
                 if (boundary.PossiblySent)
                 {
-                    await TryRecordUncertaintyAsync(dispatching, Reason(exception), cancellationToken).ConfigureAwait(false);
+                    await TryRecordUncertaintyAsync(dispatching, Reason(exception)).ConfigureAwait(false);
                 }
                 else
                 {
-                    await TryRecordNotSentAsync(dispatching, Reason(exception), cancellationToken).ConfigureAwait(false);
+                    await TryRecordNotSentAsync(dispatching, Reason(exception)).ConfigureAwait(false);
                 }
                 throw;
             }
@@ -135,14 +135,14 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
 
         private async Task TryRecordUncertaintyAsync(
             AiMcpEffectEvidenceRecord dispatching,
-            string reasonCode,
-            CancellationToken cancellationToken)
+            string reasonCode)
         {
-            if (cancellationToken.IsCancellationRequested) return;
             try
             {
+                // Once Dispatching is durable, caller/deadline cancellation cannot be allowed
+                // to cancel the safety transition that fences future physical re-emission.
                 _ = await _journal.TryMarkUncertainAsync(
-                    dispatching, reasonCode, cancellationToken).ConfigureAwait(false);
+                    dispatching, reasonCode, CancellationToken.None).ConfigureAwait(false);
             }
             catch
             {
@@ -153,14 +153,14 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable
 
         private async Task TryRecordNotSentAsync(
             AiMcpEffectEvidenceRecord dispatching,
-            string reasonCode,
-            CancellationToken cancellationToken)
+            string reasonCode)
         {
-            if (cancellationToken.IsCancellationRequested) return;
             try
             {
+                // Dispatch authority was already persisted. Finalizing the evidence must not
+                // be skipped merely because the request token is now cancelled.
                 _ = await _journal.TryMarkNotSentAsync(
-                    dispatching, reasonCode, cancellationToken).ConfigureAwait(false);
+                    dispatching, reasonCode, CancellationToken.None).ConfigureAwait(false);
             }
             catch
             {

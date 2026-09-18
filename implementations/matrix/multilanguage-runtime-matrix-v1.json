@@ -576,6 +576,46 @@
           "python"
         ]
       }
+    },
+    {
+      "id": "feature-mcp-effect-completed-local-replay-python-client",
+      "coverageTarget": "mcp-effect-evidence",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [
+        "completed-local-replay"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "mcp-effect-evidence",
+          "--effect-case",
+          "completed-local-replay"
+        ]
+      }
+    },
+    {
+      "id": "feature-mcp-effect-uncertain-blocks-blind-resend-python-client",
+      "coverageTarget": "mcp-effect-evidence",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [
+        "uncertain-blocks-blind-resend"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "mcp-effect-evidence",
+          "--effect-case",
+          "uncertain-blocks-blind-resend"
+        ]
+      }
     }
   ]
 }

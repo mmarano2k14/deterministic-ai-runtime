@@ -363,6 +363,97 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertIn("3/3 nested Child DAG ProcessHostPool scenarios passed.", verifier)
 
 
+
+    def test_matrix_harness_registers_durable_mcp_effect_fence_only_when_opted_in(self) -> None:
+        registration = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" /
+            "Bootstrap" / "MatrixHarnessRegistration.cs"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("services.AddAiDurableMcpEffectEvidence();", registration)
+        self.assertIn("services.AddAiOutboundMcpToolExecution(", registration)
+        self.assertIn('ConnectionRef = "matrix-effect-probe"', registration)
+        self.assertIn('new AiOutboundMcpToolRegistration("probe.fail-count"', registration)
+        self.assertIn('new AiOutboundMcpToolRegistration("probe.slow-count"', registration)
+        self.assertLess(registration.index("if (!options.Enabled)"), registration.index("services.AddAiDurableMcpEffectEvidence();"))
+
+    def test_mcp_effect_probe_is_matrix_only_and_has_no_runtime_project_reference(self) -> None:
+        project = (
+            MATRIX_ROOT / "fixtures" / "mcp-effect-probe" /
+            "Multiplexed.AI.Matrix.McpEffectProbe" / "Multiplexed.AI.Matrix.McpEffectProbe.csproj"
+        ).read_text(encoding="utf-8-sig")
+        program = (
+            MATRIX_ROOT / "fixtures" / "mcp-effect-probe" /
+            "Multiplexed.AI.Matrix.McpEffectProbe" / "Program.cs"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("ModelContextProtocol.AspNetCore", project)
+        self.assertNotIn("ProjectReference", project)
+        self.assertIn('Name = "probe.fail-count"', program)
+        self.assertIn('Name = "probe.slow-count"', program)
+        self.assertIn("physicalCallCount", program)
+
+    def test_mcp_effect_feature_proves_retry_and_single_physical_emission(self) -> None:
+        client = (MATRIX_ROOT / "clients" / "python" / "feature.py").read_text(encoding="utf-8-sig")
+        verifier = (MATRIX_ROOT / "runtime" / "docker" / "verifier.py").read_text(encoding="utf-8-sig")
+        self.assertIn('max_retries=1', client)
+        self.assertIn('durable.get("retryCount") != 1', client)
+        self.assertIn('probe.get("physicalCallCount") != 1', client)
+        self.assertIn('"Completed" if effect_case == "completed-local-replay" else "Uncertain"', client)
+        self.assertIn('"transport-timeout"', client)
+        self.assertIn("MCP_EFFECT_EXPECTED", verifier)
+        self.assertIn("2/2 durable MCP effect evidence ProcessHostPool scenarios passed.", verifier)
+
+    def test_explicit_execution_retry_budget_is_materialized_into_durable_retry_definition(self) -> None:
+        resolved_step = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.Abstractions" / "AI" / "Pipeline" /
+            "ResolvedAiPipelineStep.cs"
+        ).read_text(encoding="utf-8-sig")
+        resolver = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI" / "Runtime" / "Pipeline" /
+            "AiPipelineResolver.cs"
+        ).read_text(encoding="utf-8-sig")
+        retry_engine = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI" / "Runtime" / "AI" / "Retry" /
+            "DefaultAiRetryEngine.cs"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("public AiPipelineStepExecutionDefinition? Execution { get; init; }", resolved_step)
+        self.assertIn("Execution = stepDefinition.Execution", resolver)
+        self.assertIn("if (StepContext.Step.Execution is null)", retry_engine)
+        self.assertIn("MaxRetries = StepContext.Step.MaxRetries", retry_engine)
+        self.assertIn("BaseDelayMs = StepContext.Step.RetryDelayMs", retry_engine)
+
+    def test_durable_mcp_timeout_finalization_is_not_cancelled_by_the_expired_request_token(self) -> None:
+        adapter = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI" / "Runtime" / "Invocation" / "Mcp" /
+            "AiMcpStepAdapter.cs"
+        ).read_text(encoding="utf-8-sig")
+        durable = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI" / "Runtime" / "Invocation" / "Mcp" /
+            "Durable" / "AiDurableMcpToolTransport.cs"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("executionCancellation.Token", adapter)
+        self.assertIn("_transport is AiDurableMcpToolTransport", adapter)
+        self.assertIn("CancellationToken.None", durable)
+        self.assertNotIn("if (cancellationToken.IsCancellationRequested) return;", durable)
+
+    def test_runtime_manifest_exposes_only_harness_diagnostics_for_mcp_effect_evidence(self) -> None:
+        bootstrap = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" /
+            "Bootstrap" / "MatrixHarnessBootstrapHostedService.cs"
+        ).read_text(encoding="utf-8-sig")
+        diagnostics = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" /
+            "Bootstrap" / "ApplicationConfiguration.cs"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("effectProbeStateEndpoint", bootstrap)
+        self.assertIn("effectEvidenceEndpoint", bootstrap)
+        self.assertIn('/matrix/mcp-effect-evidence/{executionId}/{stepName}', diagnostics)
+        self.assertIn("retryCount = step?.RetryState?.RetryCount", diagnostics)
+        start = diagnostics.index("private static void ConfigureMatrixMcpEffectEvidenceEndpoint")
+        end = diagnostics.index("private static void ConfigureRuntimeInstanceEndpoints", start)
+        diagnostic_block = diagnostics[start:end]
+        self.assertNotIn("Endpoint =", diagnostic_block)
+        self.assertNotIn("EffectProbeMcpEndpoint", diagnostic_block)
+
 if __name__ == "__main__":
     unittest.main()
 

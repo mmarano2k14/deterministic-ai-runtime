@@ -35,7 +35,7 @@ services:
     volumes:
       - matrix-state:/matrix/state
     healthcheck:
-      test: ["CMD-SHELL", "test -s /matrix/state/runtime-manifest.json && python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()\""]
+      test: ["CMD-SHELL", "test -s /matrix/state/runtime-manifest.json && python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read(); urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2).read()\""]
       interval: 2s
       timeout: 3s
       retries: 60

@@ -127,6 +127,33 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.McpEffects.Durable
         }
 
         [Fact]
+        public async Task Cancelled_Dispatched_Attempt_Persists_Uncertain_With_An_Independent_Evidence_Token()
+        {
+            var store = new MemoryStore();
+            var journal = new AiMcpEffectEvidenceJournal(store, new FixedTimeProvider());
+            using var cancellation = new CancellationTokenSource();
+            var inner = new ProbeTransport
+            {
+                Handler = (_, token) =>
+                {
+                    cancellation.Cancel();
+                    return Task.FromCanceled<JsonElement>(token);
+                }
+            };
+            var transport = new AiDurableMcpToolTransport(journal, inner);
+            var request = Request("attempt-a");
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                transport.InvokeAsync(request, cancellation.Token));
+
+            var uncertain = await store.GetAsync(Scope(request), request.Effect!.EffectId);
+            Assert.NotNull(uncertain);
+            Assert.Equal(AiMcpEffectEvidenceStatus.Uncertain, uncertain.Status);
+            Assert.Equal("transport-cancelled", uncertain.Uncertainty!.ReasonCode);
+            Assert.Equal(1, inner.Calls);
+        }
+
+        [Fact]
         public void Outbound_Registration_Uses_The_Durable_Decorator_When_The_Journal_Is_Installed()
         {
             var store = new MemoryStore();

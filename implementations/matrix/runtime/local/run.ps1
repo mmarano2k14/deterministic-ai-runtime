@@ -13,6 +13,7 @@ $matrix = Join-Path $repo "implementations\matrix"
 $state = Join-Path $matrix ".state"
 $runtimeOut = Join-Path $state "runtime"
 $workerOut = Join-Path $state "worker-dotnet"
+$effectProbeOut = Join-Path $state "mcp-effect-probe"
 $mongoData = Join-Path $state "mongo"
 $manifest = Join-Path $state "runtime-manifest.json"
 $fixtureRoot = Join-Path $state "fixtures"
@@ -20,7 +21,7 @@ $fixtureDotNet = Join-Path $fixtureRoot "dotnet-worker"
 $fixtureDotNetPackaged = Join-Path $fixtureRoot "dotnet-packaged-worker"
 $fixtureTypeScript = Join-Path $fixtureRoot "typescript-worker"
 $fixturePython = Join-Path $fixtureRoot "python-worker"
-New-Item -ItemType Directory -Force -Path $state,$runtimeOut,$workerOut,$mongoData,$fixtureDotNet,$fixtureDotNetPackaged,$fixtureTypeScript,$fixturePython | Out-Null
+New-Item -ItemType Directory -Force -Path $state,$runtimeOut,$workerOut,$effectProbeOut,$mongoData,$fixtureDotNet,$fixtureDotNetPackaged,$fixtureTypeScript,$fixturePython | Out-Null
 Remove-Item $manifest -Force -ErrorAction SilentlyContinue
 
 function Resolve-Tool([string]$name) {
@@ -48,6 +49,7 @@ $processes = @()
 try {
     & $dotnet publish ".\implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Multiplexed.AI.McpServer.Host.csproj" -c Release -o $runtimeOut
     & $dotnet publish ".\implementations\dotnet\workers\Multiplexed.AI.HostedInvocation.DotNetWorker\Multiplexed.AI.HostedInvocation.DotNetWorker.csproj" -c Release -o $workerOut
+    & $dotnet publish ".\implementations\matrix\fixtures\mcp-effect-probe\Multiplexed.AI.Matrix.McpEffectProbe\Multiplexed.AI.Matrix.McpEffectProbe.csproj" -c Release -o $effectProbeOut
     & $dotnet build ".\implementations\matrix\fixtures\dotnet-worker\Multiplexed.AI.Matrix.Worker\Multiplexed.AI.Matrix.Worker.csproj" -c Release
     & $dotnet build ".\implementations\matrix\fixtures\dotnet-packaged-worker\Multiplexed.AI.Matrix.PackagedWorker\Multiplexed.AI.Matrix.PackagedWorker.csproj" -c Release
     & $dotnet build ".\implementations\matrix\clients\dotnet\Multiplexed.AI.Matrix.DotNetClient\Multiplexed.AI.Matrix.DotNetClient.csproj" -c Release
@@ -143,7 +145,23 @@ try {
     $env:AiMatrixHarness__Topology = "local"
     $env:AiMatrixHarness__Provider = "ProcessHostPool"
     $env:AiMatrixHarness__ManifestPath = $manifest
+    $env:AiMatrixHarness__EffectProbeMcpEndpoint = "http://127.0.0.1:8090/mcp"
+    $env:AiMatrixHarness__EffectProbeStateEndpoint = "http://localhost:8090/state"
+    $env:AiMatrixHarness__EffectEvidenceEndpoint = "http://localhost:8081/matrix/mcp-effect-evidence"
     $env:MATRIX_FIXTURE_ROOT = $fixtureRoot
+
+    $effectProbe = Start-Process -FilePath $dotnet -ArgumentList @((Join-Path $effectProbeOut "Multiplexed.AI.Matrix.McpEffectProbe.dll"), "--urls", "http://127.0.0.1:8090") -PassThru -NoNewWindow
+    $processes += $effectProbe
+    $probeDeadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $probeDeadline) {
+        if ($effectProbe.HasExited) { throw "MCP effect probe exited before becoming ready." }
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:8090/health" -TimeoutSec 2 | Out-Null
+            break
+        } catch { }
+        Start-Sleep -Milliseconds 250
+    }
+    if ($effectProbe.HasExited) { throw "MCP effect probe exited before runtime startup." }
 
     $runtime = Start-Process -FilePath $dotnet -ArgumentList @((Join-Path $runtimeOut "Multiplexed.AI.McpServer.Host.dll"), "--Multiplexed.Rbac.Core:Project=matrix") -PassThru -NoNewWindow
     $processes += $runtime

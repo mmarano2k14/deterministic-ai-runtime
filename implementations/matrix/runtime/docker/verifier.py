@@ -41,7 +41,17 @@ NESTED_CHILD_DAG_EXPECTED = {
     f"feature-nested-child-dag-python-client-{worker}-worker": worker
     for worker in WORKERS
 }
-EXPECTED = [*CORE_EXPECTED, *FEATURE_EXPECTED, *CUSTOM_POLICY_EXPECTED, *NESTED_CHILD_DAG_EXPECTED]
+MCP_EFFECT_EXPECTED = {
+    "feature-mcp-effect-completed-local-replay-python-client": ("completed-local-replay", "Completed"),
+    "feature-mcp-effect-uncertain-blocks-blind-resend-python-client": ("uncertain-blocks-blind-resend", "Uncertain"),
+}
+EXPECTED = [
+    *CORE_EXPECTED,
+    *FEATURE_EXPECTED,
+    *CUSTOM_POLICY_EXPECTED,
+    *NESTED_CHILD_DAG_EXPECTED,
+    *MCP_EFFECT_EXPECTED,
+]
 
 
 def _load(scenario: str) -> dict[str, object] | None:
@@ -195,6 +205,54 @@ def _validate_nested_child_dag(
     return None
 
 
+def _validate_mcp_effect(
+    scenario: str,
+    document: dict[str, object],
+    effect_case: str,
+    expected_evidence_status: str,
+) -> str | None:
+    common = _validate_common(scenario, document)
+    if common:
+        return common
+    if document.get("coverageTarget") != "mcp-effect-evidence":
+        return "wrong MCP effect evidence coverage target"
+    if document.get("coverageValues") != [effect_case]:
+        return "wrong MCP effect evidence value"
+    if document.get("clientLanguage") != "python" or document.get("workerLanguage") is not None:
+        return "MCP effect evidence incorrectly claims a hosted worker"
+    if document.get("terminalStatus") != "Failed" or document.get("stepStatus") != "Failed":
+        return "MCP effect evidence scenario did not fail after its bounded retry"
+    if document.get("durableEvidenceStatus") != expected_evidence_status:
+        return "wrong durable MCP effect evidence status"
+    if document.get("retryCount") != 1:
+        return "MCP effect evidence did not prove exactly one logical retry"
+    if document.get("physicalCallCount") != 1:
+        return "MCP effect evidence did not fence duplicate physical tools/call emission"
+    effect_id = document.get("effectId")
+    if not isinstance(effect_id, str) or not effect_id.startswith("mcp-effect-v1-"):
+        return "missing durable MCP effect identity"
+
+    evidence = set(document.get("evidence", []))
+    common_required = {"publish", "submit", "logical-retry-observed", "single-physical-tools-call", "terminal-result"}
+    if not common_required.issubset(evidence):
+        return "missing common MCP effect evidence"
+
+    if effect_case == "completed-local-replay":
+        if document.get("durableResultIsError") is not True or document.get("uncertaintyReasonCode") is not None:
+            return "completed replay did not preserve confirmed result evidence"
+        if not {"durable-effect-completed", "completed-result-replayed-locally"}.issubset(evidence):
+            return "missing completed local replay evidence"
+        return None
+
+    if document.get("durableResultIsError") is not None:
+        return "uncertain effect unexpectedly contains a confirmed result"
+    if document.get("uncertaintyReasonCode") != "transport-timeout":
+        return "uncertain effect did not preserve the transport timeout reason"
+    if not {"durable-effect-uncertain", "blind-resend-blocked"}.issubset(evidence):
+        return "missing uncertain blind-resend fencing evidence"
+    return None
+
+
 def main() -> int:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline and any(not (ROOT / f"{scenario}.json").exists() for scenario in EXPECTED):
@@ -245,6 +303,17 @@ def main() -> int:
         else:
             print(f"{scenario}: PASSED")
 
+    for scenario, (effect_case, expected_status) in MCP_EFFECT_EXPECTED.items():
+        document = _load(scenario)
+        if document is None:
+            failures.append(f"{scenario}: missing evidence")
+            continue
+        error = _validate_mcp_effect(scenario, document, effect_case, expected_status)
+        if error:
+            failures.append(f"{scenario}: {error}")
+        else:
+            print(f"{scenario}: PASSED")
+
     if failures:
         for failure in failures:
             print(failure, file=sys.stderr)
@@ -254,6 +323,7 @@ def main() -> int:
     print("6/6 publication-pinning/dependency-package ProcessHostPool feature scenarios passed.")
     print("3/3 hosted custom-policy-family ProcessHostPool scenarios passed.")
     print("3/3 nested Child DAG ProcessHostPool scenarios passed.")
+    print("2/2 durable MCP effect evidence ProcessHostPool scenarios passed.")
     return 0
 
 

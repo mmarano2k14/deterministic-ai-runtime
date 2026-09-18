@@ -214,7 +214,26 @@ namespace Multiplexed.AI.Runtime.AI.Retry
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            return retryDefinition ?? DefaultRetryDefinition;
+            var effective = retryDefinition ?? DefaultRetryDefinition;
+
+            // Historical definitions without an explicit Execution section retain the existing
+            // config.retry/default behavior. When Execution is explicitly declared, its budget
+            // and delay are the dedicated orchestration metadata and must be persisted into the
+            // durable retry definition used by every local/distributed retry transition.
+            if (StepContext.Step.Execution is null)
+            {
+                return effective;
+            }
+
+            return new AiRetryPolicyDefinition
+            {
+                Policies = effective.Policies.ToList(),
+                MaxRetries = StepContext.Step.MaxRetries,
+                Strategy = effective.Strategy,
+                BaseDelayMs = StepContext.Step.RetryDelayMs,
+                MaxDelayMs = effective.MaxDelayMs,
+                Jitter = effective.Jitter
+            };
         }
 
         private static void ApplyDecision(

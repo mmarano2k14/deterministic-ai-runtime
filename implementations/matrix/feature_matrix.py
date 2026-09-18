@@ -20,6 +20,7 @@ FEATURE_TARGETS = {
     "deterministic-dependency-packaging",
     "custom-policy-family",
     "nested-child-dag",
+    "mcp-effect-evidence",
 }
 
 
@@ -73,15 +74,18 @@ def _command_for(scenario: dict[str, Any], manifest: Path) -> list[str]:
         str(manifest),
         "--feature",
         scenario["coverageTarget"],
-        "--worker",
-        scenario["workerLanguage"],
         "--scenario-id",
         scenario["id"],
         "--evidence",
         str(evidence),
     ]
+    worker = scenario.get("workerLanguage")
+    if worker:
+        command.extend(["--worker", worker])
     if scenario["coverageTarget"] == "custom-policy-family":
         command.extend(["--policy-family", scenario["coverageValues"][0]])
+    if scenario["coverageTarget"] == "mcp-effect-evidence":
+        command.extend(["--effect-case", scenario["coverageValues"][0]])
     return command
 
 

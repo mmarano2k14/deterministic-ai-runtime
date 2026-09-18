@@ -133,6 +133,7 @@ namespace Multiplexed.AI.Runtime.Pipeline
                     StepKey = stepDefinition.StepKey,
                     ExecutionLanguage = stepDefinition.ExecutionLanguage,
                     Invocation = stepDefinition.Invocation,
+                    Execution = stepDefinition.Execution,
                     InvocationBinding = stepDefinition.Invocation is not null
                         ? adapterContext.Binding
                         : null,

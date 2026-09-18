@@ -38,6 +38,13 @@ namespace Multiplexed.Abstractions.AI.Pipeline
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public AiInvocationDefinition? Invocation { get; init; }
 
+        /// <summary>
+        /// Original explicit execution metadata. A null value preserves historical retry configuration/default behavior;
+        /// a non-null value lets runtime policy materialization honor the dedicated execution budget and delay.
+        /// </summary>
+        [JsonIgnore]
+        public AiPipelineStepExecutionDefinition? Execution { get; init; }
+
         /// <summary>Effective immutable metadata; null on historical undeclared native steps.</summary>
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public AiInvocationBinding? InvocationBinding { get; init; }

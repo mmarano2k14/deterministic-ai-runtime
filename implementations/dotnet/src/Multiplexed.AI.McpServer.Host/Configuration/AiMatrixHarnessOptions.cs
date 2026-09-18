@@ -14,5 +14,8 @@ namespace Multiplexed.AI.McpServer.Host.Configuration
         public string Topology { get; set; } = "local";
         public string Provider { get; set; } = "ProcessHostPool";
         public string ManifestPath { get; set; } = string.Empty;
+        public string EffectProbeMcpEndpoint { get; set; } = "http://127.0.0.1:8090/mcp";
+        public string EffectProbeStateEndpoint { get; set; } = "http://localhost:8090/state";
+        public string EffectEvidenceEndpoint { get; set; } = "http://localhost:8081/matrix/mcp-effect-evidence";
     }
 }

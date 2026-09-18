@@ -52,6 +52,17 @@ run_feature() {
     --evidence "$evidence"
 }
 
+run_effect_feature() {
+  effect_case="$1"
+  case "$effect_case" in
+    completed-local-replay) scenario="feature-mcp-effect-completed-local-replay-python-client" ;;
+    uncertain-blocks-blind-resend) scenario="feature-mcp-effect-uncertain-blocks-blind-resend-python-client" ;;
+    *) echo "unknown MCP effect case: $effect_case" >&2; exit 2 ;;
+  esac
+  evidence="/matrix/evidence/${scenario}.json"
+  python /app/implementations/matrix/clients/python/feature.py     --manifest "$MANIFEST"     --feature mcp-effect-evidence     --effect-case "$effect_case"     --scenario-id "$scenario"     --evidence "$evidence"
+}
+
 run_one dotnet
 run_one typescript
 run_one python
@@ -71,4 +82,7 @@ if [ "$LANGUAGE" = "python" ]; then
   run_feature nested-child-dag dotnet
   run_feature nested-child-dag typescript
   run_feature nested-child-dag python
+
+  run_effect_feature completed-local-replay
+  run_effect_feature uncertain-blocks-blind-resend
 fi

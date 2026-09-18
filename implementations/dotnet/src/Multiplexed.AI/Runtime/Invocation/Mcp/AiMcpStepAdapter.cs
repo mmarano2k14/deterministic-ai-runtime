@@ -3,6 +3,7 @@ using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Invocation.Mcp;
 using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Runtime.Execution.Context;
+using Multiplexed.AI.Runtime.Invocation.Mcp.Durable;
 
 namespace Multiplexed.AI.Runtime.Invocation.Mcp
 {
@@ -48,7 +49,9 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp
             }
 
             var identity = AiMcpInvocationIdentity.Capture(context);
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, context.CancellationToken);
+            using var executionCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, context.CancellationToken);
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(executionCancellation.Token);
             var deadlineUtc = DateTimeOffset.UtcNow.Add(_timeout);
             deadline.CancelAfter(_timeout);
             try
@@ -76,8 +79,13 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp
                 request = request with { Effect = AiMcpEffectIdentities.Create(request) };
                 deadline.Token.ThrowIfCancellationRequested();
 
-                var response = await AwaitBoundedAsync(_transport.InvokeAsync(request, deadline.Token), deadline.Token)
-                    .ConfigureAwait(false);
+                // Durable MCP transport owns the post-dispatch evidence transition. Do not race
+                // that safety-critical finalization with the adapter deadline token: the immutable
+                // request deadline is enforced by the durable/physical transport itself.
+                var response = _transport is AiDurableMcpToolTransport
+                    ? await _transport.InvokeAsync(request, executionCancellation.Token).ConfigureAwait(false)
+                    : await AwaitBoundedAsync(_transport.InvokeAsync(request, deadline.Token), deadline.Token)
+                        .ConfigureAwait(false);
                 deadline.Token.ThrowIfCancellationRequested();
                 var result = AiMcpToolResponseReader.Read(response, request.RequestId);
                 deadline.Token.ThrowIfCancellationRequested();

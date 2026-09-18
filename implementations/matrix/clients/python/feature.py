@@ -9,6 +9,8 @@ import json
 import os
 import sys
 import uuid
+import urllib.parse
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -30,6 +32,7 @@ from multiplexed_ai_sdk import (  # noqa: E402
     AiSdkPipelineDefinition,
     AiSdkPipelinePublicationRequest,
     AiSdkPipelineStepDefinition,
+    AiSdkPipelineStepExecutionDefinition,
     AiSdkPublicationCallSite,
     AiSdkPublicationDependencyPackage,
     AiSdkPublicationDependencyPackageKind,
@@ -60,6 +63,8 @@ async def main() -> int:
         document = await _run_custom_policy_family(client, args)
     elif args.feature == "nested-child-dag":
         document = await _run_nested_child_dag(client, args)
+    elif args.feature == "mcp-effect-evidence":
+        document = await _run_mcp_effect_evidence(client, args)
     else:
         raise ValueError(f"Unsupported feature '{args.feature}'.")
 
@@ -272,6 +277,137 @@ async def _run_custom_policy_family(client: AiSdkClient, args: argparse.Namespac
         "expectedTerminalStatus": expected_status.value,
         "terminalStatus": result.status.value,
         "failureCode": result.failure.code if result.failure else None,
+        "evidence": evidence,
+        "recordedAtUtc": terminal.updated_at_utc or None,
+    }
+
+
+async def _run_mcp_effect_evidence(client: AiSdkClient, args: argparse.Namespace) -> dict[str, object]:
+    effect_case = args.effect_case
+    if effect_case not in {"completed-local-replay", "uncertain-blocks-blind-resend"}:
+        raise ValueError("mcp-effect-evidence requires a supported effect case.")
+    if not args.effect_probe_state_endpoint or not args.effect_evidence_endpoint:
+        raise RuntimeError("MCP effect evidence scenarios require matrix diagnostics endpoints from the runtime manifest.")
+
+    tool = "probe.fail-count" if effect_case == "completed-local-replay" else "probe.slow-count"
+    step_input: dict[str, object] = {"scenario": args.scenario_id}
+    if effect_case == "uncertain-blocks-blind-resend":
+        step_input["milliseconds"] = 10000
+
+    definition = AiSdkPipelineDefinition(
+        name=f"matrix-feature-mcp-effect-{effect_case}",
+        version="v1",
+        execution_mode=AiSdkExecutionMode.DAG,
+        steps=(
+            AiSdkPipelineStepDefinition(
+                name="effect",
+                step_key="mcp.tool",
+                order=1,
+                invocation=AiSdkInvocationDefinition(
+                    kind=AiSdkInvocationKind.MCP,
+                    connection_ref="matrix-effect-probe",
+                    tool=tool,
+                ),
+                input=step_input,
+                execution=AiSdkPipelineStepExecutionDefinition(
+                    max_retries=1,
+                    retry_delay_ms=50,
+                ),
+            ),
+        ),
+    )
+    publication = await client.publish_pipeline(AiSdkPipelinePublicationRequest(definition=definition))
+    submitted = await client.submit_execution(
+        AiSdkExecutionSubmissionRequest(
+            publication_ref=publication.publication_ref,
+            idempotency_key=f"{args.scenario_id}-{uuid.uuid4().hex}",
+            input={"feature": "mcp-effect-evidence", "case": effect_case},
+            metadata=_metadata(args) | {"matrix.effectCase": effect_case},
+        )
+    )
+    terminal = await _wait_for_terminal(client, submitted.execution_id, 45.0)
+    result = await client.get_execution_result(submitted.execution_id)
+    if result.status != AiSdkExecutionStatus.FAILED:
+        raise RuntimeError(
+            f"MCP effect evidence scenario '{effect_case}' ended as '{result.status.value}', expected 'Failed'."
+        )
+
+    step = next((item for item in terminal.steps if item.name == "effect"), None)
+    if step is None or step.status != AiSdkExecutionStepStatus.FAILED:
+        raise RuntimeError("MCP effect evidence scenario did not retain the failed effect step observation.")
+
+    evidence_url = (
+        f"{args.effect_evidence_endpoint.rstrip('/')}/"
+        f"{urllib.parse.quote(submitted.execution_id, safe='')}/effect"
+    )
+    probe_url = (
+        f"{args.effect_probe_state_endpoint.rstrip('/')}/"
+        f"{urllib.parse.quote(args.scenario_id, safe='')}"
+    )
+    durable = await _read_json(evidence_url)
+    probe = await _read_json(probe_url)
+
+    expected_status = "Completed" if effect_case == "completed-local-replay" else "Uncertain"
+    if durable.get("status") != expected_status:
+        raise RuntimeError(
+            f"Durable MCP effect evidence ended as '{durable.get('status')}', expected '{expected_status}'."
+        )
+    if durable.get("retryCount") != 1:
+        raise RuntimeError(
+            f"MCP effect step retry count was '{durable.get('retryCount')}', expected exactly one logical retry."
+        )
+    if probe.get("physicalCallCount") != 1:
+        raise RuntimeError(
+            f"MCP effect probe observed '{probe.get('physicalCallCount')}' physical calls; blind re-emission was not fenced."
+        )
+
+    if effect_case == "completed-local-replay":
+        if durable.get("resultIsError") is not True or durable.get("uncertaintyReasonCode") is not None:
+            raise RuntimeError("Completed MCP effect evidence did not preserve the confirmed remote tool-error result.")
+        evidence = [
+            "publish",
+            "submit",
+            "durable-effect-completed",
+            "logical-retry-observed",
+            "completed-result-replayed-locally",
+            "single-physical-tools-call",
+            "terminal-result",
+        ]
+    else:
+        if durable.get("resultIsError") is not None or durable.get("uncertaintyReasonCode") != "transport-timeout":
+            raise RuntimeError("Uncertain MCP effect evidence did not preserve the transport-timeout uncertainty proof.")
+        evidence = [
+            "publish",
+            "submit",
+            "durable-effect-uncertain",
+            "logical-retry-observed",
+            "blind-resend-blocked",
+            "single-physical-tools-call",
+            "terminal-result",
+        ]
+
+    return {
+        "schemaVersion": 1,
+        "scenarioId": args.scenario_id,
+        "status": "passed",
+        "coverageTarget": "mcp-effect-evidence",
+        "coverageValues": [effect_case],
+        "clientLanguage": "python",
+        "workerLanguage": None,
+        "endpoint": args.endpoint,
+        "topology": args.topology,
+        "provider": args.provider,
+        "publicationRef": publication.publication_ref,
+        "executionId": submitted.execution_id,
+        "terminalStatus": result.status.value,
+        "stepStatus": step.status.value,
+        "durableEvidenceStatus": durable.get("status"),
+        "durableEvidenceRevision": durable.get("revision"),
+        "effectId": durable.get("effectId"),
+        "retryCount": durable.get("retryCount"),
+        "physicalCallCount": probe.get("physicalCallCount"),
+        "durableResultIsError": durable.get("resultIsError"),
+        "uncertaintyReasonCode": durable.get("uncertaintyReasonCode"),
         "evidence": evidence,
         "recordedAtUtc": terminal.updated_at_utc or None,
     }
@@ -901,11 +1037,22 @@ async def _wait_for_terminal(client: AiSdkClient, execution_id: str, timeout_sec
     raise TimeoutError(f"Execution '{execution_id}' did not become terminal within {timeout_seconds} seconds.")
 
 
+async def _read_json(url: str) -> dict[str, object]:
+    def read() -> dict[str, object]:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            document = json.loads(response.read().decode("utf-8"))
+        if not isinstance(document, dict):
+            raise RuntimeError(f"Matrix diagnostics endpoint '{url}' did not return a JSON object.")
+        return document
+
+    return await asyncio.to_thread(read)
+
+
 def _metadata(args: argparse.Namespace) -> dict[str, str]:
     return {
         "matrix.scenario": args.scenario_id,
         "matrix.client": "python",
-        "matrix.worker": args.worker,
+        "matrix.worker": args.worker or "none",
         "matrix.feature": args.feature,
     }
 
@@ -921,10 +1068,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--feature",
         required=True,
-        choices=("publication-pinning", "deterministic-dependency-packaging", "custom-policy-family", "nested-child-dag"),
+        choices=("publication-pinning", "deterministic-dependency-packaging", "custom-policy-family", "nested-child-dag", "mcp-effect-evidence"),
     )
-    parser.add_argument("--worker", required=True, choices=("dotnet", "typescript", "python"))
+    parser.add_argument("--worker", choices=("dotnet", "typescript", "python"))
     parser.add_argument("--policy-family", choices=("concurrency", "retry", "delegation"))
+    parser.add_argument("--effect-case", choices=("completed-local-replay", "uncertain-blocks-blind-resend"))
     parser.add_argument("--scenario-id", required=True)
     parser.add_argument("--evidence", required=True)
     parser.add_argument("--endpoint")
@@ -934,25 +1082,38 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--access-context-header", default="X-Access-Context")
     parser.add_argument("--topology", default="local")
     parser.add_argument("--provider", default="ProcessHostPool")
+    parser.add_argument("--effect-probe-state-endpoint")
+    parser.add_argument("--effect-evidence-endpoint")
     parser.add_argument("--manifest")
     args = parser.parse_args()
 
     if args.manifest:
         manifest = json.loads(Path(args.manifest).resolve().read_text(encoding="utf-8-sig"))
         args.endpoint = args.endpoint or manifest["endpoint"]
-        args.environment_ref = args.environment_ref or manifest["environmentRefs"][args.worker]
+        if args.worker:
+            args.environment_ref = args.environment_ref or manifest["environmentRefs"][args.worker]
         args.token = args.token or manifest.get("bearerToken")
         args.access_context = args.access_context or manifest.get("accessContext")
         args.access_context_header = manifest.get("accessContextHeader", args.access_context_header)
         args.topology = manifest.get("topology", args.topology)
         args.provider = manifest.get("provider", args.provider)
+        args.effect_probe_state_endpoint = args.effect_probe_state_endpoint or manifest.get("effectProbeStateEndpoint")
+        args.effect_evidence_endpoint = args.effect_evidence_endpoint or manifest.get("effectEvidenceEndpoint")
 
-    if not args.endpoint or not args.environment_ref:
-        parser.error("--endpoint and --environment-ref are required unless --manifest supplies them")
+    if not args.endpoint:
+        parser.error("--endpoint is required unless --manifest supplies it")
+    if args.feature != "mcp-effect-evidence" and (not args.worker or not args.environment_ref):
+        parser.error("--worker and --environment-ref are required for hosted feature scenarios")
+    if args.feature == "mcp-effect-evidence" and args.worker:
+        parser.error("--worker is not used by mcp-effect-evidence")
     if args.feature == "custom-policy-family" and not args.policy_family:
         parser.error("--policy-family is required for custom-policy-family")
     if args.feature != "custom-policy-family" and args.policy_family:
         parser.error("--policy-family is valid only for custom-policy-family")
+    if args.feature == "mcp-effect-evidence" and not args.effect_case:
+        parser.error("--effect-case is required for mcp-effect-evidence")
+    if args.feature != "mcp-effect-evidence" and args.effect_case:
+        parser.error("--effect-case is valid only for mcp-effect-evidence")
     return args
 
 

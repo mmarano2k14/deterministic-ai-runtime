@@ -47,7 +47,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     Trn(options, "code", "publication", "execute"),
                     Trn(options, "shared-run", "execution", "submit"),
                     Trn(options, "execution", "control", "read"),
-                    Trn(options, "execution", "control", "cancel")
+                    Trn(options, "execution", "control", "cancel"),
+                    Trn(options, "mcp-effect", "probe", "invoke")
                 }, StringComparer.Ordinal)
             };
             var context = new RbacExecutionContext
@@ -71,6 +72,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 accessContextHeader = "X-Access-Context",
                 topology = options.Topology,
                 provider = options.Provider,
+                effectProbeStateEndpoint = options.EffectProbeStateEndpoint,
+                effectEvidenceEndpoint = options.EffectEvidenceEndpoint,
                 environmentRefs = new
                 {
                     dotnet = _environments.DotNetReference,

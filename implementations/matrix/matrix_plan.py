@@ -8,6 +8,7 @@ from typing import Any
 CLIENT_LANGUAGES = ("dotnet", "typescript", "python")
 WORKER_LANGUAGES = ("dotnet", "typescript", "python")
 CUSTOM_POLICY_FAMILIES = ("concurrency", "retry", "delegation")
+MCP_EFFECT_VALUES = ("completed-local-replay", "uncertain-blocks-blind-resend")
 DEPENDENCY_PACKAGE_BY_WORKER = {
     "dotnet": "DotNetAssemblyClosure",
     "typescript": "NodeLockedBundle",
@@ -98,6 +99,7 @@ def validate_plan(plan: dict[str, Any]) -> list[str]:
     _validate_initial_feature_bindings(errors, plan.get("featureScenarios"))
     _validate_custom_policy_bindings(errors, plan.get("featureScenarios"))
     _validate_nested_child_dag_bindings(errors, plan.get("featureScenarios"))
+    _validate_mcp_effect_bindings(errors, plan.get("featureScenarios"))
 
     return errors
 
@@ -210,6 +212,10 @@ def _validate_coverage_targets(errors: list[str], value: Any) -> None:
     policy = by_id.get("custom-policy-family", {})
     if tuple(policy.get("requiredValues", [])) != CUSTOM_POLICY_FAMILIES:
         errors.append("custom-policy-family must require only concurrency, retry and delegation.")
+
+    mcp_effect = by_id.get("mcp-effect-evidence", {})
+    if tuple(mcp_effect.get("requiredValues", [])) != MCP_EFFECT_VALUES:
+        errors.append("mcp-effect-evidence must require completed local replay and uncertain blind-resend fencing.")
 
 
 def _validate_feature_scenarios(errors: list[str], value: Any) -> None:
@@ -346,6 +352,36 @@ def _validate_nested_child_dag_bindings(errors: list[str], value: Any) -> None:
         errors.append("nested-child-dag feature bindings must not invent coverage values.")
     if any(scenario.get("executor") is None for scenario in bound):
         errors.append("nested-child-dag feature bindings require executable client bindings.")
+
+
+def _validate_mcp_effect_bindings(errors: list[str], value: Any) -> None:
+    if not isinstance(value, list):
+        return
+
+    bound = [
+        scenario for scenario in value
+        if isinstance(scenario, dict) and scenario.get("coverageTarget") == "mcp-effect-evidence"
+    ]
+    if len(bound) != len(MCP_EFFECT_VALUES):
+        errors.append("mcp-effect-evidence feature bindings must contain exactly the two durable evidence cases.")
+        return
+
+    observed: set[str] = set()
+    for scenario in bound:
+        values = scenario.get("coverageValues")
+        if not isinstance(values, list) or len(values) != 1 or values[0] not in MCP_EFFECT_VALUES:
+            errors.append("mcp-effect-evidence feature bindings must declare exactly one supported evidence value.")
+            continue
+        observed.add(values[0])
+        if scenario.get("clientLanguage") != "python":
+            errors.append("mcp-effect-evidence feature bindings currently execute through the Python external SDK client.")
+        if scenario.get("workerLanguage") is not None:
+            errors.append("mcp-effect-evidence is language-free and must not claim a hosted worker language.")
+        if scenario.get("executor") is None:
+            errors.append("mcp-effect-evidence feature bindings require executable client bindings.")
+
+    if observed != set(MCP_EFFECT_VALUES):
+        errors.append("mcp-effect-evidence feature bindings must cover both durable evidence cases exactly once.")
 
 
 def _validate_executor(errors: list[str], prefix: str, executor: Any) -> None:
