@@ -36,6 +36,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             app.MapHealthChecks("/health");
             ConfigureMatrixMcpEffectEvidenceEndpoint(app);
+            ConfigureMatrixRecoveryAndJournalEndpoints(app);
 
             switch (hostOptions.Mode)
             {
@@ -141,6 +142,62 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                         retryCount = step?.RetryState?.RetryCount,
                         stepStatus = step?.Status.ToString()
                     });
+                });
+        }
+
+        /// <summary>
+        /// Exposes matrix-only recovery and durable result-acceptance probes through production authorities.
+        /// These endpoints are disabled for every normal host.
+        /// </summary>
+        private static void ConfigureMatrixRecoveryAndJournalEndpoints(WebApplication app)
+        {
+            var matrix = app.Configuration.GetSection("AiMatrixHarness").Get<AiMatrixHarnessOptions>()
+                ?? new AiMatrixHarnessOptions();
+            if (!matrix.Enabled)
+            {
+                return;
+            }
+
+            app.MapPost(
+                "/matrix/recovery/{recoveryCase}/{executionId}",
+                async (
+                    string recoveryCase,
+                    string executionId,
+                    MatrixRecoverySeedRequest seed,
+                    MatrixRecoveryProbe probe,
+                    CancellationToken cancellationToken) =>
+                {
+                    try
+                    {
+                        var result = await probe
+                            .RunAsync(recoveryCase, executionId, seed, cancellationToken)
+                            .ConfigureAwait(false);
+                        return (IResult)Results.Ok(result);
+                    }
+                    catch (Exception exception)
+                    {
+                        return (IResult)Results.Json(
+                            new
+                            {
+                                error = "matrix-recovery-probe-failed",
+                                exceptionType = exception.GetType().Name,
+                                message = exception.Message
+                            },
+                            statusCode: StatusCodes.Status500InternalServerError);
+                    }
+                });
+
+            app.MapPost(
+                "/matrix/journal-result-acceptance/{acceptanceCase}",
+                async (
+                    string acceptanceCase,
+                    MatrixJournalResultAcceptanceProbe probe,
+                    CancellationToken cancellationToken) =>
+                {
+                    var result = await probe
+                        .RunAsync(acceptanceCase, cancellationToken)
+                        .ConfigureAwait(false);
+                    return Results.Ok(result);
                 });
         }
 

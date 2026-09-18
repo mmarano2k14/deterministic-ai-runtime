@@ -63,6 +63,38 @@ run_effect_feature() {
   python /app/implementations/matrix/clients/python/feature.py     --manifest "$MANIFEST"     --feature mcp-effect-evidence     --effect-case "$effect_case"     --scenario-id "$scenario"     --evidence "$evidence"
 }
 
+run_recovery_feature() {
+  recovery_case="$1"
+  case "$recovery_case" in
+    in-flight-resume) scenario="feature-recovery-in-flight-resume-python-client" ;;
+    local-queued-redispatch) scenario="feature-recovery-local-queued-redispatch-python-client" ;;
+    *) echo "unknown recovery case: $recovery_case" >&2; exit 2 ;;
+  esac
+  evidence="/matrix/evidence/${scenario}.json"
+  python /app/implementations/matrix/clients/python/feature.py \
+    --manifest "$MANIFEST" \
+    --feature recovery \
+    --recovery-case "$recovery_case" \
+    --scenario-id "$scenario" \
+    --evidence "$evidence"
+}
+
+run_journal_feature() {
+  journal_case="$1"
+  case "$journal_case" in
+    accepted-result-replay) scenario="feature-journal-result-accepted-replay-python-client" ;;
+    duplicate-delivery-convergence) scenario="feature-journal-duplicate-delivery-convergence-python-client" ;;
+    *) echo "unknown journal acceptance case: $journal_case" >&2; exit 2 ;;
+  esac
+  evidence="/matrix/evidence/${scenario}.json"
+  python /app/implementations/matrix/clients/python/feature.py \
+    --manifest "$MANIFEST" \
+    --feature journal-result-acceptance \
+    --journal-case "$journal_case" \
+    --scenario-id "$scenario" \
+    --evidence "$evidence"
+}
+
 run_cancellation_feature() {
   scenario="feature-cancellation-${LANGUAGE}-client-${LANGUAGE}-worker"
   evidence="/matrix/evidence/${scenario}.json"
@@ -103,4 +135,10 @@ if [ "$LANGUAGE" = "python" ]; then
 
   run_effect_feature completed-local-replay
   run_effect_feature uncertain-blocks-blind-resend
+
+  run_recovery_feature in-flight-resume
+  run_recovery_feature local-queued-redispatch
+
+  run_journal_feature accepted-result-replay
+  run_journal_feature duplicate-delivery-convergence
 fi

@@ -21,6 +21,8 @@ FEATURE_TARGETS = {
     "custom-policy-family",
     "nested-child-dag",
     "mcp-effect-evidence",
+    "recovery",
+    "journal-result-acceptance",
 }
 
 
@@ -86,6 +88,10 @@ def _command_for(scenario: dict[str, Any], manifest: Path) -> list[str]:
         command.extend(["--policy-family", scenario["coverageValues"][0]])
     if scenario["coverageTarget"] == "mcp-effect-evidence":
         command.extend(["--effect-case", scenario["coverageValues"][0]])
+    if scenario["coverageTarget"] == "recovery":
+        command.extend(["--recovery-case", scenario["coverageValues"][0]])
+    if scenario["coverageTarget"] == "journal-result-acceptance":
+        command.extend(["--journal-case", scenario["coverageValues"][0]])
     return command
 
 

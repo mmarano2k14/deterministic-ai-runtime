@@ -77,6 +77,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     InvocationTimeout = TimeSpan.FromSeconds(2)
                 });
 
+            services.AddSingleton<MatrixRecoveryProbe>();
+            services.AddSingleton<MatrixJournalResultAcceptanceProbe>();
             services.AddHostedService<MatrixHarnessBootstrapHostedService>();
         }
     }

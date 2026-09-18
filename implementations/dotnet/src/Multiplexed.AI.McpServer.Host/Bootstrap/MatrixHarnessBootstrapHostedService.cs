@@ -74,6 +74,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 provider = options.Provider,
                 effectProbeStateEndpoint = options.EffectProbeStateEndpoint,
                 effectEvidenceEndpoint = options.EffectEvidenceEndpoint,
+                recoveryEndpoint = options.RecoveryEndpoint,
+                journalResultAcceptanceEndpoint = options.JournalResultAcceptanceEndpoint,
                 environmentRefs = new
                 {
                     dotnet = _environments.DotNetReference,

@@ -14,7 +14,9 @@ from matrix_plan import (  # noqa: E402
     CLIENT_LANGUAGES,
     CUSTOM_POLICY_FAMILIES,
     DEPENDENCY_PACKAGE_BY_WORKER,
+    JOURNAL_RESULT_ACCEPTANCE_VALUES,
     MCP_EFFECT_VALUES,
+    RECOVERY_VALUES,
     REQUIRED_COVERAGE_TARGETS,
     WORKER_LANGUAGES,
     load_plan,
@@ -147,9 +149,9 @@ class MatrixPlanTests(unittest.TestCase):
         errors = validate_plan(invalid)
         self.assertTrue(any("coverageTarget is unsupported" in error for error in errors))
 
-    def test_current_process_feature_matrix_binds_seventeen_scenarios(self):
+    def test_current_process_feature_matrix_binds_twenty_one_scenarios(self):
         plan = self.plan
-        self.assertEqual(17, len(plan["featureScenarios"]))
+        self.assertEqual(21, len(plan["featureScenarios"]))
         counts = {}
         for scenario in plan["featureScenarios"]:
             counts[scenario["coverageTarget"]] = counts.get(scenario["coverageTarget"], 0) + 1
@@ -158,6 +160,9 @@ class MatrixPlanTests(unittest.TestCase):
         self.assertEqual(3, counts.get("custom-policy-family"))
         self.assertEqual(3, counts.get("nested-child-dag"))
         self.assertEqual(2, counts.get("mcp-effect-evidence"))
+        self.assertEqual(3, counts.get("cancellation"))
+        self.assertEqual(2, counts.get("recovery"))
+        self.assertEqual(2, counts.get("journal-result-acceptance"))
 
     def test_mcp_effect_feature_bindings_cover_exact_durable_cases(self) -> None:
         scenarios = [
@@ -178,6 +183,49 @@ class MatrixPlanTests(unittest.TestCase):
         ]
         errors = validate_plan(invalid)
         self.assertTrue(any("mcp-effect-evidence feature bindings" in error for error in errors))
+
+    def test_recovery_feature_bindings_cover_exact_recovery_paths(self) -> None:
+        scenarios = [
+            item for item in self.plan["featureScenarios"]
+            if item["coverageTarget"] == "recovery"
+        ]
+        self.assertEqual(2, len(scenarios))
+        self.assertEqual(set(RECOVERY_VALUES), {item["coverageValues"][0] for item in scenarios})
+        self.assertTrue(all(item["clientLanguage"] == "python" for item in scenarios))
+        self.assertTrue(all(item["workerLanguage"] is None for item in scenarios))
+        self.assertTrue(all(item["executor"] is not None for item in scenarios))
+
+    def test_missing_recovery_path_fails_closed(self) -> None:
+        invalid = copy.deepcopy(self.plan)
+        invalid["featureScenarios"] = [
+            item for item in invalid["featureScenarios"]
+            if item["id"] != "feature-recovery-local-queued-redispatch-python-client"
+        ]
+        errors = validate_plan(invalid)
+        self.assertTrue(any("recovery feature bindings" in error for error in errors))
+
+    def test_journal_result_acceptance_bindings_cover_exact_cases(self) -> None:
+        scenarios = [
+            item for item in self.plan["featureScenarios"]
+            if item["coverageTarget"] == "journal-result-acceptance"
+        ]
+        self.assertEqual(2, len(scenarios))
+        self.assertEqual(
+            set(JOURNAL_RESULT_ACCEPTANCE_VALUES),
+            {item["coverageValues"][0] for item in scenarios},
+        )
+        self.assertTrue(all(item["clientLanguage"] == "python" for item in scenarios))
+        self.assertTrue(all(item["workerLanguage"] is None for item in scenarios))
+        self.assertTrue(all(item["executor"] is not None for item in scenarios))
+
+    def test_missing_journal_acceptance_case_fails_closed(self) -> None:
+        invalid = copy.deepcopy(self.plan)
+        invalid["featureScenarios"] = [
+            item for item in invalid["featureScenarios"]
+            if item["id"] != "feature-journal-duplicate-delivery-convergence-python-client"
+        ]
+        errors = validate_plan(invalid)
+        self.assertTrue(any("journal-result-acceptance feature bindings" in error for error in errors))
 
     def test_nested_child_dag_feature_bindings_cover_all_hosted_languages(self) -> None:
         scenarios = [
@@ -201,7 +249,7 @@ class MatrixPlanTests(unittest.TestCase):
 
     def test_matrix_readme_records_mcp_effect_evidence_as_current_coverage(self):
         readme = (MATRIX_ROOT / "README.md").read_text(encoding="utf-8-sig")
-        self.assertIn("fourteen currently bound feature scenarios", readme)
+        self.assertIn("eighteen currently bound Python-driven feature scenarios", readme)
         self.assertIn("three hosted custom-policy scenarios", readme)
         self.assertIn("three nested Child DAG scenarios", readme)
         self.assertIn("two durable MCP effect evidence scenarios", readme)

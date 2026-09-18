@@ -83,6 +83,7 @@ try {
     $env:AiSharedQueueBackgroundService__Enabled = "true"
     $env:AiSharedQueuePump__Enabled = "true"
     $env:AiLocalRuntimeInstancePool__Enabled = "true"
+    $env:AiLocalRuntimeInstancePool__InstanceCount = "2"
     $env:ConnectionStrings__Redis = "localhost:6379"
     $env:ConnectionStrings__Mongo = "mongodb://localhost:27017"
     $env:Mongo__DatabaseName = "multiplexed-ai-matrix"
@@ -148,6 +149,8 @@ try {
     $env:AiMatrixHarness__EffectProbeMcpEndpoint = "http://127.0.0.1:8090/mcp"
     $env:AiMatrixHarness__EffectProbeStateEndpoint = "http://localhost:8090/state"
     $env:AiMatrixHarness__EffectEvidenceEndpoint = "http://localhost:8081/matrix/mcp-effect-evidence"
+    $env:AiMatrixHarness__RecoveryEndpoint = "http://localhost:8081/matrix/recovery"
+    $env:AiMatrixHarness__JournalResultAcceptanceEndpoint = "http://localhost:8081/matrix/journal-result-acceptance"
     $env:MATRIX_FIXTURE_ROOT = $fixtureRoot
 
     $effectProbe = Start-Process -FilePath $dotnet -ArgumentList @((Join-Path $effectProbeOut "Multiplexed.AI.Matrix.McpEffectProbe.dll"), "--urls", "http://127.0.0.1:8090") -PassThru -NoNewWindow

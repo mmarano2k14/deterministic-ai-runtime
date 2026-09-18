@@ -9,6 +9,8 @@ CLIENT_LANGUAGES = ("dotnet", "typescript", "python")
 WORKER_LANGUAGES = ("dotnet", "typescript", "python")
 CUSTOM_POLICY_FAMILIES = ("concurrency", "retry", "delegation")
 MCP_EFFECT_VALUES = ("completed-local-replay", "uncertain-blocks-blind-resend")
+RECOVERY_VALUES = ("in-flight-resume", "local-queued-redispatch")
+JOURNAL_RESULT_ACCEPTANCE_VALUES = ("accepted-result-replay", "duplicate-delivery-convergence")
 DEPENDENCY_PACKAGE_BY_WORKER = {
     "dotnet": "DotNetAssemblyClosure",
     "typescript": "NodeLockedBundle",
@@ -100,6 +102,8 @@ def validate_plan(plan: dict[str, Any]) -> list[str]:
     _validate_custom_policy_bindings(errors, plan.get("featureScenarios"))
     _validate_nested_child_dag_bindings(errors, plan.get("featureScenarios"))
     _validate_mcp_effect_bindings(errors, plan.get("featureScenarios"))
+    _validate_recovery_bindings(errors, plan.get("featureScenarios"))
+    _validate_journal_result_acceptance_bindings(errors, plan.get("featureScenarios"))
 
     return errors
 
@@ -216,6 +220,14 @@ def _validate_coverage_targets(errors: list[str], value: Any) -> None:
     mcp_effect = by_id.get("mcp-effect-evidence", {})
     if tuple(mcp_effect.get("requiredValues", [])) != MCP_EFFECT_VALUES:
         errors.append("mcp-effect-evidence must require completed local replay and uncertain blind-resend fencing.")
+
+    recovery = by_id.get("recovery", {})
+    if tuple(recovery.get("requiredValues", [])) != RECOVERY_VALUES:
+        errors.append("recovery must require in-flight resume and local-queued redispatch.")
+
+    journal_acceptance = by_id.get("journal-result-acceptance", {})
+    if tuple(journal_acceptance.get("requiredValues", [])) != JOURNAL_RESULT_ACCEPTANCE_VALUES:
+        errors.append("journal-result-acceptance must require accepted-result replay and duplicate-delivery convergence.")
 
 
 def _validate_feature_scenarios(errors: list[str], value: Any) -> None:
@@ -382,6 +394,70 @@ def _validate_mcp_effect_bindings(errors: list[str], value: Any) -> None:
 
     if observed != set(MCP_EFFECT_VALUES):
         errors.append("mcp-effect-evidence feature bindings must cover both durable evidence cases exactly once.")
+
+
+def _validate_recovery_bindings(errors: list[str], value: Any) -> None:
+    if not isinstance(value, list):
+        return
+
+    bound = [
+        scenario for scenario in value
+        if isinstance(scenario, dict) and scenario.get("coverageTarget") == "recovery"
+    ]
+    if len(bound) != len(RECOVERY_VALUES):
+        errors.append("recovery feature bindings must contain exactly the two supported recovery paths.")
+        return
+
+    observed: set[str] = set()
+    for scenario in bound:
+        values = scenario.get("coverageValues")
+        if not isinstance(values, list) or len(values) != 1 or values[0] not in RECOVERY_VALUES:
+            errors.append("recovery feature bindings must declare exactly one supported recovery value.")
+            continue
+        observed.add(values[0])
+        if scenario.get("clientLanguage") != "python":
+            errors.append("recovery feature bindings currently execute through the Python external SDK driver.")
+        if scenario.get("workerLanguage") is not None:
+            errors.append("recovery coverage is runtime-owned and must not claim one hosted worker language.")
+        if scenario.get("executor") is None:
+            errors.append("recovery feature bindings require executable client bindings.")
+
+    if observed != set(RECOVERY_VALUES):
+        errors.append("recovery feature bindings must cover in-flight resume and local-queued redispatch exactly once.")
+
+
+def _validate_journal_result_acceptance_bindings(errors: list[str], value: Any) -> None:
+    if not isinstance(value, list):
+        return
+
+    bound = [
+        scenario for scenario in value
+        if isinstance(scenario, dict) and scenario.get("coverageTarget") == "journal-result-acceptance"
+    ]
+    if len(bound) != len(JOURNAL_RESULT_ACCEPTANCE_VALUES):
+        errors.append("journal-result-acceptance feature bindings must contain exactly the two supported acceptance cases.")
+        return
+
+    observed: set[str] = set()
+    for scenario in bound:
+        values = scenario.get("coverageValues")
+        if (
+            not isinstance(values, list)
+            or len(values) != 1
+            or values[0] not in JOURNAL_RESULT_ACCEPTANCE_VALUES
+        ):
+            errors.append("journal-result-acceptance bindings must declare exactly one supported acceptance value.")
+            continue
+        observed.add(values[0])
+        if scenario.get("clientLanguage") != "python":
+            errors.append("journal-result-acceptance bindings currently execute through the Python external SDK driver.")
+        if scenario.get("workerLanguage") is not None:
+            errors.append("journal-result-acceptance is journal-owned and must not claim one hosted worker language.")
+        if scenario.get("executor") is None:
+            errors.append("journal-result-acceptance bindings require executable client bindings.")
+
+    if observed != set(JOURNAL_RESULT_ACCEPTANCE_VALUES):
+        errors.append("journal-result-acceptance bindings must cover both acceptance cases exactly once.")
 
 
 def _validate_executor(errors: list[str], prefix: str, executor: Any) -> None:

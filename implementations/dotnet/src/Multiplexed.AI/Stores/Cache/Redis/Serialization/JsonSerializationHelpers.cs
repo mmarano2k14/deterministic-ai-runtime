@@ -91,6 +91,22 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Serialization
                             writer.WriteEndArray();
                         }
                     }
+                    else if (string.Equals(
+                        property.Name,
+                        "ExecutionContextSnapshot",
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        writer.WritePropertyName(property.Name);
+
+                        if (property.Value.ValueKind == JsonValueKind.Object)
+                        {
+                            WriteRepairedExecutionContextSnapshotJson(writer, property.Value);
+                        }
+                        else
+                        {
+                            property.Value.WriteTo(writer);
+                        }
+                    }
                     else
                     {
                         property.WriteTo(writer);
@@ -108,6 +124,87 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Serialization
             }
 
             return Encoding.UTF8.GetString(stream.ToArray());
+        }
+
+        /// <summary>
+        /// Writes an execution-context snapshot while normalizing collection shapes that Redis Lua cjson
+        /// can round-trip as empty JSON objects.
+        /// </summary>
+        private static void WriteRepairedExecutionContextSnapshotJson(
+            Utf8JsonWriter writer,
+            JsonElement snapshot)
+        {
+            writer.WriteStartObject();
+
+            foreach (var property in snapshot.EnumerateObject())
+            {
+                if (string.Equals(property.Name, "Namespaces", StringComparison.OrdinalIgnoreCase))
+                {
+                    writer.WritePropertyName(property.Name);
+
+                    if (property.Value.ValueKind == JsonValueKind.Array)
+                    {
+                        writer.WriteStartArray();
+                        foreach (var namespaceEntry in property.Value.EnumerateArray())
+                        {
+                            if (namespaceEntry.ValueKind == JsonValueKind.Object)
+                            {
+                                WriteRepairedNamespaceEntryJson(writer, namespaceEntry);
+                            }
+                            else
+                            {
+                                namespaceEntry.WriteTo(writer);
+                            }
+                        }
+                        writer.WriteEndArray();
+                    }
+                    else
+                    {
+                        writer.WriteStartArray();
+                        writer.WriteEndArray();
+                    }
+
+                    continue;
+                }
+
+                property.WriteTo(writer);
+            }
+
+            writer.WriteEndObject();
+        }
+
+        /// <summary>
+        /// Writes a namespace entry while guaranteeing that TRN permissions remain a JSON array.
+        /// </summary>
+        private static void WriteRepairedNamespaceEntryJson(
+            Utf8JsonWriter writer,
+            JsonElement namespaceEntry)
+        {
+            writer.WriteStartObject();
+
+            foreach (var property in namespaceEntry.EnumerateObject())
+            {
+                if (string.Equals(property.Name, "Trns", StringComparison.OrdinalIgnoreCase))
+                {
+                    writer.WritePropertyName(property.Name);
+
+                    if (property.Value.ValueKind == JsonValueKind.Array)
+                    {
+                        property.Value.WriteTo(writer);
+                    }
+                    else
+                    {
+                        writer.WriteStartArray();
+                        writer.WriteEndArray();
+                    }
+
+                    continue;
+                }
+
+                property.WriteTo(writer);
+            }
+
+            writer.WriteEndObject();
         }
 
         /// <summary>

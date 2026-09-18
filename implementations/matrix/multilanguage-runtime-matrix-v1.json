@@ -673,6 +673,86 @@
           "python"
         ]
       }
+    },
+    {
+      "id": "feature-recovery-in-flight-resume-python-client",
+      "coverageTarget": "recovery",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [
+        "in-flight-resume"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "recovery",
+          "--recovery-case",
+          "in-flight-resume"
+        ]
+      }
+    },
+    {
+      "id": "feature-recovery-local-queued-redispatch-python-client",
+      "coverageTarget": "recovery",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [
+        "local-queued-redispatch"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "recovery",
+          "--recovery-case",
+          "local-queued-redispatch"
+        ]
+      }
+    },
+    {
+      "id": "feature-journal-result-accepted-replay-python-client",
+      "coverageTarget": "journal-result-acceptance",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [
+        "accepted-result-replay"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "journal-result-acceptance",
+          "--journal-case",
+          "accepted-result-replay"
+        ]
+      }
+    },
+    {
+      "id": "feature-journal-duplicate-delivery-convergence-python-client",
+      "coverageTarget": "journal-result-acceptance",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [
+        "duplicate-delivery-convergence"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "journal-result-acceptance",
+          "--journal-case",
+          "duplicate-delivery-convergence"
+        ]
+      }
     }
   ]
 }

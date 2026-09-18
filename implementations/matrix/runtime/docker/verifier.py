@@ -49,6 +49,14 @@ MCP_EFFECT_EXPECTED = {
     "feature-mcp-effect-completed-local-replay-python-client": ("completed-local-replay", "Completed"),
     "feature-mcp-effect-uncertain-blocks-blind-resend-python-client": ("uncertain-blocks-blind-resend", "Uncertain"),
 }
+RECOVERY_EXPECTED = {
+    "feature-recovery-in-flight-resume-python-client": "in-flight-resume",
+    "feature-recovery-local-queued-redispatch-python-client": "local-queued-redispatch",
+}
+JOURNAL_RESULT_ACCEPTANCE_EXPECTED = {
+    "feature-journal-result-accepted-replay-python-client": "accepted-result-replay",
+    "feature-journal-duplicate-delivery-convergence-python-client": "duplicate-delivery-convergence",
+}
 EXPECTED = [
     *CORE_EXPECTED,
     *FEATURE_EXPECTED,
@@ -56,6 +64,8 @@ EXPECTED = [
     *NESTED_CHILD_DAG_EXPECTED,
     *MCP_EFFECT_EXPECTED,
     *CANCELLATION_EXPECTED,
+    *RECOVERY_EXPECTED,
+    *JOURNAL_RESULT_ACCEPTANCE_EXPECTED,
 ]
 
 
@@ -258,6 +268,99 @@ def _validate_mcp_effect(
     return None
 
 
+def _validate_recovery(
+    scenario: str,
+    document: dict[str, object],
+    recovery_case: str,
+) -> str | None:
+    common = _validate_common(scenario, document)
+    if common:
+        return common
+    if document.get("coverageTarget") != "recovery":
+        return "wrong recovery coverage target"
+    if document.get("coverageValues") != [recovery_case]:
+        return "wrong recovery coverage value"
+    if document.get("clientLanguage") != "python" or document.get("workerLanguage") is not None:
+        return "recovery evidence incorrectly claims a hosted worker"
+    if document.get("runtimeIndexStatus") != "requeued-for-recovery":
+        return "recovery did not durably mark the failed ownership as requeued"
+    if document.get("recoveryAction") != "requeue-shared-run":
+        return "recovery did not use the shared-run requeue transition"
+    if document.get("terminalStatus") != "Completed":
+        return "recovered execution did not converge to Completed"
+
+    evidence = set(document.get("evidence", []))
+    common_required = {"production-recovery-reconciler", "shared-run-requeued-for-recovery", "terminal-result"}
+    if not common_required.issubset(evidence):
+        return "missing common recovery evidence"
+
+    if recovery_case == "in-flight-resume":
+        if document.get("originalExecutionId") != document.get("recoveredExecutionId"):
+            return "in-flight resume changed the durable execution identity"
+        if document.get("activeStatusBeforeRecovery") in {"Completed", "Failed", "Cancelled"}:
+            return "in-flight recovery was not triggered against an active execution"
+        if document.get("activeStepStatusBeforeRecovery") not in {"Running", "WaitingForExternal"}:
+            return "in-flight recovery was not triggered while the step was active"
+        if not {"active-execution-observed", "same-execution-id-resumed"}.issubset(evidence):
+            return "missing in-flight resume evidence"
+        return None
+
+    redispatched = document.get("redispatchedExecutionId")
+    if document.get("preRecoveryExecutionId") is not None:
+        return "local-queued recovery incorrectly carried an execution id before redispatch"
+    if not isinstance(redispatched, str) or not redispatched:
+        return "local-queued recovery did not create an execution after redispatch"
+    if not document.get("replacementRuntimeInstanceId") or not document.get("replacementLocalRunId"):
+        return "local-queued recovery did not prove replacement runtime ownership"
+    if document.get("replacementRuntimeIndexStatus") != "completed":
+        return "local-queued replacement runtime index did not converge to completed"
+    if not {"public-sdk-definition-seed", "local-queued-no-execution-id", "local-queued-ownership-seeded", "healthy-runtime-redispatch", "new-execution-id-created"}.issubset(evidence):
+        return "missing local-queued redispatch evidence"
+    return None
+
+
+def _validate_journal_result_acceptance(
+    scenario: str,
+    document: dict[str, object],
+    acceptance_case: str,
+) -> str | None:
+    common = _validate_common(scenario, document)
+    if common:
+        return common
+    if document.get("coverageTarget") != "journal-result-acceptance":
+        return "wrong journal result-acceptance coverage target"
+    if document.get("coverageValues") != [acceptance_case]:
+        return "wrong journal result-acceptance coverage value"
+    if document.get("clientLanguage") != "python" or document.get("workerLanguage") is not None:
+        return "journal result acceptance incorrectly claims a hosted worker"
+    if document.get("terminalStatus") != "Succeeded" or document.get("continuationStatus") != "Pending":
+        return "journal terminal result or continuation intent is incorrect"
+    if document.get("leaseEpoch") != 1:
+        return "journal acceptance did not preserve epoch-one lease fencing"
+    result_hash = document.get("resultSha256")
+    if not isinstance(result_hash, str) or len(result_hash) != 64:
+        return "journal result hash evidence is missing"
+
+    evidence = set(document.get("evidence", []))
+    if not {"mongo-backed-journal-prepare", "lease-epoch-acquired", "pending-continuation-preserved"}.issubset(evidence):
+        return "missing common journal acceptance evidence"
+
+    if acceptance_case == "accepted-result-replay":
+        if document.get("firstCompletionStatus") != "Accepted" or document.get("replayCompletionStatus") != "AlreadyAccepted":
+            return "accepted result replay did not converge idempotently"
+        if not {"result-accepted", "fresh-journal-reload", "identical-result-replay-already-accepted"}.issubset(evidence):
+            return "missing accepted-result replay evidence"
+        return None
+
+    if document.get("deliveryCount") != 8 or document.get("acceptedCount") != 1:
+        return "duplicate delivery convergence did not produce exactly one accepted result"
+    if document.get("alreadyAcceptedCount") != 7 or document.get("leaseRejectedCount") != 0:
+        return "duplicate delivery convergence did not acknowledge all identical duplicates"
+    if not {"concurrent-duplicate-deliveries", "single-result-accepted", "duplicates-converged-already-accepted"}.issubset(evidence):
+        return "missing duplicate-delivery convergence evidence"
+    return None
+
+
 def _validate_cancellation(
     scenario: str,
     document: dict[str, object],
@@ -366,6 +469,28 @@ def main() -> int:
         else:
             print(f"{scenario}: PASSED")
 
+    for scenario, recovery_case in RECOVERY_EXPECTED.items():
+        document = _load(scenario)
+        if document is None:
+            failures.append(f"{scenario}: missing evidence")
+            continue
+        error = _validate_recovery(scenario, document, recovery_case)
+        if error:
+            failures.append(f"{scenario}: {error}")
+        else:
+            print(f"{scenario}: PASSED")
+
+    for scenario, acceptance_case in JOURNAL_RESULT_ACCEPTANCE_EXPECTED.items():
+        document = _load(scenario)
+        if document is None:
+            failures.append(f"{scenario}: missing evidence")
+            continue
+        error = _validate_journal_result_acceptance(scenario, document, acceptance_case)
+        if error:
+            failures.append(f"{scenario}: {error}")
+        else:
+            print(f"{scenario}: PASSED")
+
     if failures:
         for failure in failures:
             print(failure, file=sys.stderr)
@@ -377,6 +502,8 @@ def main() -> int:
     print("3/3 nested Child DAG ProcessHostPool scenarios passed.")
     print("2/2 durable MCP effect evidence ProcessHostPool scenarios passed.")
     print("3/3 durable cancellation SDK-client scenarios passed.")
+    print("2/2 runtime recovery ProcessHostPool scenarios passed.")
+    print("2/2 durable journal result-acceptance scenarios passed.")
     return 0
 
 

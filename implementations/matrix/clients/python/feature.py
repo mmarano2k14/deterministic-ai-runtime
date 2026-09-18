@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import uuid
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -65,6 +66,10 @@ async def main() -> int:
         document = await _run_nested_child_dag(client, args)
     elif args.feature == "mcp-effect-evidence":
         document = await _run_mcp_effect_evidence(client, args)
+    elif args.feature == "recovery":
+        document = await _run_recovery(client, args)
+    elif args.feature == "journal-result-acceptance":
+        document = await _run_journal_result_acceptance(args)
     else:
         raise ValueError(f"Unsupported feature '{args.feature}'.")
 
@@ -411,6 +416,284 @@ async def _run_mcp_effect_evidence(client: AiSdkClient, args: argparse.Namespace
         "evidence": evidence,
         "recordedAtUtc": terminal.updated_at_utc or None,
     }
+
+
+async def _run_recovery(client: AiSdkClient, args: argparse.Namespace) -> dict[str, object]:
+    recovery_case = args.recovery_case
+    if not args.recovery_endpoint:
+        raise RuntimeError("The runtime manifest did not expose the matrix recovery endpoint.")
+
+    pipeline_name = f"matrix-feature-recovery-{recovery_case}-{uuid.uuid4().hex}"
+    delay_ms = 15000 if recovery_case == "in-flight-resume" else 3000
+    definition = AiSdkPipelineDefinition(
+        name=pipeline_name,
+        version="1",
+        execution_mode=AiSdkExecutionMode.DAG,
+        steps=(
+            AiSdkPipelineStepDefinition(
+                name="work",
+                step_key="delay-step",
+                order=0,
+                config={"delayMs": delay_ms},
+            ),
+        ),
+    )
+    publication = await client.publish_pipeline(
+        AiSdkPipelinePublicationRequest(definition=definition)
+    )
+
+    if recovery_case == "local-queued-redispatch":
+        seed_identity = f"matrix-local-queued-{uuid.uuid4().hex}"
+        recovery = await _post_json(
+            f"{args.recovery_endpoint.rstrip('/')}/{urllib.parse.quote(recovery_case)}/{urllib.parse.quote(seed_identity)}",
+            {
+                "definition": definition.to_wire(),
+                "input": {"feature": "recovery", "case": recovery_case},
+                "metadata": _metadata(args),
+            },
+        )
+        redispatched_execution_id = recovery.get("redispatchedExecutionId")
+        if not isinstance(redispatched_execution_id, str) or not redispatched_execution_id:
+            raise RuntimeError(f"Local-queued recovery did not produce a replacement execution: {recovery!r}")
+        if recovery.get("preRecoveryExecutionId") is not None:
+            raise RuntimeError("Local-queued recovery seed unexpectedly carried a durable execution identity before redispatch.")
+        if recovery.get("indexStatus") != "requeued-for-recovery" or recovery.get("recoveryChanged") is not True:
+            raise RuntimeError(f"Local-queued recovery did not apply the expected durable transition: {recovery!r}")
+        if recovery.get("terminalStatus") != "Completed":
+            raise RuntimeError(
+                f"Redispatched local-queued execution ended as '{recovery.get('terminalStatus')}', expected 'Completed'."
+            )
+        if recovery.get("replacementRuntimeIndexStatus") != "completed":
+            raise RuntimeError(
+                "Redispatched local-queued runtime index did not converge to completed: "
+                f"{recovery.get('replacementRuntimeIndexStatus')!r}."
+            )
+
+        return {
+            "schemaVersion": 1,
+            "scenarioId": args.scenario_id,
+            "status": "passed",
+            "coverageTarget": "recovery",
+            "coverageValues": [recovery_case],
+            "clientLanguage": "python",
+            "workerLanguage": None,
+            "endpoint": args.endpoint,
+            "topology": args.topology,
+            "provider": args.provider,
+            "publicationRef": publication.publication_ref,
+            "seedIdentity": seed_identity,
+            "preRecoveryExecutionId": recovery.get("preRecoveryExecutionId"),
+            "redispatchedExecutionId": redispatched_execution_id,
+            "sharedRunId": recovery.get("sharedRunId"),
+            "failedRuntimeInstanceId": recovery.get("failedRuntimeInstanceId"),
+            "failedLocalRunId": recovery.get("failedLocalRunId"),
+            "replacementRuntimeInstanceId": recovery.get("replacementRuntimeInstanceId"),
+            "replacementLocalRunId": recovery.get("replacementLocalRunId"),
+            "runtimeIndexStatus": recovery.get("indexStatus"),
+            "replacementRuntimeIndexStatus": recovery.get("replacementRuntimeIndexStatus"),
+            "recoveryAction": recovery.get("recoveryAction"),
+            "recoveryReason": recovery.get("recoveryReason"),
+            "recoveryObservedBy": recovery.get("observedBy"),
+            "terminalStatus": recovery.get("terminalStatus"),
+            "evidence": [
+                "public-sdk-definition-seed",
+                "local-queued-no-execution-id",
+                "local-queued-ownership-seeded",
+                "production-recovery-reconciler",
+                "shared-run-requeued-for-recovery",
+                "healthy-runtime-redispatch",
+                "new-execution-id-created",
+                "terminal-result",
+            ],
+            "recordedAtUtc": None,
+        }
+
+    submitted = await client.submit_execution(
+        AiSdkExecutionSubmissionRequest(
+            publication_ref=publication.publication_ref,
+            idempotency_key=f"{args.scenario_id}-{uuid.uuid4().hex}",
+            input={"feature": "recovery", "case": recovery_case},
+            metadata=_metadata(args),
+        )
+    )
+    active = await _wait_for_active_step(client, submitted.execution_id, "work", 30.0)
+    recovery = await _post_json(
+        f"{args.recovery_endpoint.rstrip('/')}/{urllib.parse.quote(recovery_case)}/{urllib.parse.quote(submitted.execution_id)}"
+    )
+    if recovery.get("executionId") != submitted.execution_id:
+        raise RuntimeError("In-flight recovery did not preserve the original durable execution identity.")
+    if recovery.get("indexStatus") != "requeued-for-recovery" or recovery.get("recoveryChanged") is not True:
+        raise RuntimeError(f"In-flight recovery did not apply the expected durable transition: {recovery!r}")
+    failed_runtime_instance_id = recovery.get("failedRuntimeInstanceId")
+    replacement_runtime_instance_id = recovery.get("replacementRuntimeInstanceId")
+    if not isinstance(replacement_runtime_instance_id, str) or not replacement_runtime_instance_id:
+        raise RuntimeError(f"In-flight recovery did not expose replacement runtime ownership: {recovery!r}")
+    if replacement_runtime_instance_id == failed_runtime_instance_id:
+        raise RuntimeError("In-flight recovery reused the failed runtime instead of distinct replacement capacity.")
+
+    observation = await _wait_for_terminal(client, submitted.execution_id, 120.0)
+    result = await client.get_execution_result(submitted.execution_id)
+    if observation.status != AiSdkExecutionStatus.COMPLETED or result.status != AiSdkExecutionStatus.COMPLETED:
+        raise RuntimeError(
+            f"Recovered in-flight execution ended as '{result.status.value}', expected 'Completed'."
+        )
+    active_step = next((candidate for candidate in active.steps if candidate.name == "work"), None)
+    return {
+        "schemaVersion": 1,
+        "scenarioId": args.scenario_id,
+        "status": "passed",
+        "coverageTarget": "recovery",
+        "coverageValues": [recovery_case],
+        "clientLanguage": "python",
+        "workerLanguage": None,
+        "endpoint": args.endpoint,
+        "topology": args.topology,
+        "provider": args.provider,
+        "publicationRef": publication.publication_ref,
+        "executionId": submitted.execution_id,
+        "originalExecutionId": submitted.execution_id,
+        "recoveredExecutionId": submitted.execution_id,
+        "activeStatusBeforeRecovery": active.status.value,
+        "activeStepStatusBeforeRecovery": active_step.status.value if active_step else None,
+        "sharedRunId": recovery.get("sharedRunId"),
+        "failedRuntimeInstanceId": recovery.get("failedRuntimeInstanceId"),
+        "failedLocalRunId": recovery.get("failedLocalRunId"),
+        "replacementRuntimeInstanceId": replacement_runtime_instance_id,
+        "replacementLocalRunId": recovery.get("replacementLocalRunId"),
+        "runtimeIndexStatus": recovery.get("indexStatus"),
+        "recoveryAction": recovery.get("recoveryAction"),
+        "recoveryReason": recovery.get("recoveryReason"),
+        "recoveryObservedBy": recovery.get("observedBy"),
+        "terminalStatus": result.status.value,
+        "evidence": [
+            "publish",
+            "submit",
+            "active-execution-observed",
+            "runtime-ownership-marked-unavailable",
+            "production-recovery-reconciler",
+            "shared-run-requeued-for-recovery",
+            "same-execution-id-resumed",
+            "terminal-result",
+        ],
+        "recordedAtUtc": observation.updated_at_utc or None,
+    }
+
+
+async def _run_journal_result_acceptance(args: argparse.Namespace) -> dict[str, object]:
+    acceptance_case = args.journal_case
+    if not args.journal_result_acceptance_endpoint:
+        raise RuntimeError("The runtime manifest did not expose the matrix journal result-acceptance endpoint.")
+
+    diagnostic = await _post_json(
+        f"{args.journal_result_acceptance_endpoint.rstrip('/')}/{urllib.parse.quote(acceptance_case)}"
+    )
+    if diagnostic.get("acceptanceCase") != acceptance_case:
+        raise RuntimeError("Journal result-acceptance diagnostics returned the wrong case identity.")
+    if diagnostic.get("terminalStatus") != "Succeeded" or diagnostic.get("continuationStatus") != "Pending":
+        raise RuntimeError(f"Journal result acceptance did not persist the expected terminal state: {diagnostic!r}")
+    if diagnostic.get("leaseEpoch") != 1:
+        raise RuntimeError("Journal result acceptance did not preserve the first lease epoch fence.")
+    result_hash = diagnostic.get("resultSha256")
+    if not isinstance(result_hash, str) or len(result_hash) != 64:
+        raise RuntimeError("Journal result acceptance did not expose a durable result hash.")
+
+    if acceptance_case == "accepted-result-replay":
+        if diagnostic.get("firstCompletionStatus") != "Accepted" or diagnostic.get("replayCompletionStatus") != "AlreadyAccepted":
+            raise RuntimeError(f"Accepted result replay was not idempotent: {diagnostic!r}")
+        evidence = [
+            "mongo-backed-journal-prepare",
+            "lease-epoch-acquired",
+            "result-accepted",
+            "fresh-journal-reload",
+            "identical-result-replay-already-accepted",
+            "pending-continuation-preserved",
+        ]
+    else:
+        if diagnostic.get("deliveryCount") != 8:
+            raise RuntimeError("Duplicate-delivery convergence did not execute all eight deliveries.")
+        if diagnostic.get("acceptedCount") != 1 or diagnostic.get("alreadyAcceptedCount") != 7:
+            raise RuntimeError(f"Duplicate deliveries did not converge to one accepted result: {diagnostic!r}")
+        if diagnostic.get("leaseRejectedCount") != 0:
+            raise RuntimeError("Identical duplicate deliveries unexpectedly crossed the lease fence.")
+        evidence = [
+            "mongo-backed-journal-prepare",
+            "lease-epoch-acquired",
+            "concurrent-duplicate-deliveries",
+            "single-result-accepted",
+            "duplicates-converged-already-accepted",
+            "pending-continuation-preserved",
+        ]
+
+    return {
+        "schemaVersion": 1,
+        "scenarioId": args.scenario_id,
+        "status": "passed",
+        "coverageTarget": "journal-result-acceptance",
+        "coverageValues": [acceptance_case],
+        "clientLanguage": "python",
+        "workerLanguage": None,
+        "endpoint": args.endpoint,
+        "topology": args.topology,
+        "provider": args.provider,
+        "operationId": diagnostic.get("operationId"),
+        "firstCompletionStatus": diagnostic.get("firstCompletionStatus"),
+        "replayCompletionStatus": diagnostic.get("replayCompletionStatus"),
+        "deliveryCount": diagnostic.get("deliveryCount"),
+        "acceptedCount": diagnostic.get("acceptedCount"),
+        "alreadyAcceptedCount": diagnostic.get("alreadyAcceptedCount"),
+        "leaseRejectedCount": diagnostic.get("leaseRejectedCount"),
+        "terminalStatus": diagnostic.get("terminalStatus"),
+        "continuationStatus": diagnostic.get("continuationStatus"),
+        "resultSha256": diagnostic.get("resultSha256"),
+        "leaseEpoch": diagnostic.get("leaseEpoch"),
+        "journalRevision": diagnostic.get("revision"),
+        "evidence": evidence,
+    }
+
+
+async def _wait_for_active_step(
+    client: AiSdkClient,
+    execution_id: str,
+    step_name: str,
+    timeout_seconds: float,
+):
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+    while loop.time() < deadline:
+        observation = await client.observe_execution(execution_id)
+        step = next((candidate for candidate in observation.steps if candidate.name == step_name), None)
+        if observation.status not in TERMINAL and step is not None and step.status in {
+            AiSdkExecutionStepStatus.RUNNING,
+            AiSdkExecutionStepStatus.WAITING_FOR_EXTERNAL,
+        }:
+            return observation
+        await asyncio.sleep(0.1)
+    raise TimeoutError(
+        f"Execution '{execution_id}' did not expose active step '{step_name}' within {timeout_seconds} seconds."
+    )
+
+
+async def _post_json(url: str, payload: dict[str, object] | None = None) -> dict[str, object]:
+    def post() -> dict[str, object]:
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload or {}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                document = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            body = error.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"Matrix diagnostics endpoint '{url}' returned HTTP {error.code}: {body}"
+            ) from error
+        if not isinstance(document, dict):
+            raise RuntimeError(f"Matrix diagnostics endpoint '{url}' did not return a JSON object.")
+        return document
+
+    return await asyncio.to_thread(post)
 
 
 async def _run_nested_child_dag(client: AiSdkClient, args: argparse.Namespace) -> dict[str, object]:
@@ -1068,11 +1351,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--feature",
         required=True,
-        choices=("publication-pinning", "deterministic-dependency-packaging", "custom-policy-family", "nested-child-dag", "mcp-effect-evidence"),
+        choices=("publication-pinning", "deterministic-dependency-packaging", "custom-policy-family", "nested-child-dag", "mcp-effect-evidence", "recovery", "journal-result-acceptance"),
     )
     parser.add_argument("--worker", choices=("dotnet", "typescript", "python"))
     parser.add_argument("--policy-family", choices=("concurrency", "retry", "delegation"))
     parser.add_argument("--effect-case", choices=("completed-local-replay", "uncertain-blocks-blind-resend"))
+    parser.add_argument("--recovery-case", choices=("in-flight-resume", "local-queued-redispatch"))
+    parser.add_argument("--journal-case", choices=("accepted-result-replay", "duplicate-delivery-convergence"))
     parser.add_argument("--scenario-id", required=True)
     parser.add_argument("--evidence", required=True)
     parser.add_argument("--endpoint")
@@ -1084,6 +1369,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--provider", default="ProcessHostPool")
     parser.add_argument("--effect-probe-state-endpoint")
     parser.add_argument("--effect-evidence-endpoint")
+    parser.add_argument("--recovery-endpoint")
+    parser.add_argument("--journal-result-acceptance-endpoint")
     parser.add_argument("--manifest")
     args = parser.parse_args()
 
@@ -1099,13 +1386,16 @@ def _parse_args() -> argparse.Namespace:
         args.provider = manifest.get("provider", args.provider)
         args.effect_probe_state_endpoint = args.effect_probe_state_endpoint or manifest.get("effectProbeStateEndpoint")
         args.effect_evidence_endpoint = args.effect_evidence_endpoint or manifest.get("effectEvidenceEndpoint")
+        args.recovery_endpoint = args.recovery_endpoint or manifest.get("recoveryEndpoint")
+        args.journal_result_acceptance_endpoint = args.journal_result_acceptance_endpoint or manifest.get("journalResultAcceptanceEndpoint")
 
     if not args.endpoint:
         parser.error("--endpoint is required unless --manifest supplies it")
-    if args.feature != "mcp-effect-evidence" and (not args.worker or not args.environment_ref):
+    non_hosted_features = {"mcp-effect-evidence", "recovery", "journal-result-acceptance"}
+    if args.feature not in non_hosted_features and (not args.worker or not args.environment_ref):
         parser.error("--worker and --environment-ref are required for hosted feature scenarios")
-    if args.feature == "mcp-effect-evidence" and args.worker:
-        parser.error("--worker is not used by mcp-effect-evidence")
+    if args.feature in non_hosted_features and args.worker:
+        parser.error(f"--worker is not used by {args.feature}")
     if args.feature == "custom-policy-family" and not args.policy_family:
         parser.error("--policy-family is required for custom-policy-family")
     if args.feature != "custom-policy-family" and args.policy_family:
@@ -1114,6 +1404,14 @@ def _parse_args() -> argparse.Namespace:
         parser.error("--effect-case is required for mcp-effect-evidence")
     if args.feature != "mcp-effect-evidence" and args.effect_case:
         parser.error("--effect-case is valid only for mcp-effect-evidence")
+    if args.feature == "recovery" and not args.recovery_case:
+        parser.error("--recovery-case is required for recovery")
+    if args.feature != "recovery" and args.recovery_case:
+        parser.error("--recovery-case is valid only for recovery")
+    if args.feature == "journal-result-acceptance" and not args.journal_case:
+        parser.error("--journal-case is required for journal-result-acceptance")
+    if args.feature != "journal-result-acceptance" and args.journal_case:
+        parser.error("--journal-case is valid only for journal-result-acceptance")
     return args
 
 

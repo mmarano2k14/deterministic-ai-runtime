@@ -512,6 +512,185 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertIn("AiDurableInvocationContinuationStatus.Suppressed", continuation)
 
 
+    def test_increment_six_recovery_harness_is_opt_in_and_uses_production_authorities(self) -> None:
+        registration = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" /
+            "Bootstrap" / "MatrixHarnessRegistration.cs"
+        ).read_text(encoding="utf-8-sig")
+        endpoints = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" /
+            "Bootstrap" / "ApplicationConfiguration.cs"
+        ).read_text(encoding="utf-8-sig")
+        recovery = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" /
+            "Bootstrap" / "MatrixRecoveryProbe.cs"
+        ).read_text(encoding="utf-8-sig")
+
+        self.assertIn("if (!matrix.Enabled)", endpoints)
+        self.assertIn('/matrix/recovery/{recoveryCase}/{executionId}', endpoints)
+        self.assertIn("MatrixRecoverySeedRequest seed", endpoints)
+        self.assertIn("services.AddSingleton<MatrixRecoveryProbe>()", registration)
+        self.assertIn("IAiRuntimeExecutionRecoveryReconciler", recovery)
+        self.assertIn("IAiRuntimeInstanceRegistry", recovery)
+        self.assertIn("IAiRuntimeRunExecutionIndex", recovery)
+        self.assertIn("IAiSharedRunStore", recovery)
+        self.assertIn("IAiSharedQueue", recovery)
+        self.assertIn(".ReconcileAsync(cancellationToken)", recovery)
+        self.assertIn(".MarkUnhealthyAsync", recovery)
+        self.assertNotIn("RedisAi", recovery)
+        self.assertNotIn("MongoAi", recovery)
+
+        feature_client = (MATRIX_ROOT / "clients" / "python" / "feature.py").read_text(encoding="utf-8-sig")
+        self.assertIn("except urllib.error.HTTPError as error", feature_client)
+        self.assertIn("returned HTTP {error.code}", feature_client)
+
+
+    def test_increment_six_recovery_matrix_preprovisions_replacement_runtime_capacity(self) -> None:
+        docker_entrypoint = (MATRIX_ROOT / "runtime" / "docker" / "runtime-entrypoint.sh").read_text()
+        local_runner = (MATRIX_ROOT / "runtime" / "local" / "run.ps1").read_text()
+        recovery = (
+            MATRIX_ROOT.parent
+            / "dotnet"
+            / "src"
+            / "Multiplexed.AI.McpServer.Host"
+            / "Bootstrap"
+            / "MatrixRecoveryProbe.cs"
+        ).read_text()
+
+        self.assertIn('AiLocalRuntimeInstancePool__InstanceCount="2"', docker_entrypoint)
+        self.assertIn('AiLocalRuntimeInstancePool__InstanceCount = "2"', local_runner)
+        self.assertIn("healthyReplacement", recovery)
+        self.assertIn("runtime.Status == AiRuntimeInstanceStatus.Ready", recovery)
+        self.assertIn("runtime.CanAcceptRun", recovery)
+        self.assertIn("availableReplacementRuntimeInstanceId", recovery)
+        self.assertIn("replacementRuntimeInstanceId = reassigned.AssignedRuntimeInstanceId", recovery)
+        self.assertIn("was not reassigned to distinct healthy runtime capacity", recovery)
+
+        feature_client = (MATRIX_ROOT / "clients" / "python" / "feature.py").read_text()
+        self.assertIn('replacement_runtime_instance_id = recovery.get("replacementRuntimeInstanceId")', feature_client)
+        self.assertIn("In-flight recovery reused the failed runtime", feature_client)
+
+    def test_increment_six_recovery_proves_identity_preserving_resume_and_new_identity_redispatch(self) -> None:
+        client = (MATRIX_ROOT / "clients" / "python" / "feature.py").read_text(encoding="utf-8-sig")
+        recovery = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" /
+            "Bootstrap" / "MatrixRecoveryProbe.cs"
+        ).read_text(encoding="utf-8-sig")
+
+        self.assertIn('step_key="delay-step"', client)
+        self.assertNotIn('The local-queued recovery template execution did not complete.', client)
+        self.assertIn('"public-sdk-definition-seed"', client)
+        self.assertIn('"local-queued-no-execution-id"', client)
+        self.assertIn('"same-execution-id-resumed"', client)
+        self.assertIn('"new-execution-id-created"', client)
+        self.assertIn('recovery.get("preRecoveryExecutionId") is not None', client)
+        self.assertIn('"in-flight-resume" => RunInFlightResumeAsync', recovery)
+        self.assertIn('"local-queued-redispatch" => RunLocalQueuedRedispatchAsync', recovery)
+        self.assertIn("ExecutionId = null", recovery)
+        self.assertIn("RequestedExecutionId = null", recovery)
+        self.assertIn("PipelineDefinitionSnapshot = null", recovery)
+        self.assertIn("AiPublicSdkContractMapper.ToInternal(seed.Definition)", recovery)
+        self.assertIn("CreateMatrixExecutionContextSnapshot", recovery)
+        self.assertNotIn("No template shared run exists", recovery)
+        self.assertLess(
+            recovery.index("RegisterQueuedAsync"),
+            recovery.index("// The recovery loop runs every second."),
+        )
+        self.assertIn("AiRunMetadataKeys.CamelCaseSharedRunId", recovery)
+        self.assertNotIn("redispatchedExecutionId = replacement.ExecutionId", recovery)
+        self.assertIn("replacementIndex = await this.runtimeRunIndex", recovery)
+        self.assertIn(".GetAsync(replacement.LocalRunId, cancellationToken)", recovery)
+        self.assertIn("var redispatchedExecutionId = replacementIndex.ExecutionId", recovery)
+        self.assertIn("replacementRuntimeIndexStatus = completedIndex.Status", recovery)
+        self.assertIn("preRecoveryExecutionId = (string?)null", recovery)
+        self.assertIn("this.dagExecutions", recovery)
+
+    def test_increment_six_repairs_redis_lua_empty_execution_context_collections(self) -> None:
+        helper = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI" /
+            "Stores" / "Cache" / "Redis" / "Serialization" / "JsonSerializationHelpers.cs"
+        ).read_text(encoding="utf-8-sig")
+        recovery = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" /
+            "Bootstrap" / "MatrixRecoveryProbe.cs"
+        ).read_text(encoding="utf-8-sig")
+        feature_client = (MATRIX_ROOT / "clients" / "python" / "feature.py").read_text(encoding="utf-8-sig")
+        verifier = (MATRIX_ROOT / "runtime" / "docker" / "verifier.py").read_text(encoding="utf-8-sig")
+
+        self.assertIn("WriteRepairedExecutionContextSnapshotJson", helper)
+        self.assertIn('string.Equals(property.Name, "Namespaces", StringComparison.OrdinalIgnoreCase)', helper)
+        self.assertIn("WriteRepairedNamespaceEntryJson", helper)
+        self.assertIn('string.Equals(property.Name, "Trns", StringComparison.OrdinalIgnoreCase)', helper)
+        self.assertIn("writer.WriteStartArray();", helper)
+        self.assertIn("replacementRuntimeIndexStatus = completedIndex.Status", recovery)
+        self.assertIn('recovery.get("replacementRuntimeIndexStatus") != "completed"', feature_client)
+        self.assertIn('document.get("replacementRuntimeIndexStatus") != "completed"', verifier)
+
+    def test_increment_six_local_queued_seed_is_not_visible_to_the_live_pending_pump(self) -> None:
+        recovery = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" /
+            "Bootstrap" / "MatrixRecoveryProbe.cs"
+        ).read_text(encoding="utf-8-sig")
+        app = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" /
+            "Bootstrap" / "ApplicationConfiguration.cs"
+        ).read_text(encoding="utf-8-sig")
+
+        self.assertIn("Status = AiSharedQueueItemStatus.Dispatched", recovery)
+        self.assertIn("ClaimToken = seedClaimToken", recovery)
+        self.assertIn("ClaimedByRuntimeInstanceId = failedRuntimeInstanceId", recovery)
+        self.assertNotIn(".ClaimAsync(", recovery)
+        self.assertNotIn("AiSharedQueueItemStatus.Pending", recovery)
+        self.assertIn('error = "matrix-recovery-probe-failed"', app)
+        self.assertIn("exceptionType = exception.GetType().Name", app)
+        self.assertIn("message = exception.Message", app)
+        self.assertNotIn("exception.StackTrace", app)
+
+    def test_increment_six_journal_probe_uses_real_store_lease_epoch_and_idempotent_completion(self) -> None:
+        journal = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" /
+            "Bootstrap" / "MatrixJournalResultAcceptanceProbe.cs"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("IAiDurableInvocationStore", journal)
+        self.assertIn("new AiDurableInvocationJournal(this.store)", journal)
+        self.assertIn("TryAcquireLeaseAsync", journal)
+        self.assertIn("AiDurableInvocationCompletionStatus.Accepted", journal)
+        self.assertIn("AiDurableInvocationCompletionStatus.AlreadyAccepted", journal)
+        self.assertIn("Enumerable.Range(0, 8)", journal)
+        self.assertIn("Task.WhenAll(deliveries)", journal)
+        self.assertIn("accepted != 1 || alreadyAccepted != 7 || rejected != 0", journal)
+
+    def test_increment_six_runner_executes_all_four_recovery_and_journal_cases(self) -> None:
+        runner = (MATRIX_ROOT / "runtime" / "docker" / "run-client.sh").read_text(encoding="utf-8-sig")
+        for command in (
+            "run_recovery_feature in-flight-resume",
+            "run_recovery_feature local-queued-redispatch",
+            "run_journal_feature accepted-result-replay",
+            "run_journal_feature duplicate-delivery-convergence",
+        ):
+            self.assertIn(command, runner)
+
+    def test_increment_six_verifier_requires_recovery_and_journal_result_acceptance(self) -> None:
+        verifier = (MATRIX_ROOT / "runtime" / "docker" / "verifier.py").read_text(encoding="utf-8-sig")
+        self.assertIn("RECOVERY_EXPECTED", verifier)
+        self.assertIn("JOURNAL_RESULT_ACCEPTANCE_EXPECTED", verifier)
+        self.assertIn("2/2 runtime recovery ProcessHostPool scenarios passed.", verifier)
+        self.assertIn("2/2 durable journal result-acceptance scenarios passed.", verifier)
+        self.assertIn('document.get("runtimeIndexStatus") != "requeued-for-recovery"', verifier)
+        self.assertIn('document.get("acceptedCount") != 1', verifier)
+        self.assertIn('document.get("alreadyAcceptedCount") != 7', verifier)
+
+    def test_increment_six_plan_raises_executed_gate_to_thirty(self) -> None:
+        plan = load_plan()
+        recovery = [item for item in plan["featureScenarios"] if item["coverageTarget"] == "recovery"]
+        journal = [item for item in plan["featureScenarios"] if item["coverageTarget"] == "journal-result-acceptance"]
+        self.assertEqual(9, len(plan["coreScenarios"]))
+        self.assertEqual(21, len(plan["featureScenarios"]))
+        self.assertEqual({"in-flight-resume", "local-queued-redispatch"}, {item["coverageValues"][0] for item in recovery})
+        self.assertEqual({"accepted-result-replay", "duplicate-delivery-convergence"}, {item["coverageValues"][0] for item in journal})
+        self.assertEqual(30, len(plan["coreScenarios"]) + len(plan["featureScenarios"]))
+
+
 if __name__ == "__main__":
     unittest.main()
 

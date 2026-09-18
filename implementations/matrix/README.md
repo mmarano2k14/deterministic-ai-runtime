@@ -50,7 +50,7 @@ If MongoDB and Redis are already running on their default local ports:
 .\implementations\matrix\runtime\local\run.ps1 -InfrastructureAlreadyRunning
 ```
 
-The local orchestrator publishes the real runtime and .NET worker, stages the same worker-fixture layout used by Docker, starts the runtime with exact installed runtime identities, waits for the matrix manifest, executes the 3 x 3 core matrix, and then executes the fourteen currently bound feature scenarios.
+The local orchestrator publishes the real runtime and .NET worker, stages the same worker-fixture layout used by Docker, starts the runtime with exact installed runtime identities, waits for the matrix manifest, executes the 3 x 3 core matrix, and then executes the eighteen currently bound Python-driven feature scenarios. Cancellation remains exercised independently by all three native SDK client containers.
 
 ## Runtime manifest
 
@@ -95,7 +95,7 @@ Deterministic dependency packaging is exercised once against each hosted worker 
 
 The Docker verifier preserves the original nine core scenarios and additionally requires all six bound feature evidence documents. A successful live run must therefore report both `9/9 production-like Docker ProcessHostPool scenarios passed.` and `6/6 publication-pinning/dependency-package ProcessHostPool feature scenarios passed.`. Until that live run is executed, the feature scenarios remain planned/bound evidence rather than a green claim.
 
-The current ProcessHost coverage remains limited to ProcessHostPool / HostRuntime / TrustedProcess execution. Recovery, replay/result acceptance, and OCI/container-provider isolation remain outside the currently bound scenarios. Durable running cancellation is now exercised by all three external SDK clients.
+The current ProcessHost coverage remains limited to ProcessHostPool / HostRuntime / TrustedProcess execution. Durable recovery and durable journal result acceptance are now exercised below, while OCI/container-provider isolation remains outside the currently bound scenarios. Durable running cancellation is exercised independently by all three external SDK clients.
 
 ### Hosted custom policy family scenarios
 
@@ -132,3 +132,23 @@ The Docker verifier now requires nine core scenarios, six publication/dependency
 ## Cancellation coverage
 
 The Docker ProcessHostPool matrix exercises `sdk.execution.cancel` independently through the .NET, TypeScript, and Python external SDKs. Each client submits a same-language long-running hosted execution, observes the hosted step in an active state, requests durable cancellation, validates the acknowledgement metadata, and requires public observation/result convergence to `Cancelled`. Cancelling an SDK transport call does not satisfy this target.
+
+## Recovery coverage
+
+The ProcessHostPool matrix binds two recovery paths through the existing runtime execution recovery reconciler. The matrix-only recovery endpoint is diagnostic orchestration only: it marks runtime availability and seeds durable ownership evidence, while the production recovery reconciler, shared queue, shared-run ownership resolver, runtime execution index, execution-control service and DAG store retain mutation authority.
+
+`in-flight-resume` starts a public native DAG execution, waits until its step is actively running, marks the owning runtime unavailable and invokes the production recovery reconciler. The failed local run must become `requeued-for-recovery`, the shared run must be requeued through recovery metadata, and the original durable `ExecutionId` must resume and converge to `Completed`. A new execution identity does not satisfy this scenario.
+
+`local-queued-redispatch` begins from an active public template while its authoritative shared-run dispatch record is still present. The harness copies that `RunRequest`, normalizes it into true not-yet-started local-queued work by clearing the preallocated execution identity/snapshot, seeds one real shared-queue/local-run ownership with no `ExecutionId`, assigns it to an unavailable runtime and invokes the same recovery reconciler. Recovery must requeue that ownership, a healthy runtime must accept the shared run, a new durable execution identity must be created, and that replacement execution must converge to `Completed`.
+
+These scenarios exercise recovery authorities only; they do not claim provider host restart or process-kill ownership. Physical crash/kill coverage remains a separate failure-injection concern.
+
+## Durable journal result-acceptance coverage
+
+Two matrix scenarios use the production Mongo-backed `IAiDurableInvocationStore` through fresh `AiDurableInvocationJournal` instances. They do not call store-specific Mongo methods and do not bypass lease/epoch/result CAS rules.
+
+`accepted-result-replay` prepares one durable operation, acquires epoch-one lease authority, accepts one terminal result, reconstructs a fresh journal over the same durable store, and submits the identical result with the same assignment. The first completion must be `Accepted`; the replay must be `AlreadyAccepted`; the terminal result hash and pending continuation intent must remain unchanged.
+
+`duplicate-delivery-convergence` submits eight concurrent identical result deliveries under the same live lease. Exactly one delivery must become `Accepted`, the remaining seven must converge as `AlreadyAccepted`, no delivery may cross the lease fence as `LeaseRejected`, and the durable record must retain one authoritative terminal result with pending continuation intent.
+
+With these four scenarios, the production-like Docker gate becomes 30 executed scenarios: 9 core + 6 publication/dependency + 3 custom policy + 3 nested Child DAG + 2 durable MCP effect + 3 cancellation + 2 recovery + 2 journal result-acceptance.

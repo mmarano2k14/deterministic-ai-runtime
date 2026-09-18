@@ -17,5 +17,7 @@ namespace Multiplexed.AI.McpServer.Host.Configuration
         public string EffectProbeMcpEndpoint { get; set; } = "http://127.0.0.1:8090/mcp";
         public string EffectProbeStateEndpoint { get; set; } = "http://localhost:8090/state";
         public string EffectEvidenceEndpoint { get; set; } = "http://localhost:8081/matrix/mcp-effect-evidence";
+        public string RecoveryEndpoint { get; set; } = "http://localhost:8081/matrix/recovery";
+        public string JournalResultAcceptanceEndpoint { get; set; } = "http://localhost:8081/matrix/journal-result-acceptance";
     }
 }
