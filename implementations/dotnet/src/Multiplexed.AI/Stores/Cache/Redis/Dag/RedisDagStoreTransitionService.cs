@@ -25,6 +25,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
         private LuaScript _parkScript;
         private LuaScript _resumeExternalWaitScript;
         private LuaScript _failScript;
+        private LuaScript _failWithDecisionScript;
         private LuaScript _finalizeScript;
         private LuaScript _retentionPatchScript;
 
@@ -42,6 +43,7 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             _parkScript = RedisDagLuaScripts.ParkPreparedScript;
             _resumeExternalWaitScript = RedisDagLuaScripts.ResumeExternalWaitPreparedScript;
             _failScript = RedisDagLuaScripts.FailPreparedScript;
+            _failWithDecisionScript = RedisDagLuaScripts.FailWithDecisionPreparedScript;
             _finalizeScript = RedisDagLuaScripts.FinalizeScript;
             _retentionPatchScript = RedisDagLuaScripts.RetentionPatchPreparedScript;
         }
@@ -205,6 +207,93 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
             string? error,
             CancellationToken cancellationToken = default) =>
             TryFailCoreAsync(executionId, stepName, claimToken, error, string.Empty, cancellationToken);
+
+        /// <summary>
+        /// Applies a retry/fail decision that has already been evaluated by the runtime policy authority.
+        /// </summary>
+        public async Task<bool> TryFailStepWithDecisionAsync(
+            string executionId,
+            string stepName,
+            string claimToken,
+            string? error,
+            AiDagStepFailureDecision decision,
+            AiStepResult? result = null,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(decision);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (string.IsNullOrWhiteSpace(executionId))
+                throw new ArgumentException("Execution id cannot be null or empty.", nameof(executionId));
+
+            if (string.IsNullOrWhiteSpace(stepName))
+                throw new ArgumentException("Step name cannot be null or empty.", nameof(stepName));
+
+            if (string.IsNullOrWhiteSpace(claimToken))
+                throw new ArgumentException("Claim token cannot be null or empty.", nameof(claimToken));
+
+            if (decision.Disposition == AiDagStepFailureDisposition.Retry &&
+                (!decision.RetryDelay.HasValue || decision.RetryDelay.Value < TimeSpan.Zero))
+            {
+                throw new InvalidOperationException("An explicit retry decision requires a non-negative delay.");
+            }
+
+            if (decision.Disposition == AiDagStepFailureDisposition.Fail && decision.RetryDelay.HasValue)
+            {
+                throw new InvalidOperationException("A terminal failure decision cannot carry a retry delay.");
+            }
+
+            var resultJson = string.Empty;
+            if (result is not null)
+            {
+                if (result.Success ||
+                    result.EffectiveOutcome != AiStepExecutionOutcome.Fail ||
+                    result.InvocationReceipt is null ||
+                    string.IsNullOrWhiteSpace(result.Error) ||
+                    string.IsNullOrWhiteSpace(result.InvocationReceipt.OperationId) ||
+                    string.IsNullOrWhiteSpace(result.InvocationReceipt.ResultSha256))
+                {
+                    throw new InvalidOperationException(
+                        "An explicit failure result requires a failed result with its server receipt.");
+                }
+
+                resultJson = JsonSerializer.Serialize(result, _services.JsonOptions);
+            }
+
+            var stepKey = _services.KeyBuilder.GetDagStepKey(executionId, stepName);
+            var nowUnix = RedisDagStoreHelper.NowMs();
+            var shouldRetry = decision.Disposition == AiDagStepFailureDisposition.Retry;
+            var retryDelayMs = decision.RetryDelay.HasValue
+                ? checked((long)decision.RetryDelay.Value.TotalMilliseconds)
+                : 0L;
+
+            try
+            {
+                return await ExecuteFailWithDecisionAsync(
+                    stepKey,
+                    claimToken,
+                    nowUnix,
+                    error ?? string.Empty,
+                    resultJson,
+                    shouldRetry,
+                    retryDelayMs,
+                    decision.Reason ?? string.Empty).ConfigureAwait(false);
+            }
+            catch (RedisServerException ex) when (ex.Message.Contains("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
+            {
+                _failWithDecisionScript = RedisDagLuaScripts.FailWithDecisionPreparedScript;
+
+                return await ExecuteFailWithDecisionAsync(
+                    stepKey,
+                    claimToken,
+                    nowUnix,
+                    error ?? string.Empty,
+                    resultJson,
+                    shouldRetry,
+                    retryDelayMs,
+                    decision.Reason ?? string.Empty).ConfigureAwait(false);
+            }
+        }
 
         /// <summary>Preserves custom failure data and receipt without changing claim or retry semantics.</summary>
         public Task<bool> TryFailStepWithResultAsync(
@@ -573,6 +662,41 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Dag
                     error = (RedisValue)error,
                     resultJson = (RedisValue)resultJson
                 });
+            Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
+                _services.Database,
+                Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaDag);
+
+            return (int)result! == 1;
+        }
+
+
+        /// <summary>
+        /// Executes the explicit retry/fail decision transition.
+        /// </summary>
+        private async Task<bool> ExecuteFailWithDecisionAsync(
+            string stepKey,
+            string claimToken,
+            long nowUnix,
+            string error,
+            string resultJson,
+            bool shouldRetry,
+            long retryDelayMs,
+            string decisionReason)
+        {
+            var result = await _failWithDecisionScript.EvaluateAsync(
+                    _services.Database,
+                    new
+                    {
+                        stepKey = (RedisKey)stepKey,
+                        claimToken = (RedisValue)claimToken,
+                        nowUnix = (RedisValue)nowUnix,
+                        error = (RedisValue)error,
+                        resultJson = (RedisValue)resultJson,
+                        shouldRetry = (RedisValue)(shouldRetry ? 1 : 0),
+                        retryDelayMs = (RedisValue)retryDelayMs,
+                        decisionReason = (RedisValue)decisionReason
+                    })
+                .ConfigureAwait(false);
             Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionDiagnostics.RecordInvocation(
                 _services.Database,
                 Multiplexed.AI.Runtime.Observability.Performance.AiRedisReadAttributionOperations.LuaDag);

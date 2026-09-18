@@ -52,6 +52,73 @@ class MatrixPlanTests(unittest.TestCase):
         for scenario in [*self.plan["coreScenarios"], *self.plan["featureScenarios"]]:
             self.assertFalse({"status", "passed", "executed", "skipped"}.intersection(scenario))
 
+
+    def test_initial_feature_bindings_cover_all_hosted_languages(self) -> None:
+        for target_id in ("publication-pinning", "deterministic-dependency-packaging"):
+            scenarios = [
+                item for item in self.plan["featureScenarios"]
+                if item["coverageTarget"] == target_id
+            ]
+            self.assertEqual(set(WORKER_LANGUAGES), {item["workerLanguage"] for item in scenarios})
+            self.assertTrue(all(item["executor"] is not None for item in scenarios))
+
+    def test_dependency_feature_binding_matches_language_package_kind(self) -> None:
+        scenarios = [
+            item for item in self.plan["featureScenarios"]
+            if item["coverageTarget"] == "deterministic-dependency-packaging"
+        ]
+        self.assertEqual(3, len(scenarios))
+        for scenario in scenarios:
+            self.assertEqual(
+                [DEPENDENCY_PACKAGE_BY_WORKER[scenario["workerLanguage"]]],
+                scenario["coverageValues"],
+            )
+
+
+    def test_custom_policy_feature_bindings_cover_exact_supported_families(self) -> None:
+        scenarios = [
+            item for item in self.plan["featureScenarios"]
+            if item["coverageTarget"] == "custom-policy-family"
+        ]
+        self.assertEqual(3, len(scenarios))
+        self.assertEqual(
+            set(CUSTOM_POLICY_FAMILIES),
+            {item["coverageValues"][0] for item in scenarios},
+        )
+        self.assertTrue(all(item["clientLanguage"] == "python" for item in scenarios))
+        self.assertTrue(all(item["executor"] is not None for item in scenarios))
+
+    def test_missing_custom_policy_family_binding_fails_closed(self) -> None:
+        invalid = copy.deepcopy(self.plan)
+        invalid["featureScenarios"] = [
+            item for item in invalid["featureScenarios"]
+            if item["id"] != "feature-custom-policy-delegation-dotnet-worker"
+        ]
+        errors = validate_plan(invalid)
+        self.assertTrue(any("custom-policy-family feature bindings" in error for error in errors))
+
+    def test_hosted_invocation_registration_installs_all_supported_policy_transports(self) -> None:
+        host = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" /
+            "Bootstrap" / "HostedInvocationHostRegistration.cs"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("services.AddAiHostedConcurrencyPolicyExecution();", host)
+        self.assertIn("services.AddAiHostedRetryPolicyExecution();", host)
+        self.assertIn("services.AddAiHostedDelegationPolicyExecution();", host)
+        self.assertLess(host.index("services.AddAiHostedInvocationWorkers("), host.index("services.AddAiHostedConcurrencyPolicyExecution();"))
+
+    def test_missing_initial_feature_worker_fails_closed(self) -> None:
+        invalid = copy.deepcopy(self.plan)
+        invalid["featureScenarios"] = [
+            item for item in invalid["featureScenarios"]
+            if not (
+                item["coverageTarget"] == "publication-pinning"
+                and item["workerLanguage"] == "python"
+            )
+        ]
+        errors = validate_plan(invalid)
+        self.assertTrue(any("publication-pinning feature bindings" in error for error in errors))
+
     def test_missing_core_pair_fails_closed(self) -> None:
         invalid = copy.deepcopy(self.plan)
         invalid["coreScenarios"].pop()
@@ -78,6 +145,22 @@ class MatrixPlanTests(unittest.TestCase):
         )
         errors = validate_plan(invalid)
         self.assertTrue(any("coverageTarget is unsupported" in error for error in errors))
+
+    def test_current_process_feature_matrix_binds_nine_scenarios(self):
+        plan = self.plan
+        self.assertEqual(9, len(plan["featureScenarios"]))
+        counts = {}
+        for scenario in plan["featureScenarios"]:
+            counts[scenario["coverageTarget"]] = counts.get(scenario["coverageTarget"], 0) + 1
+        self.assertEqual(3, counts.get("publication-pinning"))
+        self.assertEqual(3, counts.get("deterministic-dependency-packaging"))
+        self.assertEqual(3, counts.get("custom-policy-family"))
+
+    def test_matrix_readme_records_custom_policy_as_current_coverage(self):
+        readme = (MATRIX_ROOT / "README.md").read_text(encoding="utf-8-sig")
+        self.assertIn("nine currently bound feature scenarios", readme)
+        self.assertIn("three hosted custom-policy scenarios", readme)
+        self.assertNotIn("Custom policy families, nested Child DAGs", readme)
 
 
 if __name__ == "__main__":

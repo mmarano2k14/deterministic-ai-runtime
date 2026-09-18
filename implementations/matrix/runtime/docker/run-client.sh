@@ -26,6 +26,44 @@ run_one() {
   esac
 }
 
+
+run_feature() {
+  feature="$1"
+  worker="$2"
+  case "$feature" in
+    publication-pinning) scenario="feature-publication-pinning-python-client-${worker}-worker" ;;
+    deterministic-dependency-packaging) scenario="feature-dependency-package-python-client-${worker}-worker" ;;
+    custom-policy-family) scenario="feature-custom-policy-${POLICY_FAMILY}-${worker}-worker" ;;
+    *) echo "unknown feature: $feature" >&2; exit 2 ;;
+  esac
+  evidence="/matrix/evidence/${scenario}.json"
+  policy_args=""
+  if [ "$feature" = "custom-policy-family" ]; then
+    policy_args="--policy-family $POLICY_FAMILY"
+  fi
+  # shellcheck disable=SC2086
+  python /app/implementations/matrix/clients/python/feature.py \
+    --manifest "$MANIFEST" \
+    --feature "$feature" \
+    --worker "$worker" \
+    $policy_args \
+    --scenario-id "$scenario" \
+    --evidence "$evidence"
+}
+
 run_one dotnet
 run_one typescript
 run_one python
+
+if [ "$LANGUAGE" = "python" ]; then
+  run_feature publication-pinning dotnet
+  run_feature publication-pinning typescript
+  run_feature publication-pinning python
+  run_feature deterministic-dependency-packaging dotnet
+  run_feature deterministic-dependency-packaging typescript
+  run_feature deterministic-dependency-packaging python
+
+  POLICY_FAMILY=concurrency run_feature custom-policy-family python
+  POLICY_FAMILY=retry run_feature custom-policy-family typescript
+  POLICY_FAMILY=delegation run_feature custom-policy-family dotnet
+fi

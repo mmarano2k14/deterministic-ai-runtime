@@ -79,6 +79,13 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 new AiConfiguredWorkerProcessCatalog(profiles),
                 new AiWorkerSupervisionOptions(maxConcurrentProcesses: options.MaxConcurrentProcesses),
                 executionPolicy: admission);
+
+            // Hosted custom policy families reuse the exact publication material and worker transport.
+            // They do not create a native fallback or a second policy/scheduling authority.
+            services.AddAiHostedConcurrencyPolicyExecution();
+            services.AddAiHostedRetryPolicyExecution();
+            services.AddAiHostedDelegationPolicyExecution();
+
             services.AddAiHostedInvocationWorkerPolling(new AiWorkerPollingOptions(
                 new[] { invocationScope },
                 new[] { "dotnet", "typescript", "python" },

@@ -320,12 +320,18 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                             },
                             async trace =>
                             {
-                                var result = await _engineServices.DagStore.TryFailStepAsync(
-                                    executionId,
+                                var result = await AiDagExecutionHelpers.TryPersistClaimedStepFailureAsync(
+                                    _engineServices,
+                                    record,
+                                    state,
+                                    resolvedPipeline,
                                     claimed.StepName,
                                     claimed.ClaimToken,
                                     ex.Message,
-                                    cancellationToken).ConfigureAwait(false);
+                                    result: null,
+                                    exception: ex,
+                                    buildExecutionContext: buildExecutionContext,
+                                    cancellationToken: cancellationToken).ConfigureAwait(false);
 
                                 trace.SetTag("failed", result);
                                 trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, workerId);
@@ -499,11 +505,18 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Distributed
                             },
                             async trace =>
                             {
-                                var result = stepResult.InvocationReceipt is null
-                                    ? await _engineServices.DagStore.TryFailStepAsync(
-                                        executionId, claimed.StepName, claimed.ClaimToken, stepResult.Error, cancellationToken).ConfigureAwait(false)
-                                    : await _engineServices.DagStore.TryFailStepWithResultAsync(
-                                        executionId, claimed.StepName, claimed.ClaimToken, stepResult, cancellationToken).ConfigureAwait(false);
+                                var result = await AiDagExecutionHelpers.TryPersistClaimedStepFailureAsync(
+                                    _engineServices,
+                                    record,
+                                    state,
+                                    resolvedPipeline,
+                                    claimed.StepName,
+                                    claimed.ClaimToken,
+                                    stepResult.Error,
+                                    stepResult,
+                                    exception: null,
+                                    buildExecutionContext: buildExecutionContext,
+                                    cancellationToken: cancellationToken).ConfigureAwait(false);
 
                                 trace.SetTag("failed", result);
                                 trace.SetTag(AiWorkerMetadataKeys.CamelCaseWorkerId, workerId);

@@ -24,7 +24,7 @@ From any directory inside the repository on Windows PowerShell:
 & (Join-Path (git rev-parse --show-toplevel) "implementations\matrix\runtime\docker\run-matrix.ps1")
 ```
 
-The runner performs a clean build/run, waits for the terminal verifier, prints the client/verifier exit states and the final `9/9` verifier result, and writes the complete Docker output to `matrix-full.log` at the repository root. It deliberately does not use Compose `--abort-on-container-exit` / `--exit-code-from`, because the three SDK clients are expected one-shot services and their successful exit must not terminate the runtime before the verifier runs.
+The runner performs a clean build/run, waits for the terminal verifier, prints the client/verifier exit states, reports the core and currently bound feature-verifier results, and writes the complete Docker output to `matrix-full.log` at the repository root. It deliberately does not use Compose `--abort-on-container-exit` / `--exit-code-from`, because the three SDK clients are expected one-shot services and their successful exit must not terminate the runtime before the verifier runs.
 
 Cleanup including persisted test data:
 
@@ -50,7 +50,7 @@ If MongoDB and Redis are already running on their default local ports:
 .\implementations\matrix\runtime\local\run.ps1 -InfrastructureAlreadyRunning
 ```
 
-The local orchestrator publishes the real runtime and .NET worker, stages the same worker-fixture layout used by Docker, starts the runtime with exact installed runtime identities, waits for the matrix manifest and then executes the same 3 x 3 core matrix.
+The local orchestrator publishes the real runtime and .NET worker, stages the same worker-fixture layout used by Docker, starts the runtime with exact installed runtime identities, waits for the matrix manifest, executes the 3 x 3 core matrix, and then executes the nine currently bound feature scenarios.
 
 ## Runtime manifest
 
@@ -77,10 +77,34 @@ Context rotation is disabled only in this harness because the current public SDK
 
 ## Provider semantics
 
-This pack validates only:
+This matrix topology validates only:
 
 ```text
 ProcessHostPool / HostRuntime / TrustedProcess / HostNetwork / ValidatedPaths
 ```
 
 It does not claim sandboxed-container enforcement. OCI isolated workers are a separate matrix target and must be executed independently before being marked covered.
+
+## Bound feature scenarios
+
+The ProcessHost matrix first binds six publication/dependency feature scenarios without widening execution authority. The Python external SDK is used as the bounded feature driver because the core matrix already proves the public SDK boundary independently for .NET, TypeScript and Python clients. Feature coverage is therefore recorded only for the combinations actually executed.
+
+Publication pinning is exercised once against each hosted worker language. Each scenario submits an execution against one immutable publication, publishes a replacement with the same logical pipeline identity but intentionally failing code, observes the still-running execution after that replacement exists, and then requires the original execution to complete while retaining its original publication reference.
+
+Deterministic dependency packaging is exercised once against each hosted worker language with the language-specific immutable package kind: `DotNetAssemblyClosure`, `NodeLockedBundle`, and `PythonWheelBundle`. The dependency payloads are supplied through the existing publication contract and are materialized by the existing hosted workers; no package manager or runtime package installation is introduced.
+
+The Docker verifier preserves the original nine core scenarios and additionally requires all six bound feature evidence documents. A successful live run must therefore report both `9/9 production-like Docker ProcessHostPool scenarios passed.` and `6/6 publication-pinning/dependency-package ProcessHostPool feature scenarios passed.`. Until that live run is executed, the feature scenarios remain planned/bound evidence rather than a green claim.
+
+The current ProcessHost increment remains limited to ProcessHostPool / HostRuntime / TrustedProcess execution. Nested Child DAG execution, durable MCP effect evidence, cancellation, recovery, replay/result acceptance, and OCI/container-provider isolation remain outside this increment.
+
+### Hosted custom policy family scenarios
+
+The production-like process matrix also binds the three hosted custom policy families currently supported by the runtime through the public Python SDK client. The scenarios are deliberately behavioral rather than publication-only:
+
+- `concurrency` runs a Python hosted policy that explicitly allows a native `hello-world` step; custom-to-native policy fallback remains forbidden.
+- `retry` runs a TypeScript hosted policy that returns `stop` against the deterministic `fail-once-then-succeed` fixture. The expected execution status is `Failed`; a silent policy drop would instead allow the normal retry path to recover.
+- `delegation` runs a .NET hosted policy that returns `deny` at the existing `execution.child-dag` checkpoint. The expected execution status is `Failed`; the child is not dispatched. This does not claim nested Child DAG execution coverage, which remains a separate matrix target.
+
+These three scenarios reuse immutable publication pinning, the existing hosted worker transport, policy-family adapters, and the existing runtime policy checkpoints. No alternate policy engine or scheduler is introduced.
+
+The Docker verifier therefore requires nine core scenarios, six publication/dependency scenarios, and three hosted custom-policy scenarios. A successful live run must report all three bounded verifier summaries before the matrix runner can return GREEN.

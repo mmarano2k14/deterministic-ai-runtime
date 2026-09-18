@@ -39,6 +39,7 @@ REQUIRED_INVARIANTS = {
     "no-silent-custom-to-native-fallback",
 }
 ALLOWED_EXECUTOR_KINDS = {"dotnet", "typescript", "python", "command"}
+INITIAL_BOUND_FEATURE_TARGETS = {"publication-pinning", "deterministic-dependency-packaging"}
 
 
 class MatrixPlanError(ValueError):
@@ -94,6 +95,8 @@ def validate_plan(plan: dict[str, Any]) -> list[str]:
     _validate_core_scenarios(errors, plan.get("coreScenarios"))
     _validate_coverage_targets(errors, plan.get("coverageTargets"))
     _validate_feature_scenarios(errors, plan.get("featureScenarios"))
+    _validate_initial_feature_bindings(errors, plan.get("featureScenarios"))
+    _validate_custom_policy_bindings(errors, plan.get("featureScenarios"))
 
     return errors
 
@@ -245,10 +248,81 @@ def _validate_feature_scenarios(errors: list[str], value: Any) -> None:
         values = scenario.get("coverageValues", [])
         if not isinstance(values, list):
             errors.append(f"{prefix}.coverageValues must be an array.")
+        elif (
+            any(not isinstance(item, str) or not item.strip() for item in values)
+            or len(values) != len(set(values))
+        ):
+            errors.append(f"{prefix}.coverageValues must contain unique non-empty strings.")
 
         if any(key in scenario for key in ("status", "passed", "executed", "skipped")):
             errors.append(f"{prefix} must not claim an execution outcome inside the plan.")
 
+
+def _validate_initial_feature_bindings(errors: list[str], value: Any) -> None:
+    if not isinstance(value, list):
+        return
+
+    scenarios = [scenario for scenario in value if isinstance(scenario, dict)]
+    for target_id in INITIAL_BOUND_FEATURE_TARGETS:
+        bound = [scenario for scenario in scenarios if scenario.get("coverageTarget") == target_id]
+        workers = {scenario.get("workerLanguage") for scenario in bound}
+        if workers != set(WORKER_LANGUAGES):
+            errors.append(
+                f"{target_id} feature bindings must cover dotnet, typescript and python workers."
+            )
+        if any(scenario.get("executor") is None for scenario in bound):
+            errors.append(f"{target_id} feature bindings must have executable client bindings.")
+
+    pinning = [
+        scenario for scenario in scenarios
+        if scenario.get("coverageTarget") == "publication-pinning"
+    ]
+    if any(scenario.get("coverageValues") != [] for scenario in pinning):
+        errors.append("publication-pinning feature bindings must not invent coverage values.")
+
+    packaging = [
+        scenario for scenario in scenarios
+        if scenario.get("coverageTarget") == "deterministic-dependency-packaging"
+    ]
+    for scenario in packaging:
+        worker = scenario.get("workerLanguage")
+        if worker not in DEPENDENCY_PACKAGE_BY_WORKER:
+            continue
+        expected = [DEPENDENCY_PACKAGE_BY_WORKER[worker]]
+        if scenario.get("coverageValues") != expected:
+            errors.append(
+                "deterministic-dependency-packaging feature binding for "
+                f"'{worker}' must declare exactly {expected!r}."
+            )
+
+
+
+def _validate_custom_policy_bindings(errors: list[str], value: Any) -> None:
+    if not isinstance(value, list):
+        return
+
+    bound = [
+        scenario for scenario in value
+        if isinstance(scenario, dict) and scenario.get("coverageTarget") == "custom-policy-family"
+    ]
+    if len(bound) != len(CUSTOM_POLICY_FAMILIES):
+        errors.append("custom-policy-family feature bindings must contain exactly one scenario per hosted family.")
+        return
+
+    observed: set[str] = set()
+    for scenario in bound:
+        values = scenario.get("coverageValues")
+        if not isinstance(values, list) or len(values) != 1 or values[0] not in CUSTOM_POLICY_FAMILIES:
+            errors.append("custom-policy-family feature bindings must declare exactly one supported family value.")
+            continue
+        observed.add(values[0])
+        if scenario.get("clientLanguage") != "python":
+            errors.append("custom-policy-family feature bindings currently execute through the Python external SDK client.")
+        if scenario.get("workerLanguage") not in WORKER_LANGUAGES or scenario.get("executor") is None:
+            errors.append("custom-policy-family feature bindings require one executable hosted worker binding.")
+
+    if observed != set(CUSTOM_POLICY_FAMILIES):
+        errors.append("custom-policy-family feature bindings must cover concurrency, retry and delegation exactly once.")
 
 def _validate_executor(errors: list[str], prefix: str, executor: Any) -> None:
     if executor is None:

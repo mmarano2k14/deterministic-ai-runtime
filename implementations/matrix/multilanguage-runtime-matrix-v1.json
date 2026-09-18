@@ -342,5 +342,186 @@
       "notes": "Validate that each external client remains free of engine/runtime dependencies."
     }
   ],
-  "featureScenarios": []
+  "featureScenarios": [
+    {
+      "id": "feature-publication-pinning-python-client-dotnet-worker",
+      "coverageTarget": "publication-pinning",
+      "clientLanguage": "python",
+      "workerLanguage": "dotnet",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "publication-pinning",
+          "--worker",
+          "dotnet"
+        ]
+      }
+    },
+    {
+      "id": "feature-publication-pinning-python-client-typescript-worker",
+      "coverageTarget": "publication-pinning",
+      "clientLanguage": "python",
+      "workerLanguage": "typescript",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "publication-pinning",
+          "--worker",
+          "typescript"
+        ]
+      }
+    },
+    {
+      "id": "feature-publication-pinning-python-client-python-worker",
+      "coverageTarget": "publication-pinning",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "publication-pinning",
+          "--worker",
+          "python"
+        ]
+      }
+    },
+    {
+      "id": "feature-dependency-package-python-client-dotnet-worker",
+      "coverageTarget": "deterministic-dependency-packaging",
+      "clientLanguage": "python",
+      "workerLanguage": "dotnet",
+      "coverageValues": [
+        "DotNetAssemblyClosure"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "deterministic-dependency-packaging",
+          "--worker",
+          "dotnet"
+        ]
+      }
+    },
+    {
+      "id": "feature-dependency-package-python-client-typescript-worker",
+      "coverageTarget": "deterministic-dependency-packaging",
+      "clientLanguage": "python",
+      "workerLanguage": "typescript",
+      "coverageValues": [
+        "NodeLockedBundle"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "deterministic-dependency-packaging",
+          "--worker",
+          "typescript"
+        ]
+      }
+    },
+    {
+      "id": "feature-dependency-package-python-client-python-worker",
+      "coverageTarget": "deterministic-dependency-packaging",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [
+        "PythonWheelBundle"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "deterministic-dependency-packaging",
+          "--worker",
+          "python"
+        ]
+      }
+    },
+    {
+      "id": "feature-custom-policy-concurrency-python-worker",
+      "coverageTarget": "custom-policy-family",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [
+        "concurrency"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "custom-policy-family",
+          "--policy-family",
+          "concurrency",
+          "--worker",
+          "python"
+        ]
+      }
+    },
+    {
+      "id": "feature-custom-policy-retry-typescript-worker",
+      "coverageTarget": "custom-policy-family",
+      "clientLanguage": "python",
+      "workerLanguage": "typescript",
+      "coverageValues": [
+        "retry"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "custom-policy-family",
+          "--policy-family",
+          "retry",
+          "--worker",
+          "typescript"
+        ]
+      }
+    },
+    {
+      "id": "feature-custom-policy-delegation-dotnet-worker",
+      "coverageTarget": "custom-policy-family",
+      "clientLanguage": "python",
+      "workerLanguage": "dotnet",
+      "coverageValues": [
+        "delegation"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "custom-policy-family",
+          "--policy-family",
+          "delegation",
+          "--worker",
+          "dotnet"
+        ]
+      }
+    }
+  ]
 }

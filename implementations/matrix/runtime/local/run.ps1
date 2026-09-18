@@ -17,9 +17,10 @@ $mongoData = Join-Path $state "mongo"
 $manifest = Join-Path $state "runtime-manifest.json"
 $fixtureRoot = Join-Path $state "fixtures"
 $fixtureDotNet = Join-Path $fixtureRoot "dotnet-worker"
+$fixtureDotNetPackaged = Join-Path $fixtureRoot "dotnet-packaged-worker"
 $fixtureTypeScript = Join-Path $fixtureRoot "typescript-worker"
 $fixturePython = Join-Path $fixtureRoot "python-worker"
-New-Item -ItemType Directory -Force -Path $state,$runtimeOut,$workerOut,$mongoData,$fixtureDotNet,$fixtureTypeScript,$fixturePython | Out-Null
+New-Item -ItemType Directory -Force -Path $state,$runtimeOut,$workerOut,$mongoData,$fixtureDotNet,$fixtureDotNetPackaged,$fixtureTypeScript,$fixturePython | Out-Null
 Remove-Item $manifest -Force -ErrorAction SilentlyContinue
 
 function Resolve-Tool([string]$name) {
@@ -48,8 +49,11 @@ try {
     & $dotnet publish ".\implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Multiplexed.AI.McpServer.Host.csproj" -c Release -o $runtimeOut
     & $dotnet publish ".\implementations\dotnet\workers\Multiplexed.AI.HostedInvocation.DotNetWorker\Multiplexed.AI.HostedInvocation.DotNetWorker.csproj" -c Release -o $workerOut
     & $dotnet build ".\implementations\matrix\fixtures\dotnet-worker\Multiplexed.AI.Matrix.Worker\Multiplexed.AI.Matrix.Worker.csproj" -c Release
+    & $dotnet build ".\implementations\matrix\fixtures\dotnet-packaged-worker\Multiplexed.AI.Matrix.PackagedWorker\Multiplexed.AI.Matrix.PackagedWorker.csproj" -c Release
     & $dotnet build ".\implementations\matrix\clients\dotnet\Multiplexed.AI.Matrix.DotNetClient\Multiplexed.AI.Matrix.DotNetClient.csproj" -c Release
     Copy-Item ".\implementations\matrix\fixtures\dotnet-worker\Multiplexed.AI.Matrix.Worker\bin\Release\net10.0\Multiplexed.AI.Matrix.Worker.dll" (Join-Path $fixtureDotNet "Multiplexed.AI.Matrix.Worker.dll") -Force
+    Copy-Item ".\implementations\matrix\fixtures\dotnet-packaged-worker\Multiplexed.AI.Matrix.PackagedWorker\bin\Release\net10.0\Multiplexed.AI.Matrix.PackagedWorker.dll" (Join-Path $fixtureDotNetPackaged "Multiplexed.AI.Matrix.PackagedWorker.dll") -Force
+    Copy-Item ".\implementations\matrix\fixtures\dotnet-packaged-worker\Multiplexed.AI.Matrix.PackagedWorker\bin\Release\net10.0\Multiplexed.AI.Matrix.Dependency.dll" (Join-Path $fixtureDotNetPackaged "Multiplexed.AI.Matrix.Dependency.dll") -Force
     Copy-Item ".\implementations\matrix\fixtures\typescript-worker\main.ts" (Join-Path $fixtureTypeScript "main.ts") -Force
     Copy-Item ".\implementations\matrix\fixtures\python-worker\main.py" (Join-Path $fixturePython "main.py") -Force
     Push-Location ".\implementations\node\sdk"
@@ -158,6 +162,9 @@ try {
     if (-not (Test-Path $manifest)) { throw "Runtime manifest was not produced." }
 
     & $python ".\implementations\matrix\core_matrix.py" run --topology local --scenario all --manifest $manifest --no-build
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    & $python ".\implementations\matrix\feature_matrix.py" run --scenario all --manifest $manifest --no-build
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 finally {

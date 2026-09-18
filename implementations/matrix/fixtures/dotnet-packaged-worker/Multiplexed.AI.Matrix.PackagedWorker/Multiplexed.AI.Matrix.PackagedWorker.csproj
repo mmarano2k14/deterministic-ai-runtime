@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Multiplexed.AI.Matrix.PackagedWorker</AssemblyName>
+    <RootNamespace>Multiplexed.AI.Matrix.PackagedWorker</RootNamespace>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\dotnet-dependency\Multiplexed.AI.Matrix.Dependency\Multiplexed.AI.Matrix.Dependency.csproj" />
+  </ItemGroup>
+</Project>

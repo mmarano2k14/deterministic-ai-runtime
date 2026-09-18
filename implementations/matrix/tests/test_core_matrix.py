@@ -261,6 +261,175 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertIn("Symbolic links and reparse points are not accepted", launch_paths)
         self.assertIn("A linked launch path is not accepted", launch_paths)
 
+    def test_initial_feature_matrix_binds_six_real_scenarios(self) -> None:
+        plan = load_plan()
+        bound = [
+            item for item in plan["featureScenarios"]
+            if item["coverageTarget"] in {"publication-pinning", "deterministic-dependency-packaging"}
+        ]
+        self.assertEqual(6, len(bound))
+        self.assertEqual({"python"}, {item["clientLanguage"] for item in bound})
+        for target in ("publication-pinning", "deterministic-dependency-packaging"):
+            workers = {item["workerLanguage"] for item in bound if item["coverageTarget"] == target}
+            self.assertEqual({"dotnet", "typescript", "python"}, workers)
+
+    def test_feature_client_uses_only_public_python_sdk_contracts(self) -> None:
+        client = (MATRIX_ROOT / "clients" / "python" / "feature.py").read_text(encoding="utf-8-sig")
+        self.assertIn("from multiplexed_ai_sdk import", client)
+        self.assertIn("AiSdkPublicationDependencyPackageKind", client)
+        self.assertIn("postRepublishObservedPublicationRef", client)
+        self.assertNotIn("Multiplexed.AI.Runtime", client)
+        self.assertNotIn("IAiPublicSdkBoundary", client)
+
+    def test_custom_policy_upload_sites_match_declared_policy_scope(self) -> None:
+        client = (MATRIX_ROOT / "clients" / "python" / "feature.py").read_text(encoding="utf-8-sig")
+        self.assertIn('"concurrency": None', client)
+        self.assertIn('"retry": "work"', client)
+        self.assertIn('"delegation": "invoke-child"', client)
+        self.assertIn("step_name=step_name", client)
+
+    def test_fail_once_retry_fixture_treats_missing_retry_state_as_first_attempt(self) -> None:
+        fixture = (
+            MATRIX_ROOT.parent
+            / "dotnet"
+            / "src"
+            / "Multiplexed.AI"
+            / "Runtime"
+            / "Pipeline"
+            / "Steps"
+            / "Test"
+            / "FailOnceThenSucceedStep.cs"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("(stepState.RetryState?.RetryCount ?? 0) == 0", fixture)
+        self.assertNotIn("stepState.RetryState?.RetryCount == 0", fixture)
+
+    def test_python_docker_client_carries_dotnet_dependency_fixture_and_feature_runner(self) -> None:
+        dockerfile = (MATRIX_ROOT / "runtime" / "docker" / "python-client.Dockerfile").read_text(encoding="utf-8-sig")
+        runner = (MATRIX_ROOT / "runtime" / "docker" / "run-client.sh").read_text(encoding="utf-8-sig")
+        self.assertIn("Multiplexed.AI.Matrix.PackagedWorker.csproj", dockerfile)
+        self.assertIn("Multiplexed.AI.Matrix.Dependency.dll", dockerfile)
+        self.assertIn("feature.py", runner)
+        self.assertIn("publication-pinning", runner)
+        self.assertIn("deterministic-dependency-packaging", runner)
+
+    def test_verifier_preserves_core_nine_and_requires_six_feature_scenarios(self) -> None:
+        verifier = (MATRIX_ROOT / "runtime" / "docker" / "verifier.py").read_text(encoding="utf-8-sig")
+        self.assertIn("CORE_EXPECTED", verifier)
+        self.assertIn("FEATURE_EXPECTED", verifier)
+        self.assertIn("9/9 production-like Docker ProcessHostPool scenarios passed.", verifier)
+        self.assertIn("6/6 publication-pinning/dependency-package ProcessHostPool feature scenarios passed.", verifier)
+        for kind in ("DotNetAssemblyClosure", "NodeLockedBundle", "PythonWheelBundle"):
+            self.assertIn(kind, verifier)
+
+    def test_local_process_runner_stages_packaged_fixture_and_executes_feature_matrix(self) -> None:
+        runner = (MATRIX_ROOT / "runtime" / "local" / "run.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn("$fixtureDotNetPackaged", runner)
+        self.assertIn("Multiplexed.AI.Matrix.PackagedWorker.dll", runner)
+        self.assertIn("Multiplexed.AI.Matrix.Dependency.dll", runner)
+        self.assertIn("feature_matrix.py", runner)
+
+    def test_dotnet_dependency_fixture_has_exact_stable_identity(self) -> None:
+        project = MATRIX_ROOT / "fixtures" / "dotnet-dependency" / "Multiplexed.AI.Matrix.Dependency" / "Multiplexed.AI.Matrix.Dependency.csproj"
+        text = project.read_text(encoding="utf-8-sig")
+        self.assertIn("<AssemblyName>Multiplexed.AI.Matrix.Dependency</AssemblyName>", text)
+        self.assertIn("<Version>1.0.0</Version>", text)
+        self.assertIn("<AssemblyVersion>1.0.0.0</AssemblyVersion>", text)
+        self.assertIn("<Deterministic>true</Deterministic>", text)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+def test_distributed_failure_path_preserves_custom_retry_policy_authority() -> None:
+    root = MATRIX_ROOT.parents[1]
+    helpers = (
+        root
+        / "implementations"
+        / "dotnet"
+        / "src"
+        / "Multiplexed.AI"
+        / "Runtime"
+        / "Execution"
+        / "Engine"
+        / "Helpers"
+        / "AiDagExecutionHelpers.cs"
+    ).read_text(encoding="utf-8-sig")
+    distributed = (
+        root
+        / "implementations"
+        / "dotnet"
+        / "src"
+        / "Multiplexed.AI"
+        / "Runtime"
+        / "Execution"
+        / "Engine"
+        / "Distributed"
+        / "AiDagDistributedExecutionRunner.cs"
+    ).read_text(encoding="utf-8-sig")
+    batch = (
+        root
+        / "implementations"
+        / "dotnet"
+        / "src"
+        / "Multiplexed.AI"
+        / "Runtime"
+        / "Execution"
+        / "Engine"
+        / "Batch"
+        / "AiDagBatchExecutionRunner.cs"
+    ).read_text(encoding="utf-8-sig")
+    store = (
+        root
+        / "implementations"
+        / "dotnet"
+        / "src"
+        / "Multiplexed.AI"
+        / "Stores"
+        / "Cache"
+        / "Redis"
+        / "Dag"
+        / "RedisDagStoreTransitionService.cs"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "RetryPolicyBindings.Any" in helpers
+    assert "AiInvocationKind.Custom" in helpers
+    assert "HandleFailureAsync(" in helpers
+    assert "TryFailStepWithDecisionAsync(" in helpers
+    assert "TryPersistClaimedStepFailureAsync(" in distributed
+    assert "TryPersistClaimedStepFailureAsync(" in batch
+    assert "shouldRetry = decision.Disposition == AiDagStepFailureDisposition.Retry" in store
+
+
+def test_redis_failure_transition_accepts_explicit_retry_decision_without_changing_native_failure_script() -> None:
+    root = MATRIX_ROOT.parents[1]
+    transition = (
+        root
+        / "implementations"
+        / "dotnet"
+        / "src"
+        / "Multiplexed.AI"
+        / "Stores"
+        / "Cache"
+        / "Redis"
+        / "Dag"
+        / "RedisDagStoreTransitionService.cs"
+    ).read_text(encoding="utf-8-sig")
+    lua = (
+        root
+        / "implementations"
+        / "dotnet"
+        / "src"
+        / "Multiplexed.AI"
+        / "Stores"
+        / "Cache"
+        / "Redis"
+        / "Lua"
+        / "RedisDagLuaScripts.cs"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "FailWithDecisionPreparedScript" in transition
+    assert "ExecuteFailWithDecisionAsync" in transition
+    assert "public static readonly LuaScript FailWithDecisionPreparedScript" in lua
+    assert "local shouldRetry = tonumber(@shouldRetry) == 1" in lua
+    assert "if retryCount < maxRetries then" in lua
+    assert "@decisionMode" not in lua
