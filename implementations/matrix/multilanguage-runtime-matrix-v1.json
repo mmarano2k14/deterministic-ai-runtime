@@ -753,6 +753,51 @@
           "duplicate-delivery-convergence"
         ]
       }
+    },
+    {
+      "id": "feature-external-client-dependency-firewall-dotnet-client",
+      "coverageTarget": "external-client-dependency-firewall",
+      "clientLanguage": "dotnet",
+      "workerLanguage": null,
+      "coverageValues": [],
+      "executor": {
+        "kind": "dotnet",
+        "command": [
+          "dotnet",
+          "run",
+          "--project",
+          "implementations/matrix/clients/dotnet/Multiplexed.AI.Matrix.DotNetClient/Multiplexed.AI.Matrix.DotNetClient.csproj",
+          "--"
+        ]
+      }
+    },
+    {
+      "id": "feature-external-client-dependency-firewall-typescript-client",
+      "coverageTarget": "external-client-dependency-firewall",
+      "clientLanguage": "typescript",
+      "workerLanguage": null,
+      "coverageValues": [],
+      "executor": {
+        "kind": "typescript",
+        "command": [
+          "node",
+          "implementations/matrix/clients/typescript/run.mjs"
+        ]
+      }
+    },
+    {
+      "id": "feature-external-client-dependency-firewall-python-client",
+      "coverageTarget": "external-client-dependency-firewall",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/run.py"
+        ]
+      }
     }
   ]
 }

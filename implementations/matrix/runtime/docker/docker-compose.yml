@@ -86,7 +86,7 @@ services:
       client-python:
         condition: service_completed_successfully
     volumes:
-      - matrix-evidence:/matrix/evidence:ro
+      - matrix-evidence:/matrix/evidence
 
 volumes:
   mongo-data:

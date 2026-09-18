@@ -685,10 +685,50 @@ class CoreMatrixTests(unittest.TestCase):
         recovery = [item for item in plan["featureScenarios"] if item["coverageTarget"] == "recovery"]
         journal = [item for item in plan["featureScenarios"] if item["coverageTarget"] == "journal-result-acceptance"]
         self.assertEqual(9, len(plan["coreScenarios"]))
-        self.assertEqual(21, len(plan["featureScenarios"]))
+        self.assertGreaterEqual(len(plan["featureScenarios"]), 21)
         self.assertEqual({"in-flight-resume", "local-queued-redispatch"}, {item["coverageValues"][0] for item in recovery})
         self.assertEqual({"accepted-result-replay", "duplicate-delivery-convergence"}, {item["coverageValues"][0] for item in journal})
-        self.assertEqual(30, len(plan["coreScenarios"]) + len(plan["featureScenarios"]))
+        self.assertGreaterEqual(len(plan["coreScenarios"]) + len(plan["featureScenarios"]), 30)
+
+    def test_increment_seven_dependency_firewall_executes_inside_all_three_clients(self) -> None:
+        runner = (MATRIX_ROOT / "runtime" / "docker" / "run-client.sh").read_text(encoding="utf-8-sig")
+        dotnet = (MATRIX_ROOT / "clients" / "dotnet" / "Multiplexed.AI.Matrix.DotNetClient" / "Program.cs").read_text(encoding="utf-8-sig")
+        typescript = (MATRIX_ROOT / "clients" / "typescript" / "run.mjs").read_text(encoding="utf-8-sig")
+        python = (MATRIX_ROOT / "clients" / "python" / "run.py").read_text(encoding="utf-8-sig")
+
+        self.assertIn("run_dependency_firewall", runner)
+        self.assertIn('options.Feature, "dependency-firewall"', dotnet)
+        self.assertIn("sdkRepositoryReferences", dotnet)
+        self.assertIn('args.feature === "dependency-firewall"', typescript)
+        self.assertIn("forbiddenDistImports", typescript)
+        self.assertIn('args.feature == "dependency-firewall"', python)
+        self.assertIn("forbiddenAbsoluteImports", python)
+
+    def test_increment_seven_verifier_closes_exact_executed_coverage_without_pack4_overclaim(self) -> None:
+        verifier = (MATRIX_ROOT / "runtime" / "docker" / "verifier.py").read_text(encoding="utf-8-sig")
+        dockerfile = (MATRIX_ROOT / "runtime" / "docker" / "verifier.Dockerfile").read_text(encoding="utf-8-sig")
+        compose = (MATRIX_ROOT / "runtime" / "docker" / "docker-compose.yml").read_text(encoding="utf-8-sig")
+
+        self.assertIn("FIREWALL_EXPECTED", verifier)
+        self.assertIn("3/3 external client dependency-firewall scenarios passed.", verifier)
+        self.assertIn("Exact executed-coverage closure: 33/33 scenarios", verifier)
+        self.assertIn("Deferred to Pack 4 (NOT EXECUTED)", verifier)
+        self.assertIn('"sandboxed-container", "OciImage"', verifier)
+        self.assertIn('executed-coverage-closure.json', verifier)
+        self.assertIn('multilanguage-runtime-matrix-v1.json /app/matrix-plan.json', dockerfile)
+        self.assertIn('matrix-evidence:/matrix/evidence', compose)
+        self.assertNotIn('matrix-evidence:/matrix/evidence:ro', compose)
+
+    def test_increment_seven_plan_raises_canonical_gate_to_thirty_three(self) -> None:
+        plan = load_plan()
+        firewall = [
+            item for item in plan["featureScenarios"]
+            if item["coverageTarget"] == "external-client-dependency-firewall"
+        ]
+        self.assertEqual(9, len(plan["coreScenarios"]))
+        self.assertEqual(24, len(plan["featureScenarios"]))
+        self.assertEqual({"dotnet", "typescript", "python"}, {item["clientLanguage"] for item in firewall})
+        self.assertEqual(33, len(plan["coreScenarios"]) + len(plan["featureScenarios"]))
 
 
 if __name__ == "__main__":

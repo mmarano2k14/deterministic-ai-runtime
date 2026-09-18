@@ -10,6 +10,12 @@ using Multiplexed.AI.Sdk.Contracts.Publication;
 using Multiplexed.AI.Sdk.Transport;
 
 var options = Arguments.Parse(args);
+if (string.Equals(options.Feature, "dependency-firewall", StringComparison.OrdinalIgnoreCase))
+{
+    await RunDependencyFirewallAsync(options);
+    return;
+}
+
 var transportOptions = new AiSdkTransportOptions
 {
     CredentialProvider = string.IsNullOrWhiteSpace(options.Token)
@@ -139,6 +145,83 @@ static async Task<AiSdkExecutionObservation> WaitForTerminalAsync(
     throw new TimeoutException($"Execution '{executionId}' did not become terminal within {timeout}.");
 }
 
+
+
+static async Task RunDependencyFirewallAsync(Arguments options)
+{
+    var sdkAssembly = typeof(AiSdkClient).Assembly;
+    var contractsAssembly = typeof(AiSdkPipelineDefinition).Assembly;
+
+    static string[] RepositoryReferences(System.Reflection.Assembly assembly) =>
+        assembly.GetReferencedAssemblies()
+            .Select(reference => reference.Name)
+            .Where(name => !string.IsNullOrWhiteSpace(name) && name.StartsWith("Multiplexed.", StringComparison.Ordinal))
+            .Select(name => name!)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+
+    var sdkRepositoryReferences = RepositoryReferences(sdkAssembly);
+    var contractRepositoryReferences = RepositoryReferences(contractsAssembly);
+    var publishedRepositoryAssemblies = Directory
+        .EnumerateFiles(AppContext.BaseDirectory, "Multiplexed*.dll", SearchOption.TopDirectoryOnly)
+        .Select(Path.GetFileNameWithoutExtension)
+        .Where(name => !string.IsNullOrWhiteSpace(name))
+        .Select(name => name!)
+        .OrderBy(name => name, StringComparer.Ordinal)
+        .ToArray();
+
+    var allowedSdkReferences = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "Multiplexed.AI.Sdk.Contracts"
+    };
+    var allowedPublishedAssemblies = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "Multiplexed.AI.Matrix.DotNetClient",
+        "Multiplexed.AI.Sdk",
+        "Multiplexed.AI.Sdk.Contracts"
+    };
+
+    var forbiddenRepositoryDependencies = sdkRepositoryReferences
+        .Where(name => !allowedSdkReferences.Contains(name))
+        .Concat(contractRepositoryReferences)
+        .Concat(publishedRepositoryAssemblies.Where(name => !allowedPublishedAssemblies.Contains(name)))
+        .Distinct(StringComparer.Ordinal)
+        .OrderBy(name => name, StringComparer.Ordinal)
+        .ToArray();
+
+    if (forbiddenRepositoryDependencies.Length != 0)
+    {
+        throw new InvalidOperationException(
+            "External .NET SDK dependency firewall detected repository runtime/engine dependencies: " +
+            string.Join(", ", forbiddenRepositoryDependencies));
+    }
+
+    await Evidence.WriteAsync(options.Evidence, new
+    {
+        schemaVersion = 1,
+        scenarioId = options.ScenarioId,
+        status = "passed",
+        coverageTarget = "external-client-dependency-firewall",
+        coverageValues = Array.Empty<string>(),
+        clientLanguage = "dotnet",
+        workerLanguage = (string?)null,
+        topology = options.Topology,
+        provider = options.Provider,
+        artifactKind = "published-dotnet-client",
+        sdkRepositoryReferences,
+        contractRepositoryReferences,
+        publishedRepositoryAssemblies,
+        forbiddenRepositoryDependencies,
+        evidence = new[]
+        {
+            "sdk-assembly-reference-graph-inspected",
+            "contracts-reference-graph-inspected",
+            "published-client-bundle-inspected",
+            "no-engine-runtime-dependency"
+        },
+        recordedAtUtc = DateTimeOffset.UtcNow
+    });
+}
 
 static async Task RunCancellationAsync(AiSdkClient client, Arguments options)
 {

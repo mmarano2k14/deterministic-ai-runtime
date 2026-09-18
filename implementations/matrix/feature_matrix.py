@@ -23,6 +23,7 @@ FEATURE_TARGETS = {
     "mcp-effect-evidence",
     "recovery",
     "journal-result-acceptance",
+    "external-client-dependency-firewall",
 }
 
 
@@ -47,6 +48,9 @@ def _build_prerequisites() -> None:
     packaged_project = MATRIX_ROOT / "fixtures" / "dotnet-packaged-worker" / "Multiplexed.AI.Matrix.PackagedWorker" / "Multiplexed.AI.Matrix.PackagedWorker.csproj"
     _run([dotnet, "build", str(core_project), "-c", "Release"])
     _run([dotnet, "build", str(packaged_project), "-c", "Release"])
+    dotnet_client = MATRIX_ROOT / "clients" / "dotnet" / "Multiplexed.AI.Matrix.DotNetClient" / "Multiplexed.AI.Matrix.DotNetClient.csproj"
+    _run([dotnet, "build", str(dotnet_client), "-c", "Release"])
+    _run([_resolve_tool("npm"), "run", "build"], cwd=ROOT / "implementations" / "node" / "sdk")
 
     fixture_root = Path(
         os.environ.get("MATRIX_FIXTURE_ROOT", str(MATRIX_ROOT / ".state" / "fixtures"))
@@ -69,6 +73,24 @@ def _build_prerequisites() -> None:
 
 def _command_for(scenario: dict[str, Any], manifest: Path) -> list[str]:
     evidence = EVIDENCE_ROOT / f"{scenario['id']}.json"
+    if scenario["coverageTarget"] == "external-client-dependency-firewall":
+        client = scenario["clientLanguage"]
+        common = [
+            "--manifest", str(manifest),
+            "--feature", "dependency-firewall",
+            "--worker", client,
+            "--scenario-id", scenario["id"],
+            "--evidence", str(evidence),
+        ]
+        if client == "dotnet":
+            project = MATRIX_ROOT / "clients" / "dotnet" / "Multiplexed.AI.Matrix.DotNetClient" / "Multiplexed.AI.Matrix.DotNetClient.csproj"
+            return ["dotnet", "run", "--project", str(project), "-c", "Release", "--no-build", "--", *common]
+        if client == "typescript":
+            return ["node", str(MATRIX_ROOT / "clients" / "typescript" / "run.mjs"), *common]
+        if client == "python":
+            return [sys.executable, str(MATRIX_ROOT / "clients" / "python" / "run.py"), *common]
+        raise RuntimeError(f"Unsupported dependency-firewall client language: {client}")
+
     command = [
         sys.executable,
         str(MATRIX_ROOT / "clients" / "python" / "feature.py"),
@@ -128,7 +150,7 @@ def _summary(plan: dict[str, Any]) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Execute bound production-like feature scenarios through the external Python SDK client."
+        description="Execute bound production-like feature scenarios through their declared external SDK client."
     )
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run")

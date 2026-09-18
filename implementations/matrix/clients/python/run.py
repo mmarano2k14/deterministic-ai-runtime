@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ast
 import base64
 import json
 import os
 import sys
+import tomllib
 import uuid
 from pathlib import Path
 
@@ -39,6 +41,10 @@ from multiplexed_ai_sdk import (  # noqa: E402
 
 async def main() -> int:
     args = _parse_args()
+    if args.feature == "dependency-firewall":
+        _run_dependency_firewall(args)
+        return 0
+
     provider = (
         AiSdkStaticCredentialProvider(AiSdkCredential("Bearer", args.token))
         if args.token
@@ -200,6 +206,69 @@ async def main() -> int:
     return 0
 
 
+
+def _run_dependency_firewall(args: argparse.Namespace) -> None:
+    sdk_root = REPO_ROOT / "implementations" / "python" / "sdk"
+    project = tomllib.loads((sdk_root / "pyproject.toml").read_text(encoding="utf-8"))
+    declared_dependencies = sorted(project.get("project", {}).get("dependencies", []))
+
+    def dependency_name(requirement: str) -> str:
+        value = requirement.split(";", 1)[0].strip()
+        for separator in ("[", "<", ">", "=", "!", "~", " "):
+            value = value.split(separator, 1)[0]
+        return value.strip().lower().replace("_", "-")
+
+    forbidden_declared_dependencies = sorted(
+        requirement
+        for requirement in declared_dependencies
+        if dependency_name(requirement).startswith("multiplexed-")
+    )
+
+    absolute_import_roots: set[str] = set()
+    for source in (sdk_root / "src" / "multiplexed_ai_sdk").rglob("*.py"):
+        tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                absolute_import_roots.update(alias.name.split(".", 1)[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                absolute_import_roots.add(node.module.split(".", 1)[0])
+
+    forbidden_absolute_imports = sorted(
+        name for name in absolute_import_roots
+        if name.startswith("multiplexed") and name != "multiplexed_ai_sdk"
+    )
+    if forbidden_declared_dependencies or forbidden_absolute_imports:
+        raise RuntimeError(
+            "External Python SDK dependency firewall detected repository dependencies: "
+            + ", ".join([*forbidden_declared_dependencies, *forbidden_absolute_imports])
+        )
+
+    _write_evidence(
+        Path(args.evidence),
+        {
+            "schemaVersion": 1,
+            "scenarioId": args.scenario_id,
+            "status": "passed",
+            "coverageTarget": "external-client-dependency-firewall",
+            "coverageValues": [],
+            "clientLanguage": "python",
+            "workerLanguage": None,
+            "topology": args.topology,
+            "provider": args.provider,
+            "artifactKind": "python-sdk-source-distribution",
+            "declaredDependencies": declared_dependencies,
+            "absoluteImportRoots": sorted(absolute_import_roots),
+            "forbiddenDeclaredDependencies": forbidden_declared_dependencies,
+            "forbiddenAbsoluteImports": forbidden_absolute_imports,
+            "evidence": [
+                "pyproject-dependencies-inspected",
+                "sdk-source-imports-inspected",
+                "no-engine-runtime-dependency",
+            ],
+            "recordedAtUtc": None,
+        },
+    )
+
 async def _wait_for_active_step(client: AiSdkClient, execution_id: str, step_name: str, timeout_seconds: float):
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_seconds
@@ -285,7 +354,7 @@ def _write_evidence(path: Path, document: dict[str, object]) -> None:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--endpoint")
-    parser.add_argument("--feature", choices=("cancellation",))
+    parser.add_argument("--feature", choices=("cancellation", "dependency-firewall"))
     parser.add_argument("--worker", required=True, choices=("dotnet", "typescript", "python"))
     parser.add_argument("--environment-ref")
     parser.add_argument("--scenario-id", required=True)

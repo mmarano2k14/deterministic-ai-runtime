@@ -8,6 +8,10 @@ import {
 } from "../../../node/sdk/dist/index.js";
 
 const args = await parseArgs(process.argv.slice(2));
+if (args.feature === "dependency-firewall") {
+  await runDependencyFirewall(args);
+  process.exit(0);
+}
 const root = process.env.MATRIX_FIXTURE_ROOT ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 const credentialProvider = args.token
   ? new AiSdkStaticCredentialProvider({ scheme: "Bearer", value: args.token })
@@ -138,6 +142,67 @@ if (args.feature === "cancellation") {
     evidence: ["publish", "submit", "observe", "terminal-result", "public-execution-id"],
     recordedAtUtc: new Date().toISOString(),
   });
+}
+
+
+async function runDependencyFirewall(args) {
+  const sdkRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../node/sdk");
+  const packageDocument = JSON.parse(await fs.readFile(path.join(sdkRoot, "package.json"), "utf8"));
+  const declaredDependencies = Object.keys(packageDocument.dependencies ?? {}).sort();
+  const declaredDevDependencies = Object.keys(packageDocument.devDependencies ?? {}).sort();
+  const forbiddenDeclaredDependencies = [...declaredDependencies, ...declaredDevDependencies]
+    .filter((name) => name.startsWith("@multiplexed/") || name.startsWith("multiplexed-"))
+    .sort();
+
+  const distRoot = path.join(sdkRoot, "dist");
+  const files = await walkFiles(distRoot);
+  const importSpecifiers = new Set();
+  const importPattern = /(?:\bfrom\s+|\bimport\s*\(\s*|\brequire\s*\(\s*)["']([^"']+)["']/g;
+  for (const file of files.filter((item) => item.endsWith(".js") || item.endsWith(".d.ts"))) {
+    const text = await fs.readFile(file, "utf8");
+    for (const match of text.matchAll(importPattern)) importSpecifiers.add(match[1]);
+  }
+  const forbiddenDistImports = [...importSpecifiers]
+    .filter((name) => name.startsWith("@multiplexed/") || name.startsWith("multiplexed-"))
+    .sort();
+
+  if (forbiddenDeclaredDependencies.length || forbiddenDistImports.length) {
+    throw new Error(`External TypeScript SDK dependency firewall detected repository dependencies: ${[...forbiddenDeclaredDependencies, ...forbiddenDistImports].join(", ")}`);
+  }
+
+  await writeEvidence(args.evidence, {
+    schemaVersion: 1,
+    scenarioId: args.scenarioId,
+    status: "passed",
+    coverageTarget: "external-client-dependency-firewall",
+    coverageValues: [],
+    clientLanguage: "typescript",
+    workerLanguage: null,
+    topology: args.topology,
+    provider: args.provider,
+    artifactKind: "compiled-typescript-sdk",
+    declaredDependencies,
+    declaredDevDependencies,
+    distImportSpecifiers: [...importSpecifiers].sort(),
+    forbiddenDeclaredDependencies,
+    forbiddenDistImports,
+    evidence: [
+      "package-dependencies-inspected",
+      "compiled-dist-imports-inspected",
+      "no-engine-runtime-dependency",
+    ],
+    recordedAtUtc: new Date().toISOString(),
+  });
+}
+
+async function walkFiles(root) {
+  const result = [];
+  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+    const full = path.join(root, entry.name);
+    if (entry.isDirectory()) result.push(...await walkFiles(full));
+    else if (entry.isFile()) result.push(full);
+  }
+  return result;
 }
 
 async function waitForTerminal(sdk, executionId, timeoutMs) {

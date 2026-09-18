@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 ROOT = Path("/matrix/evidence")
+PLAN_PATH = Path("/app/matrix-plan.json")
 CLIENTS = ("dotnet", "typescript", "python")
 WORKERS = ("dotnet", "typescript", "python")
 CORE_EXPECTED = [f"core-{client}-client-{worker}-worker" for client in CLIENTS for worker in WORKERS]
@@ -53,6 +54,10 @@ RECOVERY_EXPECTED = {
     "feature-recovery-in-flight-resume-python-client": "in-flight-resume",
     "feature-recovery-local-queued-redispatch-python-client": "local-queued-redispatch",
 }
+FIREWALL_EXPECTED = {
+    f"feature-external-client-dependency-firewall-{language}-client": language
+    for language in CLIENTS
+}
 JOURNAL_RESULT_ACCEPTANCE_EXPECTED = {
     "feature-journal-result-accepted-replay-python-client": "accepted-result-replay",
     "feature-journal-duplicate-delivery-convergence-python-client": "duplicate-delivery-convergence",
@@ -66,6 +71,7 @@ EXPECTED = [
     *CANCELLATION_EXPECTED,
     *RECOVERY_EXPECTED,
     *JOURNAL_RESULT_ACCEPTANCE_EXPECTED,
+    *FIREWALL_EXPECTED,
 ]
 
 
@@ -397,6 +403,87 @@ def _validate_cancellation(
     return None
 
 
+
+def _validate_dependency_firewall(
+    scenario: str,
+    document: dict[str, object],
+    client: str,
+) -> str | None:
+    common = _validate_common(scenario, document)
+    if common:
+        return common
+    if document.get("coverageTarget") != "external-client-dependency-firewall":
+        return "wrong external-client dependency-firewall coverage target"
+    if document.get("coverageValues") != []:
+        return "dependency firewall invented coverage values"
+    if document.get("clientLanguage") != client or document.get("workerLanguage") is not None:
+        return "wrong dependency-firewall client/worker evidence"
+    evidence = set(document.get("evidence", []))
+    if "no-engine-runtime-dependency" not in evidence:
+        return "dependency firewall did not record the no-engine/runtime proof"
+
+    if client == "dotnet":
+        if document.get("sdkRepositoryReferences") != ["Multiplexed.AI.Sdk.Contracts"]:
+            return "the .NET SDK repository reference graph is not limited to public contracts"
+        if document.get("contractRepositoryReferences") != []:
+            return "the .NET public contracts assembly has repository dependencies"
+        if document.get("forbiddenRepositoryDependencies") != []:
+            return "the .NET published client contains forbidden repository dependencies"
+        return None
+
+    if client == "typescript":
+        if document.get("forbiddenDeclaredDependencies") != [] or document.get("forbiddenDistImports") != []:
+            return "the TypeScript SDK contains forbidden repository dependencies"
+        return None
+
+    if document.get("forbiddenDeclaredDependencies") != [] or document.get("forbiddenAbsoluteImports") != []:
+        return "the Python SDK contains forbidden repository dependencies"
+    return None
+
+
+def _write_exact_coverage_closure() -> None:
+    plan = json.loads(PLAN_PATH.read_text(encoding="utf-8-sig"))
+    feature_targets = {scenario["coverageTarget"] for scenario in plan["featureScenarios"]}
+    expected_executed_targets = {
+        "publication-pinning",
+        "deterministic-dependency-packaging",
+        "custom-policy-family",
+        "nested-child-dag",
+        "mcp-effect-evidence",
+        "cancellation",
+        "recovery",
+        "journal-result-acceptance",
+        "external-client-dependency-firewall",
+    }
+    deferred_targets = {"worker-isolation-provider", "isolation-artifact-selection"}
+    if feature_targets != expected_executed_targets:
+        raise RuntimeError(f"Exact coverage target set mismatch: {sorted(feature_targets)!r}.")
+    plan_targets = {target["id"] for target in plan["coverageTargets"]}
+    if plan_targets - feature_targets != deferred_targets:
+        raise RuntimeError("Only the two Pack 4 isolation targets may remain unexecuted after Pack 3 closure.")
+
+    closure = {
+        "schemaVersion": 1,
+        "status": "passed",
+        "topology": "docker",
+        "provider": "ProcessHostPool",
+        "executedScenarioCount": len(EXPECTED),
+        "coreScenarioCount": len(CORE_EXPECTED),
+        "featureScenarioCount": len(EXPECTED) - len(CORE_EXPECTED),
+        "executedCoverageTargets": sorted(expected_executed_targets),
+        "deferredCoverageTargets": sorted(deferred_targets),
+        "clientLanguages": list(CLIENTS),
+        "workerLanguages": list(WORKERS),
+        "dependencyPackageKinds": sorted(PACKAGE_BY_WORKER.values()),
+        "customPolicyFamilies": ["concurrency", "retry", "delegation"],
+        "recoveryPaths": ["in-flight-resume", "local-queued-redispatch"],
+        "mcpEffectCases": ["completed-local-replay", "uncertain-blocks-blind-resend"],
+        "journalAcceptanceCases": ["accepted-result-replay", "duplicate-delivery-convergence"],
+        "notExecutedValues": ["sandboxed-container", "OciImage"],
+        "claimBoundary": "Only combinations represented by passed evidence documents are executed coverage.",
+    }
+    (ROOT / "executed-coverage-closure.json").write_text(json.dumps(closure, indent=2) + "\n", encoding="utf-8")
+
 def main() -> int:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline and any(not (ROOT / f"{scenario}.json").exists() for scenario in EXPECTED):
@@ -491,6 +578,17 @@ def main() -> int:
         else:
             print(f"{scenario}: PASSED")
 
+    for scenario, client in FIREWALL_EXPECTED.items():
+        document = _load(scenario)
+        if document is None:
+            failures.append(f"{scenario}: missing evidence")
+            continue
+        error = _validate_dependency_firewall(scenario, document, client)
+        if error:
+            failures.append(f"{scenario}: {error}")
+        else:
+            print(f"{scenario}: PASSED")
+
     if failures:
         for failure in failures:
             print(failure, file=sys.stderr)
@@ -504,6 +602,10 @@ def main() -> int:
     print("3/3 durable cancellation SDK-client scenarios passed.")
     print("2/2 runtime recovery ProcessHostPool scenarios passed.")
     print("2/2 durable journal result-acceptance scenarios passed.")
+    print("3/3 external client dependency-firewall scenarios passed.")
+    _write_exact_coverage_closure()
+    print("Exact executed-coverage closure: 33/33 scenarios; topology=docker; provider=ProcessHostPool.")
+    print("Deferred to Pack 4 (NOT EXECUTED): worker-isolation-provider, isolation-artifact-selection.")
     return 0
 
 

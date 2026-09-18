@@ -50,7 +50,7 @@ If MongoDB and Redis are already running on their default local ports:
 .\implementations\matrix\runtime\local\run.ps1 -InfrastructureAlreadyRunning
 ```
 
-The local orchestrator publishes the real runtime and .NET worker, stages the same worker-fixture layout used by Docker, starts the runtime with exact installed runtime identities, waits for the matrix manifest, executes the 3 x 3 core matrix, and then executes the eighteen currently bound Python-driven feature scenarios. Cancellation remains exercised independently by all three native SDK client containers.
+The local orchestrator publishes the real runtime and .NET worker, stages the same worker-fixture layout used by Docker, starts the runtime with exact installed runtime identities, waits for the matrix manifest, executes the 3 x 3 core matrix, and then executes the eighteen Python-driven feature scenarios plus the three native external-client dependency-firewall checks. Cancellation remains exercised independently by all three native SDK client containers.
 
 ## Runtime manifest
 
@@ -151,4 +151,16 @@ Two matrix scenarios use the production Mongo-backed `IAiDurableInvocationStore`
 
 `duplicate-delivery-convergence` submits eight concurrent identical result deliveries under the same live lease. Exactly one delivery must become `Accepted`, the remaining seven must converge as `AlreadyAccepted`, no delivery may cross the lease fence as `LeaseRejected`, and the durable record must retain one authoritative terminal result with pending continuation intent.
 
-With these four scenarios, the production-like Docker gate becomes 30 executed scenarios: 9 core + 6 publication/dependency + 3 custom policy + 3 nested Child DAG + 2 durable MCP effect + 3 cancellation + 2 recovery + 2 journal result-acceptance.
+With these four scenarios, the production-like Docker gate reaches 30 runtime/behavioral scenarios before the exact coverage closure below.
+
+## Exact executed-coverage closure
+
+The final ProcessHost Pack 3 closure adds three external client dependency-firewall scenarios, executed independently inside the published .NET client artifact, compiled TypeScript SDK artifact, and Python SDK source/distribution boundary. These checks do not exercise a hosted worker; they prove that the external SDK artifact remains independent from engine/runtime repository dependencies.
+
+The .NET check inspects the SDK and public-contract assembly reference graphs plus the published client bundle. The TypeScript check inspects declared package dependencies and compiled `dist` import specifiers. The Python check inspects declared `pyproject.toml` dependencies and absolute SDK source imports. Any repository runtime/engine dependency fails the client before verifier execution.
+
+The canonical Docker verifier requires all 33 executed scenarios: 9 core + 6 publication/dependency + 3 custom policy + 3 nested Child DAG + 2 durable MCP effect + 3 cancellation + 2 recovery + 2 journal result-acceptance + 3 external client dependency-firewall scenarios. It also writes `executed-coverage-closure.json` from the evidence set and records the exact topology/provider as `docker` / `ProcessHostPool`.
+
+Two roadmap coverage targets remain deliberately **NOT EXECUTED** in Pack 3: `worker-isolation-provider` and `isolation-artifact-selection`. Their `sandboxed-container` and `OciImage` values belong to Pack 4 and are not inferred from `TrustedProcess` / `HostRuntime` evidence. This keeps the 33 executed scenarios bounded to combinations that actually ran.
+
+Fixture-backed workers are still used by this Pack 3 matrix. Removing those fixtures and rerunning the full matrix through non-fixture execution artifacts is the separate closure gate that follows this increment.

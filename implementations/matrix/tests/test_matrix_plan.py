@@ -149,9 +149,9 @@ class MatrixPlanTests(unittest.TestCase):
         errors = validate_plan(invalid)
         self.assertTrue(any("coverageTarget is unsupported" in error for error in errors))
 
-    def test_current_process_feature_matrix_binds_twenty_one_scenarios(self):
+    def test_current_process_feature_matrix_binds_twenty_four_scenarios(self):
         plan = self.plan
-        self.assertEqual(21, len(plan["featureScenarios"]))
+        self.assertEqual(24, len(plan["featureScenarios"]))
         counts = {}
         for scenario in plan["featureScenarios"]:
             counts[scenario["coverageTarget"]] = counts.get(scenario["coverageTarget"], 0) + 1
@@ -163,6 +163,44 @@ class MatrixPlanTests(unittest.TestCase):
         self.assertEqual(3, counts.get("cancellation"))
         self.assertEqual(2, counts.get("recovery"))
         self.assertEqual(2, counts.get("journal-result-acceptance"))
+        self.assertEqual(3, counts.get("external-client-dependency-firewall"))
+
+    def test_external_client_dependency_firewall_binds_all_three_native_clients(self) -> None:
+        scenarios = [
+            item for item in self.plan["featureScenarios"]
+            if item["coverageTarget"] == "external-client-dependency-firewall"
+        ]
+        self.assertEqual(3, len(scenarios))
+        self.assertEqual(set(CLIENT_LANGUAGES), {item["clientLanguage"] for item in scenarios})
+        self.assertTrue(all(item["workerLanguage"] is None for item in scenarios))
+        self.assertTrue(all(item["coverageValues"] == [] for item in scenarios))
+        self.assertTrue(all(item["executor"]["kind"] == item["clientLanguage"] for item in scenarios))
+
+    def test_missing_external_client_dependency_firewall_binding_fails_closed(self) -> None:
+        invalid = copy.deepcopy(self.plan)
+        invalid["featureScenarios"] = [
+            item for item in invalid["featureScenarios"]
+            if item["id"] != "feature-external-client-dependency-firewall-typescript-client"
+        ]
+        errors = validate_plan(invalid)
+        self.assertTrue(any("external-client-dependency-firewall feature bindings" in error for error in errors))
+
+    def test_pack4_isolation_targets_remain_unbound_in_pack3(self) -> None:
+        bound_targets = {item["coverageTarget"] for item in self.plan["featureScenarios"]}
+        self.assertNotIn("worker-isolation-provider", bound_targets)
+        self.assertNotIn("isolation-artifact-selection", bound_targets)
+
+        invalid = copy.deepcopy(self.plan)
+        invalid["featureScenarios"].append({
+            "id": "invalid-pack4-early-claim",
+            "coverageTarget": "worker-isolation-provider",
+            "clientLanguage": "python",
+            "workerLanguage": None,
+            "coverageValues": ["sandboxed-container"],
+            "executor": {"kind": "python", "command": ["python", "invalid.py"]},
+        })
+        errors = validate_plan(invalid)
+        self.assertTrue(any("Pack 4 isolation coverage targets must remain unbound" in error for error in errors))
 
     def test_mcp_effect_feature_bindings_cover_exact_durable_cases(self) -> None:
         scenarios = [
@@ -249,10 +287,12 @@ class MatrixPlanTests(unittest.TestCase):
 
     def test_matrix_readme_records_mcp_effect_evidence_as_current_coverage(self):
         readme = (MATRIX_ROOT / "README.md").read_text(encoding="utf-8-sig")
-        self.assertIn("eighteen currently bound Python-driven feature scenarios", readme)
+        self.assertIn("eighteen Python-driven feature scenarios", readme)
         self.assertIn("three hosted custom-policy scenarios", readme)
         self.assertIn("three nested Child DAG scenarios", readme)
         self.assertIn("two durable MCP effect evidence scenarios", readme)
+        self.assertIn("three external client dependency-firewall scenarios", readme)
+        self.assertIn("33 executed scenarios", readme)
 
 
 if __name__ == "__main__":

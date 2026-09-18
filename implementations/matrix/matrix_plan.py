@@ -43,6 +43,7 @@ REQUIRED_INVARIANTS = {
 }
 ALLOWED_EXECUTOR_KINDS = {"dotnet", "typescript", "python", "command"}
 INITIAL_BOUND_FEATURE_TARGETS = {"publication-pinning", "deterministic-dependency-packaging"}
+PACK4_DEFERRED_COVERAGE_TARGETS = {"worker-isolation-provider", "isolation-artifact-selection"}
 
 
 class MatrixPlanError(ValueError):
@@ -104,6 +105,8 @@ def validate_plan(plan: dict[str, Any]) -> list[str]:
     _validate_mcp_effect_bindings(errors, plan.get("featureScenarios"))
     _validate_recovery_bindings(errors, plan.get("featureScenarios"))
     _validate_journal_result_acceptance_bindings(errors, plan.get("featureScenarios"))
+    _validate_external_client_dependency_firewall_bindings(errors, plan.get("featureScenarios"))
+    _validate_pack4_deferred_bindings(errors, plan.get("featureScenarios"))
 
     return errors
 
@@ -459,6 +462,46 @@ def _validate_journal_result_acceptance_bindings(errors: list[str], value: Any) 
     if observed != set(JOURNAL_RESULT_ACCEPTANCE_VALUES):
         errors.append("journal-result-acceptance bindings must cover both acceptance cases exactly once.")
 
+
+
+def _validate_external_client_dependency_firewall_bindings(errors: list[str], value: Any) -> None:
+    if not isinstance(value, list):
+        return
+
+    bound = [
+        scenario for scenario in value
+        if isinstance(scenario, dict) and scenario.get("coverageTarget") == "external-client-dependency-firewall"
+    ]
+    if len(bound) != len(CLIENT_LANGUAGES):
+        errors.append("external-client-dependency-firewall feature bindings must contain exactly one scenario per external client language.")
+        return
+
+    if {scenario.get("clientLanguage") for scenario in bound} != set(CLIENT_LANGUAGES):
+        errors.append("external-client-dependency-firewall feature bindings must cover dotnet, typescript and python clients.")
+    for scenario in bound:
+        client = scenario.get("clientLanguage")
+        if scenario.get("workerLanguage") is not None:
+            errors.append("external-client-dependency-firewall must not claim a hosted worker language.")
+        if scenario.get("coverageValues") != []:
+            errors.append("external-client-dependency-firewall must not invent coverage values.")
+        executor = scenario.get("executor")
+        if not isinstance(executor, dict) or executor.get("kind") != client:
+            errors.append("external-client-dependency-firewall must execute inside the matching external client language.")
+
+
+def _validate_pack4_deferred_bindings(errors: list[str], value: Any) -> None:
+    if not isinstance(value, list):
+        return
+    bound = {
+        scenario.get("coverageTarget")
+        for scenario in value
+        if isinstance(scenario, dict) and scenario.get("coverageTarget") in PACK4_DEFERRED_COVERAGE_TARGETS
+    }
+    if bound:
+        errors.append(
+            "Pack 4 isolation coverage targets must remain unbound in the ProcessHost Pack 3 matrix: "
+            f"{sorted(bound)!r}."
+        )
 
 def _validate_executor(errors: list[str], prefix: str, executor: Any) -> None:
     if executor is None:

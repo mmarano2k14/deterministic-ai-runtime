@@ -112,10 +112,29 @@ run_cancellation_feature() {
   esac
 }
 
+
+run_dependency_firewall() {
+  scenario="feature-external-client-dependency-firewall-${LANGUAGE}-client"
+  evidence="/matrix/evidence/${scenario}.json"
+  case "$LANGUAGE" in
+    dotnet)
+      dotnet /app/client/Multiplexed.AI.Matrix.DotNetClient.dll --manifest "$MANIFEST" --feature dependency-firewall --worker dotnet --scenario-id "$scenario" --evidence "$evidence"
+      ;;
+    typescript)
+      node /app/implementations/matrix/clients/typescript/run.mjs --manifest "$MANIFEST" --feature dependency-firewall --worker typescript --scenario-id "$scenario" --evidence "$evidence"
+      ;;
+    python)
+      python /app/implementations/matrix/clients/python/run.py --manifest "$MANIFEST" --feature dependency-firewall --worker python --scenario-id "$scenario" --evidence "$evidence"
+      ;;
+    *) echo "unknown dependency-firewall client language: $LANGUAGE" >&2; exit 2 ;;
+  esac
+}
+
 run_one dotnet
 run_one typescript
 run_one python
 run_cancellation_feature
+run_dependency_firewall
 
 if [ "$LANGUAGE" = "python" ]; then
   run_feature publication-pinning dotnet
