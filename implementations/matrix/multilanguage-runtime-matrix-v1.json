@@ -616,6 +616,63 @@
           "uncertain-blocks-blind-resend"
         ]
       }
+    },
+    {
+      "id": "feature-cancellation-dotnet-client-dotnet-worker",
+      "coverageTarget": "cancellation",
+      "clientLanguage": "dotnet",
+      "workerLanguage": "dotnet",
+      "coverageValues": [],
+      "executor": {
+        "kind": "dotnet",
+        "command": [
+          "dotnet",
+          "run",
+          "--project",
+          "implementations/matrix/clients/dotnet/Multiplexed.AI.Matrix.DotNetClient/Multiplexed.AI.Matrix.DotNetClient.csproj",
+          "--",
+          "--feature",
+          "cancellation",
+          "--worker",
+          "dotnet"
+        ]
+      }
+    },
+    {
+      "id": "feature-cancellation-typescript-client-typescript-worker",
+      "coverageTarget": "cancellation",
+      "clientLanguage": "typescript",
+      "workerLanguage": "typescript",
+      "coverageValues": [],
+      "executor": {
+        "kind": "typescript",
+        "command": [
+          "node",
+          "implementations/matrix/clients/typescript/run.mjs",
+          "--feature",
+          "cancellation",
+          "--worker",
+          "typescript"
+        ]
+      }
+    },
+    {
+      "id": "feature-cancellation-python-client-python-worker",
+      "coverageTarget": "cancellation",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/run.py",
+          "--feature",
+          "cancellation",
+          "--worker",
+          "python"
+        ]
+      }
     }
   ]
 }

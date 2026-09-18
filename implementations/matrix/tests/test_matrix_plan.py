@@ -147,9 +147,9 @@ class MatrixPlanTests(unittest.TestCase):
         errors = validate_plan(invalid)
         self.assertTrue(any("coverageTarget is unsupported" in error for error in errors))
 
-    def test_current_process_feature_matrix_binds_fourteen_scenarios(self):
+    def test_current_process_feature_matrix_binds_seventeen_scenarios(self):
         plan = self.plan
-        self.assertEqual(14, len(plan["featureScenarios"]))
+        self.assertEqual(17, len(plan["featureScenarios"]))
         counts = {}
         for scenario in plan["featureScenarios"]:
             counts[scenario["coverageTarget"]] = counts.get(scenario["coverageTarget"], 0) + 1

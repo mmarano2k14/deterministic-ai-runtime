@@ -63,9 +63,27 @@ run_effect_feature() {
   python /app/implementations/matrix/clients/python/feature.py     --manifest "$MANIFEST"     --feature mcp-effect-evidence     --effect-case "$effect_case"     --scenario-id "$scenario"     --evidence "$evidence"
 }
 
+run_cancellation_feature() {
+  scenario="feature-cancellation-${LANGUAGE}-client-${LANGUAGE}-worker"
+  evidence="/matrix/evidence/${scenario}.json"
+  case "$LANGUAGE" in
+    dotnet)
+      dotnet /app/client/Multiplexed.AI.Matrix.DotNetClient.dll --manifest "$MANIFEST" --feature cancellation --worker dotnet --scenario-id "$scenario" --evidence "$evidence"
+      ;;
+    typescript)
+      node /app/implementations/matrix/clients/typescript/run.mjs --manifest "$MANIFEST" --feature cancellation --worker typescript --scenario-id "$scenario" --evidence "$evidence"
+      ;;
+    python)
+      python /app/implementations/matrix/clients/python/run.py --manifest "$MANIFEST" --feature cancellation --worker python --scenario-id "$scenario" --evidence "$evidence"
+      ;;
+    *) echo "unknown cancellation client language: $LANGUAGE" >&2; exit 2 ;;
+  esac
+}
+
 run_one dotnet
 run_one typescript
 run_one python
+run_cancellation_feature
 
 if [ "$LANGUAGE" = "python" ]; then
   run_feature publication-pinning dotnet

@@ -20,7 +20,9 @@ const client = new AiSdkClient(
       : undefined,
   }),
 );
-const source = await workerSource(root, args.worker);
+const source = args.feature === "cancellation"
+  ? await cancellationWorkerSource(root, args.worker)
+  : await workerSource(root, args.worker);
 const marker = `${args.scenarioId}-marker`;
 
 const publication = await client.publishPipeline({
@@ -62,27 +64,81 @@ const submitted = await client.submitExecution({
   },
 });
 
-await waitForTerminal(client, submitted.executionId, 90_000);
-const result = await client.getExecutionResult(submitted.executionId);
-if (result.status !== "Completed") {
-  throw new Error(`Execution '${submitted.executionId}' ended as '${result.status}'.`);
-}
+if (args.feature === "cancellation") {
+  const active = await waitForActiveStep(client, submitted.executionId, "work", 30_000);
+  const correlationId = `cancel-${crypto.randomUUID().replaceAll("-", "")}`;
+  const cancellation = await client.cancelExecution(submitted.executionId, {
+    reason: "matrix-running-cancellation",
+    correlationId,
+  });
+  if (!cancellation.cancellationRequested || cancellation.executionId !== submitted.executionId) {
+    throw new Error("Public cancellation operation did not acknowledge the submitted execution.");
+  }
+  if (!cancellation.requestedAtUtc || cancellation.correlationId !== correlationId) {
+    throw new Error("Public cancellation acknowledgement did not preserve durable request metadata.");
+  }
 
-await writeEvidence(args.evidence, {
-  schemaVersion: 1,
-  scenarioId: args.scenarioId,
-  status: "passed",
-  clientLanguage: "typescript",
-  workerLanguage: args.worker,
-  endpoint: args.endpoint,
-  topology: args.topology,
-  provider: args.provider,
-  publicationRef: publication.publicationRef,
-  executionId: submitted.executionId,
-  terminalStatus: result.status,
-  evidence: ["publish", "submit", "observe", "terminal-result", "public-execution-id"],
-  recordedAtUtc: new Date().toISOString(),
-});
+  const terminal = await waitForTerminal(client, submitted.executionId, 45_000);
+  const result = await client.getExecutionResult(submitted.executionId);
+  if (terminal.status !== "Cancelled" || result.status !== "Cancelled") {
+    throw new Error(`Cancellation scenario ended as observation='${terminal.status}', result='${result.status}', expected 'Cancelled'.`);
+  }
+  if (result.output != null || result.failure != null) {
+    throw new Error("Cancelled public result unexpectedly exposed completed output or failure payload.");
+  }
+  const activeStep = active.steps.find((step) => step.name === "work");
+  const terminalStep = terminal.steps.find((step) => step.name === "work");
+  await writeEvidence(args.evidence, {
+    schemaVersion: 1,
+    scenarioId: args.scenarioId,
+    status: "passed",
+    coverageTarget: "cancellation",
+    coverageValues: [],
+    cancellationMode: "running-cooperative",
+    clientLanguage: "typescript",
+    workerLanguage: args.worker,
+    endpoint: args.endpoint,
+    topology: args.topology,
+    provider: args.provider,
+    publicationRef: publication.publicationRef,
+    executionId: submitted.executionId,
+    activeStatusBeforeCancel: active.status,
+    activeStepStatusBeforeCancel: activeStep?.status,
+    cancellationRequested: cancellation.cancellationRequested,
+    cancellationRequestedAtUtc: cancellation.requestedAtUtc,
+    cancellationCorrelationId: cancellation.correlationId,
+    terminalStatus: result.status,
+    terminalStepStatus: terminalStep?.status,
+    evidence: [
+      "publish", "submit", "active-execution-observed", "sdk-execution-cancel",
+      "durable-cancellation-acknowledged", "terminal-cancelled-observed", "terminal-result",
+    ],
+    recordedAtUtc: terminal.updatedAtUtc,
+  });
+} else {
+  if (args.feature) throw new Error(`Unsupported --feature '${args.feature}'.`);
+  await waitForTerminal(client, submitted.executionId, 90_000);
+  const result = await client.getExecutionResult(submitted.executionId);
+  if (result.status !== "Completed") {
+    throw new Error(`Execution '${submitted.executionId}' ended as '${result.status}'.`);
+  }
+
+  await writeEvidence(args.evidence, {
+    schemaVersion: 1,
+    scenarioId: args.scenarioId,
+    status: "passed",
+    clientLanguage: "typescript",
+    workerLanguage: args.worker,
+    endpoint: args.endpoint,
+    topology: args.topology,
+    provider: args.provider,
+    publicationRef: publication.publicationRef,
+    executionId: submitted.executionId,
+    terminalStatus: result.status,
+    evidence: ["publish", "submit", "observe", "terminal-result", "public-execution-id"],
+    recordedAtUtc: new Date().toISOString(),
+  });
+}
 
 async function waitForTerminal(sdk, executionId, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -92,6 +148,45 @@ async function waitForTerminal(sdk, executionId, timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`Execution '${executionId}' did not become terminal within ${timeoutMs} ms.`);
+}
+
+async function waitForActiveStep(sdk, executionId, stepName, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const observation = await sdk.observeExecution(executionId);
+    if (["Completed", "Failed", "Cancelled"].includes(observation.status)) {
+      throw new Error(`Execution '${executionId}' became terminal as '${observation.status}' before cancellation could be requested.`);
+    }
+    const step = observation.steps.find((item) => item.name === stepName);
+    if (step && ["Running", "WaitingForExternal"].includes(step.status)) return observation;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Execution '${executionId}' did not expose active step '${stepName}' within ${timeoutMs} ms.`);
+}
+
+async function cancellationWorkerSource(repoRoot, worker) {
+  const fixture = (relative) => process.env.MATRIX_FIXTURE_ROOT
+    ? path.join(repoRoot, relative)
+    : path.join(repoRoot, "implementations", "matrix", "fixtures", relative);
+  if (worker === "dotnet") {
+    const bytes = await fs.readFile(fixture("dotnet-worker/Multiplexed.AI.Matrix.Worker.dll"));
+    return { entryPointPath: "functions.dll", entryPointSymbol: "Multiplexed.AI.Matrix.Worker.Functions::PinStable", bytes };
+  }
+  if (worker === "typescript") {
+    return {
+      entryPointPath: "main.ts",
+      entryPointSymbol: "run",
+      bytes: Buffer.from("export async function run(inputs: unknown, context: unknown) { await new Promise(resolve => setTimeout(resolve, 8000)); return { success: true, payload: { cancellationFixture: true } }; }\n", "utf8"),
+    };
+  }
+  if (worker === "python") {
+    return {
+      entryPointPath: "main.py",
+      entryPointSymbol: "run",
+      bytes: Buffer.from("import time\ndef run(inputs, context):\n    time.sleep(8)\n    return {'success': True, 'payload': {'cancellationFixture': True}}\n", "utf8"),
+    };
+  }
+  throw new Error(`Unsupported worker language '${worker}'.`);
 }
 
 async function workerSource(repoRoot, worker) {
@@ -124,6 +219,7 @@ async function parseArgs(values) {
   const worker = required("--worker");
   const scenarioId = required("--scenario-id");
   const evidence = required("--evidence");
+  const feature = read("--feature");
   const manifestPath = read("--manifest");
   if (manifestPath) {
     const manifest = JSON.parse(await fs.readFile(path.resolve(manifestPath), "utf8"));
@@ -135,6 +231,7 @@ async function parseArgs(values) {
       environmentRef,
       scenarioId,
       evidence,
+      feature,
       token: read("--token") ?? manifest.bearerToken,
       accessContext: read("--access-context") ?? manifest.accessContext,
       accessContextHeader: manifest.accessContextHeader ?? "X-Access-Context",
@@ -144,7 +241,7 @@ async function parseArgs(values) {
   }
   return {
     endpoint: required("--endpoint"), worker,
-    environmentRef: required("--environment-ref"), scenarioId, evidence,
+    environmentRef: required("--environment-ref"), scenarioId, evidence, feature,
     token: read("--token"), accessContext: read("--access-context"),
     accessContextHeader: read("--access-context-header") ?? "X-Access-Context",
     topology: read("--topology") ?? "local", provider: read("--provider") ?? "ProcessHostPool",

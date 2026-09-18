@@ -41,6 +41,10 @@ NESTED_CHILD_DAG_EXPECTED = {
     f"feature-nested-child-dag-python-client-{worker}-worker": worker
     for worker in WORKERS
 }
+CANCELLATION_EXPECTED = {
+    f"feature-cancellation-{language}-client-{language}-worker": (language, language)
+    for language in CLIENTS
+}
 MCP_EFFECT_EXPECTED = {
     "feature-mcp-effect-completed-local-replay-python-client": ("completed-local-replay", "Completed"),
     "feature-mcp-effect-uncertain-blocks-blind-resend-python-client": ("uncertain-blocks-blind-resend", "Uncertain"),
@@ -51,6 +55,7 @@ EXPECTED = [
     *CUSTOM_POLICY_EXPECTED,
     *NESTED_CHILD_DAG_EXPECTED,
     *MCP_EFFECT_EXPECTED,
+    *CANCELLATION_EXPECTED,
 ]
 
 
@@ -253,6 +258,42 @@ def _validate_mcp_effect(
     return None
 
 
+def _validate_cancellation(
+    scenario: str,
+    document: dict[str, object],
+    client: str,
+    worker: str,
+) -> str | None:
+    common = _validate_common(scenario, document)
+    if common:
+        return common
+    if document.get("coverageTarget") != "cancellation":
+        return "wrong cancellation coverage target"
+    if document.get("coverageValues") != []:
+        return "cancellation invented coverage values"
+    if document.get("cancellationMode") != "running-cooperative":
+        return "wrong cancellation mode"
+    if document.get("clientLanguage") != client or document.get("workerLanguage") != worker:
+        return "wrong cancellation client/worker evidence"
+    if document.get("cancellationRequested") is not True:
+        return "public cancellation was not acknowledged"
+    if not document.get("cancellationRequestedAtUtc") or not document.get("cancellationCorrelationId"):
+        return "durable cancellation request metadata is missing"
+    if document.get("activeStatusBeforeCancel") in {"Completed", "Failed", "Cancelled"}:
+        return "cancellation was not issued against an active execution"
+    if document.get("activeStepStatusBeforeCancel") not in {"Running", "WaitingForExternal"}:
+        return "cancellation was not issued while the hosted step was active"
+    if document.get("terminalStatus") != "Cancelled":
+        return "execution did not converge to Cancelled"
+    required = {
+        "publish", "submit", "active-execution-observed", "sdk-execution-cancel",
+        "durable-cancellation-acknowledged", "terminal-cancelled-observed", "terminal-result",
+    }
+    if not required.issubset(set(document.get("evidence", []))):
+        return "missing cancellation evidence"
+    return None
+
+
 def main() -> int:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline and any(not (ROOT / f"{scenario}.json").exists() for scenario in EXPECTED):
@@ -314,6 +355,17 @@ def main() -> int:
         else:
             print(f"{scenario}: PASSED")
 
+    for scenario, (client, worker) in CANCELLATION_EXPECTED.items():
+        document = _load(scenario)
+        if document is None:
+            failures.append(f"{scenario}: missing evidence")
+            continue
+        error = _validate_cancellation(scenario, document, client, worker)
+        if error:
+            failures.append(f"{scenario}: {error}")
+        else:
+            print(f"{scenario}: PASSED")
+
     if failures:
         for failure in failures:
             print(failure, file=sys.stderr)
@@ -324,6 +376,7 @@ def main() -> int:
     print("3/3 hosted custom-policy-family ProcessHostPool scenarios passed.")
     print("3/3 nested Child DAG ProcessHostPool scenarios passed.")
     print("2/2 durable MCP effect evidence ProcessHostPool scenarios passed.")
+    print("3/3 durable cancellation SDK-client scenarios passed.")
     return 0
 
 

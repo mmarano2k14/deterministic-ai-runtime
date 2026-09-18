@@ -454,6 +454,64 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertNotIn("Endpoint =", diagnostic_block)
         self.assertNotIn("EffectProbeMcpEndpoint", diagnostic_block)
 
+
+    def test_cancellation_target_is_executed_by_all_three_external_sdk_clients(self) -> None:
+        plan = load_plan()
+        scenarios = [item for item in plan["featureScenarios"] if item["coverageTarget"] == "cancellation"]
+        self.assertEqual({item["clientLanguage"] for item in scenarios}, {"dotnet", "typescript", "python"})
+        self.assertEqual(len(scenarios), 3)
+        self.assertTrue(all(item["coverageValues"] == [] for item in scenarios))
+
+    def test_each_external_client_uses_explicit_durable_cancellation_operation(self) -> None:
+        dotnet = (MATRIX_ROOT / "clients" / "dotnet" / "Multiplexed.AI.Matrix.DotNetClient" / "Program.cs").read_text(encoding="utf-8-sig")
+        typescript = (MATRIX_ROOT / "clients" / "typescript" / "run.mjs").read_text(encoding="utf-8-sig")
+        python = (MATRIX_ROOT / "clients" / "python" / "run.py").read_text(encoding="utf-8-sig")
+        self.assertIn("CancelExecutionAsync", dotnet)
+        self.assertIn("cancelExecution", typescript)
+        self.assertIn("cancel_execution", python)
+        for text in (dotnet, typescript, python):
+            self.assertIn("matrix-running-cancellation", text)
+            self.assertIn("running-cooperative", text)
+            self.assertIn("active-execution-observed", text)
+
+    def test_docker_runner_assigns_cancellation_to_each_native_sdk_client_container(self) -> None:
+        runner = (MATRIX_ROOT / "runtime" / "docker" / "run-client.sh").read_text(encoding="utf-8-sig")
+        self.assertIn('scenario="feature-cancellation-${LANGUAGE}-client-${LANGUAGE}-worker"', runner)
+        self.assertIn("dotnet /app/client/Multiplexed.AI.Matrix.DotNetClient.dll", runner)
+        self.assertIn("node /app/implementations/matrix/clients/typescript/run.mjs", runner)
+        self.assertIn("python /app/implementations/matrix/clients/python/run.py", runner)
+        self.assertIn("run_cancellation_feature", runner)
+
+    def test_verifier_requires_three_client_language_cancellation_scenarios(self) -> None:
+        verifier = (MATRIX_ROOT / "runtime" / "docker" / "verifier.py").read_text(encoding="utf-8-sig")
+        self.assertIn("CANCELLATION_EXPECTED", verifier)
+        self.assertIn('"activeStepStatusBeforeCancel"', verifier)
+        self.assertIn('"terminalStatus") != "Cancelled"', verifier)
+        self.assertIn("3/3 durable cancellation SDK-client scenarios passed.", verifier)
+
+    def test_public_cancellation_finalizes_parked_dag_through_terminal_store_authority(self) -> None:
+        coordinator = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI" / "Runtime" / "Execution" / "Control" /
+            "AiDagExecutionCancellationCoordinator.cs"
+        ).read_text(encoding="utf-8-sig")
+        boundary = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer" / "PublicSdk" /
+            "AiPublicSdkBoundary.cs"
+        ).read_text(encoding="utf-8-sig")
+        continuation = (
+            MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI" / "Runtime" / "Invocation" / "Durable" / "Dag" /
+            "AiDurableInvocationDagContinuationCoordinator.cs"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("TryFinalizeExecutionAsync", coordinator)
+        self.assertIn("ExpectedExecutionStepKey = record.ExecutionStepKey", coordinator)
+        self.assertIn("Status = AiExecutionStatus.Cancelled", coordinator)
+        self.assertIn("MarkCancelledAsync", coordinator)
+        self.assertIn("AiDagExecutionCancellationCoordinator", boundary)
+        self.assertIn("_cancellation.CancelAsync", boundary)
+        self.assertIn("if (parent.IsTerminal)", continuation)
+        self.assertIn("AiDurableInvocationContinuationStatus.Suppressed", continuation)
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -95,7 +95,7 @@ Deterministic dependency packaging is exercised once against each hosted worker 
 
 The Docker verifier preserves the original nine core scenarios and additionally requires all six bound feature evidence documents. A successful live run must therefore report both `9/9 production-like Docker ProcessHostPool scenarios passed.` and `6/6 publication-pinning/dependency-package ProcessHostPool feature scenarios passed.`. Until that live run is executed, the feature scenarios remain planned/bound evidence rather than a green claim.
 
-The current ProcessHost coverage remains limited to ProcessHostPool / HostRuntime / TrustedProcess execution. Cancellation, recovery, replay/result acceptance, and OCI/container-provider isolation remain outside the currently bound scenarios.
+The current ProcessHost coverage remains limited to ProcessHostPool / HostRuntime / TrustedProcess execution. Recovery, replay/result acceptance, and OCI/container-provider isolation remain outside the currently bound scenarios. Durable running cancellation is now exercised by all three external SDK clients.
 
 ### Hosted custom policy family scenarios
 
@@ -128,3 +128,7 @@ The process matrix binds two language-free MCP effect scenarios through the exte
 Matrix-only diagnostics expose the durable evidence status and retained DAG retry count without exposing endpoint or credential material. These diagnostics are disabled with the matrix harness and are not public runtime APIs. The scenarios prove bounded durable effect evidence behavior only; they do not claim generic exactly-once delivery or automatic reconciliation of uncertain effects.
 
 The Docker verifier now requires nine core scenarios, six publication/dependency scenarios, three hosted custom-policy scenarios, three nested Child DAG scenarios, and two durable MCP effect evidence scenarios. A successful live run must report all five bounded verifier summaries before the matrix runner can return GREEN. The resulting gate is 23/23 executed scenarios.
+
+## Cancellation coverage
+
+The Docker ProcessHostPool matrix exercises `sdk.execution.cancel` independently through the .NET, TypeScript, and Python external SDKs. Each client submits a same-language long-running hosted execution, observes the hosted step in an active state, requests durable cancellation, validates the acknowledgement metadata, and requires public observation/result convergence to `Cancelled`. Cancelling an SDK transport call does not satisfy this target.

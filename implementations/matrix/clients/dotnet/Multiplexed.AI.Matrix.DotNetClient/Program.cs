@@ -2,7 +2,9 @@ using System.Text;
 using System.Text.Json;
 using Multiplexed.AI.Sdk;
 using Multiplexed.AI.Sdk.Authentication;
+using Multiplexed.AI.Sdk.Contracts.Control;
 using Multiplexed.AI.Sdk.Contracts.Executions;
+using Multiplexed.AI.Sdk.Contracts.Observation;
 using Multiplexed.AI.Sdk.Contracts.Pipelines;
 using Multiplexed.AI.Sdk.Contracts.Publication;
 using Multiplexed.AI.Sdk.Transport;
@@ -21,6 +23,16 @@ var transportOptions = new AiSdkTransportOptions
         }
 };
 var client = new AiSdkClient(new AiSdkMcpHttpTransport(new Uri(options.Endpoint), transportOptions));
+
+if (string.Equals(options.Feature, "cancellation", StringComparison.OrdinalIgnoreCase))
+{
+    await RunCancellationAsync(client, options);
+    return;
+}
+if (!string.IsNullOrWhiteSpace(options.Feature))
+{
+    throw new ArgumentException($"Unsupported --feature '{options.Feature}'.");
+}
 
 var source = WorkerSource.Load(options.Worker);
 var marker = options.ScenarioId + "-marker";
@@ -109,7 +121,7 @@ await Evidence.WriteAsync(options.Evidence, new
     recordedAtUtc = DateTimeOffset.UtcNow
 });
 
-static async Task<Multiplexed.AI.Sdk.Contracts.Observation.AiSdkExecutionObservation> WaitForTerminalAsync(
+static async Task<AiSdkExecutionObservation> WaitForTerminalAsync(
     AiSdkClient client,
     string executionId,
     TimeSpan timeout)
@@ -127,10 +139,167 @@ static async Task<Multiplexed.AI.Sdk.Contracts.Observation.AiSdkExecutionObserva
     throw new TimeoutException($"Execution '{executionId}' did not become terminal within {timeout}.");
 }
 
+
+static async Task RunCancellationAsync(AiSdkClient client, Arguments options)
+{
+    var source = WorkerSource.LoadCancellation(options.Worker);
+    var marker = options.ScenarioId + "-marker";
+    var publication = await client.PublishPipelineAsync(new AiSdkPipelinePublicationRequest
+    {
+        Definition = new AiSdkPipelineDefinition
+        {
+            Name = "matrix-" + options.ScenarioId,
+            Version = "1",
+            ExecutionLanguage = options.Worker,
+            ExecutionMode = AiSdkExecutionMode.Dag,
+            Steps =
+            [
+                new AiSdkPipelineStepDefinition
+                {
+                    Name = "work",
+                    StepKey = "custom",
+                    Order = 0,
+                    ExecutionLanguage = options.Worker,
+                    Invocation = new AiSdkInvocationDefinition { Kind = AiSdkInvocationKind.Custom },
+                    Input = new Dictionary<string, JsonElement>
+                    {
+                        ["marker"] = JsonSerializer.SerializeToElement(marker)
+                    }
+                }
+            ]
+        },
+        Functions =
+        [
+            new AiSdkPublicationFunctionUpload
+            {
+                Site = new AiSdkPublicationCallSite
+                {
+                    Kind = AiSdkPublicationFunctionKind.Step,
+                    StepName = "work"
+                },
+                EnvironmentRef = options.EnvironmentRef,
+                EntryPointPath = source.EntryPointPath,
+                EntryPointSymbol = source.EntryPointSymbol,
+                Sources =
+                [
+                    new AiSdkPublicationFileUpload
+                    {
+                        Path = source.EntryPointPath,
+                        ContentBase64 = Convert.ToBase64String(source.Bytes)
+                    }
+                ]
+            }
+        ]
+    });
+
+    var submitted = await client.SubmitExecutionAsync(new AiSdkExecutionSubmissionRequest
+    {
+        PublicationRef = publication.PublicationRef,
+        IdempotencyKey = options.ScenarioId + "-" + Guid.NewGuid().ToString("N"),
+        Input = JsonSerializer.SerializeToElement(new { marker }),
+        Metadata = new Dictionary<string, string>
+        {
+            ["matrix.scenario"] = options.ScenarioId,
+            ["matrix.client"] = "dotnet",
+            ["matrix.worker"] = options.Worker,
+            ["matrix.feature"] = "cancellation"
+        }
+    });
+
+    var active = await WaitForActiveStepAsync(client, submitted.ExecutionId, "work", TimeSpan.FromSeconds(30));
+    var correlationId = "cancel-" + Guid.NewGuid().ToString("N");
+    var cancellation = await client.CancelExecutionAsync(
+        submitted.ExecutionId,
+        new AiSdkExecutionCancellationRequest
+        {
+            Reason = "matrix-running-cancellation",
+            CorrelationId = correlationId
+        });
+
+    if (!cancellation.CancellationRequested || cancellation.ExecutionId != submitted.ExecutionId)
+    {
+        throw new InvalidOperationException("Public cancellation operation did not acknowledge the submitted execution.");
+    }
+    if (!cancellation.RequestedAtUtc.HasValue || cancellation.CorrelationId != correlationId)
+    {
+        throw new InvalidOperationException("Public cancellation acknowledgement did not preserve durable request metadata.");
+    }
+
+    var terminal = await WaitForTerminalAsync(client, submitted.ExecutionId, TimeSpan.FromSeconds(45));
+    var result = await client.GetExecutionResultAsync(submitted.ExecutionId);
+    if (terminal.Status != AiSdkExecutionStatus.Cancelled || result.Status != AiSdkExecutionStatus.Cancelled)
+    {
+        throw new InvalidOperationException(
+            $"Cancellation scenario ended as observation='{terminal.Status}', result='{result.Status}', expected 'Cancelled'.");
+    }
+    if (result.Output is not null || result.Failure is not null)
+    {
+        throw new InvalidOperationException("Cancelled public result unexpectedly exposed completed output or failure payload.");
+    }
+
+    var activeStep = active.Steps.FirstOrDefault(step => step.Name == "work");
+    var terminalStep = terminal.Steps.FirstOrDefault(step => step.Name == "work");
+    await Evidence.WriteAsync(options.Evidence, new
+    {
+        schemaVersion = 1,
+        scenarioId = options.ScenarioId,
+        status = "passed",
+        coverageTarget = "cancellation",
+        coverageValues = Array.Empty<string>(),
+        cancellationMode = "running-cooperative",
+        clientLanguage = "dotnet",
+        workerLanguage = options.Worker,
+        endpoint = options.Endpoint,
+        topology = options.Topology,
+        provider = options.Provider,
+        publicationRef = publication.PublicationRef,
+        executionId = submitted.ExecutionId,
+        activeStatusBeforeCancel = active.Status.ToString(),
+        activeStepStatusBeforeCancel = activeStep?.Status.ToString(),
+        cancellationRequested = cancellation.CancellationRequested,
+        cancellationRequestedAtUtc = cancellation.RequestedAtUtc,
+        cancellationCorrelationId = cancellation.CorrelationId,
+        terminalStatus = result.Status.ToString(),
+        terminalStepStatus = terminalStep?.Status.ToString(),
+        evidence = new[]
+        {
+            "publish", "submit", "active-execution-observed", "sdk-execution-cancel",
+            "durable-cancellation-acknowledged", "terminal-cancelled-observed", "terminal-result"
+        },
+        recordedAtUtc = terminal.UpdatedAtUtc
+    });
+}
+
+static async Task<AiSdkExecutionObservation> WaitForActiveStepAsync(
+    AiSdkClient client,
+    string executionId,
+    string stepName,
+    TimeSpan timeout)
+{
+    var deadline = DateTimeOffset.UtcNow + timeout;
+    while (DateTimeOffset.UtcNow < deadline)
+    {
+        var observation = await client.ObserveExecutionAsync(executionId);
+        if (observation.Status is AiSdkExecutionStatus.Completed or AiSdkExecutionStatus.Failed or AiSdkExecutionStatus.Cancelled)
+        {
+            throw new InvalidOperationException(
+                $"Execution '{executionId}' became terminal as '{observation.Status}' before cancellation could be requested.");
+        }
+        var step = observation.Steps.FirstOrDefault(item => item.Name == stepName);
+        if (step?.Status is AiSdkExecutionStepStatus.Running or AiSdkExecutionStepStatus.WaitingForExternal)
+        {
+            return observation;
+        }
+        await Task.Delay(100);
+    }
+    throw new TimeoutException($"Execution '{executionId}' did not expose active step '{stepName}' within {timeout}.");
+}
+
 internal sealed record Arguments(
     string Endpoint,
     string Worker,
     string EnvironmentRef,
+    string? Feature,
     string ScenarioId,
     string Evidence,
     string? Token,
@@ -148,6 +317,7 @@ internal sealed record Arguments(
         }
 
         var worker = Read("--worker") ?? throw new ArgumentException("Missing --worker.");
+        var feature = Read("--feature");
         var scenario = Read("--scenario-id") ?? throw new ArgumentException("Missing --scenario-id.");
         var evidence = Read("--evidence") ?? throw new ArgumentException("Missing --evidence.");
         var manifestPath = Read("--manifest");
@@ -158,6 +328,7 @@ internal sealed record Arguments(
                 Read("--endpoint") ?? manifest.Endpoint,
                 worker,
                 Read("--environment-ref") ?? manifest.EnvironmentRef(worker),
+                feature,
                 scenario,
                 evidence,
                 Read("--token") ?? manifest.BearerToken,
@@ -171,6 +342,7 @@ internal sealed record Arguments(
             Read("--endpoint") ?? throw new ArgumentException("Missing --endpoint."),
             worker,
             Read("--environment-ref") ?? throw new ArgumentException("Missing --environment-ref."),
+            feature,
             scenario,
             evidence,
             Read("--token"),
@@ -215,6 +387,21 @@ internal sealed record WorkerSource(string EntryPointPath, string EntryPointSymb
             "python" => FromText(root, FixturePath(root, "python-worker/main.py"), "main.py", "run"),
             "typescript" => FromText(root, FixturePath(root, "typescript-worker/main.ts"), "main.ts", "run"),
             "dotnet" => FromBytes(root, FixturePath(root, "dotnet-worker/Multiplexed.AI.Matrix.Worker.dll"), "functions.dll", "Multiplexed.AI.Matrix.Worker.Functions::Run"),
+            _ => throw new ArgumentOutOfRangeException(nameof(worker), worker, "Unsupported worker language.")
+        };
+    }
+
+    internal static WorkerSource LoadCancellation(string worker)
+    {
+        var root = Environment.GetEnvironmentVariable("MATRIX_FIXTURE_ROOT");
+        if (string.IsNullOrWhiteSpace(root)) root = FindRepoRoot();
+        return worker switch
+        {
+            "dotnet" => FromBytes(root, FixturePath(root, "dotnet-worker/Multiplexed.AI.Matrix.Worker.dll"), "functions.dll", "Multiplexed.AI.Matrix.Worker.Functions::PinStable"),
+            "typescript" => new("main.ts", "run", Encoding.UTF8.GetBytes(
+                "export async function run(inputs: unknown, context: unknown) { await new Promise(resolve => setTimeout(resolve, 8000)); return { success: true, payload: { cancelledFixture: false } }; }\n")),
+            "python" => new("main.py", "run", Encoding.UTF8.GetBytes(
+                "import time\ndef run(inputs, context):\n    time.sleep(8)\n    return {'success': True, 'payload': {'cancelledFixture': False}}\n")),
             _ => throw new ArgumentOutOfRangeException(nameof(worker), worker, "Unsupported worker language.")
         };
     }

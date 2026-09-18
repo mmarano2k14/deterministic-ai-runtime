@@ -2,10 +2,10 @@ using System.Text.Json;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Controller;
 using Multiplexed.Abstractions.AI.Execution;
-using Multiplexed.Abstractions.AI.Execution.Control;
 using Multiplexed.Abstractions.AI.Execution.Instance.Worker;
 using Multiplexed.Abstractions.AI.Invocation.Durable;
 using Multiplexed.Abstractions.Core.ExecutionContext;
+using Multiplexed.AI.Runtime.Execution.Control;
 using Multiplexed.AI.Runtime.Publication;
 using Multiplexed.AI.Sdk.Contracts.Control;
 using Multiplexed.AI.Sdk.Contracts.Executions;
@@ -22,7 +22,7 @@ namespace Multiplexed.AI.McpServer.PublicSdk
         private readonly AiPublishedDagRunService _runs;
         private readonly IAiSharedRuntimeController _controller;
         private readonly IAiDagExecutionStore _dagExecutions;
-        private readonly IAiExecutionControlService _control;
+        private readonly AiDagExecutionCancellationCoordinator _cancellation;
         private readonly IExecutionContextSnapshotProvider _context;
         private readonly IAiControlPlaneIdResolver _controlPlane;
 
@@ -31,7 +31,7 @@ namespace Multiplexed.AI.McpServer.PublicSdk
             AiPublishedDagRunService runs,
             IAiSharedRuntimeController controller,
             IAiDagExecutionStore dagExecutions,
-            IAiExecutionControlService control,
+            AiDagExecutionCancellationCoordinator cancellation,
             IExecutionContextSnapshotProvider context,
             IAiControlPlaneIdResolver controlPlane)
         {
@@ -39,7 +39,7 @@ namespace Multiplexed.AI.McpServer.PublicSdk
             _runs = runs;
             _controller = controller;
             _dagExecutions = dagExecutions;
-            _control = control;
+            _cancellation = cancellation;
             _context = context;
             _controlPlane = controlPlane;
         }
@@ -186,13 +186,15 @@ namespace Multiplexed.AI.McpServer.PublicSdk
                 ?? throw new KeyNotFoundException($"Execution '{executionId}' was not found.");
             RequireOwner(record, scope);
             var snapshot = _context.MapToSnapshot();
-            var control = await _control.CancelExecutionAsync(
+            var control = await _cancellation.CancelAsync(
                 executionId, request.Reason, snapshot.UserId, cancellationToken).ConfigureAwait(false);
+            var cancelledRecord = await _dagExecutions.GetRecordAsync(executionId, cancellationToken).ConfigureAwait(false)
+                ?? throw new KeyNotFoundException($"Execution '{executionId}' was not found after cancellation.");
             return new AiSdkExecutionCancellationResponse
             {
                 ExecutionId = executionId,
                 CancellationRequested = true,
-                Status = AiPublicSdkContractMapper.ToPublic(record.Status),
+                Status = AiPublicSdkContractMapper.ToPublic(cancelledRecord.Status),
                 RequestedAtUtc = ToOffset(control.CancellationRequestedAtUtc),
                 CorrelationId = request.CorrelationId
             };
