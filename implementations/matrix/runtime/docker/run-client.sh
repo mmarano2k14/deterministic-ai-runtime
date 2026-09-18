@@ -34,6 +34,7 @@ run_feature() {
     publication-pinning) scenario="feature-publication-pinning-python-client-${worker}-worker" ;;
     deterministic-dependency-packaging) scenario="feature-dependency-package-python-client-${worker}-worker" ;;
     custom-policy-family) scenario="feature-custom-policy-${POLICY_FAMILY}-${worker}-worker" ;;
+    nested-child-dag) scenario="feature-nested-child-dag-python-client-${worker}-worker" ;;
     *) echo "unknown feature: $feature" >&2; exit 2 ;;
   esac
   evidence="/matrix/evidence/${scenario}.json"
@@ -66,4 +67,8 @@ if [ "$LANGUAGE" = "python" ]; then
   POLICY_FAMILY=concurrency run_feature custom-policy-family python
   POLICY_FAMILY=retry run_feature custom-policy-family typescript
   POLICY_FAMILY=delegation run_feature custom-policy-family dotnet
+
+  run_feature nested-child-dag dotnet
+  run_feature nested-child-dag typescript
+  run_feature nested-child-dag python
 fi

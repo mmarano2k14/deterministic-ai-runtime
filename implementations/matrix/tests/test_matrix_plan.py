@@ -146,21 +146,42 @@ class MatrixPlanTests(unittest.TestCase):
         errors = validate_plan(invalid)
         self.assertTrue(any("coverageTarget is unsupported" in error for error in errors))
 
-    def test_current_process_feature_matrix_binds_nine_scenarios(self):
+    def test_current_process_feature_matrix_binds_twelve_scenarios(self):
         plan = self.plan
-        self.assertEqual(9, len(plan["featureScenarios"]))
+        self.assertEqual(12, len(plan["featureScenarios"]))
         counts = {}
         for scenario in plan["featureScenarios"]:
             counts[scenario["coverageTarget"]] = counts.get(scenario["coverageTarget"], 0) + 1
         self.assertEqual(3, counts.get("publication-pinning"))
         self.assertEqual(3, counts.get("deterministic-dependency-packaging"))
         self.assertEqual(3, counts.get("custom-policy-family"))
+        self.assertEqual(3, counts.get("nested-child-dag"))
 
-    def test_matrix_readme_records_custom_policy_as_current_coverage(self):
+    def test_nested_child_dag_feature_bindings_cover_all_hosted_languages(self) -> None:
+        scenarios = [
+            item for item in self.plan["featureScenarios"]
+            if item["coverageTarget"] == "nested-child-dag"
+        ]
+        self.assertEqual(3, len(scenarios))
+        self.assertEqual(set(WORKER_LANGUAGES), {item["workerLanguage"] for item in scenarios})
+        self.assertTrue(all(item["clientLanguage"] == "python" for item in scenarios))
+        self.assertTrue(all(item["coverageValues"] == [] for item in scenarios))
+        self.assertTrue(all(item["executor"] is not None for item in scenarios))
+
+    def test_missing_nested_child_dag_worker_fails_closed(self) -> None:
+        invalid = copy.deepcopy(self.plan)
+        invalid["featureScenarios"] = [
+            item for item in invalid["featureScenarios"]
+            if item["id"] != "feature-nested-child-dag-python-client-python-worker"
+        ]
+        errors = validate_plan(invalid)
+        self.assertTrue(any("nested-child-dag feature bindings" in error for error in errors))
+
+    def test_matrix_readme_records_nested_child_dag_as_current_coverage(self):
         readme = (MATRIX_ROOT / "README.md").read_text(encoding="utf-8-sig")
-        self.assertIn("nine currently bound feature scenarios", readme)
+        self.assertIn("twelve currently bound feature scenarios", readme)
         self.assertIn("three hosted custom-policy scenarios", readme)
-        self.assertNotIn("Custom policy families, nested Child DAGs", readme)
+        self.assertIn("three nested Child DAG scenarios", readme)
 
 
 if __name__ == "__main__":

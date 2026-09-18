@@ -37,7 +37,11 @@ CUSTOM_POLICY_EXPECTED = {
     "feature-custom-policy-retry-typescript-worker": ("retry", "typescript", "Failed", "stop"),
     "feature-custom-policy-delegation-dotnet-worker": ("delegation", "dotnet", "Failed", "deny"),
 }
-EXPECTED = [*CORE_EXPECTED, *FEATURE_EXPECTED, *CUSTOM_POLICY_EXPECTED]
+NESTED_CHILD_DAG_EXPECTED = {
+    f"feature-nested-child-dag-python-client-{worker}-worker": worker
+    for worker in WORKERS
+}
+EXPECTED = [*CORE_EXPECTED, *FEATURE_EXPECTED, *CUSTOM_POLICY_EXPECTED, *NESTED_CHILD_DAG_EXPECTED]
 
 
 def _load(scenario: str) -> dict[str, object] | None:
@@ -150,6 +154,47 @@ def _validate_custom_policy(
         return "missing hosted custom-policy evidence"
     return None
 
+
+def _validate_nested_child_dag(
+    scenario: str,
+    document: dict[str, object],
+    worker: str,
+) -> str | None:
+    common = _validate_common(scenario, document)
+    if common:
+        return common
+    if document.get("coverageTarget") != "nested-child-dag":
+        return "wrong nested Child DAG coverage target"
+    if document.get("coverageValues") != []:
+        return "nested Child DAG evidence invented coverage values"
+    if document.get("clientLanguage") != "python" or document.get("workerLanguage") != worker:
+        return "wrong nested Child DAG client/worker evidence"
+    if document.get("terminalStatus") != "Completed":
+        return "nested Child DAG execution did not complete"
+    if document.get("nestedDepth") != 2:
+        return "nested Child DAG depth proof is not exactly two"
+    if document.get("definitionPath") != "/invoke-child/invoke-grandchild":
+        return "nested custom declaration path is incorrect"
+    if document.get("rootChildStep") != "invoke-child" or document.get("nestedChildStep") != "invoke-grandchild":
+        return "nested Child DAG call-site evidence is incorrect"
+    if document.get("leafStep") != "leaf":
+        return "nested Child DAG leaf evidence is incorrect"
+    if document.get("rootStepStatus") != "Completed":
+        return "nested Child DAG parent continuation did not complete"
+    required = {
+        "publish-nested-definition",
+        "submit-root",
+        "nested-child-dispatch",
+        "nested-grandchild-custom-declaration",
+        "parent-continuation",
+        "observe",
+        "terminal-result",
+    }
+    if not required.issubset(set(document.get("evidence", []))):
+        return "missing nested Child DAG evidence"
+    return None
+
+
 def main() -> int:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline and any(not (ROOT / f"{scenario}.json").exists() for scenario in EXPECTED):
@@ -189,6 +234,17 @@ def main() -> int:
         else:
             print(f"{scenario}: PASSED")
 
+    for scenario, worker in NESTED_CHILD_DAG_EXPECTED.items():
+        document = _load(scenario)
+        if document is None:
+            failures.append(f"{scenario}: missing evidence")
+            continue
+        error = _validate_nested_child_dag(scenario, document, worker)
+        if error:
+            failures.append(f"{scenario}: {error}")
+        else:
+            print(f"{scenario}: PASSED")
+
     if failures:
         for failure in failures:
             print(failure, file=sys.stderr)
@@ -197,6 +253,7 @@ def main() -> int:
     print("9/9 production-like Docker ProcessHostPool scenarios passed.")
     print("6/6 publication-pinning/dependency-package ProcessHostPool feature scenarios passed.")
     print("3/3 hosted custom-policy-family ProcessHostPool scenarios passed.")
+    print("3/3 nested Child DAG ProcessHostPool scenarios passed.")
     return 0
 
 

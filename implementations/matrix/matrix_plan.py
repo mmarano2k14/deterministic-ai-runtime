@@ -97,6 +97,7 @@ def validate_plan(plan: dict[str, Any]) -> list[str]:
     _validate_feature_scenarios(errors, plan.get("featureScenarios"))
     _validate_initial_feature_bindings(errors, plan.get("featureScenarios"))
     _validate_custom_policy_bindings(errors, plan.get("featureScenarios"))
+    _validate_nested_child_dag_bindings(errors, plan.get("featureScenarios"))
 
     return errors
 
@@ -323,6 +324,29 @@ def _validate_custom_policy_bindings(errors: list[str], value: Any) -> None:
 
     if observed != set(CUSTOM_POLICY_FAMILIES):
         errors.append("custom-policy-family feature bindings must cover concurrency, retry and delegation exactly once.")
+
+
+def _validate_nested_child_dag_bindings(errors: list[str], value: Any) -> None:
+    if not isinstance(value, list):
+        return
+
+    bound = [
+        scenario for scenario in value
+        if isinstance(scenario, dict) and scenario.get("coverageTarget") == "nested-child-dag"
+    ]
+    if len(bound) != len(WORKER_LANGUAGES):
+        errors.append("nested-child-dag feature bindings must contain exactly one scenario per hosted worker language.")
+        return
+
+    if {scenario.get("workerLanguage") for scenario in bound} != set(WORKER_LANGUAGES):
+        errors.append("nested-child-dag feature bindings must cover dotnet, typescript and python workers.")
+    if any(scenario.get("clientLanguage") != "python" for scenario in bound):
+        errors.append("nested-child-dag feature bindings currently execute through the Python external SDK client.")
+    if any(scenario.get("coverageValues") != [] for scenario in bound):
+        errors.append("nested-child-dag feature bindings must not invent coverage values.")
+    if any(scenario.get("executor") is None for scenario in bound):
+        errors.append("nested-child-dag feature bindings require executable client bindings.")
+
 
 def _validate_executor(errors: list[str], prefix: str, executor: Any) -> None:
     if executor is None:

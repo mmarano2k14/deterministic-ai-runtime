@@ -22,6 +22,7 @@ from multiplexed_ai_sdk import (  # noqa: E402
     AiSdkCredential,
     AiSdkExecutionMode,
     AiSdkExecutionStatus,
+    AiSdkExecutionStepStatus,
     AiSdkExecutionSubmissionRequest,
     AiSdkInvocationDefinition,
     AiSdkInvocationKind,
@@ -57,6 +58,8 @@ async def main() -> int:
         document = await _run_dependency_packaging(client, args)
     elif args.feature == "custom-policy-family":
         document = await _run_custom_policy_family(client, args)
+    elif args.feature == "nested-child-dag":
+        document = await _run_nested_child_dag(client, args)
     else:
         raise ValueError(f"Unsupported feature '{args.feature}'.")
 
@@ -272,6 +275,185 @@ async def _run_custom_policy_family(client: AiSdkClient, args: argparse.Namespac
         "evidence": evidence,
         "recordedAtUtc": terminal.updated_at_utc or None,
     }
+
+
+async def _run_nested_child_dag(client: AiSdkClient, args: argparse.Namespace) -> dict[str, object]:
+    definition = _nested_child_definition(args.worker)
+    function = _nested_child_function(args.worker, args.environment_ref)
+    publication = await client.publish_pipeline(
+        AiSdkPipelinePublicationRequest(definition=definition, functions=(function,))
+    )
+    submitted = await client.submit_execution(
+        AiSdkExecutionSubmissionRequest(
+            publication_ref=publication.publication_ref,
+            idempotency_key=f"{args.scenario_id}-{uuid.uuid4().hex}",
+            input={"feature": "nested-child-dag", "worker": args.worker},
+            metadata=_metadata(args) | {
+                "matrix.childDagDepth": "2",
+                "matrix.definitionPath": "/invoke-child/invoke-grandchild",
+            },
+        )
+    )
+    terminal = await _wait_for_terminal(client, submitted.execution_id, 120.0)
+    result = await client.get_execution_result(submitted.execution_id)
+
+    if result.status != AiSdkExecutionStatus.COMPLETED:
+        raise RuntimeError(
+            f"Nested Child DAG scenario ended as '{result.status.value}', expected 'Completed'."
+        )
+    if terminal.publication_ref != publication.publication_ref:
+        raise RuntimeError("Nested Child DAG execution no longer references its submitted immutable publication.")
+
+    root_step = next((step for step in terminal.steps if step.name == "invoke-child"), None)
+    if root_step is None or root_step.status != AiSdkExecutionStepStatus.COMPLETED:
+        raise RuntimeError("Nested Child DAG root continuation did not converge to a completed parent step.")
+
+    return {
+        "schemaVersion": 1,
+        "scenarioId": args.scenario_id,
+        "status": "passed",
+        "coverageTarget": "nested-child-dag",
+        "coverageValues": [],
+        "clientLanguage": "python",
+        "workerLanguage": args.worker,
+        "endpoint": args.endpoint,
+        "topology": args.topology,
+        "provider": args.provider,
+        "publicationRef": publication.publication_ref,
+        "executionId": submitted.execution_id,
+        "terminalStatus": result.status.value,
+        "nestedDepth": 2,
+        "definitionPath": "/invoke-child/invoke-grandchild",
+        "rootChildStep": "invoke-child",
+        "nestedChildStep": "invoke-grandchild",
+        "leafStep": "leaf",
+        "rootStepStatus": root_step.status.value,
+        "evidence": [
+            "publish-nested-definition",
+            "submit-root",
+            "nested-child-dispatch",
+            "nested-grandchild-custom-declaration",
+            "parent-continuation",
+            "observe",
+            "terminal-result",
+        ],
+        "recordedAtUtc": terminal.updated_at_utc or None,
+    }
+
+
+def _nested_child_definition(worker: str) -> AiSdkPipelineDefinition:
+    grandchild_name = f"matrix-feature-nested-grandchild-{worker}"
+    child_name = f"matrix-feature-nested-child-{worker}"
+
+    grandchild_definition = {
+        "Name": grandchild_name,
+        "Version": "1",
+        "ExecutionLanguage": worker,
+        "ExecutionMode": "Dag",
+        "Steps": [
+            {
+                "Name": "leaf",
+                "StepKey": "matrix-nested-leaf",
+                "Order": 0,
+                "ExecutionLanguage": worker,
+                "Invocation": {"kind": "Custom"},
+                "DependsOn": [],
+                "Input": {"marker": f"nested-child-dag-{worker}"},
+                "Config": {},
+            }
+        ],
+        "Config": {},
+    }
+    child_definition = {
+        "Name": child_name,
+        "Version": "1",
+        "ExecutionLanguage": "typescript",
+        "ExecutionMode": "Dag",
+        "Steps": [
+            {
+                "Name": "invoke-grandchild",
+                "StepKey": "execution.child-dag",
+                "Order": 0,
+                "DependsOn": [],
+                "Input": {},
+                "Config": {
+                    "childDagId": grandchild_name,
+                    "childDagVersion": "1",
+                    "logicalInvocationKey": "matrix-nested-grandchild",
+                    "childDagDefinition": grandchild_definition,
+                },
+            }
+        ],
+        "Config": {},
+    }
+    return AiSdkPipelineDefinition(
+        name=f"matrix-feature-nested-child-dag-{worker}",
+        version="1",
+        execution_language="python",
+        execution_mode=AiSdkExecutionMode.DAG,
+        steps=(
+            AiSdkPipelineStepDefinition(
+                name="invoke-child",
+                step_key="execution.child-dag",
+                order=0,
+                config={
+                    "childDagId": child_name,
+                    "childDagVersion": "1",
+                    "logicalInvocationKey": "matrix-nested-child",
+                    "childDagDefinition": child_definition,
+                },
+            ),
+        ),
+    )
+
+
+def _nested_child_function(
+    worker: str,
+    environment_ref: str,
+) -> AiSdkPublicationFunctionUpload:
+    site = AiSdkPublicationCallSite(
+        kind=AiSdkPublicationFunctionKind.STEP,
+        step_name="leaf",
+        definition_path="/invoke-child/invoke-grandchild",
+    )
+
+    if worker == "dotnet":
+        path = _fixture_root() / "dotnet-worker" / "Multiplexed.AI.Matrix.Worker.dll"
+        return AiSdkPublicationFunctionUpload(
+            site=site,
+            environment_ref=environment_ref,
+            entry_point_path="functions.dll",
+            entry_point_symbol="Multiplexed.AI.Matrix.Worker.Functions::Run",
+            sources=(_file("functions.dll", path.read_bytes()),),
+        )
+
+    if worker == "typescript":
+        source = (
+            "export function run(inputs: { marker?: string }, context: unknown) { "
+            "return { success: true, payload: { workerLanguage: 'typescript', marker: inputs.marker ?? null } }; }\n"
+        ).encode("utf-8")
+        return AiSdkPublicationFunctionUpload(
+            site=site,
+            environment_ref=environment_ref,
+            entry_point_path="main.ts",
+            entry_point_symbol="run",
+            sources=(_file("main.ts", source),),
+        )
+
+    if worker == "python":
+        source = (
+            "def run(inputs, context):\n"
+            "    return {'success': True, 'payload': {'workerLanguage': 'python', 'marker': inputs.get('marker')}}\n"
+        ).encode("utf-8")
+        return AiSdkPublicationFunctionUpload(
+            site=site,
+            environment_ref=environment_ref,
+            entry_point_path="main.py",
+            entry_point_symbol="run",
+            sources=(_file("main.py", source),),
+        )
+
+    raise ValueError(f"Unsupported nested Child DAG worker language '{worker}'.")
 
 
 def _custom_policy_definition(family: str, worker: str) -> AiSdkPipelineDefinition:
@@ -739,7 +921,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--feature",
         required=True,
-        choices=("publication-pinning", "deterministic-dependency-packaging", "custom-policy-family"),
+        choices=("publication-pinning", "deterministic-dependency-packaging", "custom-policy-family", "nested-child-dag"),
     )
     parser.add_argument("--worker", required=True, choices=("dotnet", "typescript", "python"))
     parser.add_argument("--policy-family", choices=("concurrency", "retry", "delegation"))

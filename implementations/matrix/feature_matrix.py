@@ -19,6 +19,7 @@ FEATURE_TARGETS = {
     "publication-pinning",
     "deterministic-dependency-packaging",
     "custom-policy-family",
+    "nested-child-dag",
 }
 
 

@@ -336,6 +336,32 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertIn("<AssemblyVersion>1.0.0.0</AssemblyVersion>", text)
         self.assertIn("<Deterministic>true</Deterministic>", text)
 
+    def test_nested_child_dag_feature_uses_exact_recursive_publication_path(self) -> None:
+        client = (MATRIX_ROOT / "clients" / "python" / "feature.py").read_text(encoding="utf-8-sig")
+        self.assertIn('definition_path="/invoke-child/invoke-grandchild"', client)
+        self.assertIn('"childDagDefinition": grandchild_definition', client)
+        self.assertIn('"childDagDefinition": child_definition', client)
+        self.assertIn('"StepKey": "execution.child-dag"', client)
+        self.assertIn('"Invocation": {"kind": "Custom"}', client)
+        self.assertNotIn('"Invocation": {"Kind": "Custom"}', client)
+
+    def test_docker_python_client_executes_all_three_nested_child_dag_workers(self) -> None:
+        runner = (MATRIX_ROOT / "runtime" / "docker" / "run-client.sh").read_text(encoding="utf-8-sig")
+        self.assertIn('nested-child-dag) scenario="feature-nested-child-dag-python-client-${worker}-worker"', runner)
+        for worker in ("dotnet", "typescript", "python"):
+            self.assertIn(f"run_feature nested-child-dag {worker}", runner)
+
+    def test_docker_runtime_keeps_child_dag_composition_enabled(self) -> None:
+        runtime = (MATRIX_ROOT / "runtime" / "docker" / "runtime-entrypoint.sh").read_text(encoding="utf-8-sig")
+        self.assertIn('AiChildDagComposition__Enabled="true"', runtime)
+
+    def test_verifier_requires_three_nested_child_dag_scenarios(self) -> None:
+        verifier = (MATRIX_ROOT / "runtime" / "docker" / "verifier.py").read_text(encoding="utf-8-sig")
+        self.assertIn("NESTED_CHILD_DAG_EXPECTED", verifier)
+        self.assertIn('"nestedDepth"', verifier)
+        self.assertIn('"/invoke-child/invoke-grandchild"', verifier)
+        self.assertIn("3/3 nested Child DAG ProcessHostPool scenarios passed.", verifier)
+
 
 if __name__ == "__main__":
     unittest.main()

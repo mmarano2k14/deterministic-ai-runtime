@@ -522,6 +522,60 @@
           "dotnet"
         ]
       }
+    },
+    {
+      "id": "feature-nested-child-dag-python-client-dotnet-worker",
+      "coverageTarget": "nested-child-dag",
+      "clientLanguage": "python",
+      "workerLanguage": "dotnet",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "nested-child-dag",
+          "--worker",
+          "dotnet"
+        ]
+      }
+    },
+    {
+      "id": "feature-nested-child-dag-python-client-typescript-worker",
+      "coverageTarget": "nested-child-dag",
+      "clientLanguage": "python",
+      "workerLanguage": "typescript",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "nested-child-dag",
+          "--worker",
+          "typescript"
+        ]
+      }
+    },
+    {
+      "id": "feature-nested-child-dag-python-client-python-worker",
+      "coverageTarget": "nested-child-dag",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "nested-child-dag",
+          "--worker",
+          "python"
+        ]
+      }
     }
   ]
 }

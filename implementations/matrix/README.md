@@ -50,7 +50,7 @@ If MongoDB and Redis are already running on their default local ports:
 .\implementations\matrix\runtime\local\run.ps1 -InfrastructureAlreadyRunning
 ```
 
-The local orchestrator publishes the real runtime and .NET worker, stages the same worker-fixture layout used by Docker, starts the runtime with exact installed runtime identities, waits for the matrix manifest, executes the 3 x 3 core matrix, and then executes the nine currently bound feature scenarios.
+The local orchestrator publishes the real runtime and .NET worker, stages the same worker-fixture layout used by Docker, starts the runtime with exact installed runtime identities, waits for the matrix manifest, executes the 3 x 3 core matrix, and then executes the twelve currently bound feature scenarios.
 
 ## Runtime manifest
 
@@ -95,7 +95,7 @@ Deterministic dependency packaging is exercised once against each hosted worker 
 
 The Docker verifier preserves the original nine core scenarios and additionally requires all six bound feature evidence documents. A successful live run must therefore report both `9/9 production-like Docker ProcessHostPool scenarios passed.` and `6/6 publication-pinning/dependency-package ProcessHostPool feature scenarios passed.`. Until that live run is executed, the feature scenarios remain planned/bound evidence rather than a green claim.
 
-The current ProcessHost increment remains limited to ProcessHostPool / HostRuntime / TrustedProcess execution. Nested Child DAG execution, durable MCP effect evidence, cancellation, recovery, replay/result acceptance, and OCI/container-provider isolation remain outside this increment.
+The current ProcessHost coverage remains limited to ProcessHostPool / HostRuntime / TrustedProcess execution. Durable MCP effect evidence, cancellation, recovery, replay/result acceptance, and OCI/container-provider isolation remain outside the currently bound scenarios.
 
 ### Hosted custom policy family scenarios
 
@@ -103,8 +103,16 @@ The production-like process matrix also binds the three hosted custom policy fam
 
 - `concurrency` runs a Python hosted policy that explicitly allows a native `hello-world` step; custom-to-native policy fallback remains forbidden.
 - `retry` runs a TypeScript hosted policy that returns `stop` against the deterministic `fail-once-then-succeed` fixture. The expected execution status is `Failed`; a silent policy drop would instead allow the normal retry path to recover.
-- `delegation` runs a .NET hosted policy that returns `deny` at the existing `execution.child-dag` checkpoint. The expected execution status is `Failed`; the child is not dispatched. This does not claim nested Child DAG execution coverage, which remains a separate matrix target.
+- `delegation` runs a .NET hosted policy that returns `deny` at the existing `execution.child-dag` checkpoint. The expected execution status is `Failed`; the child is not dispatched. This policy-denial proof remains distinct from the nested Child DAG execution scenarios below.
 
 These three scenarios reuse immutable publication pinning, the existing hosted worker transport, policy-family adapters, and the existing runtime policy checkpoints. No alternate policy engine or scheduler is introduced.
 
-The Docker verifier therefore requires nine core scenarios, six publication/dependency scenarios, and three hosted custom-policy scenarios. A successful live run must report all three bounded verifier summaries before the matrix runner can return GREEN.
+### Nested Child DAG scenarios
+
+The production-like process matrix additionally binds three depth-two published Child DAG scenarios through the external Python SDK client, one for each hosted worker language. Each root publication contains an inline child DAG, which in turn contains an inline grandchild DAG with one custom hosted `leaf` declaration.
+
+The custom leaf is bound through the immutable publication call site `/invoke-child/invoke-grandchild`. The grandchild default/step language is the worker language under test (`dotnet`, `typescript`, or `python`), while both parent Child DAG transitions continue to use the existing `execution.child-dag` scheduler, child-relation persistence, publication child-run binding, shared-queue continuation, and finalization authorities.
+
+The evidence is intentionally bounded to what the live public path proves: immutable nested publication, root submission, nested child dispatch, hosted grandchild custom declaration execution, parent continuation, terminal observation, and `Completed` root result. It does not claim recovery or failure-injection coverage for nested Child DAGs; those remain separate roadmap targets.
+
+The Docker verifier therefore requires nine core scenarios, six publication/dependency scenarios, three hosted custom-policy scenarios, and three nested Child DAG scenarios. A successful live run must report all four bounded verifier summaries before the matrix runner can return GREEN. The resulting gate is 21/21 executed scenarios.
