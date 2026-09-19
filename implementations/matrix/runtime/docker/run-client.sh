@@ -95,6 +95,28 @@ run_journal_feature() {
     --evidence "$evidence"
 }
 
+run_isolation_feature() {
+  target="$1"
+  value="$2"
+  profile="$3"
+  case "$target:$value" in
+    worker-isolation-provider:trusted-process) scenario="feature-worker-isolation-provider-trusted-process-python-worker" ;;
+    worker-isolation-provider:sandboxed-container) scenario="feature-worker-isolation-provider-sandboxed-container-python-worker" ;;
+    isolation-artifact-selection:HostRuntime) scenario="feature-isolation-artifact-selection-host-runtime-python-worker" ;;
+    isolation-artifact-selection:OciImage) scenario="feature-isolation-artifact-selection-oci-image-python-worker" ;;
+    *) echo "unknown isolation closure case: $target/$value" >&2; exit 2 ;;
+  esac
+  evidence="/matrix/evidence/${scenario}.json"
+  python /app/implementations/matrix/clients/python/feature.py \
+    --manifest "$MANIFEST" \
+    --feature "$target" \
+    --worker python \
+    --environment-profile "$profile" \
+    --coverage-value "$value" \
+    --scenario-id "$scenario" \
+    --evidence "$evidence"
+}
+
 run_cancellation_feature() {
   scenario="feature-cancellation-${LANGUAGE}-client-${LANGUAGE}-worker"
   evidence="/matrix/evidence/${scenario}.json"
@@ -160,4 +182,9 @@ if [ "$LANGUAGE" = "python" ]; then
 
   run_journal_feature accepted-result-replay
   run_journal_feature duplicate-delivery-convergence
+
+  run_isolation_feature worker-isolation-provider trusted-process process
+  run_isolation_feature worker-isolation-provider sandboxed-container container
+  run_isolation_feature isolation-artifact-selection HostRuntime process
+  run_isolation_feature isolation-artifact-selection OciImage container
 fi

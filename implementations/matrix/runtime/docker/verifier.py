@@ -62,6 +62,24 @@ JOURNAL_RESULT_ACCEPTANCE_EXPECTED = {
     "feature-journal-result-accepted-replay-python-client": "accepted-result-replay",
     "feature-journal-duplicate-delivery-convergence-python-client": "duplicate-delivery-convergence",
 }
+ISOLATION_EXPECTED = {
+    "feature-worker-isolation-provider-trusted-process-python-worker": (
+        "worker-isolation-provider", "trusted-process", "trusted-process", "HostRuntime",
+        "process", "matrix-python", "ProcessHostPool",
+    ),
+    "feature-worker-isolation-provider-sandboxed-container-python-worker": (
+        "worker-isolation-provider", "sandboxed-container", "sandboxed-container", "OciImage",
+        "container", "matrix-python-oci", "ContainerIsolationProvider",
+    ),
+    "feature-isolation-artifact-selection-host-runtime-python-worker": (
+        "isolation-artifact-selection", "HostRuntime", "trusted-process", "HostRuntime",
+        "process", "matrix-python", "ProcessHostPool",
+    ),
+    "feature-isolation-artifact-selection-oci-image-python-worker": (
+        "isolation-artifact-selection", "OciImage", "sandboxed-container", "OciImage",
+        "container", "matrix-python-oci", "ContainerIsolationProvider",
+    ),
+}
 EXPECTED = [
     *CORE_EXPECTED,
     *FEATURE_EXPECTED,
@@ -71,6 +89,7 @@ EXPECTED = [
     *CANCELLATION_EXPECTED,
     *RECOVERY_EXPECTED,
     *JOURNAL_RESULT_ACCEPTANCE_EXPECTED,
+    *ISOLATION_EXPECTED,
     *FIREWALL_EXPECTED,
 ]
 
@@ -441,6 +460,56 @@ def _validate_dependency_firewall(
     return None
 
 
+def _validate_isolation_closure(
+    scenario: str,
+    document: dict[str, object],
+    target: str,
+    value: str,
+    isolation_provider: str,
+    artifact_kind: str,
+    environment_profile: str,
+    environment_ref: str,
+    provider: str,
+) -> str | None:
+    if document.get("scenarioId") != scenario or document.get("status") != "passed":
+        return "invalid status or identity"
+    if document.get("topology") != "docker" or document.get("provider") != provider:
+        return "wrong topology/provider evidence"
+    if document.get("coverageTarget") != target or document.get("coverageValues") != [value]:
+        return "wrong isolation coverage target/value"
+    if document.get("clientLanguage") != "python" or document.get("workerLanguage") != "python":
+        return "isolation closure must execute through the Python external SDK and Python hosted worker"
+    if document.get("terminalStatus") != "Completed":
+        return "isolation closure execution did not complete"
+    if document.get("environmentProfile") != environment_profile:
+        return "wrong environment profile evidence"
+    if document.get("environmentRef") != environment_ref:
+        return "wrong immutable environment reference"
+    if document.get("isolationProvider") != isolation_provider:
+        return "wrong isolation provider evidence"
+    if document.get("artifactKind") != artifact_kind:
+        return "wrong artifact-kind evidence"
+
+    evidence = set(document.get("evidence", []))
+    required = {
+        "publish",
+        "submit",
+        "selected-environment-ref",
+        "production-hosted-worker-executed",
+        "terminal-result",
+    }
+    if isolation_provider == "sandboxed-container":
+        required.update({
+            "sandboxed-container-probe-passed",
+            "non-root-worker",
+            "read-only-rootfs",
+            "network-none-loopback-only",
+        })
+    if not required.issubset(evidence):
+        return "missing isolation execution evidence"
+    return None
+
+
 def _write_exact_coverage_closure() -> None:
     plan = json.loads(PLAN_PATH.read_text(encoding="utf-8-sig"))
     feature_targets = {scenario["coverageTarget"] for scenario in plan["featureScenarios"]}
@@ -453,25 +522,27 @@ def _write_exact_coverage_closure() -> None:
         "cancellation",
         "recovery",
         "journal-result-acceptance",
+        "worker-isolation-provider",
+        "isolation-artifact-selection",
         "external-client-dependency-firewall",
     }
-    deferred_targets = {"worker-isolation-provider", "isolation-artifact-selection"}
     if feature_targets != expected_executed_targets:
         raise RuntimeError(f"Exact coverage target set mismatch: {sorted(feature_targets)!r}.")
     plan_targets = {target["id"] for target in plan["coverageTargets"]}
-    if plan_targets - feature_targets != deferred_targets:
-        raise RuntimeError("Only the two Pack 4 isolation targets may remain unexecuted after Pack 3 closure.")
+    if plan_targets != feature_targets:
+        raise RuntimeError("Every declared final-roadmap coverage target must have executed matrix bindings.")
 
     closure = {
         "schemaVersion": 1,
         "status": "passed",
         "topology": "docker",
-        "provider": "ProcessHostPool",
+        "provider": "mixed-hosted-worker-providers",
+        "providers": ["ProcessHostPool", "ContainerIsolationProvider"],
         "executedScenarioCount": len(EXPECTED),
         "coreScenarioCount": len(CORE_EXPECTED),
         "featureScenarioCount": len(EXPECTED) - len(CORE_EXPECTED),
         "executedCoverageTargets": sorted(expected_executed_targets),
-        "deferredCoverageTargets": sorted(deferred_targets),
+        "deferredCoverageTargets": [],
         "clientLanguages": list(CLIENTS),
         "workerLanguages": list(WORKERS),
         "dependencyPackageKinds": sorted(PACKAGE_BY_WORKER.values()),
@@ -479,8 +550,9 @@ def _write_exact_coverage_closure() -> None:
         "recoveryPaths": ["in-flight-resume", "local-queued-redispatch"],
         "mcpEffectCases": ["completed-local-replay", "uncertain-blocks-blind-resend"],
         "journalAcceptanceCases": ["accepted-result-replay", "duplicate-delivery-convergence"],
-        "notExecutedValues": ["sandboxed-container", "OciImage"],
-        "claimBoundary": "Only combinations represented by passed evidence documents are executed coverage.",
+        "workerIsolationProviders": ["trusted-process", "sandboxed-container"],
+        "isolationArtifactKinds": ["HostRuntime", "OciImage"],
+        "claimBoundary": "Only combinations represented by passed evidence documents are executed coverage; the OCI path is the local/CI Docker-socket profile, not production Kubernetes.",
     }
     (ROOT / "executed-coverage-closure.json").write_text(json.dumps(closure, indent=2) + "\n", encoding="utf-8")
 
@@ -578,6 +650,17 @@ def main() -> int:
         else:
             print(f"{scenario}: PASSED")
 
+    for scenario, expected in ISOLATION_EXPECTED.items():
+        document = _load(scenario)
+        if document is None:
+            failures.append(f"{scenario}: missing evidence")
+            continue
+        error = _validate_isolation_closure(scenario, document, *expected)
+        if error:
+            failures.append(f"{scenario}: {error}")
+        else:
+            print(f"{scenario}: PASSED")
+
     for scenario, client in FIREWALL_EXPECTED.items():
         document = _load(scenario)
         if document is None:
@@ -603,10 +686,12 @@ def main() -> int:
     print("2/2 runtime recovery ProcessHostPool scenarios passed.")
     print("2/2 durable journal result-acceptance scenarios passed.")
     print("3/3 external client dependency-firewall scenarios passed.")
+    print("2/2 worker-isolation-provider scenarios passed (trusted process + sandboxed container).")
+    print("2/2 isolation-artifact-selection scenarios passed (HostRuntime + OciImage).")
     _write_exact_coverage_closure()
-    print("Exact executed-coverage closure: 33/33 scenarios; topology=docker; provider=ProcessHostPool.")
+    print("Exact executed-coverage closure: 37/37 scenarios; topology=docker; providers=ProcessHostPool+ContainerIsolationProvider.")
     print("Fixture-free closure: public SDK samples + production hosted workers; matrix fixture tree not required.")
-    print("Deferred to Pack 4 (NOT EXECUTED): worker-isolation-provider, isolation-artifact-selection.")
+    print("OCI closure profile: sibling worker containers through the host Docker socket; no Docker-in-Docker and no Kubernetes claim.")
     return 0
 
 

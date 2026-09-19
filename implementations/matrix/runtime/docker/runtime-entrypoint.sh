@@ -82,6 +82,35 @@ export AiHostedInvocation__Python__ExecutablePath="$PYTHON_EXE"
 export AiHostedInvocation__Python__WorkerPath="/app/workers/python/worker.py"
 export AiHostedInvocation__Python__WorkingDirectory="/app/workers/python"
 
+# Pack 4 local/CI profile: the runtime container talks to the host Docker engine through
+# the mounted socket and launches sibling worker containers. This is deliberately not
+# Docker-in-Docker and must not be presented as production Kubernetes isolation.
+if [ -n "${MATRIX_OCI_IMAGE_REPOSITORY:-}" ] || [ -n "${MATRIX_OCI_IMAGE_DIGEST:-}" ] || [ -n "${MATRIX_OCI_RUNTIME_VERSION:-}" ]; then
+  [ -n "${MATRIX_OCI_IMAGE_REPOSITORY:-}" ] && [ -n "${MATRIX_OCI_IMAGE_DIGEST:-}" ] && [ -n "${MATRIX_OCI_RUNTIME_VERSION:-}" ] || {
+    echo "Incomplete matrix OCI worker configuration." >&2
+    exit 1
+  }
+  [ -S /var/run/docker.sock ] || { echo "Docker socket is required for the local/CI OCI matrix profile." >&2; exit 1; }
+  /usr/bin/docker version >/dev/null 2>&1 || { echo "Docker engine is not reachable from the runtime container." >&2; exit 1; }
+
+  export AiHostedInvocation__Container__Enabled="true"
+  export AiHostedInvocation__Container__EngineExecutablePath="/usr/bin/docker"
+  export AiHostedInvocation__Container__EngineWorkingDirectory="/app"
+  export AiHostedInvocation__Container__ContainerOwnerScope="matrix-oci"
+  export AiHostedInvocation__Container__CpuMilliCores="1000"
+  export AiHostedInvocation__Container__MemoryBytes="268435456"
+  export AiHostedInvocation__Container__PidsLimit="64"
+  export AiHostedInvocation__Container__WritableWorkspaceBytes="67108864"
+  export AiHostedInvocation__Container__HeartbeatMilliseconds="250"
+  export AiHostedInvocation__Container__EngineEnvironment__DOCKER_HOST="unix:///var/run/docker.sock"
+  export AiHostedInvocation__Container__Runtimes__0__Reference="matrix-python-oci"
+  export AiHostedInvocation__Container__Runtimes__0__ExecutionLanguage="python"
+  export AiHostedInvocation__Container__Runtimes__0__RuntimeVersion="$MATRIX_OCI_RUNTIME_VERSION"
+  export AiHostedInvocation__Container__Runtimes__0__ImageRepository="$MATRIX_OCI_IMAGE_REPOSITORY"
+  export AiHostedInvocation__Container__Runtimes__0__ImageDigest="$MATRIX_OCI_IMAGE_DIGEST"
+  export AiHostedInvocation__Container__Runtimes__0__ContainerUser="65532:65532"
+fi
+
 export AiMatrixHarness__Enabled="true"
 export AiMatrixHarness__BearerToken="matrix-e2e-token"
 export AiMatrixHarness__UserId="matrix-user"

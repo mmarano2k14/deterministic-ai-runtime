@@ -32,8 +32,13 @@ services:
         condition: service_healthy
     ports:
       - "8081:8080"
+    environment:
+      MATRIX_OCI_IMAGE_REPOSITORY: ${MATRIX_OCI_IMAGE_REPOSITORY:-}
+      MATRIX_OCI_IMAGE_DIGEST: ${MATRIX_OCI_IMAGE_DIGEST:-}
+      MATRIX_OCI_RUNTIME_VERSION: ${MATRIX_OCI_RUNTIME_VERSION:-}
     volumes:
       - matrix-state:/matrix/state
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD-SHELL", "test -s /matrix/state/runtime-manifest.json && python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read(); urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2).read()\""]
       interval: 2s

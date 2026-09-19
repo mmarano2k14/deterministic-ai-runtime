@@ -754,31 +754,43 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertIn('args.feature == "dependency-firewall"', python)
         self.assertIn("forbiddenAbsoluteImports", python)
 
-    def test_increment_seven_verifier_closes_exact_executed_coverage_without_pack4_overclaim(self) -> None:
+    def test_isolation_closure_verifier_requires_real_oci_matrix_evidence(self) -> None:
         verifier = (MATRIX_ROOT / "runtime" / "docker" / "verifier.py").read_text(encoding="utf-8-sig")
-        dockerfile = (MATRIX_ROOT / "runtime" / "docker" / "verifier.Dockerfile").read_text(encoding="utf-8-sig")
+        verifier_dockerfile = (MATRIX_ROOT / "runtime" / "docker" / "verifier.Dockerfile").read_text(encoding="utf-8-sig")
+        runtime_dockerfile = (MATRIX_ROOT / "runtime" / "docker" / "runtime.Dockerfile").read_text(encoding="utf-8-sig")
         compose = (MATRIX_ROOT / "runtime" / "docker" / "docker-compose.yml").read_text(encoding="utf-8-sig")
+        runner = (MATRIX_ROOT / "runtime" / "docker" / "run-matrix.ps1").read_text(encoding="utf-8-sig")
 
-        self.assertIn("FIREWALL_EXPECTED", verifier)
-        self.assertIn("3/3 external client dependency-firewall scenarios passed.", verifier)
-        self.assertIn("Exact executed-coverage closure: 33/33 scenarios", verifier)
-        self.assertIn("Deferred to Pack 4 (NOT EXECUTED)", verifier)
-        self.assertIn('"sandboxed-container", "OciImage"', verifier)
+        self.assertIn("ISOLATION_EXPECTED", verifier)
+        self.assertIn("2/2 worker-isolation-provider scenarios passed", verifier)
+        self.assertIn("2/2 isolation-artifact-selection scenarios passed", verifier)
+        self.assertIn("Exact executed-coverage closure: 37/37 scenarios", verifier)
+        self.assertNotIn("Deferred to Pack 4 (NOT EXECUTED)", verifier)
+        self.assertIn('"workerIsolationProviders": ["trusted-process", "sandboxed-container"]', verifier)
+        self.assertIn('"isolationArtifactKinds": ["HostRuntime", "OciImage"]', verifier)
         self.assertIn('executed-coverage-closure.json', verifier)
-        self.assertIn('multilanguage-runtime-matrix-v1.json /app/matrix-plan.json', dockerfile)
+        self.assertIn('multilanguage-runtime-matrix-v1.json /app/matrix-plan.json', verifier_dockerfile)
+        self.assertIn('FROM docker:27-cli AS docker-cli', runtime_dockerfile)
+        self.assertIn('/var/run/docker.sock:/var/run/docker.sock', compose)
+        self.assertIn('Prepare-RealEngineTestImage.ps1', runner)
         self.assertIn('matrix-evidence:/matrix/evidence', compose)
         self.assertNotIn('matrix-evidence:/matrix/evidence:ro', compose)
 
-    def test_increment_seven_plan_raises_canonical_gate_to_thirty_three(self) -> None:
+    def test_isolation_closure_plan_raises_canonical_gate_to_thirty_seven(self) -> None:
         plan = load_plan()
         firewall = [
             item for item in plan["featureScenarios"]
             if item["coverageTarget"] == "external-client-dependency-firewall"
         ]
+        isolation = [
+            item for item in plan["featureScenarios"]
+            if item["coverageTarget"] in {"worker-isolation-provider", "isolation-artifact-selection"}
+        ]
         self.assertEqual(9, len(plan["coreScenarios"]))
-        self.assertEqual(24, len(plan["featureScenarios"]))
+        self.assertEqual(28, len(plan["featureScenarios"]))
         self.assertEqual({"dotnet", "typescript", "python"}, {item["clientLanguage"] for item in firewall})
-        self.assertEqual(33, len(plan["coreScenarios"]) + len(plan["featureScenarios"]))
+        self.assertEqual(4, len(isolation))
+        self.assertEqual(37, len(plan["coreScenarios"]) + len(plan["featureScenarios"]))
 
 
 if __name__ == "__main__":

@@ -43,7 +43,8 @@ REQUIRED_INVARIANTS = {
 }
 ALLOWED_EXECUTOR_KINDS = {"dotnet", "typescript", "python", "command"}
 INITIAL_BOUND_FEATURE_TARGETS = {"publication-pinning", "deterministic-dependency-packaging"}
-PACK4_DEFERRED_COVERAGE_TARGETS = {"worker-isolation-provider", "isolation-artifact-selection"}
+WORKER_ISOLATION_PROVIDER_VALUES = ("trusted-process", "sandboxed-container")
+ISOLATION_ARTIFACT_SELECTION_VALUES = ("HostRuntime", "OciImage")
 
 
 class MatrixPlanError(ValueError):
@@ -106,7 +107,8 @@ def validate_plan(plan: dict[str, Any]) -> list[str]:
     _validate_recovery_bindings(errors, plan.get("featureScenarios"))
     _validate_journal_result_acceptance_bindings(errors, plan.get("featureScenarios"))
     _validate_external_client_dependency_firewall_bindings(errors, plan.get("featureScenarios"))
-    _validate_pack4_deferred_bindings(errors, plan.get("featureScenarios"))
+    _validate_worker_isolation_provider_bindings(errors, plan.get("featureScenarios"))
+    _validate_isolation_artifact_selection_bindings(errors, plan.get("featureScenarios"))
 
     return errors
 
@@ -231,6 +233,14 @@ def _validate_coverage_targets(errors: list[str], value: Any) -> None:
     journal_acceptance = by_id.get("journal-result-acceptance", {})
     if tuple(journal_acceptance.get("requiredValues", [])) != JOURNAL_RESULT_ACCEPTANCE_VALUES:
         errors.append("journal-result-acceptance must require accepted-result replay and duplicate-delivery convergence.")
+
+    isolation_provider = by_id.get("worker-isolation-provider", {})
+    if tuple(isolation_provider.get("requiredValues", [])) != WORKER_ISOLATION_PROVIDER_VALUES:
+        errors.append("worker-isolation-provider must require trusted-process and sandboxed-container.")
+
+    artifact_selection = by_id.get("isolation-artifact-selection", {})
+    if tuple(artifact_selection.get("requiredValues", [])) != ISOLATION_ARTIFACT_SELECTION_VALUES:
+        errors.append("isolation-artifact-selection must require HostRuntime and OciImage.")
 
 
 def _validate_feature_scenarios(errors: list[str], value: Any) -> None:
@@ -489,19 +499,62 @@ def _validate_external_client_dependency_firewall_bindings(errors: list[str], va
             errors.append("external-client-dependency-firewall must execute inside the matching external client language.")
 
 
-def _validate_pack4_deferred_bindings(errors: list[str], value: Any) -> None:
+def _validate_worker_isolation_provider_bindings(errors: list[str], value: Any) -> None:
     if not isinstance(value, list):
         return
-    bound = {
-        scenario.get("coverageTarget")
-        for scenario in value
-        if isinstance(scenario, dict) and scenario.get("coverageTarget") in PACK4_DEFERRED_COVERAGE_TARGETS
-    }
-    if bound:
-        errors.append(
-            "Pack 4 isolation coverage targets must remain unbound in the ProcessHost Pack 3 matrix: "
-            f"{sorted(bound)!r}."
-        )
+
+    bound = [
+        scenario for scenario in value
+        if isinstance(scenario, dict) and scenario.get("coverageTarget") == "worker-isolation-provider"
+    ]
+    if len(bound) != len(WORKER_ISOLATION_PROVIDER_VALUES):
+        errors.append("worker-isolation-provider feature bindings must contain exactly trusted-process and sandboxed-container.")
+        return
+
+    observed: set[str] = set()
+    for scenario in bound:
+        values = scenario.get("coverageValues")
+        if not isinstance(values, list) or len(values) != 1 or values[0] not in WORKER_ISOLATION_PROVIDER_VALUES:
+            errors.append("worker-isolation-provider bindings must declare exactly one supported provider value.")
+            continue
+        observed.add(values[0])
+        if scenario.get("clientLanguage") != "python" or scenario.get("workerLanguage") != "python":
+            errors.append("worker-isolation-provider closure is intentionally bounded to the Python external SDK and Python hosted worker.")
+        executor = scenario.get("executor")
+        if not isinstance(executor, dict) or executor.get("kind") != "python":
+            errors.append("worker-isolation-provider bindings must execute through the Python external SDK driver.")
+
+    if observed != set(WORKER_ISOLATION_PROVIDER_VALUES):
+        errors.append("worker-isolation-provider bindings must cover trusted-process and sandboxed-container exactly once.")
+
+
+def _validate_isolation_artifact_selection_bindings(errors: list[str], value: Any) -> None:
+    if not isinstance(value, list):
+        return
+
+    bound = [
+        scenario for scenario in value
+        if isinstance(scenario, dict) and scenario.get("coverageTarget") == "isolation-artifact-selection"
+    ]
+    if len(bound) != len(ISOLATION_ARTIFACT_SELECTION_VALUES):
+        errors.append("isolation-artifact-selection feature bindings must contain exactly HostRuntime and OciImage.")
+        return
+
+    observed: set[str] = set()
+    for scenario in bound:
+        values = scenario.get("coverageValues")
+        if not isinstance(values, list) or len(values) != 1 or values[0] not in ISOLATION_ARTIFACT_SELECTION_VALUES:
+            errors.append("isolation-artifact-selection bindings must declare exactly one supported artifact value.")
+            continue
+        observed.add(values[0])
+        if scenario.get("clientLanguage") != "python" or scenario.get("workerLanguage") != "python":
+            errors.append("isolation-artifact-selection closure is intentionally bounded to the Python external SDK and Python hosted worker.")
+        executor = scenario.get("executor")
+        if not isinstance(executor, dict) or executor.get("kind") != "python":
+            errors.append("isolation-artifact-selection bindings must execute through the Python external SDK driver.")
+
+    if observed != set(ISOLATION_ARTIFACT_SELECTION_VALUES):
+        errors.append("isolation-artifact-selection bindings must cover HostRuntime and OciImage exactly once.")
 
 def _validate_executor(errors: list[str], prefix: str, executor: Any) -> None:
     if executor is None:

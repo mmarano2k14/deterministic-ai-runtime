@@ -70,6 +70,8 @@ async def main() -> int:
         document = await _run_recovery(client, args)
     elif args.feature == "journal-result-acceptance":
         document = await _run_journal_result_acceptance(args)
+    elif args.feature in {"worker-isolation-provider", "isolation-artifact-selection"}:
+        document = await _run_isolation_coverage(client, args)
     else:
         raise ValueError(f"Unsupported feature '{args.feature}'.")
 
@@ -1030,6 +1032,125 @@ def _custom_policy_function(
 
     raise ValueError(f"Unsupported custom policy worker/family combination '{worker}/{family}'.")
 
+async def _run_isolation_coverage(client: AiSdkClient, args: argparse.Namespace) -> dict[str, object]:
+    target = args.feature
+    value = args.coverage_value
+    if target == "worker-isolation-provider":
+        allowed = {"trusted-process", "sandboxed-container"}
+        expected_profile = value
+        expected_artifact = "OciImage" if value == "sandboxed-container" else "HostRuntime"
+    else:
+        allowed = {"HostRuntime", "OciImage"}
+        expected_artifact = value
+        expected_profile = "sandboxed-container" if value == "OciImage" else "trusted-process"
+    if value not in allowed:
+        raise ValueError(f"Unsupported {target} coverage value '{value}'.")
+
+    require_container = expected_profile == "sandboxed-container"
+    function = _isolation_probe_function(args.environment_ref, require_container)
+    publication = await client.publish_pipeline(
+        _publication_request(
+            f"matrix-feature-{target}-{value.lower()}",
+            args.worker,
+            args.environment_ref,
+            function,
+        )
+    )
+    submitted = await client.submit_execution(
+        AiSdkExecutionSubmissionRequest(
+            publication_ref=publication.publication_ref,
+            idempotency_key=f"{args.scenario_id}-{uuid.uuid4().hex}",
+            input={"feature": target, "coverageValue": value},
+            metadata=_metadata(args),
+        )
+    )
+    terminal = await _wait_for_terminal(client, submitted.execution_id, 90.0)
+    result = await client.get_execution_result(submitted.execution_id)
+    if result.status != AiSdkExecutionStatus.COMPLETED:
+        raise RuntimeError(
+            f"Isolation closure execution '{submitted.execution_id}' ended as '{result.status.value}', expected 'Completed'."
+        )
+
+    evidence = [
+        "publish",
+        "submit",
+        "selected-environment-ref",
+        "production-hosted-worker-executed",
+        "terminal-result",
+    ]
+    if require_container:
+        evidence.extend([
+            "sandboxed-container-probe-passed",
+            "non-root-worker",
+            "read-only-rootfs",
+            "network-none-loopback-only",
+        ])
+
+    return {
+        "schemaVersion": 1,
+        "scenarioId": args.scenario_id,
+        "status": "passed",
+        "coverageTarget": target,
+        "coverageValues": [value],
+        "clientLanguage": "python",
+        "workerLanguage": args.worker,
+        "endpoint": args.endpoint,
+        "topology": args.topology,
+        "provider": "ContainerIsolationProvider" if require_container else args.provider,
+        "environmentRef": args.environment_ref,
+        "environmentProfile": args.environment_profile,
+        "isolationProvider": expected_profile,
+        "artifactKind": expected_artifact,
+        "publicationRef": publication.publication_ref,
+        "executionId": submitted.execution_id,
+        "terminalStatus": result.status.value,
+        "evidence": evidence,
+        "recordedAtUtc": terminal.updated_at_utc or None,
+    }
+
+
+def _isolation_probe_function(
+    environment_ref: str,
+    require_container: bool,
+) -> AiSdkPublicationFunctionUpload:
+    site = AiSdkPublicationCallSite(
+        kind=AiSdkPublicationFunctionKind.STEP,
+        step_name="work",
+    )
+    if require_container:
+        source = (
+            "import os\n"
+            "def run(inputs, context):\n"
+            "    if os.getuid() != 65532:\n"
+            "        return {'success': False, 'error': {'code': 'matrix.container.uid', 'message': 'expected non-root uid 65532'}}\n"
+            "    root_write = True\n"
+            "    try:\n"
+            "        with open('/multiplexed-matrix-rootfs-probe', 'w', encoding='utf-8') as handle:\n"
+            "            handle.write('forbidden')\n"
+            "    except OSError:\n"
+            "        root_write = False\n"
+            "    if root_write:\n"
+            "        return {'success': False, 'error': {'code': 'matrix.container.rootfs', 'message': 'root filesystem was writable'}}\n"
+            "    interfaces = sorted(os.listdir('/sys/class/net'))\n"
+            "    if interfaces != ['lo']:\n"
+            "        return {'success': False, 'error': {'code': 'matrix.container.network', 'message': 'network-none isolation was not applied'}}\n"
+            "    return {'success': True, 'payload': {'mode': 'sandboxed-container', 'uid': os.getuid(), 'interfaces': interfaces}}\n"
+        ).encode("utf-8")
+    else:
+        source = (
+            "def run(inputs, context):\n"
+            "    return {'success': True, 'payload': {'mode': 'trusted-process'}}\n"
+        ).encode("utf-8")
+
+    return AiSdkPublicationFunctionUpload(
+        site=site,
+        environment_ref=environment_ref,
+        entry_point_path="main.py",
+        entry_point_symbol="run",
+        sources=(_file("main.py", source),),
+    )
+
+
 def _publication_request(
     pipeline_name: str,
     worker: str,
@@ -1351,13 +1472,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--feature",
         required=True,
-        choices=("publication-pinning", "deterministic-dependency-packaging", "custom-policy-family", "nested-child-dag", "mcp-effect-evidence", "recovery", "journal-result-acceptance"),
+        choices=("publication-pinning", "deterministic-dependency-packaging", "custom-policy-family", "nested-child-dag", "mcp-effect-evidence", "recovery", "journal-result-acceptance", "worker-isolation-provider", "isolation-artifact-selection"),
     )
     parser.add_argument("--worker", choices=("dotnet", "typescript", "python"))
     parser.add_argument("--policy-family", choices=("concurrency", "retry", "delegation"))
     parser.add_argument("--effect-case", choices=("completed-local-replay", "uncertain-blocks-blind-resend"))
     parser.add_argument("--recovery-case", choices=("in-flight-resume", "local-queued-redispatch"))
     parser.add_argument("--journal-case", choices=("accepted-result-replay", "duplicate-delivery-convergence"))
+    parser.add_argument("--coverage-value")
+    parser.add_argument("--environment-profile", choices=("process", "container"), default="process")
     parser.add_argument("--scenario-id", required=True)
     parser.add_argument("--evidence", required=True)
     parser.add_argument("--endpoint")
@@ -1378,7 +1501,13 @@ def _parse_args() -> argparse.Namespace:
         manifest = json.loads(Path(args.manifest).resolve().read_text(encoding="utf-8-sig"))
         args.endpoint = args.endpoint or manifest["endpoint"]
         if args.worker:
-            args.environment_ref = args.environment_ref or manifest["environmentRefs"][args.worker]
+            if args.environment_profile == "container":
+                container_refs = manifest.get("containerEnvironmentRefs", {})
+                if args.worker not in container_refs:
+                    parser.error(f"manifest does not expose a container environment for worker '{args.worker}'")
+                args.environment_ref = args.environment_ref or container_refs[args.worker]
+            else:
+                args.environment_ref = args.environment_ref or manifest["environmentRefs"][args.worker]
         args.token = args.token or manifest.get("bearerToken")
         args.access_context = args.access_context or manifest.get("accessContext")
         args.access_context_header = manifest.get("accessContextHeader", args.access_context_header)
@@ -1412,6 +1541,13 @@ def _parse_args() -> argparse.Namespace:
         parser.error("--journal-case is required for journal-result-acceptance")
     if args.feature != "journal-result-acceptance" and args.journal_case:
         parser.error("--journal-case is valid only for journal-result-acceptance")
+    if args.feature in {"worker-isolation-provider", "isolation-artifact-selection"}:
+        if not args.coverage_value:
+            parser.error("--coverage-value is required for isolation closure features")
+    elif args.coverage_value:
+        parser.error("--coverage-value is valid only for isolation closure features")
+    if args.feature not in {"worker-isolation-provider", "isolation-artifact-selection"} and args.environment_profile != "process":
+        parser.error("--environment-profile container is valid only for isolation closure features")
     return args
 
 

@@ -6,6 +6,7 @@ RUN dotnet publish implementations/dotnet/workers/Multiplexed.AI.HostedInvocatio
 RUN dotnet publish implementations/sdk/samples/mcp-effect-server/Multiplexed.AI.Samples.McpEffectServer/Multiplexed.AI.Samples.McpEffectServer.csproj -c Release --nologo --verbosity quiet -p:PublishDir=/out/mcp-effect-server/
 
 FROM node:22-bookworm-slim AS node-runtime
+FROM docker:27-cli AS docker-cli
 FROM python:3.12-slim-bookworm AS python-runtime
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
@@ -15,6 +16,7 @@ COPY --from=dotnet-build /out/workers/dotnet /app/workers/dotnet
 COPY --from=dotnet-build /out/mcp-effect-server /app/mcp-effect-server
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=python-runtime /usr/local /usr/local
+COPY --from=docker-cli /usr/local/bin/docker /usr/bin/docker
 COPY implementations/node/workers/hosted_invocation /app/workers/typescript
 COPY implementations/python/workers/hosted_invocation /app/workers/python
 COPY implementations/matrix/runtime/docker/runtime-entrypoint.sh /app/runtime-entrypoint.sh

@@ -32,7 +32,7 @@ Cleanup including persisted test data:
 docker compose -f .\implementations\matrix\runtime\docker\docker-compose.yml down -v --remove-orphans
 ```
 
-The stack runs real MongoDB and Redis services, the real MCP runtime host, three external SDK client containers and the real hosted .NET, TypeScript and Python process workers. Client containers have no engine/runtime project reference and communicate with the runtime only over MCP HTTP.
+The stack runs real MongoDB and Redis services, the real MCP runtime host, three external SDK client containers, the real hosted .NET, TypeScript and Python process workers, and the bounded Python sibling-container worker used by the OCI isolation scenarios. Client containers have no engine/runtime project reference and communicate with the runtime only over MCP HTTP.
 
 ### Local / ProcessHostPool - developer topology
 
@@ -50,7 +50,7 @@ If MongoDB and Redis are already running on their default local ports:
 .\implementations\matrix\runtime\local\run.ps1 -InfrastructureAlreadyRunning
 ```
 
-The local orchestrator publishes the real runtime and .NET worker, stages the same worker-fixture layout used by Docker, starts the runtime with exact installed runtime identities, waits for the matrix manifest, executes the 3 x 3 core matrix, and then executes the eighteen Python-driven feature scenarios plus the three native external-client dependency-firewall checks. Cancellation remains exercised independently by all three native SDK client containers.
+The local orchestrator publishes the real runtime and .NET worker, stages the same public sample artifacts and production hosted-worker layout used by Docker, starts the runtime with exact installed runtime identities, waits for the matrix manifest, executes the 3 x 3 core matrix, and then executes the eighteen Python-driven feature scenarios plus the three native external-client dependency-firewall checks. Cancellation remains exercised independently by all three native SDK client containers. The OCI isolation scenarios are canonical-Docker-only because their local/CI evidence depends on the bounded host Docker-socket profile.
 
 ## Runtime manifest
 
@@ -63,6 +63,7 @@ a harness bearer token
 exact .NET environment ref
 exact TypeScript environment ref
 exact Python environment ref
+exact container environment refs when OCI isolation is configured
 topology
 provider
 ```
@@ -77,13 +78,14 @@ Context rotation is disabled only in this harness because the current public SDK
 
 ## Provider semantics
 
-This matrix topology validates only:
+The canonical Docker topology preserves the existing trusted-process path and adds a bounded local/CI OCI isolation path:
 
 ```text
-ProcessHostPool / HostRuntime / TrustedProcess / HostNetwork / ValidatedPaths
+HostRuntime -> TrustedProcess -> ProcessHostPool
+OciImage    -> SandboxedContainer -> sibling worker container
 ```
 
-It does not claim sandboxed-container enforcement. OCI isolated workers are a separate matrix target and must be executed independently before being marked covered.
+The OCI path uses the host Docker socket from the runtime container to launch sibling worker containers. It does not use Docker-in-Docker and it is not evidence of production Kubernetes isolation. The exact worker image is prepared as `repository@sha256:<manifest-digest>` and preloaded before the matrix starts; runtime execution uses `--pull=never`.
 
 ## Bound feature scenarios
 
@@ -95,7 +97,7 @@ Deterministic dependency packaging is exercised once against each hosted worker 
 
 The Docker verifier preserves the original nine core scenarios and additionally requires all six bound feature evidence documents. A successful live run must therefore report both `9/9 production-like Docker ProcessHostPool scenarios passed.` and `6/6 publication-pinning/dependency-package ProcessHostPool feature scenarios passed.`. Until that live run is executed, the feature scenarios remain planned/bound evidence rather than a green claim.
 
-The current ProcessHost coverage remains limited to ProcessHostPool / HostRuntime / TrustedProcess execution. Durable recovery and durable journal result acceptance are now exercised below, while OCI/container-provider isolation remains outside the currently bound scenarios. Durable running cancellation is exercised independently by all three external SDK clients.
+The original ProcessHost coverage remains intact for the existing scenarios. Durable recovery and durable journal result acceptance continue to exercise their existing authorities, while the isolation closure adds explicit `TrustedProcess` / `SandboxedContainer` and `HostRuntime` / `OciImage` scenarios without changing scheduler, queue, recovery, journal, continuation, or result-acceptance ownership. Durable running cancellation remains exercised independently by all three external SDK clients.
 
 ### Hosted custom policy family scenarios
 
@@ -155,15 +157,31 @@ With these four scenarios, the production-like Docker gate reaches 30 runtime/be
 
 ## Exact executed-coverage closure
 
-The final ProcessHost Pack 3 closure adds three external client dependency-firewall scenarios, executed independently inside the published .NET client artifact, compiled TypeScript SDK artifact, and Python SDK source/distribution boundary. These checks do not exercise a hosted worker; they prove that the external SDK artifact remains independent from engine/runtime repository dependencies.
+The dependency-firewall closure retains three external client dependency-firewall scenarios executed independently inside the published .NET client artifact, compiled TypeScript SDK artifact, and Python SDK source/distribution boundary. These checks do not exercise a hosted worker; they prove that the external SDK artifact remains independent from engine/runtime repository dependencies.
 
-The .NET check inspects the SDK and public-contract assembly reference graphs plus the published client bundle. The TypeScript check inspects declared package dependencies and compiled `dist` import specifiers. The Python check inspects declared `pyproject.toml` dependencies and absolute SDK source imports. Any repository runtime/engine dependency fails the client before verifier execution.
+The isolation closure adds four executable scenarios through the external Python SDK and the production Python hosted worker:
 
-The canonical Docker verifier requires all 33 executed scenarios: 9 core + 6 publication/dependency + 3 custom policy + 3 nested Child DAG + 2 durable MCP effect + 3 cancellation + 2 recovery + 2 journal result-acceptance + 3 external client dependency-firewall scenarios. It also writes `executed-coverage-closure.json` from the evidence set and records the exact topology/provider as `docker` / `ProcessHostPool`.
+```text
+worker-isolation-provider
+  trusted-process      -> matrix-python     -> ProcessHostPool
+  sandboxed-container  -> matrix-python-oci -> ContainerIsolationProvider
 
-Two roadmap coverage targets remain deliberately **NOT EXECUTED** in Pack 3: `worker-isolation-provider` and `isolation-artifact-selection`. Their `sandboxed-container` and `OciImage` values belong to Pack 4 and are not inferred from `TrustedProcess` / `HostRuntime` evidence. This keeps the 33 executed scenarios bounded to combinations that actually ran.
+isolation-artifact-selection
+  HostRuntime -> matrix-python     -> TrustedProcess
+  OciImage    -> matrix-python-oci -> SandboxedContainer
+```
 
-Fixture-backed workers are still used by this Pack 3 matrix. Removing those fixtures and rerunning the full matrix through non-fixture execution artifacts is the separate closure gate that follows this increment.
+The OCI scenarios publish user code against the immutable `matrix-python-oci` environment. The server-owned catalog resolves that environment to an exact OCI manifest digest and the isolated container transport launches the production hosted worker as a sibling container. The published probe fails unless the isolated execution is non-root, the root filesystem is read-only, and the container has only loopback networking. Tenant publication input cannot select Docker arguments, mutable tags, mounts, network policy, resource limits, or engine configuration.
+
+The canonical Docker verifier now requires **37 executable scenarios**: 9 core + 6 publication/dependency + 3 custom policy + 3 nested Child DAG + 2 durable MCP effect + 3 cancellation + 2 recovery + 2 journal result-acceptance + 3 external client dependency-firewall + 2 worker-isolation-provider + 2 isolation-artifact-selection scenarios. It writes `executed-coverage-closure.json` only after every required evidence document passes validation.
+
+A successful run reports:
+
+```text
+Exact executed-coverage closure: 37/37 scenarios; topology=docker; providers=ProcessHostPool+ContainerIsolationProvider.
+```
+
+The previous baseline comprised 33 executed scenarios and closed at `33/33` under ProcessHostPool. It remains historical evidence. The additional four scenarios must be observed in a live Docker matrix run before `37/37` is claimed as executed evidence. The local/CI Docker-socket profile must not be described as production Kubernetes coverage.
 
 ## Fixture-free execution artifacts
 

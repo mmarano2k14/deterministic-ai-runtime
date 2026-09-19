@@ -15,9 +15,11 @@ from matrix_plan import (  # noqa: E402
     CUSTOM_POLICY_FAMILIES,
     DEPENDENCY_PACKAGE_BY_WORKER,
     JOURNAL_RESULT_ACCEPTANCE_VALUES,
+    ISOLATION_ARTIFACT_SELECTION_VALUES,
     MCP_EFFECT_VALUES,
     RECOVERY_VALUES,
     REQUIRED_COVERAGE_TARGETS,
+    WORKER_ISOLATION_PROVIDER_VALUES,
     WORKER_LANGUAGES,
     load_plan,
     validate_plan,
@@ -149,9 +151,9 @@ class MatrixPlanTests(unittest.TestCase):
         errors = validate_plan(invalid)
         self.assertTrue(any("coverageTarget is unsupported" in error for error in errors))
 
-    def test_current_process_feature_matrix_binds_twenty_four_scenarios(self):
+    def test_final_feature_matrix_binds_twenty_eight_scenarios(self):
         plan = self.plan
-        self.assertEqual(24, len(plan["featureScenarios"]))
+        self.assertEqual(28, len(plan["featureScenarios"]))
         counts = {}
         for scenario in plan["featureScenarios"]:
             counts[scenario["coverageTarget"]] = counts.get(scenario["coverageTarget"], 0) + 1
@@ -164,6 +166,8 @@ class MatrixPlanTests(unittest.TestCase):
         self.assertEqual(2, counts.get("recovery"))
         self.assertEqual(2, counts.get("journal-result-acceptance"))
         self.assertEqual(3, counts.get("external-client-dependency-firewall"))
+        self.assertEqual(2, counts.get("worker-isolation-provider"))
+        self.assertEqual(2, counts.get("isolation-artifact-selection"))
 
     def test_external_client_dependency_firewall_binds_all_three_native_clients(self) -> None:
         scenarios = [
@@ -185,22 +189,27 @@ class MatrixPlanTests(unittest.TestCase):
         errors = validate_plan(invalid)
         self.assertTrue(any("external-client-dependency-firewall feature bindings" in error for error in errors))
 
-    def test_pack4_isolation_targets_remain_unbound_in_pack3(self) -> None:
-        bound_targets = {item["coverageTarget"] for item in self.plan["featureScenarios"]}
-        self.assertNotIn("worker-isolation-provider", bound_targets)
-        self.assertNotIn("isolation-artifact-selection", bound_targets)
+    def test_isolation_targets_bind_exact_provider_and_artifact_values(self) -> None:
+        provider = [
+            item for item in self.plan["featureScenarios"]
+            if item["coverageTarget"] == "worker-isolation-provider"
+        ]
+        artifacts = [
+            item for item in self.plan["featureScenarios"]
+            if item["coverageTarget"] == "isolation-artifact-selection"
+        ]
+        self.assertEqual(set(WORKER_ISOLATION_PROVIDER_VALUES), {item["coverageValues"][0] for item in provider})
+        self.assertEqual(set(ISOLATION_ARTIFACT_SELECTION_VALUES), {item["coverageValues"][0] for item in artifacts})
+        self.assertTrue(all(item["clientLanguage"] == "python" and item["workerLanguage"] == "python" for item in provider + artifacts))
+        self.assertTrue(all(item["executor"]["kind"] == "python" for item in provider + artifacts))
 
         invalid = copy.deepcopy(self.plan)
-        invalid["featureScenarios"].append({
-            "id": "invalid-pack4-early-claim",
-            "coverageTarget": "worker-isolation-provider",
-            "clientLanguage": "python",
-            "workerLanguage": None,
-            "coverageValues": ["sandboxed-container"],
-            "executor": {"kind": "python", "command": ["python", "invalid.py"]},
-        })
+        invalid["featureScenarios"] = [
+            item for item in invalid["featureScenarios"]
+            if item["id"] != "feature-worker-isolation-provider-sandboxed-container-python-worker"
+        ]
         errors = validate_plan(invalid)
-        self.assertTrue(any("Pack 4 isolation coverage targets must remain unbound" in error for error in errors))
+        self.assertTrue(any("worker-isolation-provider feature bindings" in error for error in errors))
 
     def test_mcp_effect_feature_bindings_cover_exact_durable_cases(self) -> None:
         scenarios = [

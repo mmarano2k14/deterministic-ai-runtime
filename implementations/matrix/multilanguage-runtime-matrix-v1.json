@@ -798,6 +798,70 @@
           "implementations/matrix/clients/python/run.py"
         ]
       }
+    },
+    {
+      "id": "feature-worker-isolation-provider-trusted-process-python-worker",
+      "coverageTarget": "worker-isolation-provider",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [
+        "trusted-process"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py"
+        ]
+      }
+    },
+    {
+      "id": "feature-worker-isolation-provider-sandboxed-container-python-worker",
+      "coverageTarget": "worker-isolation-provider",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [
+        "sandboxed-container"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py"
+        ]
+      }
+    },
+    {
+      "id": "feature-isolation-artifact-selection-host-runtime-python-worker",
+      "coverageTarget": "isolation-artifact-selection",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [
+        "HostRuntime"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py"
+        ]
+      }
+    },
+    {
+      "id": "feature-isolation-artifact-selection-oci-image-python-worker",
+      "coverageTarget": "isolation-artifact-selection",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [
+        "OciImage"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py"
+        ]
+      }
     }
   ]
 }

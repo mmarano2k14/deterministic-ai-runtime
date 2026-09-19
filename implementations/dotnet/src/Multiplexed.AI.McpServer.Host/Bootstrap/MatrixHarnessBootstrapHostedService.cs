@@ -62,6 +62,12 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 Namespaces = new List<NamespaceEntry> { namespaceEntry }
             };
             var contextKey = await _contexts.StoreAsync(context).ConfigureAwait(false);
+            var containerEnvironmentRefs = _environments.ContainerRuntimes
+                .GroupBy(runtime => runtime.ExecutionLanguage, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Single().Reference,
+                    StringComparer.OrdinalIgnoreCase);
 
             var manifest = new
             {
@@ -81,7 +87,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     dotnet = _environments.DotNetReference,
                     typescript = _environments.TypeScriptReference,
                     python = _environments.PythonReference
-                }
+                },
+                containerEnvironmentRefs
             };
             var path = Path.GetFullPath(options.ManifestPath);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);

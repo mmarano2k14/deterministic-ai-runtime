@@ -61,7 +61,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             services.TryAddSingleton(new AiHostedInvocationEnvironmentSet(
                 dotnet.Profile.Runtime.Reference,
                 typescript.Profile.Runtime.Reference,
-                python.Profile.Runtime.Reference));
+                python.Profile.Runtime.Reference,
+                containerProfiles.Select(profile => profile.Runtime).ToArray()));
 
             // Custom hosted steps remain durable DAG invocations. The control-plane reconciler owns
             // continuation scheduling after a worker result is durably accepted; workers never resume the DAG.
@@ -348,5 +349,6 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
     public sealed record AiHostedInvocationEnvironmentSet(
         string DotNetReference,
         string TypeScriptReference,
-        string PythonReference);
+        string PythonReference,
+        IReadOnlyList<AiPublicationEnvironment> ContainerRuntimes);
 }

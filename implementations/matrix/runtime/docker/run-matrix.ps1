@@ -10,6 +10,32 @@ if ([string]::IsNullOrWhiteSpace($repoRoot)) {
 $logFile = Join-Path $repoRoot "matrix-full.log"
 Remove-Item $logFile -Force -ErrorAction SilentlyContinue
 
+$prepareOciImage = Join-Path $repoRoot "implementations\dotnet\Tests\ContainerImages\HostedWorkerIsolation\Prepare-RealEngineTestImage.ps1"
+if (-not (Test-Path -LiteralPath $prepareOciImage -PathType Leaf)) {
+    throw "OCI matrix image preparation script was not found: $prepareOciImage"
+}
+
+Write-Host "[matrix] Preparing exact OCI hosted-worker image for sibling-container scenarios..."
+& $prepareOciImage
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
+$exactOciImage = $env:MULTIPLEXED_AI_TEST_CONTAINER_IMAGE
+$ociRuntimeVersion = $env:MULTIPLEXED_AI_TEST_CONTAINER_RUNTIME_VERSION
+if ([string]::IsNullOrWhiteSpace($exactOciImage) -or [string]::IsNullOrWhiteSpace($ociRuntimeVersion)) {
+    throw "OCI image preparation did not produce an exact repository@sha256 digest and runtime version."
+}
+if ($exactOciImage -notmatch '^(?<repository>.+)@(?<digest>sha256:[0-9a-f]{64})$') {
+    throw "OCI image preparation returned a non-exact image reference: $exactOciImage"
+}
+
+$env:MATRIX_OCI_IMAGE_REPOSITORY = $Matches.repository
+$env:MATRIX_OCI_IMAGE_DIGEST = $Matches.digest
+$env:MATRIX_OCI_RUNTIME_VERSION = $ociRuntimeVersion
+Write-Host "[matrix] OCI worker: $($env:MATRIX_OCI_IMAGE_REPOSITORY)@$($env:MATRIX_OCI_IMAGE_DIGEST)"
+Write-Host "[matrix] OCI runtime version: $($env:MATRIX_OCI_RUNTIME_VERSION)"
+
 function Invoke-ComposeLogged {
     param(
         [Parameter(Mandatory = $true)]
@@ -61,7 +87,7 @@ if ($buildCode -ne 0) {
     exit $buildCode
 }
 
-Write-Host "[matrix] Starting production-like Docker ProcessHostPool matrix..."
+Write-Host "[matrix] Starting production-like Docker matrix with ProcessHostPool + OCI sibling-container execution..."
 $upCode = Invoke-ComposeLogged "up -d"
 
 if ($upCode -eq 0) {

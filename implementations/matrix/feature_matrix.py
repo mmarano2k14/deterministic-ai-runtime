@@ -23,6 +23,8 @@ FEATURE_TARGETS = {
     "mcp-effect-evidence",
     "recovery",
     "journal-result-acceptance",
+    "worker-isolation-provider",
+    "isolation-artifact-selection",
     "external-client-dependency-firewall",
 }
 
@@ -107,6 +109,10 @@ def _command_for(scenario: dict[str, Any], manifest: Path) -> list[str]:
         command.extend(["--recovery-case", scenario["coverageValues"][0]])
     if scenario["coverageTarget"] == "journal-result-acceptance":
         command.extend(["--journal-case", scenario["coverageValues"][0]])
+    if scenario["coverageTarget"] in {"worker-isolation-provider", "isolation-artifact-selection"}:
+        value = scenario["coverageValues"][0]
+        profile = "container" if value in {"sandboxed-container", "OciImage"} else "process"
+        command.extend(["--coverage-value", value, "--environment-profile", profile])
     return command
 
 
@@ -120,11 +126,12 @@ def _run_scenario(scenario: dict[str, Any], manifest: Path) -> None:
     _run(_command_for(scenario, manifest))
 
 
-def _summary(plan: dict[str, Any]) -> int:
-    scenarios = [
-        scenario for scenario in plan["featureScenarios"]
-        if scenario["coverageTarget"] in FEATURE_TARGETS
-    ]
+def _summary(plan: dict[str, Any], scenarios: list[dict[str, Any]] | None = None) -> int:
+    if scenarios is None:
+        scenarios = [
+            scenario for scenario in plan["featureScenarios"]
+            if scenario["coverageTarget"] in FEATURE_TARGETS
+        ]
     rows: list[tuple[str, str]] = []
     for scenario in scenarios:
         path = EVIDENCE_ROOT / f"{scenario['id']}.json"
@@ -139,6 +146,17 @@ def _summary(plan: dict[str, Any]) -> int:
     for scenario_id, status in rows:
         print(f"{scenario_id}: {status}")
     return 0 if rows and all(status == "PASSED" for _, status in rows) else 1
+
+
+def _manifest_has_container_environments(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        document = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return False
+    refs = document.get("containerEnvironmentRefs")
+    return isinstance(refs, dict) and bool(refs)
 
 
 def main() -> int:
@@ -163,6 +181,13 @@ def main() -> int:
     if args.command == "summary":
         return _summary(plan)
 
+    manifest = args.manifest.resolve()
+    if not _manifest_has_container_environments(manifest):
+        scenarios = [
+            scenario for scenario in scenarios
+            if scenario["coverageTarget"] not in {"worker-isolation-provider", "isolation-artifact-selection"}
+        ]
+
     if args.scenario != "all":
         scenarios = [scenario for scenario in scenarios if scenario["id"] == args.scenario]
         if not scenarios:
@@ -171,8 +196,8 @@ def main() -> int:
     if not args.no_build:
         _build_prerequisites()
     for scenario in scenarios:
-        _run_scenario(scenario, args.manifest.resolve())
-    return _summary(plan)
+        _run_scenario(scenario, manifest)
+    return _summary(plan, scenarios)
 
 
 if __name__ == "__main__":
