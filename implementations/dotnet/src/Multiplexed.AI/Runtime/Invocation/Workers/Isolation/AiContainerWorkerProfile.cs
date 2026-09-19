@@ -48,7 +48,8 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
             AiContainerWorkerResourceLimits? resourceLimits = null,
             string containerUser = "65532:65532",
             IReadOnlyDictionary<string, string>? engineEnvironment = null,
-            IEnumerable<string>? approvedLaunchRoots = null)
+            IEnumerable<string>? approvedLaunchRoots = null,
+            int heartbeatMilliseconds = 1000)
         {
             AiPublicationJson.ValidateEnvironment(runtime);
             ArgumentNullException.ThrowIfNull(executionDescriptor);
@@ -74,6 +75,8 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
             ValidateImageRepository(imageRepository);
             AiContainerWorkerOwnership.ValidateOwnerScope(containerOwnerScope);
             ValidateContainerUser(containerUser);
+            if (heartbeatMilliseconds is < 50 or > 5000)
+                throw new ArgumentOutOfRangeException(nameof(heartbeatMilliseconds));
 
             var limits = resourceLimits ?? new AiContainerWorkerResourceLimits();
             limits.Validate();
@@ -98,6 +101,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
             ContainerOwnerScope = containerOwnerScope;
             ResourceLimits = limits;
             ContainerUser = containerUser;
+            HeartbeatMilliseconds = heartbeatMilliseconds;
             EngineEnvironment = new ReadOnlyDictionary<string, string>(environment);
             ApprovedLaunchRoots = Array.AsReadOnly(normalizedRoots);
         }
@@ -112,6 +116,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
         public string ImageReference => ImageRepository + "@" + ExecutionDescriptor.Artifact.Digest;
         public AiContainerWorkerResourceLimits ResourceLimits { get; }
         public string ContainerUser { get; }
+        public int HeartbeatMilliseconds { get; }
         public IReadOnlyDictionary<string, string> EngineEnvironment { get; }
         public IReadOnlyList<string> ApprovedLaunchRoots { get; }
 

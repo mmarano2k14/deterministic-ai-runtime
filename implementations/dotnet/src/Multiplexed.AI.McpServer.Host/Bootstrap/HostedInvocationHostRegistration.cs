@@ -207,7 +207,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     limits,
                     runtimeOptions.ContainerUser,
                     options.EngineEnvironment,
-                    roots));
+                    roots,
+                    options.HeartbeatMilliseconds));
             }
             return profiles.ToArray();
         }

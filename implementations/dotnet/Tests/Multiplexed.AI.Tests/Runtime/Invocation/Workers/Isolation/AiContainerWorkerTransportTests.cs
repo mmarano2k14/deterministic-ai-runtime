@@ -14,7 +14,11 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             var profile = ContainerWorkerTestSupport.Profile();
             var plan = AiContainerWorkerLaunchPlan.Create(profile, "multiplexed-ai-test");
             Assert.Equal(profile.ImageReference, plan.ImageReference);
-            Assert.Equal(profile.ImageReference, plan.Arguments[^1]);
+            Assert.Equal(profile.ImageReference, plan.Arguments[^5]);
+            Assert.Equal("--runtime-reference=" + profile.Runtime.Reference, plan.Arguments[^4]);
+            Assert.Equal("--runtime-version=" + profile.Runtime.RuntimeVersion, plan.Arguments[^3]);
+            Assert.Equal("--runtime-sha256=" + profile.Runtime.RuntimeSha256, plan.Arguments[^2]);
+            Assert.Equal("--heartbeat-ms=" + profile.HeartbeatMilliseconds, plan.Arguments[^1]);
             Assert.Contains("--pull=never", plan.Arguments);
             Assert.DoesNotContain("pull", plan.Arguments);
             Assert.DoesNotContain("--volume", plan.Arguments);
@@ -72,7 +76,15 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             Assert.Equal(JsonValueKind.Null, root.GetProperty("inheritedPath").ValueKind);
             var arguments = root.GetProperty("arguments").EnumerateArray().Select(item => item.GetString()).ToArray();
             Assert.Contains("--pull=never", arguments);
-            Assert.Equal(profile.ImageReference, arguments[^1]);
+            Assert.Equal(profile.ImageReference, arguments[^5]);
+            var workerArguments = root.GetProperty("workerArguments").EnumerateArray().Select(item => item.GetString()!).ToArray();
+            Assert.Equal(new[]
+            {
+                "--runtime-reference=" + profile.Runtime.Reference,
+                "--runtime-version=" + profile.Runtime.RuntimeVersion,
+                "--runtime-sha256=" + profile.Runtime.RuntimeSha256,
+                "--heartbeat-ms=" + profile.HeartbeatMilliseconds
+            }, workerArguments);
             var nameIndex = Array.IndexOf(arguments, "--name");
             Assert.True(nameIndex >= 0);
             Assert.StartsWith("multiplexed-ai-", arguments[nameIndex + 1], StringComparison.Ordinal);

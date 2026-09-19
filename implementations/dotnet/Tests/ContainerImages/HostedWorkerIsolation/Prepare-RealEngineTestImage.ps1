@@ -1,8 +1,8 @@
 param(
     [string]$ContainerEngine,
-    [string]$BaseImage = "alpine:3.22",
+    [string]$BaseImage = "python:3.12-alpine",
     [int]$RegistryPort = 5000,
-    [string]$ImageName = "multiplexed-ai-hosted-worker-isolation-probe",
+    [string]$ImageName = "multiplexed-ai-hosted-worker-python",
     [switch]$RunTests,
     [switch]$KeepRegistryRunning
 )
@@ -65,7 +65,7 @@ function Resolve-EnginePath {
 function Resolve-ExactBaseImage {
     param([string]$Image)
 
-    Write-Host "Resolving test fixture base image: $Image"
+    Write-Host "Resolving hosted-worker base image: $Image"
     Invoke-ContainerEngine -Arguments @("pull", "--platform", "linux/amd64", $Image) | Out-Null
 
     $inspect = Invoke-ContainerEngine -Arguments @("image", "inspect", $Image, "--format", "{{json .RepoDigests}}")
@@ -138,10 +138,17 @@ function Push-WithRetry {
         Start-Sleep -Milliseconds 250
     }
 
-    throw "Could not push fixture image to the local registry.`n$($last.Output -join [Environment]::NewLine)"
+    throw "Could not push hosted-worker image to the local registry.`n$($last.Output -join [Environment]::NewLine)"
 }
 
 $script:EnginePath = Resolve-EnginePath -RequestedPath $ContainerEngine
+$repoRoot = (& git -C $PSScriptRoot rev-parse --show-toplevel 2>$null)
+if ([string]::IsNullOrWhiteSpace($repoRoot)) {
+    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..\..\..")).Path
+}
+else {
+    $repoRoot = [System.IO.Path]::GetFullPath($repoRoot.Trim())
+}
 Write-Host "Container engine: $script:EnginePath"
 Invoke-ContainerEngine -Arguments @("version") | Out-Null
 
@@ -155,17 +162,17 @@ $candidate = "${repository}:candidate"
 $dockerfile = Join-Path $PSScriptRoot "Dockerfile"
 
 try {
-    Write-Host "Building Linux/amd64 isolation fixture..."
+    Write-Host "Building Linux/amd64 production hosted-worker test image..."
     Invoke-ContainerEngine -Arguments @(
         "build",
         "--platform", "linux/amd64",
         "--build-arg", "BASE_IMAGE=$baseExact",
         "--tag", $candidate,
         "--file", $dockerfile,
-        $PSScriptRoot
+        $repoRoot
     ) | Out-Null
 
-    Write-Host "Publishing fixture to the local registry to obtain its OCI manifest digest..."
+    Write-Host "Publishing hosted-worker image to the local registry to obtain its OCI manifest digest..."
     $push = Push-WithRetry -Reference $candidate
     $pushText = $push.Output -join [Environment]::NewLine
     $matches = [System.Text.RegularExpressions.Regex]::Matches($pushText, 'digest:\s*(sha256:[0-9a-f]{64})')
@@ -182,7 +189,7 @@ try {
 }
 finally {
     if ($registryState.StartedByScript -and -not $KeepRegistryRunning) {
-        Write-Host "Stopping local registry before runtime validation. The exact fixture image remains preloaded locally."
+        Write-Host "Stopping local registry before runtime validation. The exact hosted-worker image remains preloaded locally."
         Invoke-ContainerEngine -Arguments @("stop", $registryName) -AllowFailure | Out-Null
     }
 }
@@ -192,18 +199,33 @@ if ($offlineInspect.ExitCode -ne 0) {
     throw "The exact repository@digest reference is not available in the local engine after preparation: $exactReference"
 }
 
+$versionProbe = Invoke-ContainerEngine -Arguments @(
+    "run", "--rm", "--pull=never",
+    "--entrypoint", "python3",
+    $exactReference,
+    "-I", "-S", "-B", "-X", "utf8",
+    "-c", "import platform; print(platform.python_version())"
+)
+$runtimeVersion = (($versionProbe.Output | Select-Object -Last 1) -as [string]).Trim()
+if ($runtimeVersion -notmatch '^3\.(12|13)\.[0-9]+$') {
+    throw "Prepared production Python worker image reported an unsupported runtime version: $runtimeVersion"
+}
+
 $env:MULTIPLEXED_AI_TEST_CONTAINER_ENGINE = $script:EnginePath
 $env:MULTIPLEXED_AI_TEST_CONTAINER_IMAGE = $exactReference
+$env:MULTIPLEXED_AI_TEST_CONTAINER_RUNTIME_VERSION = $runtimeVersion
 
 Write-Host ""
 Write-Host "Real-engine test environment prepared:"
 Write-Host "MULTIPLEXED_AI_TEST_CONTAINER_ENGINE=$($env:MULTIPLEXED_AI_TEST_CONTAINER_ENGINE)"
 Write-Host "MULTIPLEXED_AI_TEST_CONTAINER_IMAGE=$($env:MULTIPLEXED_AI_TEST_CONTAINER_IMAGE)"
+Write-Host "MULTIPLEXED_AI_TEST_CONTAINER_RUNTIME_VERSION=$($env:MULTIPLEXED_AI_TEST_CONTAINER_RUNTIME_VERSION)"
 Write-Host ""
 Write-Host "PowerShell variables for this process are already configured."
 Write-Host "CMD equivalents for another shell:"
 Write-Host "set MULTIPLEXED_AI_TEST_CONTAINER_ENGINE=$($env:MULTIPLEXED_AI_TEST_CONTAINER_ENGINE)"
 Write-Host "set MULTIPLEXED_AI_TEST_CONTAINER_IMAGE=$($env:MULTIPLEXED_AI_TEST_CONTAINER_IMAGE)"
+Write-Host "set MULTIPLEXED_AI_TEST_CONTAINER_RUNTIME_VERSION=$($env:MULTIPLEXED_AI_TEST_CONTAINER_RUNTIME_VERSION)"
 
 if ($RunTests) {
     $project = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\Multiplexed.AI.Tests\Multiplexed.AI.Tests.csproj"))

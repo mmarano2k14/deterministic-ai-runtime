@@ -1,7 +1,11 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Multiplexed.Abstractions.AI.Invocation.Workers;
 using Multiplexed.Abstractions.AI.Publication;
+using Multiplexed.AI.Runtime.Invocation.Workers;
 using Multiplexed.AI.Runtime.Invocation.Workers.Isolation;
 using Multiplexed.AI.Runtime.Publication;
 using Multiplexed.AI.Tests.Runtime.Publication;
@@ -21,7 +25,20 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
         }
     }
 
-    /// <summary>Kernel/cgroup evidence for the selected Linux amd64 container boundary using a preloaded exact image.</summary>
+    public sealed class RealHostedContainerWorkerFactAttribute : FactAttribute
+    {
+        public RealHostedContainerWorkerFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MULTIPLEXED_AI_TEST_CONTAINER_ENGINE")) ||
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MULTIPLEXED_AI_TEST_CONTAINER_IMAGE")) ||
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MULTIPLEXED_AI_TEST_CONTAINER_RUNTIME_VERSION")))
+            {
+                Skip = "Run Prepare-RealEngineTestImage.ps1 to prepare the exact production Python worker image and runtime identity.";
+            }
+        }
+    }
+
+    /// <summary>Real-engine evidence for Linux/amd64 isolation and production hosted-worker execution using a preloaded exact image.</summary>
     [Trait("Category", "ContainerRealEngine")]
     public sealed class AiContainerWorkerRealEngineClosureTests
     {
@@ -95,6 +112,67 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             }
         }
 
+        [RealHostedContainerWorkerFact]
+        public async Task Real_Transport_Executes_The_Production_Python_Worker_In_The_Exact_Isolated_Image()
+        {
+            var profile = RealWorkerProfile();
+            var local = await RunEngineAsync("image", "inspect", profile.ImageReference);
+            Assert.True(local.ExitCode == 0,
+                "The exact worker image must already be present locally before the test; runtime execution never pulls it. " + local.Stderr);
+
+            var source = Encoding.UTF8.GetBytes(
+                "def run(inputs, context):\n    return {\"success\": True, \"payload\": {\"value\": inputs[\"amount\"] * 2}}\n");
+            var original = WorkerTestSupport.Request();
+            var file = new AiWorkerFile(
+                "main.py",
+                Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant(),
+                source.LongLength,
+                Convert.ToBase64String(source).TrimEnd('=').Replace('+', '-').Replace('/', '_'));
+            var target = original.Code.Target with
+            {
+                ExecutionLanguage = "python",
+                EnvironmentRef = profile.Runtime.Reference,
+                EnvironmentSha256 = profile.Runtime.RuntimeSha256
+            };
+            var code = new AiWorkerCodeBundle(
+                target, profile.Runtime, "main.py", "run", new[] { file }, Array.Empty<AiWorkerDependency>())
+            {
+                ExecutionDescriptor = profile.ExecutionDescriptor
+            };
+            var request = original with
+            {
+                Inputs = JsonSerializer.SerializeToElement(new { amount = 21 }),
+                Code = code,
+                DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(2)
+            };
+            var transport = new AiContainerWorkerTransport(
+                new AiConfiguredContainerWorkerCatalog(new[] { profile }),
+                new AiWorkerProcessTransportOptions(
+                    startupTimeout: TimeSpan.FromSeconds(30),
+                    heartbeatTimeout: TimeSpan.FromSeconds(15),
+                    shutdownTimeout: TimeSpan.FromSeconds(10)));
+            var heartbeats = 0;
+
+            var result = await transport.InvokeAsync(request, _ =>
+            {
+                Interlocked.Increment(ref heartbeats);
+                return Task.CompletedTask;
+            });
+
+            Assert.True(result.Success);
+            Assert.True(heartbeats >= 1);
+            using var payload = JsonDocument.Parse(result.PayloadJson);
+            Assert.Equal(42, payload.RootElement.GetProperty("value").GetInt32());
+
+            var remaining = await RunEngineAsync(
+                "ps", "--all",
+                "--filter", "label=multiplexed.ai.hosted-worker=1",
+                "--filter", "label=multiplexed.ai.owner-scope=" + profile.ContainerOwnerScope,
+                "--format", "{{.Names}}");
+            Assert.Equal(0, remaining.ExitCode);
+            Assert.True(string.IsNullOrWhiteSpace(remaining.Stdout));
+        }
+
         [RealContainerEngineFact]
         public async Task Force_Removal_Contains_And_Removes_A_Running_Descendant_Process()
         {
@@ -142,12 +220,83 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             string shellScript)
         {
             var plan = AiContainerWorkerLaunchPlan.Create(profile, name);
-            var arguments = plan.Arguments.ToList();
-            arguments.Insert(arguments.Count - 1, "--detach");
+            var imageIndex = plan.Arguments.ToList().IndexOf(plan.ImageReference);
+            Assert.True(imageIndex > 0);
+            var arguments = plan.Arguments.Take(imageIndex).ToList();
+            arguments.Add("--detach");
+            arguments.Add("--entrypoint");
             arguments.Add("/bin/sh");
+            arguments.Add(plan.ImageReference);
             arguments.Add("-c");
             arguments.Add(shellScript);
             return await RunEngineAsync(arguments.ToArray());
+        }
+
+        private static AiContainerWorkerProfile RealWorkerProfile()
+        {
+            var engine = Environment.GetEnvironmentVariable("MULTIPLEXED_AI_TEST_CONTAINER_ENGINE")!;
+            var image = Environment.GetEnvironmentVariable("MULTIPLEXED_AI_TEST_CONTAINER_IMAGE")!;
+            var runtimeVersion = Environment.GetEnvironmentVariable("MULTIPLEXED_AI_TEST_CONTAINER_RUNTIME_VERSION");
+            if (string.IsNullOrWhiteSpace(runtimeVersion))
+                throw new InvalidOperationException(
+                    "MULTIPLEXED_AI_TEST_CONTAINER_RUNTIME_VERSION must identify the CPython version embedded in the prepared worker image.");
+            if (!Path.IsPathFullyQualified(engine) || !File.Exists(engine))
+                throw new FileNotFoundException(
+                    "MULTIPLEXED_AI_TEST_CONTAINER_ENGINE must identify an absolute Docker-compatible engine executable.", engine);
+
+            var (repository, digest) = SplitImageReference(image);
+            var runtime = new AiPublicationEnvironment(
+                "container-python-" + digest[7..19], "python", runtimeVersion, digest[7..]);
+            var descriptor = new AiPublicationExecutionDescriptor
+            {
+                OperatingSystem = "linux",
+                Architecture = "amd64",
+                Artifact = new(
+                    AiPublicationEnvironmentArtifactKind.OciImage,
+                    digest,
+                    AiPublicationExecutionDescriptors.OciImageMediaType),
+                Requirements = new()
+                {
+                    IsolationTier = AiWorkerIsolationTier.SandboxedContainer,
+                    NetworkEgress = AiWorkerNetworkEgress.DenyAll,
+                    PathProtection = AiWorkerPathProtection.SealedClosure
+                }
+            };
+            var root = Path.GetDirectoryName(Path.GetFullPath(engine))
+                ?? throw new InvalidOperationException("Container engine directory is required.");
+            return new(
+                runtime,
+                descriptor,
+                Path.GetFullPath(engine),
+                FileHash(engine),
+                root,
+                repository,
+                "real-worker-" + Guid.NewGuid().ToString("N")[..16],
+                new AiContainerWorkerResourceLimits
+                {
+                    CpuMilliCores = 750,
+                    MemoryBytes = 268435456,
+                    PidsLimit = 32,
+                    WritableWorkspaceBytes = 33554432
+                },
+                "65532:65532",
+                approvedLaunchRoots: new[] { root },
+                heartbeatMilliseconds: 100);
+        }
+
+        private static (string Repository, string Digest) SplitImageReference(string image)
+        {
+            var separator = image.LastIndexOf('@');
+            if (separator <= 0 || separator == image.Length - 1)
+                throw new InvalidOperationException(
+                    "MULTIPLEXED_AI_TEST_CONTAINER_IMAGE must be repository@sha256:<manifest-digest>.");
+            var repository = image[..separator];
+            var digest = image[(separator + 1)..];
+            if (!digest.StartsWith("sha256:", StringComparison.Ordinal) || digest.Length != 71 ||
+                digest[7..].Any(character => !char.IsAsciiHexDigit(character) || char.IsAsciiLetterUpper(character)))
+                throw new InvalidOperationException(
+                    "MULTIPLEXED_AI_TEST_CONTAINER_IMAGE must use a lowercase sha256 manifest digest.");
+            return (repository, digest);
         }
 
         private static AiContainerWorkerProfile RealProfile()
@@ -157,14 +306,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             if (!Path.IsPathFullyQualified(engine) || !File.Exists(engine))
                 throw new FileNotFoundException("MULTIPLEXED_AI_TEST_CONTAINER_ENGINE must identify an absolute Docker-compatible engine executable.", engine);
 
-            var separator = image.LastIndexOf('@');
-            if (separator <= 0 || separator == image.Length - 1)
-                throw new InvalidOperationException("MULTIPLEXED_AI_TEST_CONTAINER_IMAGE must be repository@sha256:<manifest-digest>.");
-            var repository = image[..separator];
-            var digest = image[(separator + 1)..];
-            if (!digest.StartsWith("sha256:", StringComparison.Ordinal) || digest.Length != 71 ||
-                digest[7..].Any(character => !char.IsAsciiHexDigit(character) || char.IsAsciiLetterUpper(character)))
-                throw new InvalidOperationException("MULTIPLEXED_AI_TEST_CONTAINER_IMAGE must use a lowercase sha256 manifest digest.");
+            var (repository, digest) = SplitImageReference(image);
 
             var runtime = PublicationTestSupport.Environment("python");
             var descriptor = new AiPublicationExecutionDescriptor

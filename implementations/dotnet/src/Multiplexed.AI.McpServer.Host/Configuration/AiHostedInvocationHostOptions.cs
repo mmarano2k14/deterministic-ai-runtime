@@ -44,6 +44,7 @@ namespace Multiplexed.AI.McpServer.Host.Configuration
         public long MemoryBytes { get; set; } = 268435456;
         public int PidsLimit { get; set; } = 64;
         public long WritableWorkspaceBytes { get; set; } = 67108864;
+        public int HeartbeatMilliseconds { get; set; } = 1000;
         public Dictionary<string, string> EngineEnvironment { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public List<AiHostedContainerRuntimeOptions> Runtimes { get; set; } = new();
     }

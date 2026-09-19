@@ -114,10 +114,12 @@ internal static class Program
                 }
             }
 
+            var imageIndex = ImageIndex(args);
             await Send(Frame("result", true, new
             {
                 arguments = args,
-                image = args[^1],
+                image = args[imageIndex],
+                workerArguments = args[(imageIndex + 1)..],
                 explicitValue = Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_VALUE"),
                 inheritedPath = Environment.GetEnvironmentVariable("PATH"),
                 dependencyPackages = packageKinds
@@ -210,7 +212,7 @@ internal static class Program
         {
             ["Config"] = new JsonObject
             {
-                ["Image"] = args[^1],
+                ["Image"] = args[ImageIndex(args)],
                 ["User"] = Separate(args, "--user") ?? string.Empty,
                 ["Labels"] = labels
             },
@@ -239,6 +241,14 @@ internal static class Program
                 ["Destination"] = tmpfsDestination
             })
         };
+    }
+
+    private static int ImageIndex(string[] args)
+    {
+        var logDriver = Array.IndexOf(args, "--log-driver=none");
+        if (logDriver < 0 || logDriver + 1 >= args.Length)
+            throw new InvalidOperationException("Container image argument is missing.");
+        return logDriver + 1;
     }
 
     private static void ApplyTamper(JsonObject inspection, string? mode)

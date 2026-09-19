@@ -279,6 +279,16 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertIn("AiWorkerNetworkEgress.DenyAll", registration)
         self.assertIn("AiWorkerPathProtection.SealedClosure", registration)
 
+    def test_container_launch_uses_the_production_worker_runtime_identity_contract(self) -> None:
+        launch_plan = (MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI" / "Runtime" / "Invocation" / "Workers" / "Isolation" / "AiContainerWorkerLaunchPlan.cs").read_text(encoding="utf-8-sig")
+        dockerfile = (MATRIX_ROOT.parent / "dotnet" / "Tests" / "ContainerImages" / "HostedWorkerIsolation" / "Dockerfile").read_text(encoding="utf-8-sig")
+        self.assertIn('image,\n                "--runtime-reference=" + profile.Runtime.Reference', launch_plan)
+        self.assertIn('"--runtime-version=" + profile.Runtime.RuntimeVersion', launch_plan)
+        self.assertIn('"--runtime-sha256=" + profile.Runtime.RuntimeSha256', launch_plan)
+        self.assertIn('"--heartbeat-ms=" + profile.HeartbeatMilliseconds', launch_plan)
+        self.assertIn("implementations/python/workers/hosted_invocation/worker.py", dockerfile)
+        self.assertIn('ENTRYPOINT ["python3", "-I", "-S", "-B", "-u", "-X", "utf8"', dockerfile)
+
     def test_worker_dispatch_failure_diagnostics_keep_a_bounded_phase(self) -> None:
         supervisor = (MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI" / "Runtime" / "Invocation" / "Workers" / "AiWorkerInvocationSupervisor.cs").read_text(encoding="utf-8-sig")
         self.assertIn('failurePhase = "prepare-worker-code"', supervisor)

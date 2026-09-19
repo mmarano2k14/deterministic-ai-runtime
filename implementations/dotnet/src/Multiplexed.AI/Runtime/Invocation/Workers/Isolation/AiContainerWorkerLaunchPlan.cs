@@ -46,7 +46,11 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
                 "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=" + profile.ResourceLimits.WritableWorkspaceBytes.ToString(CultureInfo.InvariantCulture),
                 "--env=TMPDIR=/tmp",
                 "--log-driver=none",
-                image
+                image,
+                "--runtime-reference=" + profile.Runtime.Reference,
+                "--runtime-version=" + profile.Runtime.RuntimeVersion,
+                "--runtime-sha256=" + profile.Runtime.RuntimeSha256,
+                "--heartbeat-ms=" + profile.HeartbeatMilliseconds.ToString(CultureInfo.InvariantCulture)
             };
             return new(containerName, image, Array.AsReadOnly(arguments));
         }

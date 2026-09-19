@@ -5,9 +5,9 @@ using Multiplexed.AI.Runtime.Publication;
 namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
 {
     /// <summary>
-    /// Capability contract for the first isolated worker provider target.
-    /// This delivery freezes Linux/amd64 OCI admission only; container launch and enforcement are
-    /// implemented by the subsequent transport delivery rather than inferred from this declaration.
+    /// Capability contract for the isolated worker provider target.
+    /// The initial provider freezes Linux/amd64 OCI admission and requires the concrete container
+    /// transport to enforce the declared isolation boundary before worker protocol exchange.
     /// </summary>
     public static class AiContainerWorkerExecutionAdmission
     {
