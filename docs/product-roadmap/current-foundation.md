@@ -46,7 +46,7 @@ The current architecture is built around the following core foundations:
 | DAG Execution | Represent workflows as step-based directed execution graphs. |
 | Durable Child DAG Composition | **Implemented / validated.** Delegate from one DAG to another, park the parent durably, recover nested work through existing runtime recovery, and resume the same parent execution through deterministic continuation. Native recursive Depth3 and centralized EventDriven lifecycle validation are green; immutable published custom child binding and hosted Python/TypeScript/.NET execution are supported with a separately bounded nested proof. |
 | Deterministic Dependency Packaging | **Implemented for the selected finite formats.** Pure-Python wheel bundles, locked Node source bundles, and managed .NET assembly closures are captured before manifest visibility, hash-verified, bound to the existing immutable environment, revalidated by hosted workers, and retained by whole-run pinning. Runtime package-manager/network resolution remains excluded. |
-| Hosted Worker Isolation | **Implemented / validated for the selected OCI provider.** Linux/amd64 `SandboxedContainer` execution uses exact image-manifest digests, non-root execution, denied egress, read-only root, bounded tmpfs, capability removal, `no-new-privileges`, CPU/memory/PID limits, applied-state attestation before tenant material release, shared cleanup/quarantine, and restart orphan reconciliation. The final evidence separates 86 deterministic provider/isolation tests from 2 explicit real-engine Docker/Linux tests. Kubernetes sandbox-Pod materialization remains separate future provider work. |
+| Hosted Worker Isolation | **Implemented / validated for the selected OCI provider.** Linux/amd64 `SandboxedContainer` execution uses exact image-manifest digests, non-root execution, denied egress, read-only root, bounded tmpfs, capability removal, `no-new-privileges`, CPU/memory/PID limits, applied-state attestation before tenant material release, shared cleanup/quarantine, and restart orphan reconciliation. The final evidence separates deterministic provider/isolation tests from 4 explicit real-engine Docker/Linux tests and the 37/37 public-SDK runtime-matrix closure. Kubernetes sandbox-Pod materialization remains separate future provider work. |
 | Execution State | Track workflow progress, step status, retry direction, pause/resume/cancel state, retention decisions, memory/context evidence direction, and finalization. |
 | Worker Model | Allow work to be processed by workers inside runtime instances. |
 | Queue Model | Support local queues and shared queue direction for multi-instance execution. |
@@ -1342,7 +1342,7 @@ This means the product can evolve from a developer-defined runtime into a visual
 
 ## 30. Developer Experience, API, SDK, and CLI Foundation
 
-The project now has both the runtime foundation and an implemented public SDK contract/server boundary for the first developer-facing publication/execution surface. The external .NET, TypeScript/JavaScript, and Python clients are additionally closed through a fixture-free 33/33 Docker ProcessHostPool matrix using public SDK samples and production hosted workers.
+The project now has both the runtime foundation and an implemented public SDK contract/server boundary for the first developer-facing publication/execution surface. The external .NET, TypeScript/JavaScript, and Python clients are additionally closed through a fixture-free 37/37 Docker runtime matrix using public SDK samples and production hosted workers: 33 baseline `ProcessHostPool` scenarios plus four provider/artifact-selection scenarios spanning `ProcessHostPool` and `ContainerIsolationProvider`.
 
 The developer experience direction can build on:
 
@@ -1692,7 +1692,7 @@ It is the foundation for a complete AI workflow execution platform.
 | Execution control and state lifecycle | Foundation exists |
 | Testing and reliability strategy | Foundation exists / active direction |
 | Public SDK contract/server boundary | Implemented / validated foundation |
-| External SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python, including fixture-free 33/33 Docker ProcessHostPool closure |
+| External SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python, including fixture-free 37/37 Docker runtime closure across the `ProcessHostPool` baseline and bounded `ContainerIsolationProvider` selection scenarios |
 | CLI / public SDK registry distribution / broader API productization | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |

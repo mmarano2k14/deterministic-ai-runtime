@@ -6,6 +6,78 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 0.0.9.5 - 2026-09-19 - OCI / Container Isolation
+
+### Provider wiring
+
+- Added optional deployment-owned OCI worker configuration to the hosted invocation host.
+- Added bounded configuration for the container engine path, working directory, owner scope, engine environment, resource limits, immutable runtime references, OCI repositories, manifest digests, and non-root container users.
+- Registered configured OCI runtimes in the existing immutable publication environment catalog alongside trusted-process `HostRuntime` environments.
+- Preserved exact provider selection through the pinned execution descriptor: `HostRuntime` remains routed to the trusted-process transport and `OciImage` to the isolated-container transport.
+- Composed the isolated-container provider behind the existing `IAiWorkerInvocationTransport` boundary without adding scheduler, queue, durable journal, recovery, DAG-transition, or result-acceptance authority.
+- Corrected container-provider dependency injection so isolated execution uses its own strict `SandboxedContainer` / `DenyAll` / `SealedClosure` admission policy instead of inheriting the trusted-process minimum policy.
+- Preserved fail-closed behavior when an OCI profile is missing or does not match the exact pinned runtime and execution descriptor.
+- Added provider-integration coverage proving that explicit container registration can execute through the routed transport while the trusted-process provider keeps its independent admission policy.
+- Updated matrix structural validation to assert optional container-provider registration order and immutable OCI isolation requirements.
+
+### Real container execution
+
+- Extended the server-owned OCI launch plan so the immutable image entry point receives the same exact runtime identity contract used by production hosted workers: runtime reference, runtime version, runtime SHA-256, and bounded heartbeat interval.
+- Added a bounded container heartbeat setting to the deployment-owned OCI worker profile and host configuration without exposing worker arguments to tenant-controlled publication input.
+- Preserved immutable `repository@sha256:<manifest-digest>` execution with `--pull=never`; runtime execution still cannot fall back to tags or perform an implicit image pull.
+- Replaced the real-engine shell-only fixture image with a Linux/amd64 image that embeds the production Python hosted worker and runs it under the required isolated interpreter flags.
+- Updated real-engine preparation to build from the repository root, publish the test image through a local registry solely to obtain an OCI manifest digest, preload the exact digest locally, and capture the exact CPython runtime version carried by that image.
+- Added opt-in real-engine coverage that invokes the production `AiContainerWorkerTransport`, sends a real published Python function over the existing private worker protocol, validates the returned payload, and verifies that no managed container remains after successful completion.
+- Retained kernel/cgroup isolation and forced-removal coverage by overriding the prepared worker image entry point only inside the real-engine enforcement probes.
+- Updated the container-engine test probe and transport tests for the post-image production worker argument contract.
+- Added matrix structural coverage tying the OCI launch plan to the production hosted-worker runtime identity contract and embedded worker entry point.
+
+### Lifecycle and durability closure
+
+- Added container-provider lifecycle coverage proving caller cancellation removes the active isolated assignment without accepting a durable result.
+- Added deterministic expired-lease redispatch coverage through the same isolated provider while preserving the original durable operation identity and advancing only the worker assignment epoch.
+- Added failure/retry closure proving an isolated worker/engine failure retains the durable invocation for reconciliation instead of fabricating a result or directly mutating DAG state.
+- Verified that a late result from the superseded container assignment is rejected by the existing durable journal lease authority after a replacement assignment succeeds.
+- Verified that replay of the already accepted result from the authoritative replacement assignment converges as `AlreadyAccepted` and leaves continuation ownership unchanged.
+- Preserved shared supervisor capacity semantics: confirmed cleanup returns capacity normally, while the previously established unconfirmed-cleanup path remains quarantined.
+- Extended the build-owned container-engine probe with deterministic one-shot hang/failure modes used only to exercise cancellation, failure, lease expiry, and reassignment without adding production behavior.
+- Added opt-in real-engine coverage that runs a long-lived published function inside the production Python hosted-worker image, observes live worker heartbeats, cancels the active invocation, and verifies that no managed container remains afterward.
+- Updated the real-engine preparation runner to emit detailed test execution output so each successful `ContainerRealEngine` scenario is visible in the validation terminal.
+- No scheduler, queue, recovery coordinator, DAG transition, continuation, journal acceptance, or result authority was duplicated or moved into the container provider.
+
+### Validation
+
+- Matrix Python structural/unit suite before final isolation-matrix binding: `99/99` passed.
+- The packaging environment does not provide the .NET CLI or a Docker-compatible engine, so .NET and real-engine execution remains target-environment validation.
+- Real Docker-compatible engine closure was subsequently confirmed as `4/4` passed in the target development environment before the final matrix binding changes.
+
+### Matrix closure and exact isolation evidence
+
+- Bound the previously deferred `worker-isolation-provider` coverage to exactly `trusted-process` and `sandboxed-container` executable scenarios.
+- Bound the previously deferred `isolation-artifact-selection` coverage to exactly `HostRuntime` and `OciImage` executable scenarios.
+- Kept the isolation closure intentionally bounded to the external Python SDK and production Python hosted worker; the existing 3 x 3 public SDK / hosted worker matrix remains unchanged.
+- Extended the matrix harness manifest with deployment-owned container environment references without exposing engine configuration, mutable image tags, mounts, network policy, resource limits, or Docker arguments through the public SDK.
+- Added a canonical `matrix-python-oci` environment that is resolved by the existing immutable publication environment catalog to an exact OCI manifest digest.
+- Extended the canonical Docker matrix runner to prepare and preload the exact OCI worker image before starting the matrix stack.
+- Added the Docker CLI to the runtime matrix image and mounted the host Docker socket for the local/CI isolation profile so isolated workers are launched as sibling containers rather than through Docker-in-Docker.
+- Preserved `--pull=never` execution after image preparation; runtime invocation cannot resolve a mutable tag or implicitly pull worker code.
+- Added public SDK isolation probes that fail unless the sandboxed-container path executes non-root, uses a read-only root filesystem, and exposes loopback-only networking.
+- Preserved the trusted-process path independently as `HostRuntime -> TrustedProcess -> ProcessHostPool`.
+- Preserved the isolated path independently as `OciImage -> SandboxedContainer -> ContainerIsolationProvider`.
+- Extended the canonical verifier to validate immutable environment references, provider identity, artifact kind, isolation-provider value, production-worker execution evidence, and sandbox enforcement evidence.
+- Raised the exact planned canonical gate from 33 scenarios to 37 scenarios: 9 core scenarios plus 28 feature scenarios.
+- Removed the two isolation targets from deferred coverage; `executed-coverage-closure.json` now requires all declared final-roadmap coverage targets to have executed evidence before closure can pass.
+- Recorded the final closure provider set as `ProcessHostPool` plus `ContainerIsolationProvider` while retaining `docker` as the topology.
+- Documented that the OCI matrix path is a local/CI Docker-socket profile and must not be presented as production Kubernetes coverage.
+
+### Validation update
+
+- Matrix Python structural/unit suite after isolation closure changes: `99/99` passed.
+- Real Docker-compatible engine closure before the matrix integration changes: `4/4` passed in the target development environment, including production worker execution and active cancellation cleanup.
+- The final `37/37` Docker matrix result is not claimed until the updated canonical matrix is executed in the target development environment.
+
+---
+
 ## 0.0.9.4 - 2026-09-19 - SDK / Runtime Matrix
 
 ## Multilanguage runtime matrix foundation

@@ -1,6 +1,6 @@
 # External SDK Libraries
 
-**Status:** Implemented and validated for .NET, TypeScript/JavaScript, and Python client packages. The live fixture-free Docker ProcessHostPool matrix is GREEN at 33/33 scenarios across the documented execution/recovery boundaries. Public registry publication and the standalone runtime CLI remain separate productization work.
+**Status:** Implemented and validated for .NET, TypeScript/JavaScript, and Python client packages. The live fixture-free Docker runtime matrix is GREEN at 37/37 scenarios: the existing 33-scenario `ProcessHostPool` baseline plus four provider/artifact-selection scenarios spanning `ProcessHostPool` and `ContainerIsolationProvider`. Public registry publication and the standalone runtime CLI remain separate productization work.
 
 ## Purpose
 
@@ -87,7 +87,7 @@ The published-function samples represent code an external SDK consumer supplies 
 
 The standalone MCP effect server is a controlled external service sample used to validate durable outbound-effect evidence without turning the matrix harness into another runtime authority.
 
-See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the 33/33 live closure.
+See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the 37/37 live closure and its exact provider boundaries.
 
 ## Shared client semantics
 
@@ -376,7 +376,7 @@ The external SDK branch does not claim:
 - a standalone `ai-runtime` CLI implementation;
 - replay, ledger, forensics, diagnostics, queue, or runtime-instance APIs beyond the current public publication/execution surface;
 - an additional REST gateway;
-- live client-language x hosted-worker-language x provider coverage from the package parity suite alone; the separate runtime matrix provides the documented Docker ProcessHostPool closure;
+- live client-language x hosted-worker-language x provider coverage from the package parity suite alone; the separate runtime matrix provides the documented 37/37 Docker closure across `ProcessHostPool` plus the bounded `ContainerIsolationProvider` selection scenarios;
 - any change to scheduler, queue, recovery, journal, lease/epoch, publication-pinning, or result-acceptance authority.
 
 Live client-to-server evidence is recorded separately in [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md); it supplements rather than changes the package-parity boundary described here.

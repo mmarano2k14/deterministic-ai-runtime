@@ -140,22 +140,23 @@ The published-custom nesting claim is intentionally bounded to the depth actuall
 
 ## Hosted worker isolation evidence
 
-The selected OCI-backed `SandboxedContainer` provider is validated separately from the earlier trusted-process artifacts. The current closure contains two evidence layers:
+The selected OCI-backed `SandboxedContainer` provider is validated separately from the earlier trusted-process artifacts. The current closure contains three complementary evidence layers:
 
-- a deterministic provider/isolation suite validating admission, immutable provider selection, no downgrade, launch/inspect ordering, applied-state refusal, cancellation, cleanup, quarantine, owner-scope orphan reconciliation, journal/result-path compatibility, and deterministic package metadata crossing the isolated transport;
-- explicit opt-in real Docker/Linux tests validating the selected kernel/cgroup-visible boundary.
+- a deterministic provider/isolation suite validating admission, immutable provider selection, no downgrade, launch/inspect ordering, applied-state refusal, cancellation/failure handling, cleanup, quarantine, owner-scope orphan reconciliation, journal/result-path compatibility, lease/epoch behavior, and deterministic package metadata crossing the isolated transport;
+- explicit opt-in real Docker/Linux tests validating the selected kernel/cgroup-visible boundary plus real production-worker execution and cancellation;
+- the fixture-free public-SDK runtime matrix validating live provider/artifact selection through the existing runtime path.
 
-The recorded final run for the deterministic isolation target is **86 passed, 0 failed, 0 skipped**. The real-engine target is **2 passed, 0 failed, 0 skipped**. The real tests verify non-root execution, zero effective capabilities, `NoNewPrivs=1`, read-only root filesystem, writable bounded `/tmp`, denied outbound networking with only loopback visible, exact memory/PID/CPU cgroup limits, and force-removal of a running descendant container workload.
+The recorded real-engine target is **4 passed, 0 failed, 0 skipped**. The real tests verify non-root execution, zero effective capabilities, `NoNewPrivs=1`, read-only root filesystem, writable bounded `/tmp`, denied outbound networking with only loopback visible, exact memory/PID/CPU cgroup limits, production Python hosted-worker execution, active cancellation cleanup, and force-removal of a running descendant container workload.
 
-These results do not mean that the 86 deterministic tests and the 2 real-engine tests prove the same thing. The first layer proves runtime contracts and failure behavior, frequently through a controlled engine probe. The second layer proves that the selected real container engine/Linux boundary actually applies key isolation properties. See [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) for commands, fixture setup, and limitations.
+These results do not mean that deterministic provider tests, the 4 real-engine tests, and the public-SDK matrix prove the same thing. The deterministic layer proves runtime contracts and failure behavior, frequently through a controlled engine probe. The real-engine layer proves selected kernel/container enforcement plus production Python worker execution and cancellation. The 37/37 matrix separately proves live SDK/runtime provider and artifact selection. See [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) for commands, image preparation, and limitations.
 
 ## Public SDK fixture-free runtime matrix closure
 
-The historical TRX evidence above is now supplemented by a separate live public-SDK matrix. The Docker ProcessHostPool verifier reports **33/33** scenarios with `.NET`, TypeScript/JavaScript, and Python external clients, production hosted workers, publication pinning, deterministic dependency packages, hosted policy families, nested published Child DAGs, durable MCP effect evidence, cancellation, recovery, journal result acceptance, and external-client dependency firewalls.
+The historical TRX evidence above is now supplemented by a separate live public-SDK matrix. The Docker verifier reports **37/37** scenarios with `.NET`, TypeScript/JavaScript, and Python external clients, production hosted workers, publication pinning, deterministic dependency packages, hosted policy families, nested published Child DAGs, durable MCP effect evidence, cancellation, recovery, journal result acceptance, provider/artifact selection, and external-client dependency firewalls.
 
 The final matrix run is fixture-free at the execution layer: the `implementations/matrix/fixtures` tree is not required. Reusable public SDK samples provide publishable user code, while execution uses the production hosted workers.
 
-This proof is intentionally topology-bounded to `docker + ProcessHostPool`. Isolation-provider and isolation-artifact-selection dimensions remain separate from the matrix and are not inferred from its 33/33 result.
+The executed provider boundary is exact: the original 33 scenarios remain the Docker `ProcessHostPool` baseline, while four additional scenarios close `TrustedProcess` versus `SandboxedContainer` and `HostRuntime` versus `OciImage` selection across `ProcessHostPool` and `ContainerIsolationProvider`. This does not imply `KubernetesPool` parity or a rerun of all baseline scenarios under container isolation.
 
 See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the exact scenario counts and non-claims.
 

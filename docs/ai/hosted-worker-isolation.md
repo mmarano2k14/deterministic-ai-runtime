@@ -1,6 +1,6 @@
 # Hosted Worker Isolation
 
-**Status:** Implemented and validated for the selected Linux/amd64 OCI provider boundary.
+**Status:** Implemented and validated for the selected Linux/amd64 OCI provider boundary, including real production-worker execution/cancellation and fixture-free public-SDK matrix closure.
 
 ## Purpose
 
@@ -175,6 +175,36 @@ A sandbox is a bounded physical execution environment for an assignment, not a p
 
 This avoids treating a long-lived per-tenant container as hidden execution state and reduces cross-invocation residue such as `/tmp`, process descendants, and in-memory data.
 
+## Live closure
+
+The selected provider is now exercised in two live proof domains:
+
+```text
+real Docker/Linux suite
+    -> 4/4 ContainerRealEngine tests
+
+public-SDK runtime matrix
+    -> 37/37 scenarios
+    -> topology=docker
+    -> providers=ProcessHostPool+ContainerIsolationProvider
+```
+
+The matrix adds explicit closure for:
+
+```text
+worker-isolation-provider
+    TrustedProcess
+    SandboxedContainer
+
+isolation-artifact-selection
+    HostRuntime
+    OciImage
+```
+
+The OCI path uses sibling worker containers through the host Docker socket. It does not use Docker-in-Docker.
+
+The live matrix does not imply that all earlier `ProcessHostPool` scenarios were rerun under `ContainerIsolationProvider`; the OCI-specific live scenarios currently close provider/artifact selection through the production Python hosted worker.
+
 ## Kubernetes boundary
 
 The current isolated provider is an OCI/container-engine implementation for the selected Linux/amd64 target. It is not Docker-in-Docker logic for `KubernetesPool`, and it does not claim that current Kubernetes runtime Pods automatically provide the same hosted-code sandbox.
@@ -185,10 +215,11 @@ The implemented public SDK boundary remains provider-agnostic: portable publicat
 
 ## Validation boundary
 
-The selected provider has two distinct proof layers:
+The selected provider has three distinct proof layers:
 
 - deterministic/provider tests proving runtime logic, admission, attestation, failure handling, cleanup/quarantine, reconciliation, and durable-authority preservation;
-- explicit real Docker/Linux tests proving selected kernel/cgroup-visible isolation behavior.
+- four explicit real Docker/Linux tests proving selected kernel/cgroup-visible isolation behavior, production Python hosted-worker execution, active cancellation, and descendant containment;
+- the fixture-free 37/37 public-SDK Docker matrix proving live provider/artifact selection through `ProcessHostPool` and `ContainerIsolationProvider`.
 
 These layers must not be conflated. See [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md).
 

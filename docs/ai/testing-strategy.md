@@ -70,7 +70,7 @@ The purpose of the testing strategy is to validate that the runtime behaves like
 
 ## Hosted Multilanguage Validation Evidence
 
-[Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the historical supplied results for invocation durability, environment/provider admission, launch paths, Python/TypeScript/.NET execution, custom `Concurrency` policies, outgoing MCP, and real MongoDB/Redis integration. [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) records the later fixture-free 33/33 Docker ProcessHostPool closure across external SDK clients, production hosted workers, publication pinning, dependency packaging, hosted policies, nested Child DAGs, MCP effects, cancellation, recovery, journal result acceptance, and SDK dependency firewalls.
+[Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the historical supplied results for invocation durability, environment/provider admission, launch paths, Python/TypeScript/.NET execution, custom `Concurrency` policies, outgoing MCP, and real MongoDB/Redis integration. [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) records the later fixture-free 37/37 Docker closure: the 33-scenario `ProcessHostPool` baseline plus four worker-isolation-provider and isolation-artifact-selection scenarios spanning `ProcessHostPool` and `ContainerIsolationProvider`.
 
 The broad invocation/publication artifact contains 1,098 passing results and 54 individual skipped results. Dedicated Python, TypeScript, and infrastructure artifacts execute the previously inactive paths. Counts overlap and must not be presented as one combined run or an additive unique-test total.
 
@@ -88,11 +88,13 @@ The branch does not claim generic exactly-once external side effects, provider-s
 
 ## Hosted Worker Isolation Evidence
 
-[Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) records the final selected-provider evidence. The deterministic isolation target completed with **86 passed, 0 failed, 0 skipped**. It proves runtime-side contracts such as exact provider routing, no sandbox-to-process downgrade, OCI digest admission, launch/inspect ordering, applied-state fail-closed behavior, cleanup/quarantine, startup orphan reconciliation, cancellation handling, package metadata preservation, and reuse of the existing journal/result-acceptance path.
+[Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) records the final selected-provider evidence. The deterministic isolation/provider layer proves runtime-side contracts such as exact provider routing, no sandbox-to-process downgrade, OCI digest admission, launch/inspect ordering, applied-state fail-closed behavior, cleanup/quarantine, startup orphan reconciliation, cancellation/failure lifecycle handling, package metadata preservation, lease/epoch behavior, and reuse of the existing journal/result-acceptance path.
 
-The explicit real-engine target completed with **2 passed, 0 failed, 0 skipped**. Those tests use a preloaded exact `repository@sha256:<manifest>` image and a real Docker-compatible Linux engine to observe non-root identity, capability removal, `no-new-privileges`, read-only root, writable bounded `/tmp`, denied outbound networking, cgroup CPU/memory/PID limits, and force-removal of a running descendant workload.
+The explicit real-engine target completed with **4 passed, 0 failed, 0 skipped**. Those tests use a preloaded exact `repository@sha256:<manifest>` image and a real Docker-compatible Linux engine to observe non-root identity, capability removal, `no-new-privileges`, read-only root, writable bounded `/tmp`, denied outbound networking, cgroup CPU/memory/PID limits, production Python hosted-worker execution, active cancellation cleanup, and force-removal of a running descendant workload.
 
-The two layers must remain distinct. A simulated/probe result demonstrates runtime logic and deterministic failure handling; a real-engine result demonstrates selected kernel/container enforcement. Neither is a claim about every OCI engine, every operating system, a Kubernetes sandbox-Pod provider, or universal hostile-code safety.
+A third live layer is the fixture-free **37/37** public-SDK Docker matrix. It closes `TrustedProcess` versus `SandboxedContainer` and `HostRuntime` versus `OciImage` selection across the existing `ProcessHostPool` baseline and bounded `ContainerIsolationProvider` scenarios.
+
+The three layers must remain distinct. A simulated/probe result demonstrates runtime logic and deterministic failure handling; a real-engine result demonstrates selected kernel/container enforcement and real worker lifecycle; the matrix proves live SDK/runtime selection. None is a claim about every OCI engine, every operating system, a Kubernetes sandbox-Pod provider, or universal hostile-code safety.
 
 ---
 

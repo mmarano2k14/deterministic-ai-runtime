@@ -549,7 +549,7 @@ Implemented foundation:
 - independent .NET, TypeScript/JavaScript, and Python external SDK clients;
 - shared protocol manifest and cross-language parity fixtures;
 - local NuGet/npm/wheel build-install-import smoke validation;
-- fixture-free 33/33 Docker ProcessHostPool runtime matrix across all three external SDK clients and production hosted workers;
+- fixture-free 37/37 Docker runtime matrix: the existing 33-scenario `ProcessHostPool` baseline plus four isolation-provider/artifact-selection scenarios spanning `ProcessHostPool` and `ContainerIsolationProvider`;
 - reusable public published-function samples plus an initial .NET/TypeScript/Python SDK quickstart.
 
 Remaining productization work:

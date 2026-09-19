@@ -1,6 +1,6 @@
 # External SDK Libraries Validation
 
-**Status:** Branch-closure validation completed for the independent .NET, TypeScript/JavaScript, and Python SDK libraries and their shared wire-contract parity. The separate live fixture-free Docker ProcessHostPool matrix is also GREEN at 33/33 scenarios. Public package-registry publication and the standalone CLI remain separate productization scopes.
+**Status:** Branch-closure validation completed for the independent .NET, TypeScript/JavaScript, and Python SDK libraries and their shared wire-contract parity. The separate live fixture-free Docker runtime matrix is GREEN at 37/37 scenarios across the existing `ProcessHostPool` baseline plus bounded `ContainerIsolationProvider` provider/artifact-selection closure. Public package-registry publication and the standalone CLI remain separate productization scopes.
 
 ## Validation scope
 
@@ -107,7 +107,7 @@ Package publication is not performed by the smoke runner.
 
 ## Live fixture-free runtime matrix closure
 
-The package/parity closure above is supplemented by a separate live Docker ProcessHostPool matrix. The final verifier reported **33/33** executed scenarios with all three external SDK clients and the production hosted workers.
+The package/parity closure above is supplemented by a separate live Docker runtime matrix. The final verifier reported **37/37** executed scenarios with all three external SDK clients and the production hosted workers.
 
 The live matrix covers:
 
@@ -120,14 +120,16 @@ The live matrix covers:
 3  durable cancellation SDK-client scenarios
 2  runtime recovery scenarios
 2  durable journal result-acceptance scenarios
+2  worker-isolation-provider scenarios
+2  isolation-artifact-selection scenarios
 3  external-client dependency-firewall scenarios
 -----------------------------------------------
-33 total
+37 total
 ```
 
 The final closure is fixture-free at the matrix execution layer: `implementations/matrix/fixtures` is not required. Published user code comes from reusable SDK samples and executes through the production .NET, TypeScript, and Python hosted workers.
 
-The exact executed topology is `docker + ProcessHostPool`. Worker-isolation-provider and isolation-artifact-selection dimensions remain outside this matrix and must not be inferred from the 33/33 result.
+The executed provider boundary is intentionally mixed rather than a full provider cross-product. The original 33 scenarios remain the `ProcessHostPool` baseline. Four additional scenarios close `TrustedProcess` versus `SandboxedContainer` and `HostRuntime` versus `OciImage` selection across `ProcessHostPool` and `ContainerIsolationProvider`. The live OCI path uses the production Python hosted worker in a sibling container through the host Docker socket.
 
 See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the scenario-level evidence boundary.
 
@@ -165,7 +167,7 @@ The branch closure establishes that:
 - schema/protocol incompatibility fails closed;
 - safe-read retry does not become business-operation retry authority;
 - the existing MCP public boundary remains the physical client/server transport surface for this branch;
-- the separate live matrix executes 33/33 Docker ProcessHostPool scenarios through all three external clients;
+- the separate live matrix executes 37/37 Docker scenarios through all three external clients, including the 33-scenario `ProcessHostPool` baseline and four bounded isolation-provider/artifact-selection scenarios;
 - the final live closure no longer depends on the matrix fixture tree and uses public SDK samples plus production hosted workers.
 
 ## What the evidence does not prove
@@ -175,8 +177,8 @@ This validation does **not** prove:
 - public NuGet/npm/Python package-registry publication;
 - a standalone CLI implementation;
 - a new REST/gateway surface;
-- every external-client x hosted-worker-language x process/container/provider combination beyond the executed Docker ProcessHostPool coverage;
-- OCI isolation-provider selection, OCI artifact selection, or Kubernetes parity for the 33-scenario matrix;
+- every external-client x hosted-worker-language x process/container/provider combination beyond the explicitly executed 37-scenario coverage;
+- `KubernetesPool` parity, Kubernetes sandbox-Pod materialization, or all 33 baseline scenarios rerun under `ContainerIsolationProvider`;
 - replay/ledger/forensics/diagnostic APIs that are not part of the current public SDK operation set;
 - any new scheduler, queue, recovery, journal, lease/epoch, publication-pinning, or result-acceptance authority.
 

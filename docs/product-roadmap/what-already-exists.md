@@ -51,7 +51,7 @@ The current foundation already covers several critical areas required for produc
 - observability direction through logs, metrics, traces, telemetry, provider/transport signals, lifecycle events, memory/context events, and decision history;
 - integration and reliability testing direction;
 - security and encryption hardening direction;
-- an implemented portable public SDK contract/server boundary plus independent .NET, TypeScript/JavaScript, and Python SDK clients, with a fixture-free 33/33 Docker ProcessHostPool runtime closure; public registry distribution and CLI productization remain separate;
+- an implemented portable public SDK contract/server boundary plus independent .NET, TypeScript/JavaScript, and Python SDK clients, with a fixture-free 37/37 Docker runtime closure across the `ProcessHostPool` baseline and bounded `ContainerIsolationProvider` provider/artifact-selection scenarios; public registry distribution and CLI productization remain separate;
 - memory, context, and reasoning lifecycle direction;
 - Kubernetes-ready architecture direction.
 
@@ -1844,7 +1844,7 @@ The project already has strong foundations in the following areas:
 | Integration and reliability testing | Foundation exists |
 | Testing and reliability strategy | Foundation exists / active direction |
 | Public SDK contract/server boundary | Implemented / validated foundation |
-| External SDK client libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python, including fixture-free 33/33 Docker ProcessHostPool closure |
+| External SDK client libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python, including fixture-free 37/37 Docker runtime closure across the `ProcessHostPool` baseline and bounded `ContainerIsolationProvider` selection scenarios |
 | CLI and public SDK registry distribution | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |

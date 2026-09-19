@@ -379,4 +379,4 @@ The server remains authoritative for durable idempotency, publication pinning, s
 
 ## Validation reference
 
-The external SDK path represented here is exercised by the fixture-free Docker ProcessHostPool matrix. See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the exact 33/33 executed coverage and its non-claims.
+The external SDK path represented here is exercised by the fixture-free Docker runtime matrix. See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the exact 37/37 executed coverage, including the bounded `ProcessHostPool` / `ContainerIsolationProvider` provider-selection closure and its non-claims.
