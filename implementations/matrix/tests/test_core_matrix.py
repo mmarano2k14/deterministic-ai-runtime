@@ -764,7 +764,7 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertIn("ISOLATION_EXPECTED", verifier)
         self.assertIn("2/2 worker-isolation-provider scenarios passed", verifier)
         self.assertIn("2/2 isolation-artifact-selection scenarios passed", verifier)
-        self.assertIn("Exact executed-coverage closure: 37/37 scenarios", verifier)
+        self.assertIn("Exact executed-coverage closure: 37/37 scenarios; topology=docker; runtimeProvider=ProcessHostPool; workerExecutionProviders=TrustedProcess+ContainerIsolationProvider.", verifier)
         self.assertNotIn("Deferred to Pack 4 (NOT EXECUTED)", verifier)
         self.assertIn('"workerIsolationProviders": ["trusted-process", "sandboxed-container"]', verifier)
         self.assertIn('"isolationArtifactKinds": ["HostRuntime", "OciImage"]', verifier)
@@ -775,6 +775,34 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertIn('Prepare-RealEngineTestImage.ps1', runner)
         self.assertIn('matrix-evidence:/matrix/evidence', compose)
         self.assertNotIn('matrix-evidence:/matrix/evidence:ro', compose)
+
+    def test_provider_dimensions_distinguish_runtime_hosting_from_worker_execution(self) -> None:
+        options = (MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" / "Configuration" / "AiMatrixHarnessOptions.cs").read_text(encoding="utf-8-sig")
+        bootstrap = (MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" / "Bootstrap" / "MatrixHarnessBootstrapHostedService.cs").read_text(encoding="utf-8-sig")
+        runtime = (MATRIX_ROOT / "runtime" / "docker" / "runtime-entrypoint.sh").read_text(encoding="utf-8-sig")
+        verifier = (MATRIX_ROOT / "runtime" / "docker" / "verifier.py").read_text(encoding="utf-8-sig")
+
+        self.assertIn("RuntimeProvider", options)
+        self.assertIn("WorkerExecutionProvider", options)
+        self.assertIn("runtimeProvider = options.RuntimeProvider", bootstrap)
+        self.assertIn("workerExecutionProvider = options.WorkerExecutionProvider", bootstrap)
+        self.assertIn('AiMatrixHarness__RuntimeProvider="ProcessHostPool"', runtime)
+        self.assertIn('AiMatrixHarness__WorkerExecutionProvider="TrustedProcess"', runtime)
+        self.assertIn('RUNTIME_PROVIDERS = ("ProcessHostPool", "KubernetesPool")', verifier)
+        self.assertIn('WORKER_EXECUTION_PROVIDERS = ("TrustedProcess", "ContainerIsolationProvider")', verifier)
+        self.assertIn('"runtimeProviders": ["ProcessHostPool"]', verifier)
+        self.assertIn('"workerExecutionProviders": ["TrustedProcess", "ContainerIsolationProvider"]', verifier)
+
+    def test_kubernetes_pool_remains_runtime_host_provider_not_worker_transport(self) -> None:
+        kubernetes_di = (MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI" / "Runtime" / "ControlPlane" / "DI" / "AiKubernetesRuntimePoolServiceCollectionExtensions.cs").read_text(encoding="utf-8-sig")
+        worker_router = (MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI" / "Runtime" / "Invocation" / "Workers" / "AiWorkerInvocationTransportRouter.cs").read_text(encoding="utf-8-sig")
+        image_reference = (MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI" / "Runtime" / "ControlPlane" / "RuntimeInstances" / "HostManager" / "Pool" / "Kubernetes" / "AiKubernetesRuntimePoolImageReference.cs").read_text(encoding="utf-8-sig")
+
+        self.assertIn("KubernetesAiRuntimePoolHostCreationStrategy", kubernetes_di)
+        self.assertNotIn("KubernetesPool", worker_router)
+        self.assertIn("RuntimeImageRepository", image_reference)
+        self.assertIn("RuntimeImageDigest", image_reference)
+        self.assertIn("repository@sha256", image_reference)
 
     def test_isolation_closure_plan_raises_canonical_gate_to_thirty_seven(self) -> None:
         plan = load_plan()

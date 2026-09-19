@@ -104,6 +104,8 @@ if (args.feature === "cancellation") {
     endpoint: args.endpoint,
     topology: args.topology,
     provider: args.provider,
+    runtimeProvider: args.runtimeProvider,
+    workerExecutionProvider: args.workerExecutionProvider,
     publicationRef: publication.publicationRef,
     executionId: submitted.executionId,
     activeStatusBeforeCancel: active.status,
@@ -136,6 +138,8 @@ if (args.feature === "cancellation") {
     endpoint: args.endpoint,
     topology: args.topology,
     provider: args.provider,
+    runtimeProvider: args.runtimeProvider,
+    workerExecutionProvider: args.workerExecutionProvider,
     publicationRef: publication.publicationRef,
     executionId: submitted.executionId,
     terminalStatus: result.status,
@@ -180,6 +184,8 @@ async function runDependencyFirewall(args) {
     workerLanguage: null,
     topology: args.topology,
     provider: args.provider,
+    runtimeProvider: args.runtimeProvider,
+    workerExecutionProvider: args.workerExecutionProvider,
     artifactKind: "compiled-typescript-sdk",
     declaredDependencies,
     declaredDevDependencies,
@@ -298,6 +304,8 @@ async function parseArgs(values) {
       accessContextHeader: manifest.accessContextHeader ?? "X-Access-Context",
       topology: manifest.topology ?? "local",
       provider: manifest.provider ?? "ProcessHostPool",
+      runtimeProvider: manifest.runtimeProvider ?? manifest.provider ?? "ProcessHostPool",
+      workerExecutionProvider: manifest.workerExecutionProvider ?? "TrustedProcess",
     };
   }
   return {
@@ -306,6 +314,8 @@ async function parseArgs(values) {
     token: read("--token"), accessContext: read("--access-context"),
     accessContextHeader: read("--access-context-header") ?? "X-Access-Context",
     topology: read("--topology") ?? "local", provider: read("--provider") ?? "ProcessHostPool",
+    runtimeProvider: read("--runtime-provider") ?? "ProcessHostPool",
+    workerExecutionProvider: read("--worker-execution-provider") ?? "TrustedProcess",
   };
 }
 

@@ -155,6 +155,8 @@ async def _run_publication_pinning(client: AiSdkClient, args: argparse.Namespace
         "endpoint": args.endpoint,
         "topology": args.topology,
         "provider": args.provider,
+        "runtimeProvider": args.runtime_provider,
+        "workerExecutionProvider": args.worker_execution_provider,
         "originalPublicationRef": original.publication_ref,
         "replacementPublicationRef": replacement.publication_ref,
         "submittedPublicationRef": submitted.publication_ref,
@@ -214,6 +216,8 @@ async def _run_dependency_packaging(client: AiSdkClient, args: argparse.Namespac
         "endpoint": args.endpoint,
         "topology": args.topology,
         "provider": args.provider,
+        "runtimeProvider": args.runtime_provider,
+        "workerExecutionProvider": args.worker_execution_provider,
         "publicationRef": publication.publication_ref,
         "executionId": submitted.execution_id,
         "terminalStatus": result.status.value,
@@ -277,6 +281,8 @@ async def _run_custom_policy_family(client: AiSdkClient, args: argparse.Namespac
         "endpoint": args.endpoint,
         "topology": args.topology,
         "provider": args.provider,
+        "runtimeProvider": args.runtime_provider,
+        "workerExecutionProvider": args.worker_execution_provider,
         "publicationRef": publication.publication_ref,
         "executionId": submitted.execution_id,
         "policyFamily": family,
@@ -404,6 +410,8 @@ async def _run_mcp_effect_evidence(client: AiSdkClient, args: argparse.Namespace
         "endpoint": args.endpoint,
         "topology": args.topology,
         "provider": args.provider,
+        "runtimeProvider": args.runtime_provider,
+        "workerExecutionProvider": args.worker_execution_provider,
         "publicationRef": publication.publication_ref,
         "executionId": submitted.execution_id,
         "terminalStatus": result.status.value,
@@ -482,6 +490,8 @@ async def _run_recovery(client: AiSdkClient, args: argparse.Namespace) -> dict[s
             "endpoint": args.endpoint,
             "topology": args.topology,
             "provider": args.provider,
+            "runtimeProvider": args.runtime_provider,
+            "workerExecutionProvider": args.worker_execution_provider,
             "publicationRef": publication.publication_ref,
             "seedIdentity": seed_identity,
             "preRecoveryExecutionId": recovery.get("preRecoveryExecutionId"),
@@ -551,6 +561,8 @@ async def _run_recovery(client: AiSdkClient, args: argparse.Namespace) -> dict[s
         "endpoint": args.endpoint,
         "topology": args.topology,
         "provider": args.provider,
+        "runtimeProvider": args.runtime_provider,
+        "workerExecutionProvider": args.worker_execution_provider,
         "publicationRef": publication.publication_ref,
         "executionId": submitted.execution_id,
         "originalExecutionId": submitted.execution_id,
@@ -637,6 +649,8 @@ async def _run_journal_result_acceptance(args: argparse.Namespace) -> dict[str, 
         "endpoint": args.endpoint,
         "topology": args.topology,
         "provider": args.provider,
+        "runtimeProvider": args.runtime_provider,
+        "workerExecutionProvider": args.worker_execution_provider,
         "operationId": diagnostic.get("operationId"),
         "firstCompletionStatus": diagnostic.get("firstCompletionStatus"),
         "replayCompletionStatus": diagnostic.get("replayCompletionStatus"),
@@ -740,6 +754,8 @@ async def _run_nested_child_dag(client: AiSdkClient, args: argparse.Namespace) -
         "endpoint": args.endpoint,
         "topology": args.topology,
         "provider": args.provider,
+        "runtimeProvider": args.runtime_provider,
+        "workerExecutionProvider": args.worker_execution_provider,
         "publicationRef": publication.publication_ref,
         "executionId": submitted.execution_id,
         "terminalStatus": result.status.value,
@@ -1097,6 +1113,8 @@ async def _run_isolation_coverage(client: AiSdkClient, args: argparse.Namespace)
         "endpoint": args.endpoint,
         "topology": args.topology,
         "provider": "ContainerIsolationProvider" if require_container else args.provider,
+        "runtimeProvider": args.runtime_provider,
+        "workerExecutionProvider": "ContainerIsolationProvider" if require_container else args.worker_execution_provider,
         "environmentRef": args.environment_ref,
         "environmentProfile": args.environment_profile,
         "isolationProvider": expected_profile,
@@ -1490,6 +1508,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--access-context-header", default="X-Access-Context")
     parser.add_argument("--topology", default="local")
     parser.add_argument("--provider", default="ProcessHostPool")
+    parser.add_argument("--runtime-provider", default="ProcessHostPool")
+    parser.add_argument("--worker-execution-provider", default="TrustedProcess")
     parser.add_argument("--effect-probe-state-endpoint")
     parser.add_argument("--effect-evidence-endpoint")
     parser.add_argument("--recovery-endpoint")
@@ -1513,6 +1533,8 @@ def _parse_args() -> argparse.Namespace:
         args.access_context_header = manifest.get("accessContextHeader", args.access_context_header)
         args.topology = manifest.get("topology", args.topology)
         args.provider = manifest.get("provider", args.provider)
+        args.runtime_provider = manifest.get("runtimeProvider", args.runtime_provider)
+        args.worker_execution_provider = manifest.get("workerExecutionProvider", args.worker_execution_provider)
         args.effect_probe_state_endpoint = args.effect_probe_state_endpoint or manifest.get("effectProbeStateEndpoint")
         args.effect_evidence_endpoint = args.effect_evidence_endpoint or manifest.get("effectEvidenceEndpoint")
         args.recovery_endpoint = args.recovery_endpoint or manifest.get("recoveryEndpoint")

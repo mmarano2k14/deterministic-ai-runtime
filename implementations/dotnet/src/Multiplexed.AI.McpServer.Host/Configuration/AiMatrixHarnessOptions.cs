@@ -13,6 +13,8 @@ namespace Multiplexed.AI.McpServer.Host.Configuration
         public string PublicEndpoint { get; set; } = "http://localhost:8081/mcp";
         public string Topology { get; set; } = "local";
         public string Provider { get; set; } = "ProcessHostPool";
+        public string RuntimeProvider { get; set; } = "ProcessHostPool";
+        public string WorkerExecutionProvider { get; set; } = "TrustedProcess";
         public string ManifestPath { get; set; } = string.Empty;
         public string EffectProbeMcpEndpoint { get; set; } = "http://127.0.0.1:8090/mcp";
         public string EffectProbeStateEndpoint { get; set; } = "http://localhost:8090/state";

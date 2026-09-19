@@ -78,14 +78,26 @@ Context rotation is disabled only in this harness because the current public SDK
 
 ## Provider semantics
 
-The canonical Docker topology preserves the existing trusted-process path and adds a bounded local/CI OCI isolation path:
+Provider evidence is split into two independent dimensions so runtime hosting is not conflated with hosted-worker execution:
+
+```text
+runtimeProvider
+  ProcessHostPool
+  KubernetesPool        # supported runtime topology; separate live matrix closure
+
+workerExecutionProvider
+  TrustedProcess
+  ContainerIsolationProvider
+```
+
+The validated Docker baseline currently uses `runtimeProvider=ProcessHostPool`. Its hosted-worker paths are:
 
 ```text
 HostRuntime -> TrustedProcess -> ProcessHostPool
 OciImage    -> SandboxedContainer -> sibling worker container
 ```
 
-The OCI path uses the host Docker socket from the runtime container to launch sibling worker containers. It does not use Docker-in-Docker and it is not evidence of production Kubernetes isolation. The exact worker image is prepared as `repository@sha256:<manifest-digest>` and preloaded before the matrix starts; runtime execution uses `--pull=never`.
+The OCI path uses the host Docker socket from the runtime container to launch sibling worker containers. It does not use Docker-in-Docker and it is not evidence of production Kubernetes isolation. The exact worker image is prepared as `repository@sha256:<manifest-digest>` and preloaded before the matrix starts; runtime execution uses `--pull=never`. `KubernetesPool` remains the existing runtime-hosting provider and is validated separately rather than being introduced as another `IAiWorkerInvocationTransport`.
 
 ## Bound feature scenarios
 
@@ -178,10 +190,10 @@ The canonical Docker verifier now requires **37 executable scenarios**: 9 core +
 A successful run reports:
 
 ```text
-Exact executed-coverage closure: 37/37 scenarios; topology=docker; providers=ProcessHostPool+ContainerIsolationProvider.
+Exact executed-coverage closure: 37/37 scenarios; topology=docker; runtimeProvider=ProcessHostPool; workerExecutionProviders=TrustedProcess+ContainerIsolationProvider.
 ```
 
-The previous baseline comprised 33 executed scenarios and closed at `33/33` under ProcessHostPool. It remains historical evidence. The additional four scenarios must be observed in a live Docker matrix run before `37/37` is claimed as executed evidence. The local/CI Docker-socket profile must not be described as production Kubernetes coverage.
+The previous baseline comprised 33 executed scenarios and closed at `33/33` under ProcessHostPool. The OCI isolation closure was subsequently executed successfully at `37/37` under the Docker topology and is now the preserved baseline for the KubernetesPool matrix work. The local/CI Docker-socket profile must not be described as production Kubernetes coverage.
 
 ## Fixture-free execution artifacts
 

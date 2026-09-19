@@ -141,6 +141,8 @@ try {
     $env:AiMatrixHarness__PublicEndpoint = "http://localhost:8081/mcp"
     $env:AiMatrixHarness__Topology = "local"
     $env:AiMatrixHarness__Provider = "ProcessHostPool"
+    $env:AiMatrixHarness__RuntimeProvider = "ProcessHostPool"
+    $env:AiMatrixHarness__WorkerExecutionProvider = "TrustedProcess"
     $env:AiMatrixHarness__ManifestPath = $manifest
     $env:AiMatrixHarness__EffectProbeMcpEndpoint = "http://127.0.0.1:8090/mcp"
     $env:AiMatrixHarness__EffectProbeStateEndpoint = "http://localhost:8090/state"

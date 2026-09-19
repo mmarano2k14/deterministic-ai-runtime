@@ -57,7 +57,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
                 PodRequestId = plan.PodRequestId,
                 Namespace = plan.Namespace,
                 PodName = plan.PodName,
-                RuntimeImage = this.hostOptions.RuntimeImage,
+                RuntimeImage = AiKubernetesRuntimePoolImageReference.Resolve(this.hostOptions),
                 ContainerName = this.hostOptions.ContainerName,
                 ServiceAccountName = this.hostOptions.ServiceAccountName,
                 ImagePullPolicy = this.hostOptions.ImagePullPolicy,
@@ -232,7 +232,7 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         private static void ValidateHostOptions(
             AiKubernetesRuntimePoolHostOptions options)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(options.RuntimeImage);
+            _ = AiKubernetesRuntimePoolImageReference.Resolve(options);
             ArgumentException.ThrowIfNullOrWhiteSpace(options.ContainerName);
 
             if (!string.Equals(

@@ -9,6 +9,8 @@ ROOT = Path("/matrix/evidence")
 PLAN_PATH = Path("/app/matrix-plan.json")
 CLIENTS = ("dotnet", "typescript", "python")
 WORKERS = ("dotnet", "typescript", "python")
+RUNTIME_PROVIDERS = ("ProcessHostPool", "KubernetesPool")
+WORKER_EXECUTION_PROVIDERS = ("TrustedProcess", "ContainerIsolationProvider")
 CORE_EXPECTED = [f"core-{client}-client-{worker}-worker" for client in CLIENTS for worker in WORKERS]
 PACKAGE_BY_WORKER = {
     "dotnet": "DotNetAssemblyClosure",
@@ -106,6 +108,10 @@ def _validate_common(scenario: str, document: dict[str, object]) -> str | None:
         return "invalid status or identity"
     if document.get("topology") != "docker" or document.get("provider") != "ProcessHostPool":
         return "wrong topology/provider evidence"
+    if document.get("runtimeProvider") != "ProcessHostPool":
+        return "wrong runtime-provider evidence"
+    if document.get("workerExecutionProvider") != "TrustedProcess":
+        return "wrong worker-execution-provider evidence"
     return None
 
 
@@ -475,6 +481,11 @@ def _validate_isolation_closure(
         return "invalid status or identity"
     if document.get("topology") != "docker" or document.get("provider") != provider:
         return "wrong topology/provider evidence"
+    if document.get("runtimeProvider") != "ProcessHostPool":
+        return "wrong runtime-provider evidence"
+    expected_worker_provider = "ContainerIsolationProvider" if isolation_provider == "sandboxed-container" else "TrustedProcess"
+    if document.get("workerExecutionProvider") != expected_worker_provider:
+        return "wrong worker-execution-provider evidence"
     if document.get("coverageTarget") != target or document.get("coverageValues") != [value]:
         return "wrong isolation coverage target/value"
     if document.get("clientLanguage") != "python" or document.get("workerLanguage") != "python":
@@ -538,6 +549,8 @@ def _write_exact_coverage_closure() -> None:
         "topology": "docker",
         "provider": "mixed-hosted-worker-providers",
         "providers": ["ProcessHostPool", "ContainerIsolationProvider"],
+        "runtimeProviders": ["ProcessHostPool"],
+        "workerExecutionProviders": ["TrustedProcess", "ContainerIsolationProvider"],
         "executedScenarioCount": len(EXPECTED),
         "coreScenarioCount": len(CORE_EXPECTED),
         "featureScenarioCount": len(EXPECTED) - len(CORE_EXPECTED),
@@ -552,7 +565,7 @@ def _write_exact_coverage_closure() -> None:
         "journalAcceptanceCases": ["accepted-result-replay", "duplicate-delivery-convergence"],
         "workerIsolationProviders": ["trusted-process", "sandboxed-container"],
         "isolationArtifactKinds": ["HostRuntime", "OciImage"],
-        "claimBoundary": "Only combinations represented by passed evidence documents are executed coverage; the OCI path is the local/CI Docker-socket profile, not production Kubernetes.",
+        "claimBoundary": "Only combinations represented by passed evidence documents are executed coverage. ProcessHostPool and KubernetesPool are runtime-hosting providers; TrustedProcess and ContainerIsolationProvider are hosted-worker execution providers. The OCI path is the local/CI Docker-socket profile, not production Kubernetes.",
     }
     (ROOT / "executed-coverage-closure.json").write_text(json.dumps(closure, indent=2) + "\n", encoding="utf-8")
 
@@ -689,7 +702,7 @@ def main() -> int:
     print("2/2 worker-isolation-provider scenarios passed (trusted process + sandboxed container).")
     print("2/2 isolation-artifact-selection scenarios passed (HostRuntime + OciImage).")
     _write_exact_coverage_closure()
-    print("Exact executed-coverage closure: 37/37 scenarios; topology=docker; providers=ProcessHostPool+ContainerIsolationProvider.")
+    print("Exact executed-coverage closure: 37/37 scenarios; topology=docker; runtimeProvider=ProcessHostPool; workerExecutionProviders=TrustedProcess+ContainerIsolationProvider.")
     print("Fixture-free closure: public SDK samples + production hosted workers; matrix fixture tree not required.")
     print("OCI closure profile: sibling worker containers through the host Docker socket; no Docker-in-Docker and no Kubernetes claim.")
     return 0

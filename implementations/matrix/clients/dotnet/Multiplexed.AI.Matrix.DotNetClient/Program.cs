@@ -120,6 +120,8 @@ await Evidence.WriteAsync(options.Evidence, new
     endpoint = options.Endpoint,
     topology = options.Topology,
     provider = options.Provider,
+    runtimeProvider = options.RuntimeProvider,
+    workerExecutionProvider = options.WorkerExecutionProvider,
     publicationRef = publication.PublicationRef,
     executionId = submitted.ExecutionId,
     terminalStatus = result.Status.ToString(),
@@ -207,6 +209,8 @@ static async Task RunDependencyFirewallAsync(Arguments options)
         workerLanguage = (string?)null,
         topology = options.Topology,
         provider = options.Provider,
+        runtimeProvider = options.RuntimeProvider,
+        workerExecutionProvider = options.WorkerExecutionProvider,
         artifactKind = "published-dotnet-client",
         sdkRepositoryReferences,
         contractRepositoryReferences,
@@ -335,6 +339,8 @@ static async Task RunCancellationAsync(AiSdkClient client, Arguments options)
         endpoint = options.Endpoint,
         topology = options.Topology,
         provider = options.Provider,
+        runtimeProvider = options.RuntimeProvider,
+        workerExecutionProvider = options.WorkerExecutionProvider,
         publicationRef = publication.PublicationRef,
         executionId = submitted.ExecutionId,
         activeStatusBeforeCancel = active.Status.ToString(),
@@ -389,7 +395,9 @@ internal sealed record Arguments(
     string? AccessContext,
     string AccessContextHeader,
     string Topology,
-    string Provider)
+    string Provider,
+    string RuntimeProvider,
+    string WorkerExecutionProvider)
 {
     internal static Arguments Parse(string[] values)
     {
@@ -418,7 +426,9 @@ internal sealed record Arguments(
                 Read("--access-context") ?? manifest.AccessContext,
                 manifest.AccessContextHeader,
                 manifest.Topology,
-                manifest.Provider);
+                manifest.Provider,
+                manifest.RuntimeProvider ?? manifest.Provider,
+                manifest.WorkerExecutionProvider ?? "TrustedProcess");
         }
 
         return new(
@@ -432,7 +442,9 @@ internal sealed record Arguments(
             Read("--access-context"),
             Read("--access-context-header") ?? "X-Access-Context",
             Read("--topology") ?? "local",
-            Read("--provider") ?? "ProcessHostPool");
+            Read("--provider") ?? "ProcessHostPool",
+            Read("--runtime-provider") ?? "ProcessHostPool",
+            Read("--worker-execution-provider") ?? "TrustedProcess");
     }
 }
 
@@ -443,6 +455,8 @@ internal sealed record RuntimeManifest(
     string AccessContextHeader,
     string Topology,
     string Provider,
+    string? RuntimeProvider,
+    string? WorkerExecutionProvider,
     Dictionary<string, string> EnvironmentRefs)
 {
     internal string EnvironmentRef(string language) =>

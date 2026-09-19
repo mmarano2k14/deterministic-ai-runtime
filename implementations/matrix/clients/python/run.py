@@ -156,6 +156,8 @@ async def main() -> int:
                 "endpoint": args.endpoint,
                 "topology": args.topology,
                 "provider": args.provider,
+                "runtimeProvider": args.runtime_provider,
+                "workerExecutionProvider": args.worker_execution_provider,
                 "publicationRef": publication.publication_ref,
                 "executionId": submitted.execution_id,
                 "activeStatusBeforeCancel": active.status.value,
@@ -196,6 +198,8 @@ async def main() -> int:
                 "endpoint": args.endpoint,
                 "topology": args.topology,
                 "provider": args.provider,
+                "runtimeProvider": args.runtime_provider,
+                "workerExecutionProvider": args.worker_execution_provider,
                 "publicationRef": publication.publication_ref,
                 "executionId": submitted.execution_id,
                 "terminalStatus": result.status.value,
@@ -255,6 +259,8 @@ def _run_dependency_firewall(args: argparse.Namespace) -> None:
             "workerLanguage": None,
             "topology": args.topology,
             "provider": args.provider,
+            "runtimeProvider": args.runtime_provider,
+            "workerExecutionProvider": args.worker_execution_provider,
             "artifactKind": "python-sdk-source-distribution",
             "declaredDependencies": declared_dependencies,
             "absoluteImportRoots": sorted(absolute_import_roots),
@@ -369,6 +375,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--access-context-header", default="X-Access-Context")
     parser.add_argument("--topology", default="local")
     parser.add_argument("--provider", default="ProcessHostPool")
+    parser.add_argument("--runtime-provider", default="ProcessHostPool")
+    parser.add_argument("--worker-execution-provider", default="TrustedProcess")
     parser.add_argument("--manifest")
     args = parser.parse_args()
     if args.manifest:
@@ -380,6 +388,8 @@ def _parse_args() -> argparse.Namespace:
         args.access_context_header = manifest.get("accessContextHeader", args.access_context_header)
         args.topology = manifest.get("topology", args.topology)
         args.provider = manifest.get("provider", args.provider)
+        args.runtime_provider = manifest.get("runtimeProvider", args.runtime_provider)
+        args.worker_execution_provider = manifest.get("workerExecutionProvider", args.worker_execution_provider)
     if not args.endpoint or not args.environment_ref:
         parser.error("--endpoint and --environment-ref are required unless --manifest supplies them")
     return args

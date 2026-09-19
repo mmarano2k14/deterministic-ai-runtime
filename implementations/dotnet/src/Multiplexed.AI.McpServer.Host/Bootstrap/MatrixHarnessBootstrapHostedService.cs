@@ -78,6 +78,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 accessContextHeader = "X-Access-Context",
                 topology = options.Topology,
                 provider = options.Provider,
+                runtimeProvider = options.RuntimeProvider,
+                workerExecutionProvider = options.WorkerExecutionProvider,
                 effectProbeStateEndpoint = options.EffectProbeStateEndpoint,
                 effectEvidenceEndpoint = options.EffectEvidenceEndpoint,
                 recoveryEndpoint = options.RecoveryEndpoint,
