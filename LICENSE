@@ -1,24 +1,80 @@
-Business Source License 1.1
+# Business Source License 1.1
 
-Licensor: Marco Marano
-Licensed Work: AI Runtime
+## Parameters
 
-Copyright (c) 2026 Marco Marano
+**Licensor:** Marco Marano
 
-Use Limitation:
-You may not use this software in a production environment where it is used to provide a competing AI orchestration, workflow engine, or distributed runtime platform without an explicit commercial agreement with the Licensor.
+**Licensed Work:** AI Runtime
 
-Change Date: 2029-01-01
+**Copyright:** Copyright (c) 2026 Marco Marano
 
-Change License: Apache License, Version 2.0
+**Additional Use Grant:** None
+
+**Change Date:** 2029-01-01
+
+**Change License:** Apache License, Version 2.0
 
 ---
 
-Terms:
+The Licensed Work is licensed under the Business Source License 1.1.
 
-This software is licensed under the Business Source License 1.1 (BSL).
-You may use, modify, and redistribute this code for non-production and internal purposes.
+No production use of the Licensed Work is permitted before the Change Date except under a separate commercial license or other written agreement expressly granted by the Licensor.
 
-Production use in commercial environments is restricted as described above.
+Non-production use, including development, testing, evaluation, research, benchmarking for internal purposes, and creation of derivative works, remains subject to the terms of the Business Source License 1.1.
 
-After the Change Date, this software will be automatically licensed under Apache 2.0.
+For production use before the Change Date, a commercial license or other written authorization from the Licensor is required.
+
+On the Change Date, the Licensed Work will become available under the Change License, subject to the terms of the Business Source License 1.1.
+
+---
+
+## Business Source License 1.1
+
+**Licensor:** Marco Marano
+
+**Licensed Work:** AI Runtime
+
+The Licensed Work is © 2026 Marco Marano.
+
+**Additional Use Grant:** None.
+
+**Change Date:** 2029-01-01
+
+**Change License:** Apache License, Version 2.0
+
+### Terms
+
+The Licensor hereby grants you the right to copy, modify, create derivative works, redistribute, and make non-production use of the Licensed Work.
+
+The Licensor may make an Additional Use Grant, above, permitting limited production use.
+
+Effective on the Change Date, or the fourth anniversary of the first publicly available distribution of a specific version of the Licensed Work under this License, whichever comes first, the Licensor hereby grants you rights under the terms of the Change License, and the rights granted in the paragraph above terminate.
+
+If your use of the Licensed Work does not comply with the requirements currently in effect as described in this License, you must purchase a commercial license from the Licensor, its affiliated entities, or authorized resellers, or you must refrain from using the Licensed Work.
+
+All copies of the original and modified Licensed Work, and derivative works of the Licensed Work, are subject to this License. This License applies separately for each version of the Licensed Work and the Change Date may vary for each version.
+
+You must conspicuously display this License on each original or modified copy of the Licensed Work. If you receive the Licensed Work in original or modified form from a third party, the terms of this License still apply to your use of that work.
+
+Any use of the Licensed Work in violation of this License will automatically terminate your rights under this License for the current and all other versions of the Licensed Work.
+
+This License does not grant you any right in any trademark or logo of Licensor or its affiliates, except as necessary to comply with the notice requirements above.
+
+TO THE EXTENT PERMITTED BY APPLICABLE LAW, THE LICENSED WORK IS PROVIDED ON AN “AS IS” BASIS. LICENSOR HEREBY DISCLAIMS ALL WARRANTIES AND CONDITIONS, EXPRESS OR IMPLIED, INCLUDING, WITHOUT LIMITATION, WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, AND TITLE.
+
+---
+
+## Commercial Licensing
+
+Production use before the Change Date requires a separate commercial license or other written agreement expressly granted by the Licensor.
+
+Commercial licensing may cover, among other things:
+
+- production deployments;
+- SaaS or managed-service offerings;
+- embedding the Licensed Work into commercial products or platforms;
+- white-label or OEM distribution;
+- commercial redistribution;
+- hosted AI orchestration, workflow, agentic, or distributed-runtime services.
+
+Contact the Licensor for commercial licensing terms.

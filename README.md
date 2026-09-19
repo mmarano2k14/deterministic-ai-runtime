@@ -1200,11 +1200,14 @@ Redis and MongoDB must be reachable according to the runtime/demo configuration.
 
 This project is licensed under the **Business Source License 1.1 (BSL 1.1)**.
 
-It is free to use for development, testing, evaluation, and internal purposes. Production use to provide a competing AI orchestration, workflow engine, or distributed runtime platform requires an explicit commercial agreement.
+The source code may be used for **development, testing, evaluation, research, and other non-production purposes** in accordance with the BSL 1.1 terms.
 
-The licensed source automatically converts to the **Apache License 2.0 on January 1, 2029**.
+**Production use is not permitted without a separate commercial license or explicit written authorization from the Licensor.** This includes production deployments, SaaS or managed-service offerings, embedding the runtime into commercial products, white-label or OEM use, and commercial redistribution.
 
-See the repository `LICENSE` file for the complete and authoritative terms.
+The Licensed Work will transition to the **Apache License 2.0** on the applicable Change Date defined in the repository license terms.
+
+See the repository `LICENSE.md` file for the complete and authoritative licensing terms.
+
 
 ---
 
