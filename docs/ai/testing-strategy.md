@@ -70,7 +70,7 @@ The purpose of the testing strategy is to validate that the runtime behaves like
 
 ## Hosted Multilanguage Validation Evidence
 
-[Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the supplied results for invocation durability, environment/provider admission, launch paths, Python/TypeScript/.NET execution, custom `Concurrency` policies, outgoing MCP, and real MongoDB/Redis integration.
+[Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the historical supplied results for invocation durability, environment/provider admission, launch paths, Python/TypeScript/.NET execution, custom `Concurrency` policies, outgoing MCP, and real MongoDB/Redis integration. [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) records the later fixture-free 33/33 Docker ProcessHostPool closure across external SDK clients, production hosted workers, publication pinning, dependency packaging, hosted policies, nested Child DAGs, MCP effects, cancellation, recovery, journal result acceptance, and SDK dependency firewalls.
 
 The broad invocation/publication artifact contains 1,098 passing results and 54 individual skipped results. Dedicated Python, TypeScript, and infrastructure artifacts execute the previously inactive paths. Counts overlap and must not be presented as one combined run or an additive unique-test total.
 

@@ -548,7 +548,9 @@ Implemented foundation:
 - explicit mapping to existing immutable publication, run pinning, shared submission, authorization, and execution control;
 - independent .NET, TypeScript/JavaScript, and Python external SDK clients;
 - shared protocol manifest and cross-language parity fixtures;
-- local NuGet/npm/wheel build-install-import smoke validation.
+- local NuGet/npm/wheel build-install-import smoke validation;
+- fixture-free 33/33 Docker ProcessHostPool runtime matrix across all three external SDK clients and production hosted workers;
+- reusable public published-function samples plus an initial .NET/TypeScript/Python SDK quickstart.
 
 Remaining productization work:
 
@@ -557,7 +559,7 @@ Remaining productization work:
 - broader HTTP/Gateway packaging where useful;
 - replay/ledger/forensics public client surfaces;
 - generated API documentation and compatibility/deprecation policy;
-- better examples;
+- broader example catalog beyond the implemented SDK quickstart and published-function samples;
 - public helper/context resolver documentation.
 
 Additional controller/API work may still include:

@@ -149,6 +149,16 @@ The recorded final run for the deterministic isolation target is **86 passed, 0 
 
 These results do not mean that the 86 deterministic tests and the 2 real-engine tests prove the same thing. The first layer proves runtime contracts and failure behavior, frequently through a controlled engine probe. The second layer proves that the selected real container engine/Linux boundary actually applies key isolation properties. See [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) for commands, fixture setup, and limitations.
 
+## Public SDK fixture-free runtime matrix closure
+
+The historical TRX evidence above is now supplemented by a separate live public-SDK matrix. The Docker ProcessHostPool verifier reports **33/33** scenarios with `.NET`, TypeScript/JavaScript, and Python external clients, production hosted workers, publication pinning, deterministic dependency packages, hosted policy families, nested published Child DAGs, durable MCP effect evidence, cancellation, recovery, journal result acceptance, and external-client dependency firewalls.
+
+The final matrix run is fixture-free at the execution layer: the `implementations/matrix/fixtures` tree is not required. Reusable public SDK samples provide publishable user code, while execution uses the production hosted workers.
+
+This proof is intentionally topology-bounded to `docker + ProcessHostPool`. Isolation-provider and isolation-artifact-selection dimensions remain separate from the matrix and are not inferred from its 33/33 result.
+
+See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the exact scenario counts and non-claims.
+
 ## Artifact integrity
 
 SHA-256 identifies the exact supplied result files used for this summary.
@@ -164,7 +174,7 @@ SHA-256 identifies the exact supplied result files used for this summary.
 
 ## Interpretation limits
 
-The evidence in this document supports the stated hosted-language and packaging boundaries; it predates and does not itself validate the later public SDK boundary. Deterministic package bundles are captured before publication; no general runtime package installer, language-specific SDK client package, or durable external-effect guarantee is implied by these historical results. The public contract/server boundary, container isolation, and durable MCP effect evidence are separate implemented boundaries with their own dedicated evidence and limits.
+The historical TRX evidence in this document predates the later public SDK boundary. It is now supplemented, rather than retroactively reinterpreted, by the dedicated fixture-free public-SDK runtime matrix evidence described above. Deterministic package bundles are captured before publication; no general runtime package installer, language-specific SDK client package, or durable external-effect guarantee is implied by these historical results. The public contract/server boundary, container isolation, and durable MCP effect evidence are separate implemented boundaries with their own dedicated evidence and limits.
 
 Dedicated reruns supplement the earlier regression artifact without changing its recorded outcomes. The available hosted-language evidence does not certify every runtime version, deployment topology, or failure mode. Published custom Child DAG evidence does not establish operating-system host-kill recovery, Redis/MongoDB restart or failover, Kubernetes sandbox-provider coverage, or unlimited recursive depth. Selected OCI container isolation is evidenced separately and must not be generalized beyond its tested provider/platform boundary.
 

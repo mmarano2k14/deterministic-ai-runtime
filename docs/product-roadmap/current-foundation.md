@@ -1342,7 +1342,7 @@ This means the product can evolve from a developer-defined runtime into a visual
 
 ## 30. Developer Experience, API, SDK, and CLI Foundation
 
-The project now has both the runtime foundation and an implemented public SDK contract/server boundary for the first developer-facing publication/execution surface.
+The project now has both the runtime foundation and an implemented public SDK contract/server boundary for the first developer-facing publication/execution surface. The external .NET, TypeScript/JavaScript, and Python clients are additionally closed through a fixture-free 33/33 Docker ProcessHostPool matrix using public SDK samples and production hosted workers.
 
 The developer experience direction can build on:
 
@@ -1692,7 +1692,7 @@ It is the foundation for a complete AI workflow execution platform.
 | Execution control and state lifecycle | Foundation exists |
 | Testing and reliability strategy | Foundation exists / active direction |
 | Public SDK contract/server boundary | Implemented / validated foundation |
-| External SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python |
+| External SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python, including fixture-free 33/33 Docker ProcessHostPool closure |
 | CLI / public SDK registry distribution / broader API productization | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |

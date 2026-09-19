@@ -1526,7 +1526,7 @@ Plugins remain responsible for domain-specific execution.
 | Durable MCP external-effect evidence | Implemented as an opt-in server boundary with immutable intent, pre-`tools/call` dispatch CAS, `Completed` local replay, `NotSent`/`Uncertain` classification, explicit reconciliation, restart-safe fail-closed behavior, and tenant-scoped Mongo persistence; no generic exactly-once or automatic redelivery claim |
 | Hosted worker physical isolation | Selected Linux/amd64 OCI `SandboxedContainer` provider implemented / validated with fail-closed attestation, cleanup/quarantine, orphan reconciliation, 86 deterministic isolation tests and 2 explicit real-engine tests; not a universal platform or Kubernetes sandbox claim |
 | Public SDK contract/server boundary | Implemented and validated; portable contracts have no engine-DLL dependency and the server boundary exposes publication, submission, observation, result, and cancellation while reusing existing authorities |
-| External language SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python with shared protocol/parity fixtures and local package smoke; no engine-DLL dependency |
+| External language SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python with shared protocol/parity validation, local package smoke, and a fixture-free 33/33 Docker ProcessHostPool runtime matrix; no engine-DLL dependency |
 | CLI / public SDK registry distribution | Planned productization on the same public boundary |
 | Process-host Runtime Pool Manager | Implemented / validated |
 | Independent `PoolId` / `HostId` / `RuntimeInstanceId` identity | Implemented / validated |

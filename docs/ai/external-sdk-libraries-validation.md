@@ -1,6 +1,6 @@
 # External SDK Libraries Validation
 
-**Status:** Branch-closure validation completed for the independent .NET, TypeScript/JavaScript, and Python SDK libraries and their shared wire-contract parity. Public package-registry publication and the live multi-language runtime matrix remain separate validation scopes.
+**Status:** Branch-closure validation completed for the independent .NET, TypeScript/JavaScript, and Python SDK libraries and their shared wire-contract parity. The separate live fixture-free Docker ProcessHostPool matrix is also GREEN at 33/33 scenarios. Public package-registry publication and the standalone CLI remain separate productization scopes.
 
 ## Validation scope
 
@@ -105,6 +105,32 @@ The Python smoke builds a wheel, installs it into an isolated target directory, 
 
 Package publication is not performed by the smoke runner.
 
+## Live fixture-free runtime matrix closure
+
+The package/parity closure above is supplemented by a separate live Docker ProcessHostPool matrix. The final verifier reported **33/33** executed scenarios with all three external SDK clients and the production hosted workers.
+
+The live matrix covers:
+
+```text
+9  core client x worker combinations
+6  publication-pinning / dependency-package scenarios
+3  hosted custom-policy-family scenarios
+3  nested published Child DAG scenarios
+2  durable MCP effect-evidence scenarios
+3  durable cancellation SDK-client scenarios
+2  runtime recovery scenarios
+2  durable journal result-acceptance scenarios
+3  external-client dependency-firewall scenarios
+-----------------------------------------------
+33 total
+```
+
+The final closure is fixture-free at the matrix execution layer: `implementations/matrix/fixtures` is not required. Published user code comes from reusable SDK samples and executes through the production .NET, TypeScript, and Python hosted workers.
+
+The exact executed topology is `docker + ProcessHostPool`. Worker-isolation-provider and isolation-artifact-selection dimensions remain outside this matrix and must not be inferred from the 33/33 result.
+
+See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the scenario-level evidence boundary.
+
 ## Retry and cancellation validation boundary
 
 Automatic transport retry is limited to:
@@ -138,7 +164,9 @@ The branch closure establishes that:
 - authentication remains a transport concern;
 - schema/protocol incompatibility fails closed;
 - safe-read retry does not become business-operation retry authority;
-- the existing MCP public boundary remains the physical client/server transport surface for this branch.
+- the existing MCP public boundary remains the physical client/server transport surface for this branch;
+- the separate live matrix executes 33/33 Docker ProcessHostPool scenarios through all three external clients;
+- the final live closure no longer depends on the matrix fixture tree and uses public SDK samples plus production hosted workers.
 
 ## What the evidence does not prove
 
@@ -147,16 +175,18 @@ This validation does **not** prove:
 - public NuGet/npm/Python package-registry publication;
 - a standalone CLI implementation;
 - a new REST/gateway surface;
-- live end-to-end execution for every external client language;
-- every external-client x hosted-worker-language x process/container/provider combination;
+- every external-client x hosted-worker-language x process/container/provider combination beyond the executed Docker ProcessHostPool coverage;
+- OCI isolation-provider selection, OCI artifact selection, or Kubernetes parity for the 33-scenario matrix;
 - replay/ledger/forensics/diagnostic APIs that are not part of the current public SDK operation set;
 - any new scheduler, queue, recovery, journal, lease/epoch, publication-pinning, or result-acceptance authority.
 
-Those live combinations belong to the final multi-language runtime matrix.
+The executed live combinations and their exact non-claims are recorded in [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md).
 
 ## Related documentation
 
+- [External SDK Quickstart](external-sdk-quickstart.md)
 - [External SDK Libraries](external-sdk-libraries.md)
 - [Public SDK Boundary](public-sdk-boundary.md)
 - [Public SDK Boundary Validation](public-sdk-boundary-validation.md)
+- [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md)
 - [Testing Strategy](testing-strategy.md)

@@ -1,6 +1,6 @@
 # External SDK Libraries
 
-**Status:** Implemented and branch-closure validated for .NET, TypeScript/JavaScript, and Python client packages. Public registry publication and the standalone runtime CLI remain separate productization work. Live client-to-server runtime combinations are validated separately by the multi-language runtime matrix.
+**Status:** Implemented and validated for .NET, TypeScript/JavaScript, and Python client packages. The live fixture-free Docker ProcessHostPool matrix is GREEN at 33/33 scenarios across the documented execution/recovery boundaries. Public registry publication and the standalone runtime CLI remain separate productization work.
 
 ## Purpose
 
@@ -69,6 +69,25 @@ The public .NET wire contracts remain in:
 ```text
 implementations/dotnet/src/Multiplexed.AI.Sdk.Contracts/
 ```
+
+## Public SDK samples
+
+Reusable sample user code lives outside the matrix harness:
+
+```text
+implementations/sdk/samples/published-functions/
+  dotnet/
+  typescript/
+  python/
+
+implementations/sdk/samples/mcp-effect-server/
+```
+
+The published-function samples represent code an external SDK consumer supplies for publication. They are not hosted-worker implementations. The fixture-free runtime matrix executes those samples through the real public SDK boundary and the production .NET, TypeScript, and Python hosted workers.
+
+The standalone MCP effect server is a controlled external service sample used to validate durable outbound-effect evidence without turning the matrix harness into another runtime authority.
+
+See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the 33/33 live closure.
 
 ## Shared client semantics
 
@@ -357,10 +376,10 @@ The external SDK branch does not claim:
 - a standalone `ai-runtime` CLI implementation;
 - replay, ledger, forensics, diagnostics, queue, or runtime-instance APIs beyond the current public publication/execution surface;
 - an additional REST gateway;
-- live client-language x hosted-worker-language x provider coverage by the package parity suite;
+- live client-language x hosted-worker-language x provider coverage from the package parity suite alone; the separate runtime matrix provides the documented Docker ProcessHostPool closure;
 - any change to scheduler, queue, recovery, journal, lease/epoch, publication-pinning, or result-acceptance authority.
 
-Live client-to-server combinations belong to the multi-language runtime matrix rather than this package-parity boundary.
+Live client-to-server evidence is recorded separately in [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md); it supplements rather than changes the package-parity boundary described here.
 
 ## Implementation references
 
@@ -373,6 +392,7 @@ Live client-to-server combinations belong to the multi-language runtime matrix r
 
 ## Related documentation
 
+- [External SDK Quickstart](external-sdk-quickstart.md)
 - [External SDK Libraries Validation](external-sdk-libraries-validation.md)
 - [Public SDK Boundary](public-sdk-boundary.md)
 - [Public SDK Boundary Validation](public-sdk-boundary-validation.md)
