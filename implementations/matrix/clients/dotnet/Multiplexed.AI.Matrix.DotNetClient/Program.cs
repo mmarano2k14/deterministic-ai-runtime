@@ -463,36 +463,36 @@ internal sealed record WorkerSource(string EntryPointPath, string EntryPointSymb
 {
     internal static WorkerSource Load(string worker)
     {
-        var root = Environment.GetEnvironmentVariable("MATRIX_FIXTURE_ROOT");
+        var root = Environment.GetEnvironmentVariable("MATRIX_SAMPLE_ROOT");
         if (string.IsNullOrWhiteSpace(root)) root = FindRepoRoot();
         return worker switch
         {
-            "python" => FromText(root, FixturePath(root, "python-worker/main.py"), "main.py", "run"),
-            "typescript" => FromText(root, FixturePath(root, "typescript-worker/main.ts"), "main.ts", "run"),
-            "dotnet" => FromBytes(root, FixturePath(root, "dotnet-worker/Multiplexed.AI.Matrix.Worker.dll"), "functions.dll", "Multiplexed.AI.Matrix.Worker.Functions::Run"),
+            "python" => FromText(root, SamplePath("python/functions.py"), "functions.py", "run"),
+            "typescript" => FromText(root, SamplePath("typescript/functions.ts"), "functions.ts", "run"),
+            "dotnet" => FromBytes(root, SamplePath("dotnet/Multiplexed.AI.Samples.PublishedFunctions.dll"), "functions.dll", "Multiplexed.AI.Samples.PublishedFunctions.Functions::Run"),
             _ => throw new ArgumentOutOfRangeException(nameof(worker), worker, "Unsupported worker language.")
         };
     }
 
     internal static WorkerSource LoadCancellation(string worker)
     {
-        var root = Environment.GetEnvironmentVariable("MATRIX_FIXTURE_ROOT");
+        var root = Environment.GetEnvironmentVariable("MATRIX_SAMPLE_ROOT");
         if (string.IsNullOrWhiteSpace(root)) root = FindRepoRoot();
         return worker switch
         {
-            "dotnet" => FromBytes(root, FixturePath(root, "dotnet-worker/Multiplexed.AI.Matrix.Worker.dll"), "functions.dll", "Multiplexed.AI.Matrix.Worker.Functions::PinStable"),
+            "dotnet" => FromBytes(root, SamplePath("dotnet/Multiplexed.AI.Samples.PublishedFunctions.dll"), "functions.dll", "Multiplexed.AI.Samples.PublishedFunctions.Functions::PinStable"),
             "typescript" => new("main.ts", "run", Encoding.UTF8.GetBytes(
-                "export async function run(inputs: unknown, context: unknown) { await new Promise(resolve => setTimeout(resolve, 8000)); return { success: true, payload: { cancelledFixture: false } }; }\n")),
+                "export async function run(inputs: unknown, context: unknown) { await new Promise(resolve => setTimeout(resolve, 8000)); return { success: true, payload: { cancellationSample: true } }; }\n")),
             "python" => new("main.py", "run", Encoding.UTF8.GetBytes(
-                "import time\ndef run(inputs, context):\n    time.sleep(8)\n    return {'success': True, 'payload': {'cancelledFixture': False}}\n")),
+                "import time\ndef run(inputs, context):\n    time.sleep(8)\n    return {'success': True, 'payload': {'cancellationSample': True}}\n")),
             _ => throw new ArgumentOutOfRangeException(nameof(worker), worker, "Unsupported worker language.")
         };
     }
 
-    private static string FixturePath(string root, string relative) =>
-        Environment.GetEnvironmentVariable("MATRIX_FIXTURE_ROOT") is not null
+    private static string SamplePath(string relative) =>
+        Environment.GetEnvironmentVariable("MATRIX_SAMPLE_ROOT") is not null
             ? relative.Replace('/', Path.DirectorySeparatorChar)
-            : Path.Combine("implementations", "matrix", "fixtures", relative.Replace('/', Path.DirectorySeparatorChar));
+            : Path.Combine("implementations", "sdk", "samples", "published-functions", relative.Replace('/', Path.DirectorySeparatorChar));
 
     private static WorkerSource FromText(string root, string relativePath, string logicalPath, string symbol) =>
         new(logicalPath, symbol, Encoding.UTF8.GetBytes(File.ReadAllText(Path.Combine(root, relativePath))));
@@ -508,7 +508,7 @@ internal sealed record WorkerSource(string EntryPointPath, string EntryPointSymb
             if (Directory.Exists(Path.Combine(directory.FullName, "implementations"))) return directory.FullName;
             directory = directory.Parent;
         }
-        throw new DirectoryNotFoundException("Repository root was not found.");
+        throw new DirectoryNotFoundException("Repository root could not be located.");
     }
 }
 

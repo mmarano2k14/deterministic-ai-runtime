@@ -12,7 +12,7 @@ if (args.feature === "dependency-firewall") {
   await runDependencyFirewall(args);
   process.exit(0);
 }
-const root = process.env.MATRIX_FIXTURE_ROOT ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+const root = process.env.MATRIX_SAMPLE_ROOT ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 const credentialProvider = args.token
   ? new AiSdkStaticCredentialProvider({ scheme: "Bearer", value: args.token })
   : undefined;
@@ -229,44 +229,40 @@ async function waitForActiveStep(sdk, executionId, stepName, timeoutMs) {
   throw new Error(`Execution '${executionId}' did not expose active step '${stepName}' within ${timeoutMs} ms.`);
 }
 
-async function cancellationWorkerSource(repoRoot, worker) {
-  const fixture = (relative) => process.env.MATRIX_FIXTURE_ROOT
+function samplePath(repoRoot, relative) {
+  return process.env.MATRIX_SAMPLE_ROOT
     ? path.join(repoRoot, relative)
-    : path.join(repoRoot, "implementations", "matrix", "fixtures", relative);
+    : path.join(repoRoot, "implementations", "sdk", "samples", "published-functions", relative);
+}
+
+async function cancellationWorkerSource(repoRoot, worker) {
   if (worker === "dotnet") {
-    const bytes = await fs.readFile(fixture("dotnet-worker/Multiplexed.AI.Matrix.Worker.dll"));
-    return { entryPointPath: "functions.dll", entryPointSymbol: "Multiplexed.AI.Matrix.Worker.Functions::PinStable", bytes };
+    const bytes = await fs.readFile(samplePath(repoRoot, "dotnet/Multiplexed.AI.Samples.PublishedFunctions.dll"));
+    return { entryPointPath: "functions.dll", entryPointSymbol: "Multiplexed.AI.Samples.PublishedFunctions.Functions::PinStable", bytes };
   }
   if (worker === "typescript") {
     return {
       entryPointPath: "main.ts",
       entryPointSymbol: "run",
-      bytes: Buffer.from("export async function run(inputs: unknown, context: unknown) { await new Promise(resolve => setTimeout(resolve, 8000)); return { success: true, payload: { cancellationFixture: true } }; }\n", "utf8"),
+      bytes: Buffer.from("export async function run(inputs: unknown, context: unknown) { await new Promise(resolve => setTimeout(resolve, 8000)); return { success: true, payload: { cancellationSample: true } }; }\n", "utf8"),
     };
   }
   if (worker === "python") {
     return {
       entryPointPath: "main.py",
       entryPointSymbol: "run",
-      bytes: Buffer.from("import time\ndef run(inputs, context):\n    time.sleep(8)\n    return {'success': True, 'payload': {'cancellationFixture': True}}\n", "utf8"),
+      bytes: Buffer.from("import time\ndef run(inputs, context):\n    time.sleep(8)\n    return {'success': True, 'payload': {'cancellationSample': True}}\n", "utf8"),
     };
   }
   throw new Error(`Unsupported worker language '${worker}'.`);
 }
 
 async function workerSource(repoRoot, worker) {
-  const fixture = (relative) => process.env.MATRIX_FIXTURE_ROOT
-    ? path.join(repoRoot, relative)
-    : path.join(repoRoot, "implementations", "matrix", "fixtures", relative);
-  if (worker === "python") {
-    return fromTextAbsolute(fixture("python-worker/main.py"), "main.py", "run");
-  }
-  if (worker === "typescript") {
-    return fromTextAbsolute(fixture("typescript-worker/main.ts"), "main.ts", "run");
-  }
+  if (worker === "python") return fromTextAbsolute(samplePath(repoRoot, "python/functions.py"), "functions.py", "run");
+  if (worker === "typescript") return fromTextAbsolute(samplePath(repoRoot, "typescript/functions.ts"), "functions.ts", "run");
   if (worker === "dotnet") {
-    const bytes = await fs.readFile(fixture("dotnet-worker/Multiplexed.AI.Matrix.Worker.dll"));
-    return { entryPointPath: "functions.dll", entryPointSymbol: "Multiplexed.AI.Matrix.Worker.Functions::Run", bytes };
+    const bytes = await fs.readFile(samplePath(repoRoot, "dotnet/Multiplexed.AI.Samples.PublishedFunctions.dll"));
+    return { entryPointPath: "functions.dll", entryPointSymbol: "Multiplexed.AI.Samples.PublishedFunctions.Functions::Run", bytes };
   }
   throw new Error(`Unsupported worker language '${worker}'.`);
 }

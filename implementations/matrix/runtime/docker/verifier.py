@@ -605,6 +605,7 @@ def main() -> int:
     print("3/3 external client dependency-firewall scenarios passed.")
     _write_exact_coverage_closure()
     print("Exact executed-coverage closure: 33/33 scenarios; topology=docker; provider=ProcessHostPool.")
+    print("Fixture-free closure: public SDK samples + production hosted workers; matrix fixture tree not required.")
     print("Deferred to Pack 4 (NOT EXECUTED): worker-isolation-provider, isolation-artifact-selection.")
     return 0
 

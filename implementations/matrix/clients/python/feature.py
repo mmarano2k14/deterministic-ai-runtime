@@ -837,12 +837,12 @@ def _nested_child_function(
     )
 
     if worker == "dotnet":
-        path = _fixture_root() / "dotnet-worker" / "Multiplexed.AI.Matrix.Worker.dll"
+        path = _sample_root() / "dotnet" / "Multiplexed.AI.Samples.PublishedFunctions.dll"
         return AiSdkPublicationFunctionUpload(
             site=site,
             environment_ref=environment_ref,
             entry_point_path="functions.dll",
-            entry_point_symbol="Multiplexed.AI.Matrix.Worker.Functions::Run",
+            entry_point_symbol="Multiplexed.AI.Samples.PublishedFunctions.Functions::Run",
             sources=(_file("functions.dll", path.read_bytes()),),
         )
 
@@ -1019,12 +1019,12 @@ def _custom_policy_function(
         )
 
     if worker == "dotnet" and family == "delegation":
-        path = _fixture_root() / "dotnet-worker" / "Multiplexed.AI.Matrix.Worker.dll"
+        path = _sample_root() / "dotnet" / "Multiplexed.AI.Samples.PublishedFunctions.dll"
         return AiSdkPublicationFunctionUpload(
             site=site,
             environment_ref=environment_ref,
             entry_point_path="functions.dll",
-            entry_point_symbol="Multiplexed.AI.Matrix.Worker.Functions::DelegationDeny",
+            entry_point_symbol="Multiplexed.AI.Samples.PublishedFunctions.Functions::DelegationDeny",
             sources=(_file("functions.dll", path.read_bytes()),),
         )
 
@@ -1073,11 +1073,11 @@ def _pinning_function(worker: str, replacement: bool) -> AiSdkPublicationFunctio
     )
 
     if worker == "dotnet":
-        path = _fixture_root() / "dotnet-worker" / "Multiplexed.AI.Matrix.Worker.dll"
+        path = _sample_root() / "dotnet" / "Multiplexed.AI.Samples.PublishedFunctions.dll"
         symbol = (
-            "Multiplexed.AI.Matrix.Worker.Functions::PinPoison"
+            "Multiplexed.AI.Samples.PublishedFunctions.Functions::PinPoison"
             if replacement
-            else "Multiplexed.AI.Matrix.Worker.Functions::PinStable"
+            else "Multiplexed.AI.Samples.PublishedFunctions.Functions::PinStable"
         )
         return AiSdkPublicationFunctionUpload(
             site=site,
@@ -1136,11 +1136,11 @@ def _packaged_function(
     )
 
     if worker == "dotnet":
-        fixture = _fixture_root() / "dotnet-packaged-worker"
-        function_bytes = (fixture / "Multiplexed.AI.Matrix.PackagedWorker.dll").read_bytes()
-        dependency_bytes = (fixture / "Multiplexed.AI.Matrix.Dependency.dll").read_bytes()
-        dependency_path = "Multiplexed.AI.Matrix.Dependency.dll"
-        dependency_name = "matrixdependency"
+        sample = _sample_root() / "dotnet"
+        function_bytes = (sample / "Multiplexed.AI.Samples.PublishedPackagedFunctions.dll").read_bytes()
+        dependency_bytes = (sample / "Multiplexed.AI.Samples.PublishedDependency.dll").read_bytes()
+        dependency_path = "Multiplexed.AI.Samples.PublishedDependency.dll"
+        dependency_name = "sampledependency"
         dependency_version = "1.0.0"
         manifest = _json_bytes(
             {
@@ -1151,7 +1151,7 @@ def _packaged_function(
                     {
                         "path": dependency_path,
                         "sha256": hashlib.sha256(dependency_bytes).hexdigest(),
-                        "assemblyName": "Multiplexed.AI.Matrix.Dependency",
+                        "assemblyName": "Multiplexed.AI.Samples.PublishedDependency",
                         "assemblyVersion": "1.0.0.0",
                     }
                 ],
@@ -1175,7 +1175,7 @@ def _packaged_function(
                 site=site,
                 environment_ref="placeholder",
                 entry_point_path="functions.dll",
-                entry_point_symbol="Multiplexed.AI.Matrix.PackagedWorker.Functions::Run",
+                entry_point_symbol="Multiplexed.AI.Samples.PublishedPackagedFunctions.Functions::Run",
                 sources=(_file("functions.dll", function_bytes),),
                 dependencies=(dependency,),
             ),
@@ -1281,7 +1281,7 @@ def _python_wheel_bytes() -> bytes:
         info = "rules-2.0.1.dist-info/"
         archive.writestr(
             info + "WHEEL",
-            "Wheel-Version: 1.0\nGenerator: matrix-fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+            "Wheel-Version: 1.0\nGenerator: multiplexed-ai-sdk-sample\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
         )
         archive.writestr(
             info + "METADATA",
@@ -1302,11 +1302,11 @@ def _json_bytes(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
 
 
-def _fixture_root() -> Path:
-    configured = os.environ.get("MATRIX_FIXTURE_ROOT")
+def _sample_root() -> Path:
+    configured = os.environ.get("MATRIX_SAMPLE_ROOT")
     if configured:
         return Path(configured).resolve()
-    return REPO_ROOT / "implementations" / "matrix" / "fixtures"
+    return REPO_ROOT / "implementations" / "sdk" / "samples" / "published-functions"
 
 
 async def _wait_for_terminal(client: AiSdkClient, execution_id: str, timeout_seconds: float):

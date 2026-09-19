@@ -5,20 +5,16 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services
-    .AddMcpServer()
-    .WithHttpTransport(options => options.Stateless = true)
-    .WithTools<MatrixMcpEffectProbeTools>();
-
+builder.Services.AddMcpServer().WithHttpTransport(options => options.Stateless = true).WithTools<SampleEffectTools>();
 var app = builder.Build();
 app.MapGet("/health", () => Results.Ok(new { ready = true }));
-app.MapGet("/state/{scenario}", (string scenario) => Results.Ok(MatrixMcpEffectProbeTools.State(scenario)));
+app.MapGet("/state/{scenario}", (string scenario) => Results.Ok(SampleEffectTools.State(scenario)));
 app.MapMcp("/mcp");
 await app.RunAsync().ConfigureAwait(false);
 
-/// <summary>Deterministic matrix-only MCP effect probe. It has no runtime or engine dependency.</summary>
+/// <summary>Standalone MCP sample for demonstrating deterministic outbound effect behavior.</summary>
 [McpServerToolType]
-internal sealed class MatrixMcpEffectProbeTools
+internal sealed class SampleEffectTools
 {
     private static readonly ConcurrentDictionary<string, int> Calls = new(StringComparer.Ordinal);
 
@@ -43,17 +39,10 @@ internal sealed class MatrixMcpEffectProbeTools
 
     [McpServerTool(Name = "probe.slow-count")]
     [Description("Counts one tools/call, then waits long enough for the caller-owned deadline to expire.")]
-    public static async Task<string> SlowCount(
-        string scenario,
-        int milliseconds,
-        CancellationToken cancellationToken)
+    public static async Task<string> SlowCount(string scenario, int milliseconds, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(scenario);
-        if (milliseconds is < 1 or > 30000)
-        {
-            throw new ArgumentOutOfRangeException(nameof(milliseconds));
-        }
-
+        if (milliseconds is < 1 or > 30000) throw new ArgumentOutOfRangeException(nameof(milliseconds));
         _ = Calls.AddOrUpdate(scenario, 1, static (_, current) => checked(current + 1));
         await Task.Delay(milliseconds, cancellationToken).ConfigureAwait(false);
         return "completed";

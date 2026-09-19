@@ -296,24 +296,29 @@ async def _wait_for_terminal(client: AiSdkClient, execution_id: str, timeout_sec
     raise TimeoutError(f"Execution '{execution_id}' did not become terminal within {timeout_seconds} seconds.")
 
 
+def _sample_root() -> Path:
+    configured = os.environ.get("MATRIX_SAMPLE_ROOT")
+    if configured:
+        return Path(configured).resolve()
+    return REPO_ROOT / "implementations" / "sdk" / "samples" / "published-functions"
+
+
 def _worker_source(worker: str) -> dict[str, object]:
-    configured = os.environ.get("MATRIX_FIXTURE_ROOT")
-    fixture_root = Path(configured).resolve() if configured else REPO_ROOT / "implementations" / "matrix" / "fixtures"
+    sample_root = _sample_root()
     if worker == "python":
-        path = fixture_root / "python-worker" / "main.py"
-        return {"entry_point_path": "main.py", "entry_point_symbol": "run", "bytes": path.read_bytes()}
+        path = sample_root / "python" / "functions.py"
+        return {"entry_point_path": "functions.py", "entry_point_symbol": "run", "bytes": path.read_bytes()}
     if worker == "typescript":
-        path = fixture_root / "typescript-worker" / "main.ts"
-        return {"entry_point_path": "main.ts", "entry_point_symbol": "run", "bytes": path.read_bytes()}
+        path = sample_root / "typescript" / "functions.ts"
+        return {"entry_point_path": "functions.ts", "entry_point_symbol": "run", "bytes": path.read_bytes()}
     if worker == "dotnet":
-        path = fixture_root / "dotnet-worker" / "Multiplexed.AI.Matrix.Worker.dll"
-        return {"entry_point_path": "functions.dll", "entry_point_symbol": "Multiplexed.AI.Matrix.Worker.Functions::Run", "bytes": path.read_bytes()}
+        path = sample_root / "dotnet" / "Multiplexed.AI.Samples.PublishedFunctions.dll"
+        return {"entry_point_path": "functions.dll", "entry_point_symbol": "Multiplexed.AI.Samples.PublishedFunctions.Functions::Run", "bytes": path.read_bytes()}
     raise ValueError(f"Unsupported worker language '{worker}'.")
 
 
 def _cancellation_worker_source(worker: str) -> dict[str, object]:
-    configured = os.environ.get("MATRIX_FIXTURE_ROOT")
-    fixture_root = Path(configured).resolve() if configured else REPO_ROOT / "implementations" / "matrix" / "fixtures"
+    sample_root = _sample_root()
     if worker == "python":
         return {
             "entry_point_path": "main.py",
@@ -322,7 +327,7 @@ def _cancellation_worker_source(worker: str) -> dict[str, object]:
                 "import time\n"
                 "def run(inputs, context):\n"
                 "    time.sleep(8)\n"
-                "    return {'success': True, 'payload': {'cancellationFixture': True}}\n"
+                "    return {'success': True, 'payload': {'cancellationSample': True}}\n"
             ).encode("utf-8"),
         }
     if worker == "typescript":
@@ -332,14 +337,14 @@ def _cancellation_worker_source(worker: str) -> dict[str, object]:
             "bytes": (
                 "export async function run(inputs: unknown, context: unknown) { "
                 "await new Promise(resolve => setTimeout(resolve, 8000)); "
-                "return { success: true, payload: { cancellationFixture: true } }; }\n"
+                "return { success: true, payload: { cancellationSample: true } }; }\n"
             ).encode("utf-8"),
         }
     if worker == "dotnet":
-        path = fixture_root / "dotnet-worker" / "Multiplexed.AI.Matrix.Worker.dll"
+        path = sample_root / "dotnet" / "Multiplexed.AI.Samples.PublishedFunctions.dll"
         return {
             "entry_point_path": "functions.dll",
-            "entry_point_symbol": "Multiplexed.AI.Matrix.Worker.Functions::PinStable",
+            "entry_point_symbol": "Multiplexed.AI.Samples.PublishedFunctions.Functions::PinStable",
             "bytes": path.read_bytes(),
         }
     raise ValueError(f"Unsupported worker language '{worker}'.")

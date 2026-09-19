@@ -13,15 +13,14 @@ $matrix = Join-Path $repo "implementations\matrix"
 $state = Join-Path $matrix ".state"
 $runtimeOut = Join-Path $state "runtime"
 $workerOut = Join-Path $state "worker-dotnet"
-$effectProbeOut = Join-Path $state "mcp-effect-probe"
+$effectProbeOut = Join-Path $state "mcp-effect-server"
 $mongoData = Join-Path $state "mongo"
 $manifest = Join-Path $state "runtime-manifest.json"
-$fixtureRoot = Join-Path $state "fixtures"
-$fixtureDotNet = Join-Path $fixtureRoot "dotnet-worker"
-$fixtureDotNetPackaged = Join-Path $fixtureRoot "dotnet-packaged-worker"
-$fixtureTypeScript = Join-Path $fixtureRoot "typescript-worker"
-$fixturePython = Join-Path $fixtureRoot "python-worker"
-New-Item -ItemType Directory -Force -Path $state,$runtimeOut,$workerOut,$effectProbeOut,$mongoData,$fixtureDotNet,$fixtureDotNetPackaged,$fixtureTypeScript,$fixturePython | Out-Null
+$sampleRoot = Join-Path $state "samples"
+$sampleDotNet = Join-Path $sampleRoot "dotnet"
+$sampleTypeScript = Join-Path $sampleRoot "typescript"
+$samplePython = Join-Path $sampleRoot "python"
+New-Item -ItemType Directory -Force -Path $state,$runtimeOut,$workerOut,$effectProbeOut,$mongoData,$sampleDotNet,$sampleTypeScript,$samplePython | Out-Null
 Remove-Item $manifest -Force -ErrorAction SilentlyContinue
 
 function Resolve-Tool([string]$name) {
@@ -49,15 +48,12 @@ $processes = @()
 try {
     & $dotnet publish ".\implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Multiplexed.AI.McpServer.Host.csproj" -c Release -o $runtimeOut
     & $dotnet publish ".\implementations\dotnet\workers\Multiplexed.AI.HostedInvocation.DotNetWorker\Multiplexed.AI.HostedInvocation.DotNetWorker.csproj" -c Release -o $workerOut
-    & $dotnet publish ".\implementations\matrix\fixtures\mcp-effect-probe\Multiplexed.AI.Matrix.McpEffectProbe\Multiplexed.AI.Matrix.McpEffectProbe.csproj" -c Release -o $effectProbeOut
-    & $dotnet build ".\implementations\matrix\fixtures\dotnet-worker\Multiplexed.AI.Matrix.Worker\Multiplexed.AI.Matrix.Worker.csproj" -c Release
-    & $dotnet build ".\implementations\matrix\fixtures\dotnet-packaged-worker\Multiplexed.AI.Matrix.PackagedWorker\Multiplexed.AI.Matrix.PackagedWorker.csproj" -c Release
+    & $dotnet publish ".\implementations\sdk\samples\mcp-effect-server\Multiplexed.AI.Samples.McpEffectServer\Multiplexed.AI.Samples.McpEffectServer.csproj" -c Release -o $effectProbeOut
+    & $dotnet publish ".\implementations\sdk\samples\published-functions\dotnet\Multiplexed.AI.Samples.PublishedFunctions\Multiplexed.AI.Samples.PublishedFunctions.csproj" -c Release -o $sampleDotNet
+    & $dotnet publish ".\implementations\sdk\samples\published-functions\dotnet\Multiplexed.AI.Samples.PublishedPackagedFunctions\Multiplexed.AI.Samples.PublishedPackagedFunctions.csproj" -c Release -o $sampleDotNet
+    Copy-Item ".\implementations\sdk\samples\published-functions\typescript\functions.ts" (Join-Path $sampleTypeScript "functions.ts") -Force
+    Copy-Item ".\implementations\sdk\samples\published-functions\python\functions.py" (Join-Path $samplePython "functions.py") -Force
     & $dotnet build ".\implementations\matrix\clients\dotnet\Multiplexed.AI.Matrix.DotNetClient\Multiplexed.AI.Matrix.DotNetClient.csproj" -c Release
-    Copy-Item ".\implementations\matrix\fixtures\dotnet-worker\Multiplexed.AI.Matrix.Worker\bin\Release\net10.0\Multiplexed.AI.Matrix.Worker.dll" (Join-Path $fixtureDotNet "Multiplexed.AI.Matrix.Worker.dll") -Force
-    Copy-Item ".\implementations\matrix\fixtures\dotnet-packaged-worker\Multiplexed.AI.Matrix.PackagedWorker\bin\Release\net10.0\Multiplexed.AI.Matrix.PackagedWorker.dll" (Join-Path $fixtureDotNetPackaged "Multiplexed.AI.Matrix.PackagedWorker.dll") -Force
-    Copy-Item ".\implementations\matrix\fixtures\dotnet-packaged-worker\Multiplexed.AI.Matrix.PackagedWorker\bin\Release\net10.0\Multiplexed.AI.Matrix.Dependency.dll" (Join-Path $fixtureDotNetPackaged "Multiplexed.AI.Matrix.Dependency.dll") -Force
-    Copy-Item ".\implementations\matrix\fixtures\typescript-worker\main.ts" (Join-Path $fixtureTypeScript "main.ts") -Force
-    Copy-Item ".\implementations\matrix\fixtures\python-worker\main.py" (Join-Path $fixturePython "main.py") -Force
     Push-Location ".\implementations\node\sdk"
     & $npm run build
     Pop-Location
@@ -151,20 +147,20 @@ try {
     $env:AiMatrixHarness__EffectEvidenceEndpoint = "http://localhost:8081/matrix/mcp-effect-evidence"
     $env:AiMatrixHarness__RecoveryEndpoint = "http://localhost:8081/matrix/recovery"
     $env:AiMatrixHarness__JournalResultAcceptanceEndpoint = "http://localhost:8081/matrix/journal-result-acceptance"
-    $env:MATRIX_FIXTURE_ROOT = $fixtureRoot
+    $env:MATRIX_SAMPLE_ROOT = $sampleRoot
 
-    $effectProbe = Start-Process -FilePath $dotnet -ArgumentList @((Join-Path $effectProbeOut "Multiplexed.AI.Matrix.McpEffectProbe.dll"), "--urls", "http://127.0.0.1:8090") -PassThru -NoNewWindow
+    $effectProbe = Start-Process -FilePath $dotnet -ArgumentList @((Join-Path $effectProbeOut "Multiplexed.AI.Samples.McpEffectServer.dll"), "--urls", "http://127.0.0.1:8090") -PassThru -NoNewWindow
     $processes += $effectProbe
     $probeDeadline = (Get-Date).AddSeconds(30)
     while ((Get-Date) -lt $probeDeadline) {
-        if ($effectProbe.HasExited) { throw "MCP effect probe exited before becoming ready." }
+        if ($effectProbe.HasExited) { throw "MCP effect sample server exited before becoming ready." }
         try {
             Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:8090/health" -TimeoutSec 2 | Out-Null
             break
         } catch { }
         Start-Sleep -Milliseconds 250
     }
-    if ($effectProbe.HasExited) { throw "MCP effect probe exited before runtime startup." }
+    if ($effectProbe.HasExited) { throw "MCP effect sample server exited before runtime startup." }
 
     $runtime = Start-Process -FilePath $dotnet -ArgumentList @((Join-Path $runtimeOut "Multiplexed.AI.McpServer.Host.dll"), "--Multiplexed.Rbac.Core:Project=matrix") -PassThru -NoNewWindow
     $processes += $runtime

@@ -44,31 +44,24 @@ def _resolve_tool(name: str, windows: bool | None = None) -> str:
 
 def _build_prerequisites() -> None:
     dotnet = _resolve_tool("dotnet")
-    core_project = MATRIX_ROOT / "fixtures" / "dotnet-worker" / "Multiplexed.AI.Matrix.Worker" / "Multiplexed.AI.Matrix.Worker.csproj"
-    packaged_project = MATRIX_ROOT / "fixtures" / "dotnet-packaged-worker" / "Multiplexed.AI.Matrix.PackagedWorker" / "Multiplexed.AI.Matrix.PackagedWorker.csproj"
-    _run([dotnet, "build", str(core_project), "-c", "Release"])
-    _run([dotnet, "build", str(packaged_project), "-c", "Release"])
+    sample_base = ROOT / "implementations" / "sdk" / "samples" / "published-functions" / "dotnet"
+    core_project = sample_base / "Multiplexed.AI.Samples.PublishedFunctions" / "Multiplexed.AI.Samples.PublishedFunctions.csproj"
+    packaged_project = sample_base / "Multiplexed.AI.Samples.PublishedPackagedFunctions" / "Multiplexed.AI.Samples.PublishedPackagedFunctions.csproj"
+    sample_root = Path(os.environ.get("MATRIX_SAMPLE_ROOT", str(MATRIX_ROOT / ".state" / "samples"))).resolve()
+    dotnet_target = sample_root / "dotnet"
+    typescript_target = sample_root / "typescript"
+    python_target = sample_root / "python"
+    dotnet_target.mkdir(parents=True, exist_ok=True)
+    typescript_target.mkdir(parents=True, exist_ok=True)
+    python_target.mkdir(parents=True, exist_ok=True)
+    _run([dotnet, "publish", str(core_project), "-c", "Release", "-o", str(dotnet_target)])
+    _run([dotnet, "publish", str(packaged_project), "-c", "Release", "-o", str(dotnet_target)])
+    shutil.copy2(ROOT / "implementations" / "sdk" / "samples" / "published-functions" / "typescript" / "functions.ts", typescript_target / "functions.ts")
+    shutil.copy2(ROOT / "implementations" / "sdk" / "samples" / "published-functions" / "python" / "functions.py", python_target / "functions.py")
     dotnet_client = MATRIX_ROOT / "clients" / "dotnet" / "Multiplexed.AI.Matrix.DotNetClient" / "Multiplexed.AI.Matrix.DotNetClient.csproj"
     _run([dotnet, "build", str(dotnet_client), "-c", "Release"])
     _run([_resolve_tool("npm"), "run", "build"], cwd=ROOT / "implementations" / "node" / "sdk")
-
-    fixture_root = Path(
-        os.environ.get("MATRIX_FIXTURE_ROOT", str(MATRIX_ROOT / ".state" / "fixtures"))
-    ).resolve()
-    core_target = fixture_root / "dotnet-worker"
-    packaged_target = fixture_root / "dotnet-packaged-worker"
-    core_target.mkdir(parents=True, exist_ok=True)
-    packaged_target.mkdir(parents=True, exist_ok=True)
-
-    shutil.copy2(
-        core_project.parent / "bin" / "Release" / "net10.0" / "Multiplexed.AI.Matrix.Worker.dll",
-        core_target / "Multiplexed.AI.Matrix.Worker.dll",
-    )
-    packaged_bin = packaged_project.parent / "bin" / "Release" / "net10.0"
-    for name in ("Multiplexed.AI.Matrix.PackagedWorker.dll", "Multiplexed.AI.Matrix.Dependency.dll"):
-        shutil.copy2(packaged_bin / name, packaged_target / name)
-
-    os.environ["MATRIX_FIXTURE_ROOT"] = str(fixture_root)
+    os.environ["MATRIX_SAMPLE_ROOT"] = str(sample_root)
 
 
 def _command_for(scenario: dict[str, Any], manifest: Path) -> list[str]:

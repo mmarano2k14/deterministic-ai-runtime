@@ -3,8 +3,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>Multiplexed.AI.Matrix.Dependency</AssemblyName>
-    <RootNamespace>Multiplexed.AI.Matrix.Dependency</RootNamespace>
+    <AssemblyName>Multiplexed.AI.Samples.PublishedFunctions</AssemblyName>
+    <RootNamespace>Multiplexed.AI.Samples.PublishedFunctions</RootNamespace>
     <Version>1.0.0</Version>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>

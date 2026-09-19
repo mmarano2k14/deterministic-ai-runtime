@@ -33,11 +33,18 @@ def _resolve_tool(name: str, windows: bool | None = None) -> str:
 
 
 def _build_prerequisites(client_language: str) -> None:
-    _run([
-        "dotnet", "build",
-        str(MATRIX_ROOT / "fixtures" / "dotnet-worker" / "Multiplexed.AI.Matrix.Worker" / "Multiplexed.AI.Matrix.Worker.csproj"),
-        "-c", "Release",
-    ])
+    sample_project = ROOT / "implementations" / "sdk" / "samples" / "published-functions" / "dotnet" / "Multiplexed.AI.Samples.PublishedFunctions" / "Multiplexed.AI.Samples.PublishedFunctions.csproj"
+    sample_root = Path(os.environ.get("MATRIX_SAMPLE_ROOT", str(MATRIX_ROOT / ".state" / "samples"))).resolve()
+    sample_dotnet = sample_root / "dotnet"
+    sample_typescript = sample_root / "typescript"
+    sample_python = sample_root / "python"
+    sample_dotnet.mkdir(parents=True, exist_ok=True)
+    sample_typescript.mkdir(parents=True, exist_ok=True)
+    sample_python.mkdir(parents=True, exist_ok=True)
+    _run(["dotnet", "publish", str(sample_project), "-c", "Release", "-o", str(sample_dotnet)])
+    shutil.copy2(ROOT / "implementations" / "sdk" / "samples" / "published-functions" / "typescript" / "functions.ts", sample_typescript / "functions.ts")
+    shutil.copy2(ROOT / "implementations" / "sdk" / "samples" / "published-functions" / "python" / "functions.py", sample_python / "functions.py")
+    os.environ["MATRIX_SAMPLE_ROOT"] = str(sample_root)
     if client_language == "dotnet":
         _run([
             "dotnet", "build",

@@ -99,17 +99,17 @@ export AiMatrixHarness__EffectEvidenceEndpoint="http://runtime:8080/matrix/mcp-e
 export AiMatrixHarness__RecoveryEndpoint="http://runtime:8080/matrix/recovery"
 export AiMatrixHarness__JournalResultAcceptanceEndpoint="http://runtime:8080/matrix/journal-result-acceptance"
 
-dotnet /app/mcp-effect-probe/Multiplexed.AI.Matrix.McpEffectProbe.dll --urls http://0.0.0.0:8090 &
+dotnet /app/mcp-effect-server/Multiplexed.AI.Samples.McpEffectServer.dll --urls http://0.0.0.0:8090 &
 PROBE_PID="$!"
 for _ in $(seq 1 100); do
   if python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=1).read()" >/dev/null 2>&1; then
     break
   fi
-  kill -0 "$PROBE_PID" >/dev/null 2>&1 || { echo "MCP effect probe exited before becoming ready." >&2; exit 1; }
+  kill -0 "$PROBE_PID" >/dev/null 2>&1 || { echo "MCP effect sample server exited before becoming ready." >&2; exit 1; }
   sleep 0.1
 done
 python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=1).read()" >/dev/null 2>&1 || {
-  echo "MCP effect probe did not become ready." >&2
+  echo "MCP effect sample server did not become ready." >&2
   exit 1
 }
 

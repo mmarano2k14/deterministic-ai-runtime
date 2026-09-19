@@ -164,3 +164,7 @@ The canonical Docker verifier requires all 33 executed scenarios: 9 core + 6 pub
 Two roadmap coverage targets remain deliberately **NOT EXECUTED** in Pack 3: `worker-isolation-provider` and `isolation-artifact-selection`. Their `sandboxed-container` and `OciImage` values belong to Pack 4 and are not inferred from `TrustedProcess` / `HostRuntime` evidence. This keeps the 33 executed scenarios bounded to combinations that actually ran.
 
 Fixture-backed workers are still used by this Pack 3 matrix. Removing those fixtures and rerunning the full matrix through non-fixture execution artifacts is the separate closure gate that follows this increment.
+
+## Fixture-free execution artifacts
+
+The matrix does not own worker-function fixtures. External clients publish reusable sample artifacts from `implementations/sdk/samples/published-functions`, while execution is performed by the production hosted-invocation workers under `implementations/dotnet/workers`, `implementations/node/workers`, and `implementations/python/workers`. Durable MCP effect scenarios use the standalone sample MCP server under `implementations/sdk/samples/mcp-effect-server`.

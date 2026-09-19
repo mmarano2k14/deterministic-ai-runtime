@@ -71,11 +71,37 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertIn("python3 -c", compose)
         self.assertNotIn("wget -q", compose)
 
-    def test_local_topology_stages_same_worker_fixture_layout(self) -> None:
+    def test_local_topology_stages_public_sample_artifacts(self) -> None:
         runner = (MATRIX_ROOT / "runtime" / "local" / "run.ps1").read_text(encoding="utf-8-sig")
-        self.assertIn("$env:MATRIX_FIXTURE_ROOT = $fixtureRoot", runner)
-        self.assertIn("Multiplexed.AI.Matrix.Worker.dll", runner)
+        self.assertIn("$env:MATRIX_SAMPLE_ROOT = $sampleRoot", runner)
+        self.assertIn("Multiplexed.AI.Samples.PublishedFunctions.csproj", runner)
+        self.assertIn("implementations\\sdk\\samples\\published-functions", runner)
         self.assertIn('Resolve-Tool "npm"', runner)
+
+    def test_matrix_is_fixture_free_and_uses_public_samples_plus_production_workers(self) -> None:
+        self.assertFalse((MATRIX_ROOT / "fixtures").exists())
+        inspected = [
+            MATRIX_ROOT / "core_matrix.py",
+            MATRIX_ROOT / "feature_matrix.py",
+            MATRIX_ROOT / "clients" / "python" / "run.py",
+            MATRIX_ROOT / "clients" / "python" / "feature.py",
+            MATRIX_ROOT / "clients" / "typescript" / "run.mjs",
+            MATRIX_ROOT / "clients" / "dotnet" / "Multiplexed.AI.Matrix.DotNetClient" / "Program.cs",
+            MATRIX_ROOT / "runtime" / "local" / "run.ps1",
+            MATRIX_ROOT / "runtime" / "docker" / "runtime.Dockerfile",
+            MATRIX_ROOT / "runtime" / "docker" / "dotnet-client.Dockerfile",
+            MATRIX_ROOT / "runtime" / "docker" / "typescript-client.Dockerfile",
+            MATRIX_ROOT / "runtime" / "docker" / "python-client.Dockerfile",
+        ]
+        combined = "\n".join(item.read_text(encoding="utf-8-sig") for item in inspected)
+        self.assertNotIn("MATRIX_FIXTURE_ROOT", combined)
+        self.assertNotIn("implementations/matrix/fixtures", combined.replace("\\", "/"))
+        self.assertIn("MATRIX_SAMPLE_ROOT", combined)
+        self.assertIn("implementations/sdk/samples/published-functions", combined.replace("\\", "/"))
+        runtime = (MATRIX_ROOT / "runtime" / "docker" / "runtime-entrypoint.sh").read_text(encoding="utf-8-sig")
+        self.assertIn("/app/workers/dotnet/Multiplexed.AI.HostedInvocation.DotNetWorker.dll", runtime)
+        self.assertIn("/app/workers/typescript/worker.mjs", runtime)
+        self.assertIn("/app/workers/python/worker.py", runtime)
 
     def test_access_context_transport_header_is_supported_in_all_external_sdks(self) -> None:
         dotnet = (MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.Sdk" / "Transport" / "AiSdkMcpHttpTransport.cs").read_text(encoding="utf-8-sig")
@@ -288,8 +314,8 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertIn('"delegation": "invoke-child"', client)
         self.assertIn("step_name=step_name", client)
 
-    def test_fail_once_retry_fixture_treats_missing_retry_state_as_first_attempt(self) -> None:
-        fixture = (
+    def test_fail_once_retry_test_step_treats_missing_retry_state_as_first_attempt(self) -> None:
+        step_source = (
             MATRIX_ROOT.parent
             / "dotnet"
             / "src"
@@ -300,14 +326,15 @@ class CoreMatrixTests(unittest.TestCase):
             / "Test"
             / "FailOnceThenSucceedStep.cs"
         ).read_text(encoding="utf-8-sig")
-        self.assertIn("(stepState.RetryState?.RetryCount ?? 0) == 0", fixture)
-        self.assertNotIn("stepState.RetryState?.RetryCount == 0", fixture)
+        self.assertIn("(stepState.RetryState?.RetryCount ?? 0) == 0", step_source)
+        self.assertNotIn("stepState.RetryState?.RetryCount == 0", step_source)
 
-    def test_python_docker_client_carries_dotnet_dependency_fixture_and_feature_runner(self) -> None:
+    def test_python_docker_client_carries_dotnet_dependency_sample_and_feature_runner(self) -> None:
         dockerfile = (MATRIX_ROOT / "runtime" / "docker" / "python-client.Dockerfile").read_text(encoding="utf-8-sig")
         runner = (MATRIX_ROOT / "runtime" / "docker" / "run-client.sh").read_text(encoding="utf-8-sig")
-        self.assertIn("Multiplexed.AI.Matrix.PackagedWorker.csproj", dockerfile)
-        self.assertIn("Multiplexed.AI.Matrix.Dependency.dll", dockerfile)
+        self.assertIn("Multiplexed.AI.Samples.PublishedPackagedFunctions.csproj", dockerfile)
+        self.assertIn("Multiplexed.AI.Samples.PublishedDependency.dll", dockerfile)
+        self.assertNotIn("implementations/matrix/fixtures", dockerfile)
         self.assertIn("feature.py", runner)
         self.assertIn("publication-pinning", runner)
         self.assertIn("deterministic-dependency-packaging", runner)
@@ -318,23 +345,28 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertIn("FEATURE_EXPECTED", verifier)
         self.assertIn("9/9 production-like Docker ProcessHostPool scenarios passed.", verifier)
         self.assertIn("6/6 publication-pinning/dependency-package ProcessHostPool feature scenarios passed.", verifier)
+        self.assertIn("Fixture-free closure: public SDK samples + production hosted workers; matrix fixture tree not required.", verifier)
         for kind in ("DotNetAssemblyClosure", "NodeLockedBundle", "PythonWheelBundle"):
             self.assertIn(kind, verifier)
 
-    def test_local_process_runner_stages_packaged_fixture_and_executes_feature_matrix(self) -> None:
+    def test_local_process_runner_stages_packaged_sample_and_executes_feature_matrix(self) -> None:
         runner = (MATRIX_ROOT / "runtime" / "local" / "run.ps1").read_text(encoding="utf-8-sig")
-        self.assertIn("$fixtureDotNetPackaged", runner)
-        self.assertIn("Multiplexed.AI.Matrix.PackagedWorker.dll", runner)
-        self.assertIn("Multiplexed.AI.Matrix.Dependency.dll", runner)
+        self.assertIn("$sampleDotNet", runner)
+        self.assertIn("Multiplexed.AI.Samples.PublishedPackagedFunctions.csproj", runner)
+        self.assertIn("Multiplexed.AI.Samples.PublishedPackagedFunctions.csproj", runner)
         self.assertIn("feature_matrix.py", runner)
 
-    def test_dotnet_dependency_fixture_has_exact_stable_identity(self) -> None:
-        project = MATRIX_ROOT / "fixtures" / "dotnet-dependency" / "Multiplexed.AI.Matrix.Dependency" / "Multiplexed.AI.Matrix.Dependency.csproj"
+    def test_dotnet_dependency_sample_has_exact_stable_identity(self) -> None:
+        project = (
+            MATRIX_ROOT.parent / "sdk" / "samples" / "published-functions" / "dotnet" /
+            "Multiplexed.AI.Samples.PublishedDependency" / "Multiplexed.AI.Samples.PublishedDependency.csproj"
+        )
         text = project.read_text(encoding="utf-8-sig")
-        self.assertIn("<AssemblyName>Multiplexed.AI.Matrix.Dependency</AssemblyName>", text)
+        self.assertIn("<AssemblyName>Multiplexed.AI.Samples.PublishedDependency</AssemblyName>", text)
         self.assertIn("<Version>1.0.0</Version>", text)
         self.assertIn("<AssemblyVersion>1.0.0.0</AssemblyVersion>", text)
         self.assertIn("<Deterministic>true</Deterministic>", text)
+        self.assertNotIn("ProjectReference", text)
 
     def test_nested_child_dag_feature_uses_exact_recursive_publication_path(self) -> None:
         client = (MATRIX_ROOT / "clients" / "python" / "feature.py").read_text(encoding="utf-8-sig")
@@ -376,15 +408,10 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertIn('new AiOutboundMcpToolRegistration("probe.slow-count"', registration)
         self.assertLess(registration.index("if (!options.Enabled)"), registration.index("services.AddAiDurableMcpEffectEvidence();"))
 
-    def test_mcp_effect_probe_is_matrix_only_and_has_no_runtime_project_reference(self) -> None:
-        project = (
-            MATRIX_ROOT / "fixtures" / "mcp-effect-probe" /
-            "Multiplexed.AI.Matrix.McpEffectProbe" / "Multiplexed.AI.Matrix.McpEffectProbe.csproj"
-        ).read_text(encoding="utf-8-sig")
-        program = (
-            MATRIX_ROOT / "fixtures" / "mcp-effect-probe" /
-            "Multiplexed.AI.Matrix.McpEffectProbe" / "Program.cs"
-        ).read_text(encoding="utf-8-sig")
+    def test_mcp_effect_sample_server_is_standalone_and_has_no_runtime_project_reference(self) -> None:
+        sample = MATRIX_ROOT.parent / "sdk" / "samples" / "mcp-effect-server" / "Multiplexed.AI.Samples.McpEffectServer"
+        project = (sample / "Multiplexed.AI.Samples.McpEffectServer.csproj").read_text(encoding="utf-8-sig")
+        program = (sample / "Program.cs").read_text(encoding="utf-8-sig")
         self.assertIn("ModelContextProtocol.AspNetCore", project)
         self.assertNotIn("ProjectReference", project)
         self.assertIn('Name = "probe.fail-count"', program)
