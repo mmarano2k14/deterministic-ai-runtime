@@ -16,6 +16,7 @@ namespace Multiplexed.AI.McpServer.Host.Configuration
         public AiHostedRuntimeOptions DotNet { get; set; } = new();
         public AiHostedRuntimeOptions TypeScript { get; set; } = new();
         public AiHostedRuntimeOptions Python { get; set; } = new();
+        public AiHostedContainerWorkersOptions Container { get; set; } = new();
     }
 
     public sealed class AiHostedRuntimeOptions
@@ -27,5 +28,37 @@ namespace Multiplexed.AI.McpServer.Host.Configuration
         public string? WorkerDepsPath { get; set; }
         public string? WorkerRuntimeConfigPath { get; set; }
         public string? WorkingDirectory { get; set; }
+    }
+
+    /// <summary>
+    /// Optional deployment-owned OCI provider configuration. The engine path, owner scope,
+    /// image repositories and immutable manifest digests are host configuration rather than tenant input.
+    /// </summary>
+    public sealed class AiHostedContainerWorkersOptions
+    {
+        public bool Enabled { get; set; }
+        public string EngineExecutablePath { get; set; } = string.Empty;
+        public string? EngineWorkingDirectory { get; set; }
+        public string ContainerOwnerScope { get; set; } = string.Empty;
+        public int CpuMilliCores { get; set; } = 1000;
+        public long MemoryBytes { get; set; } = 268435456;
+        public int PidsLimit { get; set; } = 64;
+        public long WritableWorkspaceBytes { get; set; } = 67108864;
+        public Dictionary<string, string> EngineEnvironment { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<AiHostedContainerRuntimeOptions> Runtimes { get; set; } = new();
+    }
+
+    /// <summary>
+    /// One exact host-approved OCI worker runtime. Mutable tags are not accepted; ImageDigest
+    /// identifies the platform-specific manifest selected for the configured language runtime.
+    /// </summary>
+    public sealed class AiHostedContainerRuntimeOptions
+    {
+        public string Reference { get; set; } = string.Empty;
+        public string ExecutionLanguage { get; set; } = string.Empty;
+        public string RuntimeVersion { get; set; } = string.Empty;
+        public string ImageRepository { get; set; } = string.Empty;
+        public string ImageDigest { get; set; } = string.Empty;
+        public string ContainerUser { get; set; } = "65532:65532";
     }
 }

@@ -264,7 +264,20 @@ class CoreMatrixTests(unittest.TestCase):
         preflight = registration.index("AiWorkerLaunchPaths.ValidateProfile(profile)")
         polling = registration.index("AddAiHostedInvocationWorkerPolling")
         self.assertLess(preflight, polling)
-        self.assertIn("foreach (var profile in profiles)", registration)
+        self.assertIn("foreach (var profile in processProfiles)", registration)
+
+    def test_hosted_container_provider_is_optional_and_composes_after_process_workers(self) -> None:
+        registration = (MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI.McpServer.Host" / "Bootstrap" / "HostedInvocationHostRegistration.cs").read_text(encoding="utf-8-sig")
+        process_registration = registration.index("services.AddAiHostedInvocationWorkers(")
+        container_registration = registration.index("services.AddAiHostedInvocationContainerWorkers(")
+        polling = registration.index("services.AddAiHostedInvocationWorkerPolling(")
+        self.assertLess(process_registration, container_registration)
+        self.assertLess(container_registration, polling)
+        self.assertIn("options.Container.Enabled", registration)
+        self.assertIn("AiPublicationEnvironmentArtifactKind.OciImage", registration)
+        self.assertIn("AiWorkerIsolationTier.SandboxedContainer", registration)
+        self.assertIn("AiWorkerNetworkEgress.DenyAll", registration)
+        self.assertIn("AiWorkerPathProtection.SealedClosure", registration)
 
     def test_worker_dispatch_failure_diagnostics_keep_a_bounded_phase(self) -> None:
         supervisor = (MATRIX_ROOT.parent / "dotnet" / "src" / "Multiplexed.AI" / "Runtime" / "Invocation" / "Workers" / "AiWorkerInvocationSupervisor.cs").read_text(encoding="utf-8-sig")

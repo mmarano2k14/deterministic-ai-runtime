@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Multiplexed.Abstractions.AI.Invocation.Durable;
 using Multiplexed.Abstractions.AI.Invocation.Workers;
+using Multiplexed.Abstractions.AI.Publication;
 using Multiplexed.AI.Runtime.Invocation.Workers;
 using Multiplexed.AI.Runtime.Invocation.Workers.DI;
 using Multiplexed.AI.Runtime.Invocation.Workers.Isolation;
@@ -58,6 +59,37 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             using var provider = services.BuildServiceProvider();
             Assert.IsType<AiWorkerInvocationTransportRouter>(provider.GetRequiredService<IAiWorkerInvocationTransport>());
             Assert.NotNull(provider.GetRequiredService<AiWorkerProcessCapacity>());
+        }
+
+        [Fact]
+        public async Task Registered_Container_Provider_Uses_Its_Own_Strict_Admission_Policy()
+        {
+            var profile = ContainerWorkerTestSupport.Profile();
+            var processRuntime = WorkerTestSupport.ProbeProfile();
+            var services = new ServiceCollection();
+            services.AddAiHostedInvocationWorkers(
+                new AiConfiguredWorkerProcessCatalog(new[] { processRuntime }),
+                new AiWorkerSupervisionOptions(maxConcurrentProcesses: 1),
+                executionPolicy: new AiWorkerExecutionAdmissionPolicy
+                {
+                    AllowLegacyTrustedProcess = false,
+                    MinimumRequirements = new()
+                    {
+                        IsolationTier = AiWorkerIsolationTier.TrustedProcess,
+                        NetworkEgress = AiWorkerNetworkEgress.HostNetwork,
+                        PathProtection = AiWorkerPathProtection.ValidatedPaths
+                    }
+                });
+            services.AddAiHostedInvocationContainerWorkers(
+                new AiConfiguredContainerWorkerCatalog(new[] { profile }));
+
+            using var provider = services.BuildServiceProvider();
+            var transport = provider.GetRequiredService<IAiWorkerInvocationTransport>();
+            var result = await transport.InvokeAsync(
+                ContainerWorkerTestSupport.Request(profile),
+                _ => Task.CompletedTask);
+
+            Assert.NotNull(result);
         }
 
         [Fact]

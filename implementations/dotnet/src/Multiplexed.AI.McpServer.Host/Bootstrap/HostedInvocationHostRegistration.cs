@@ -7,6 +7,7 @@ using Multiplexed.AI.Runtime.Invocation.Durable.DI;
 using Multiplexed.AI.Runtime.Invocation.Durable.Dag;
 using Multiplexed.AI.Runtime.Invocation.Workers;
 using Multiplexed.AI.Runtime.Invocation.Workers.DI;
+using Multiplexed.AI.Runtime.Invocation.Workers.Isolation;
 using Multiplexed.AI.Runtime.Invocation.Workers.DotNet;
 using Multiplexed.AI.Runtime.Invocation.Workers.Python;
 using Multiplexed.AI.Runtime.Invocation.Workers.TypeScript;
@@ -16,8 +17,9 @@ using Multiplexed.AI.Runtime.Publication.DI;
 namespace Multiplexed.AI.McpServer.Host.Bootstrap
 {
     /// <summary>
-    /// Materializes deployment-provisioned process workers through the existing publication, durable journal and worker
-    /// supervisor authorities. It does not add a scheduler, queue, recovery path or result-acceptance authority.
+    /// Materializes deployment-provisioned trusted-process workers and optional isolated OCI workers through the existing
+    /// publication, durable journal and worker supervisor authorities. It does not add a scheduler, queue, recovery path
+    /// or result-acceptance authority.
     /// </summary>
     public static class HostedInvocationHostRegistration
     {
@@ -35,17 +37,23 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             var dotnet = CreateDotNet(options.DotNet);
             var typescript = CreateTypeScript(options.TypeScript);
             var python = CreatePython(options.Python);
-            var profiles = new[] { dotnet.Profile, typescript.Profile, python.Profile };
-            foreach (var profile in profiles)
+            var processProfiles = new[] { dotnet.Profile, typescript.Profile, python.Profile };
+            foreach (var profile in processProfiles)
             {
                 // Deployment-owned launch paths are validated before any durable invocation can park.
                 AiWorkerLaunchPaths.ValidateProfile(profile);
             }
-            var environments = profiles.Select(profile => profile.Runtime).ToArray();
-            var descriptors = profiles.ToDictionary(
-                profile => profile.Runtime.Reference,
-                profile => profile.ExecutionDescriptor!,
-                StringComparer.Ordinal);
+
+            var containerProfiles = options.Container.Enabled
+                ? CreateContainers(options.Container)
+                : Array.Empty<AiContainerWorkerProfile>();
+            var environments = processProfiles.Select(profile => profile.Runtime)
+                .Concat(containerProfiles.Select(profile => profile.Runtime))
+                .ToArray();
+            var descriptors = processProfiles
+                .Select(profile => (Reference: profile.Runtime.Reference, Descriptor: profile.ExecutionDescriptor!))
+                .Concat(containerProfiles.Select(profile => (Reference: profile.Runtime.Reference, Descriptor: profile.ExecutionDescriptor)))
+                .ToDictionary(item => item.Reference, item => item.Descriptor, StringComparer.Ordinal);
 
             var environmentCatalog = new AiConfiguredPublicationEnvironmentCatalog(environments, descriptors);
             services.TryAddSingleton<IAiPublicationEnvironmentCatalog>(environmentCatalog);
@@ -76,9 +84,14 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 MinimumRequirements = ProcessRequirements()
             };
             services.AddAiHostedInvocationWorkers(
-                new AiConfiguredWorkerProcessCatalog(profiles),
+                new AiConfiguredWorkerProcessCatalog(processProfiles),
                 new AiWorkerSupervisionOptions(maxConcurrentProcesses: options.MaxConcurrentProcesses),
                 executionPolicy: admission);
+            if (containerProfiles.Length > 0)
+            {
+                services.AddAiHostedInvocationContainerWorkers(
+                    new AiConfiguredContainerWorkerCatalog(containerProfiles));
+            }
 
             // Hosted custom policy families reuse the exact publication material and worker transport.
             // They do not create a native fallback or a second policy/scheduling authority.
@@ -143,6 +156,62 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             return (profile, executableHash);
         }
 
+        private static AiContainerWorkerProfile[] CreateContainers(AiHostedContainerWorkersOptions options)
+        {
+            ArgumentNullException.ThrowIfNull(options);
+            var engine = FullFile(options.EngineExecutablePath, "container engine executable");
+            var workingDirectory = string.IsNullOrWhiteSpace(options.EngineWorkingDirectory)
+                ? Path.GetDirectoryName(engine)!
+                : FullDirectory(options.EngineWorkingDirectory, "container engine working directory");
+            var engineHash = Hash(engine);
+            var roots = LaunchRoots(engine, workingDirectory);
+            var limits = new AiContainerWorkerResourceLimits
+            {
+                CpuMilliCores = options.CpuMilliCores,
+                MemoryBytes = options.MemoryBytes,
+                PidsLimit = options.PidsLimit,
+                WritableWorkspaceBytes = options.WritableWorkspaceBytes
+            };
+            var configured = options.Runtimes ?? new List<AiHostedContainerRuntimeOptions>();
+            if (configured.Count is < 1 or > 16)
+                throw new InvalidOperationException("AiHostedInvocation container provider requires between 1 and 16 exact OCI runtimes.");
+
+            var profiles = new List<AiContainerWorkerProfile>(configured.Count);
+            foreach (var runtimeOptions in configured)
+            {
+                ArgumentNullException.ThrowIfNull(runtimeOptions);
+                AiPublicationExecutionDescriptors.ValidateDigest(runtimeOptions.ImageDigest);
+                var runtime = new AiPublicationEnvironment(
+                    runtimeOptions.Reference,
+                    runtimeOptions.ExecutionLanguage,
+                    runtimeOptions.RuntimeVersion,
+                    runtimeOptions.ImageDigest[7..]);
+                var descriptor = new AiPublicationExecutionDescriptor
+                {
+                    OperatingSystem = AiContainerWorkerExecutionAdmission.InitialOperatingSystem,
+                    Architecture = AiContainerWorkerExecutionAdmission.InitialArchitecture,
+                    Artifact = new AiPublicationEnvironmentArtifact(
+                        AiPublicationEnvironmentArtifactKind.OciImage,
+                        runtimeOptions.ImageDigest,
+                        AiPublicationExecutionDescriptors.OciImageMediaType),
+                    Requirements = ContainerRequirements()
+                };
+                profiles.Add(new AiContainerWorkerProfile(
+                    runtime,
+                    descriptor,
+                    engine,
+                    engineHash,
+                    workingDirectory,
+                    runtimeOptions.ImageRepository,
+                    options.ContainerOwnerScope,
+                    limits,
+                    runtimeOptions.ContainerUser,
+                    options.EngineEnvironment,
+                    roots));
+            }
+            return profiles.ToArray();
+        }
+
         private static AiPublicationExecutionDescriptor Descriptor(string executableHash) => new()
         {
             OperatingSystem = AiWorkerExecutionAdmission.CurrentOperatingSystem,
@@ -159,6 +228,13 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             IsolationTier = AiWorkerIsolationTier.TrustedProcess,
             NetworkEgress = AiWorkerNetworkEgress.HostNetwork,
             PathProtection = AiWorkerPathProtection.ValidatedPaths
+        };
+
+        private static AiPublicationExecutionRequirements ContainerRequirements() => new()
+        {
+            IsolationTier = AiWorkerIsolationTier.SandboxedContainer,
+            NetworkEgress = AiWorkerNetworkEgress.DenyAll,
+            PathProtection = AiWorkerPathProtection.SealedClosure
         };
 
         private static IReadOnlyDictionary<string, string> WorkerEnvironment()
@@ -204,6 +280,20 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             return path;
         }
 
+        private static string FullDirectory(string? value, string label)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                throw new InvalidOperationException($"AiHostedInvocation requires an exact {label} path.");
+            }
+            var path = Path.GetFullPath(value);
+            if (!Directory.Exists(path))
+            {
+                throw new DirectoryNotFoundException($"Configured {label} was not found: {path}");
+            }
+            return path;
+        }
+
         private static string Hash(string path)
         {
             using var stream = File.OpenRead(path);
@@ -230,6 +320,25 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 if (string.IsNullOrWhiteSpace(runtime.Reference) || string.IsNullOrWhiteSpace(runtime.RuntimeVersion))
                 {
                     throw new InvalidOperationException("Every hosted invocation runtime requires an immutable reference and exact version.");
+                }
+            }
+            if (options.Container.Enabled)
+            {
+                if (string.IsNullOrWhiteSpace(options.Container.EngineExecutablePath) ||
+                    string.IsNullOrWhiteSpace(options.Container.ContainerOwnerScope) ||
+                    options.Container.Runtimes is null || options.Container.Runtimes.Count is < 1 or > 16)
+                {
+                    throw new InvalidOperationException(
+                        "Enabled hosted container execution requires an engine path, owner scope and bounded exact OCI runtime list.");
+                }
+                foreach (var runtime in options.Container.Runtimes)
+                {
+                    if (runtime is null || string.IsNullOrWhiteSpace(runtime.Reference) ||
+                        string.IsNullOrWhiteSpace(runtime.ExecutionLanguage) || string.IsNullOrWhiteSpace(runtime.RuntimeVersion) ||
+                        string.IsNullOrWhiteSpace(runtime.ImageRepository) || string.IsNullOrWhiteSpace(runtime.ImageDigest))
+                    {
+                        throw new InvalidOperationException("Every hosted container runtime requires an exact reference, language, version, repository and digest.");
+                    }
                 }
             }
         }

@@ -45,7 +45,11 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.DI
             services.RemoveAll<IAiWorkerInvocationTransport>();
             services.TryAddSingleton<AiWorkerProcessTransport>();
             services.AddSingleton(catalog);
-            services.TryAddSingleton<AiContainerWorkerTransport>();
+            services.TryAddSingleton<AiContainerWorkerTransport>(provider => new AiContainerWorkerTransport(
+                provider.GetRequiredService<IAiContainerWorkerCatalog>(),
+                provider.GetRequiredService<AiWorkerProcessTransportOptions>(),
+                provider.GetRequiredService<TimeProvider>(),
+                new AiWorkerExecutionAdmissionPolicy()));
             services.TryAddSingleton<AiWorkerInvocationTransportRouter>();
             services.AddSingleton<IAiWorkerInvocationTransport>(provider =>
                 provider.GetRequiredService<AiWorkerInvocationTransportRouter>());
