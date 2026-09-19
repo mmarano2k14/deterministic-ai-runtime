@@ -98,6 +98,23 @@ internal static class Program
                 return 0;
             }
 
+            if (mode is "hang-once-after-ready" or "fail-once-after-ready")
+            {
+                var onceMarker = Environment.GetEnvironmentVariable("CONTAINER_ENGINE_PROBE_ONCE_MARKER");
+                if (string.IsNullOrWhiteSpace(onceMarker))
+                    throw new InvalidOperationException("A once-only probe mode requires CONTAINER_ENGINE_PROBE_ONCE_MARKER.");
+                if (!File.Exists(onceMarker))
+                {
+                    await File.WriteAllTextAsync(onceMarker, name);
+                    if (mode == "hang-once-after-ready")
+                    {
+                        await Task.Delay(Timeout.InfiniteTimeSpan);
+                        return 0;
+                    }
+                    return 78;
+                }
+            }
+
             var packageKinds = new List<string>();
             if (request.GetProperty("code").TryGetProperty("dependencies", out var dependencies) &&
                 dependencies.ValueKind == JsonValueKind.Array)

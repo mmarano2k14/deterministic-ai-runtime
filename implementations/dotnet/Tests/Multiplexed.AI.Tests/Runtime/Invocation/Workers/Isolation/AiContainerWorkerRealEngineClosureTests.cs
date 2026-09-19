@@ -120,37 +120,11 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             Assert.True(local.ExitCode == 0,
                 "The exact worker image must already be present locally before the test; runtime execution never pulls it. " + local.Stderr);
 
-            var source = Encoding.UTF8.GetBytes(
-                "def run(inputs, context):\n    return {\"success\": True, \"payload\": {\"value\": inputs[\"amount\"] * 2}}\n");
-            var original = WorkerTestSupport.Request();
-            var file = new AiWorkerFile(
-                "main.py",
-                Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant(),
-                source.LongLength,
-                Convert.ToBase64String(source).TrimEnd('=').Replace('+', '-').Replace('/', '_'));
-            var target = original.Code.Target with
-            {
-                ExecutionLanguage = "python",
-                EnvironmentRef = profile.Runtime.Reference,
-                EnvironmentSha256 = profile.Runtime.RuntimeSha256
-            };
-            var code = new AiWorkerCodeBundle(
-                target, profile.Runtime, "main.py", "run", new[] { file }, Array.Empty<AiWorkerDependency>())
-            {
-                ExecutionDescriptor = profile.ExecutionDescriptor
-            };
-            var request = original with
-            {
-                Inputs = JsonSerializer.SerializeToElement(new { amount = 21 }),
-                Code = code,
-                DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(2)
-            };
-            var transport = new AiContainerWorkerTransport(
-                new AiConfiguredContainerWorkerCatalog(new[] { profile }),
-                new AiWorkerProcessTransportOptions(
-                    startupTimeout: TimeSpan.FromSeconds(30),
-                    heartbeatTimeout: TimeSpan.FromSeconds(15),
-                    shutdownTimeout: TimeSpan.FromSeconds(10)));
+            var request = RealWorkerRequest(
+                profile,
+                "def run(inputs, context):\n    return {\"success\": True, \"payload\": {\"value\": inputs[\"amount\"] * 2}}\n",
+                new { amount = 21 });
+            var transport = RealWorkerTransport(profile);
             var heartbeats = 0;
 
             var result = await transport.InvokeAsync(request, _ =>
@@ -163,14 +137,34 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             Assert.True(heartbeats >= 1);
             using var payload = JsonDocument.Parse(result.PayloadJson);
             Assert.Equal(42, payload.RootElement.GetProperty("value").GetInt32());
+            await AssertNoManagedContainersAsync(profile);
+        }
 
-            var remaining = await RunEngineAsync(
-                "ps", "--all",
-                "--filter", "label=multiplexed.ai.hosted-worker=1",
-                "--filter", "label=multiplexed.ai.owner-scope=" + profile.ContainerOwnerScope,
-                "--format", "{{.Names}}");
-            Assert.Equal(0, remaining.ExitCode);
-            Assert.True(string.IsNullOrWhiteSpace(remaining.Stdout));
+        [RealHostedContainerWorkerFact]
+        public async Task Real_Cancellation_Stops_The_Active_Production_Worker_And_Removes_Its_Container()
+        {
+            var profile = RealWorkerProfile();
+            var local = await RunEngineAsync("image", "inspect", profile.ImageReference);
+            Assert.True(local.ExitCode == 0,
+                "The exact worker image must already be present locally before the test; runtime execution never pulls it. " + local.Stderr);
+
+            var request = RealWorkerRequest(
+                profile,
+                "import time\ndef run(inputs, context):\n    time.sleep(300)\n    return {\"success\": True, \"payload\": {\"unexpected\": True}}\n",
+                new { amount = 21 });
+            var transport = RealWorkerTransport(profile);
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            var heartbeats = 0;
+
+            var operation = transport.InvokeAsync(request, _ =>
+            {
+                if (Interlocked.Increment(ref heartbeats) >= 2) cancellation.Cancel();
+                return Task.CompletedTask;
+            }, cancellation.Token);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation.WaitAsync(TimeSpan.FromSeconds(30)));
+            Assert.True(heartbeats >= 2);
+            await AssertNoManagedContainersAsync(profile);
         }
 
         [RealContainerEngineFact]
@@ -212,6 +206,55 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Isolation
             {
                 if (!removed) _ = await RunEngineAsync("rm", "--force", name);
             }
+        }
+
+        private static AiWorkerInvocationRequest RealWorkerRequest(
+            AiContainerWorkerProfile profile,
+            string sourceText,
+            object inputs)
+        {
+            var source = Encoding.UTF8.GetBytes(sourceText);
+            var original = WorkerTestSupport.Request();
+            var file = new AiWorkerFile(
+                "main.py",
+                Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant(),
+                source.LongLength,
+                Convert.ToBase64String(source).TrimEnd('=').Replace('+', '-').Replace('/', '_'));
+            var target = original.Code.Target with
+            {
+                ExecutionLanguage = "python",
+                EnvironmentRef = profile.Runtime.Reference,
+                EnvironmentSha256 = profile.Runtime.RuntimeSha256
+            };
+            var code = new AiWorkerCodeBundle(
+                target, profile.Runtime, "main.py", "run", new[] { file }, Array.Empty<AiWorkerDependency>())
+            {
+                ExecutionDescriptor = profile.ExecutionDescriptor
+            };
+            return original with
+            {
+                Inputs = JsonSerializer.SerializeToElement(inputs),
+                Code = code,
+                DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(2)
+            };
+        }
+
+        private static AiContainerWorkerTransport RealWorkerTransport(AiContainerWorkerProfile profile) => new(
+            new AiConfiguredContainerWorkerCatalog(new[] { profile }),
+            new AiWorkerProcessTransportOptions(
+                startupTimeout: TimeSpan.FromSeconds(30),
+                heartbeatTimeout: TimeSpan.FromSeconds(15),
+                shutdownTimeout: TimeSpan.FromSeconds(10)));
+
+        private static async Task AssertNoManagedContainersAsync(AiContainerWorkerProfile profile)
+        {
+            var remaining = await RunEngineAsync(
+                "ps", "--all",
+                "--filter", "label=multiplexed.ai.hosted-worker=1",
+                "--filter", "label=multiplexed.ai.owner-scope=" + profile.ContainerOwnerScope,
+                "--format", "{{.Names}}");
+            Assert.Equal(0, remaining.ExitCode);
+            Assert.True(string.IsNullOrWhiteSpace(remaining.Stdout));
         }
 
         private static async Task<CommandResult> StartDetachedAsync(

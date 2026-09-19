@@ -234,8 +234,8 @@ if ($RunTests) {
     }
 
     Write-Host ""
-    Write-Host "Running ContainerRealEngine tests..."
-    & dotnet test $project --filter "Category=ContainerRealEngine"
+    Write-Host "Running ContainerRealEngine tests with detailed execution evidence..."
+    & dotnet test $project --filter "Category=ContainerRealEngine" --logger "console;verbosity=detailed"
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
