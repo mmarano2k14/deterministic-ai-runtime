@@ -99,6 +99,14 @@ OciImage    -> SandboxedContainer -> sibling worker container
 
 The OCI path uses the host Docker socket from the runtime container to launch sibling worker containers. It does not use Docker-in-Docker and it is not evidence of production Kubernetes isolation. The exact worker image is prepared as `repository@sha256:<manifest-digest>` and preloaded before the matrix starts; runtime execution uses `--pull=never`. `KubernetesPool` remains the existing runtime-hosting provider and is validated separately rather than being introduced as another `IAiWorkerInvocationTransport`.
 
+### KubernetesPool live execution sidecar
+
+KubernetesPool live execution is validated through the engine's existing Kubernetes SDK Runtime Pool scenario rather than through a second matrix-owned Pod lifecycle. The sidecar runner at `implementations/matrix/runtime/kubernetes/run-kubernetes-pool-execution.ps1` invokes the existing `HttpKubernetesPoolMcpCommandScenarioTests` path, which creates a real Runtime Pool Pod, waits for readiness, routes one command to each planned in-Pod runtime identity through the stable Service endpoint, and requests cleanup through the same Kubernetes SDK lifecycle client.
+
+The sidecar writes machine-readable evidence for `runtimeProvider=KubernetesPool` and verifies it independently from the canonical Docker `37/37` closure. This increment therefore does **not** change the `37/37` executed-coverage total. The live Kubernetes scenario must pass on the target Minikube/Kubernetes environment before a KubernetesPool GREEN claim is made.
+
+When an exact runtime image is already available to the cluster, the runner can supply `RuntimeImageRepository` plus `RuntimeImageDigest` and enable immutable-image verification. Without those parameters, the historical Kubernetes integration-test image remains available for compatibility; the engine path is the same in either case.
+
 ## Bound feature scenarios
 
 The ProcessHost matrix first binds six publication/dependency feature scenarios without widening execution authority. The Python external SDK is used as the bounded feature driver because the core matrix already proves the public SDK boundary independently for .NET, TypeScript and Python clients. Feature coverage is therefore recorded only for the combinations actually executed.

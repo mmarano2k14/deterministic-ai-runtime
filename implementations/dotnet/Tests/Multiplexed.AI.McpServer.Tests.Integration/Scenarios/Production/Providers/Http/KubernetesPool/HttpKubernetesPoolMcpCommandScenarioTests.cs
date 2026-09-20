@@ -26,6 +26,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
     [Trait("Category", "HttpKubernetesPool")]
     public sealed class HttpKubernetesPoolMcpCommandScenarioTests
     {
+        private const string MatrixScenarioId =
+            "feature-runtime-provider-kubernetes-pool-http-command-routing";
+
         /// <summary>
         /// Creates one real Pod containing three RuntimeInstanceOnly children, then sends one
         /// exact command to each child through the same stable Service endpoint.
@@ -94,6 +97,11 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     resourceFactory,
                     hostOptions);
 
+            string? serviceName = null;
+            string[] runtimeInstanceIds = Array.Empty<string>();
+            var commandCount = 0;
+            AiKubernetesRuntimeHostDeleteResult? deleteResult = null;
+
             try
             {
                 var createResult =
@@ -117,7 +125,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 Assert.True(
                     readinessResult.Metadata.TryGetValue(
                         AiKubernetesRuntimeHostMetadataKeys.ServiceName,
-                        out var serviceName));
+                        out serviceName));
 
                 Assert.False(
                     string.IsNullOrWhiteSpace(serviceName));
@@ -141,7 +149,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         BaseAddress = portForward.Endpoint
                     };
 
-                var runtimeInstanceIds =
+                runtimeInstanceIds =
                     podSpec.Bootstrap.RuntimeInstances
                         .OrderBy(runtime => runtime.Ordinal)
                         .Select(runtime => runtime.RuntimeInstanceId)
@@ -189,13 +197,33 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         .Select(result => result.RuntimeInstanceId)
                         .Distinct(StringComparer.Ordinal)
                         .Count());
+
+                commandCount = results.Length;
             }
             finally
             {
-                await client
-                    .DeleteRuntimePoolHostAsync(podSpec)
-                    .ConfigureAwait(false);
+                deleteResult =
+                    await client
+                        .DeleteRuntimePoolHostAsync(podSpec)
+                        .ConfigureAwait(false);
             }
+
+            Assert.NotNull(deleteResult);
+            Assert.True(
+                deleteResult.Success,
+                deleteResult.FailureReason);
+
+            await KubernetesRuntimePoolMatrixEvidenceWriter
+                .WritePassedAsync(
+                    MatrixScenarioId,
+                    podSpec.RuntimeImage,
+                    podSpec.Namespace,
+                    podSpec.PodName,
+                    serviceName!,
+                    runtimeInstanceIds,
+                    commandCount,
+                    cleanupSucceeded: deleteResult.Success)
+                .ConfigureAwait(false);
         }
 
         /// <summary>
@@ -234,7 +262,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
         private static AiKubernetesRuntimePoolHostOptions
             CreateHostOptions()
         {
-            return new AiKubernetesRuntimePoolHostOptions
+            var options = new AiKubernetesRuntimePoolHostOptions
             {
                 RuntimeImage =
                     KubernetesRuntimePoolScenarioConstants
@@ -265,6 +293,9 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 OpenAiApiKey =
                     "kubernetes-pool-http-5e-not-used"
             };
+
+            KubernetesRuntimePoolMatrixImageProfile.Apply(options);
+            return options;
         }
 
         /// <summary>

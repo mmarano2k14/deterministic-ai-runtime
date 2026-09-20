@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "matrixId": "kubernetes-pool-runtime-execution-v1",
+  "baselineMatrixId": "multilanguage-runtime-v1",
+  "baselineExecutedCoverage": 37,
+  "scenario": {
+    "id": "feature-runtime-provider-kubernetes-pool-http-command-routing",
+    "topology": "kubernetes",
+    "runtimeProvider": "KubernetesPool",
+    "transport": "http",
+    "minimumRuntimeInstanceCount": 3,
+    "minimumSuccessfulCommandCount": 3,
+    "requiredEvidenceKinds": [
+      "kubernetes-sdk-pod-created",
+      "runtime-pool-pod-ready",
+      "stable-service-command-routing",
+      "exact-inpod-runtime-identities",
+      "kubernetes-sdk-delete-accepted"
+    ]
+  },
+  "claimBoundary": "This increment proves live execution through the existing KubernetesPool runtime-hosting provider. It does not add KubernetesPool as a hosted-worker invocation transport and does not extend the canonical 37/37 external-SDK closure yet."
+}
