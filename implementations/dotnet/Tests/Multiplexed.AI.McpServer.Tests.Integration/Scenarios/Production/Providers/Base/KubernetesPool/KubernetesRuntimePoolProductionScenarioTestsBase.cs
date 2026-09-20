@@ -4679,6 +4679,26 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     output.WriteLine(
                         $"[RECURSIVE_CHILD_DAG_PROOF_RESULT] SchemaVersion='{proofSchemaVersion}', SchemaStatus='FROZEN', ProofRunId='{controlPlaneId}', MatrixScenarioId='{resolvedAdversarialSchedule.MatrixScenarioId}', Status='PASS', Transport='{proofTransport}', Provider='KubernetesPool', ChildDepth='{childDepth}', Cycles='{executionCycleCount}', ParentRunsTotal='{totalSubmittedRunCount}', ParentLogicalStepsTotal='{totalLogicalStepCount}', RecursiveChildExecutionsTotal='{totalRecursiveChildExecutionCount}', RecursiveChildLogicalStepsTotal='{expectedRecursiveChildLogicalStepCount}', AllExecutionsTotal='{totalExecutionCount}', AllLogicalStepsTotal='{totalLogicalStepCountIncludingRecursiveChildren}', ParentReplay='{totalReplayProofCount}/{totalSubmittedRunCount}', RecursiveChildReplay='NOT_EVALUATED', RecoveredSharedRunsTotal='{recoveredSharedRunCount}', MissingRecursiveChildStepsTotal='{missingChildLogicalStepCount}', UnexpectedDuplicateRecursiveChildStepsTotal='{unexpectedDuplicateChildLogicalStepCount}', OwnershipTransitionViolations='{totalRuntimeOwnershipTransitionViolationCount}', OwnershipIntervalProofIncluded='False', ProcessKillIdentityContinuity='{childRuntimeFailureCount}/{childRuntimeFailureCount}', ChildRuntimeFailures='{childRuntimeFailureCount}', BusyHostFailures='{busyHostFailureCount}', FailureSeed='{resolvedAdversarialSchedule.FailureSeed}', Matrix='{resolvedAdversarialSchedule.MatrixStatus}'");
 
+                    await KubernetesRuntimePoolMatrixEvidenceWriter
+                        .WriteRecoveryPassedAsync(
+                            "feature-runtime-provider-kubernetes-pool-hierarchical-recovery",
+                            proofTransport,
+                            recoveryObservationMode.ToString(),
+                            executionCycleCount,
+                            childDepth,
+                            childRuntimeFailureCount,
+                            busyHostFailureCount,
+                            recoveredSharedRunCount,
+                            allRecoveryForensicsIds.Length,
+                            totalRuntimeOwnershipTransitionCount,
+                            totalRuntimeOwnershipTransitionViolationCount,
+                            totalSubmittedRunCount,
+                            totalReplayProofCount,
+                            missingChildLogicalStepCount,
+                            unexpectedDuplicateChildLogicalStepCount,
+                            executionCycleCount > 1)
+                        .ConfigureAwait(false);
+
                     output.WriteLine(
                         "# RECURSIVE CHILD DAG PRODUCTION PROOF END");
                 }

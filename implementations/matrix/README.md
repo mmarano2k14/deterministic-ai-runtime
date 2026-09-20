@@ -107,6 +107,12 @@ The sidecar writes machine-readable evidence for `runtimeProvider=KubernetesPool
 
 When an exact runtime image is already available to the cluster, the runner can supply `RuntimeImageRepository` plus `RuntimeImageDigest` and enable immutable-image verification. Without those parameters, the historical Kubernetes integration-test image remains available for compatibility; the engine path is the same in either case.
 
+### KubernetesPool lifecycle/recovery sidecar
+
+Lifecycle and recovery evidence reuses the existing `HttpKubernetesRuntimePoolFullFailureProductionScenarioTests.Http_KubernetesPool_EventDriven_Canary_Should_Reuse_The_Same_FullFailure_Scenario` production canary. The runner at `implementations/matrix/runtime/kubernetes/run-kubernetes-pool-recovery.ps1` does not create a second recovery harness. It only requests a machine-readable evidence document while the existing engine proves an exact in-Pod runtime-process failure, a distinct busy-Pod failure, replacement capacity, recovery forensics, runtime ownership convergence, parent replay, recursive Child DAG terminal convergence, ledger/trace/lifecycle consistency, and warm-pool reuse.
+
+The recovery sidecar is verified by `recovery_verifier.py` against `kubernetes-pool-recovery-v1.json`. Like the live-execution sidecar, it preserves the canonical Docker `37/37` baseline until final KubernetesPool matrix closure. A GREEN recovery claim is made only after the real EventDriven production canary succeeds on the target Kubernetes environment and the generated evidence passes the recovery verifier.
+
 ## Bound feature scenarios
 
 The ProcessHost matrix first binds six publication/dependency feature scenarios without widening execution authority. The Python external SDK is used as the bounded feature driver because the core matrix already proves the public SDK boundary independently for .NET, TypeScript and Python clients. Feature coverage is therefore recorded only for the combinations actually executed.

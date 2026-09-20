@@ -99,6 +99,93 @@ class KubernetesRuntimePoolMatrixTests(unittest.TestCase):
             )
             module.verify(plan_path, evidence_path, require_immutable_image=True)
 
+    def test_recovery_sidecar_plan_preserves_baseline_and_requires_existing_full_failure_proof(self) -> None:
+        plan = json.loads((KUBERNETES / "kubernetes-pool-recovery-v1.json").read_text(encoding="utf-8-sig"))
+        self.assertEqual(1, plan["schemaVersion"])
+        self.assertEqual("kubernetes-pool-runtime-recovery-v1", plan["matrixId"])
+        self.assertEqual(37, plan["baselineExecutedCoverage"])
+        scenario = plan["scenario"]
+        self.assertEqual("feature-runtime-provider-kubernetes-pool-hierarchical-recovery", scenario["id"])
+        self.assertEqual("KubernetesPool", scenario["runtimeProvider"])
+        self.assertEqual("EventDriven", scenario["requiredObservationMode"])
+        self.assertGreaterEqual(scenario["minimumExecutionCycleCount"], 2)
+        self.assertGreaterEqual(scenario["minimumChildDepth"], 3)
+
+    def test_recovery_evidence_is_emitted_by_existing_kubernetes_pool_full_failure_harness(self) -> None:
+        base = (DOTNET_TESTS / "Base" / "KubernetesPool" / "KubernetesRuntimePoolProductionScenarioTestsBase.cs").read_text(encoding="utf-8-sig")
+        writer = (DOTNET_TESTS / "Base" / "KubernetesPool" / "KubernetesRuntimePoolMatrixEvidenceWriter.cs").read_text(encoding="utf-8-sig")
+        self.assertIn("WriteRecoveryPassedAsync", base)
+        self.assertIn("feature-runtime-provider-kubernetes-pool-hierarchical-recovery", base)
+        self.assertIn("MULTIPLEXED_AI_MATRIX_KUBERNETES_RECOVERY_EVIDENCE_PATH", writer)
+        self.assertIn("process-kill-execution-identity-continuity", writer)
+        self.assertIn("runtime-ownership-convergence", writer)
+        self.assertNotIn("KubernetesSdkAiKubernetesRuntimePoolHostClient", writer)
+
+    def test_recovery_runner_reuses_existing_eventdriven_full_failure_canary(self) -> None:
+        runner = (KUBERNETES / "run-kubernetes-pool-recovery.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn("HttpKubernetesRuntimePoolFullFailureProductionScenarioTests.Http_KubernetesPool_EventDriven_Canary_Should_Reuse_The_Same_FullFailure_Scenario", runner)
+        self.assertIn("MULTIPLEXED_AI_MATRIX_KUBERNETES_RECOVERY_EVIDENCE_PATH", runner)
+        self.assertIn("recovery_verifier.py", runner)
+        self.assertNotIn("docker compose", runner.lower())
+        self.assertNotIn("KubernetesSdkAiKubernetesRuntimePoolHostClient", runner)
+
+    def test_recovery_verifier_accepts_exact_existing_engine_convergence_evidence(self) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("kubernetes_pool_recovery_verifier", KUBERNETES / "recovery_verifier.py")
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        plan_path = KUBERNETES / "kubernetes-pool-recovery-v1.json"
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_path = Path(directory) / "recovery.json"
+            evidence_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "scenarioId": "feature-runtime-provider-kubernetes-pool-hierarchical-recovery",
+                        "status": "passed",
+                        "topology": "kubernetes",
+                        "runtimeProvider": "KubernetesPool",
+                        "transport": "http",
+                        "recovery": {
+                            "observationMode": "EventDriven",
+                            "executionCycleCount": 2,
+                            "childDepth": 3,
+                            "runtimeProcessFailureCount": 2,
+                            "podFailureCount": 2,
+                            "recoveredSharedRunCount": 8,
+                            "recoveryForensicsProofCount": 8,
+                            "runtimeOwnershipTransitionCount": 8,
+                            "runtimeOwnershipTransitionViolationCount": 0,
+                            "parentReplayExpectedExecutionCount": 54,
+                            "parentReplayProvenExecutionCount": 54,
+                            "missingRecursiveChildLogicalStepCount": 0,
+                            "unexpectedDuplicateRecursiveChildLogicalStepCount": 0,
+                            "lostRunCount": 0,
+                            "duplicateDurableDispatchCount": 0,
+                            "warmReuseProven": True,
+                        },
+                        "evidenceKinds": [
+                            "exact-inpod-runtime-process-failure",
+                            "process-kill-execution-identity-continuity",
+                            "busy-pod-failure",
+                            "replacement-pod-capacity",
+                            "recovery-forensics",
+                            "runtime-ownership-convergence",
+                            "terminal-dag-convergence",
+                            "parent-replay",
+                            "ledger-trace-lifecycle-proof",
+                            "warm-pool-reuse",
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            module.verify(plan_path, evidence_path)
+
 
 if __name__ == "__main__":
     unittest.main()
