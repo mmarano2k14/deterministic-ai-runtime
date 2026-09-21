@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-dependency-package-python-client-dotnet-worker",
+  "status": "passed",
+  "coverageTarget": "deterministic-dependency-packaging",
+  "coverageValues": [
+    "DotNetAssemblyClosure"
+  ],
+  "clientLanguage": "python",
+  "workerLanguage": "dotnet",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-d3ccd19acdb277d964766044a138398b3e26fe03cb673ba2f1e39d5d4672e856",
+  "executionId": "published-c6f30be6afbe901baddc974ee6ea0546edfc552948d6fbfec541210d75608718",
+  "terminalStatus": "Completed",
+  "packageKind": "DotNetAssemblyClosure",
+  "evidence": [
+    "publish",
+    "submit",
+    "packaged-dependency",
+    "observe",
+    "terminal-result"
+  ],
+  "recordedAtUtc": "2026-09-21T03:47:28.221+00:00"
+}

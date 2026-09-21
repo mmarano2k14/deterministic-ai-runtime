@@ -1,0 +1,39 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {
+      "Multiplexed.AI.Samples.PublishedPackagedFunctions/1.0.0": {
+        "dependencies": {
+          "Multiplexed.AI.Samples.PublishedDependency": "1.0.0"
+        },
+        "runtime": {
+          "Multiplexed.AI.Samples.PublishedPackagedFunctions.dll": {}
+        }
+      },
+      "Multiplexed.AI.Samples.PublishedDependency/1.0.0": {
+        "runtime": {
+          "Multiplexed.AI.Samples.PublishedDependency.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "Multiplexed.AI.Samples.PublishedPackagedFunctions/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "Multiplexed.AI.Samples.PublishedDependency/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-custom-policy-delegation-dotnet-worker",
+  "status": "passed",
+  "coverageTarget": "custom-policy-family",
+  "coverageValues": [
+    "delegation"
+  ],
+  "clientLanguage": "python",
+  "workerLanguage": "dotnet",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-f10162a2618048c37b59be6778f4fbdb45b1e8028f0a0f2bc3fa549878de5a97",
+  "executionId": "published-a86eb897117d2bc0e8806692f36a1f5202b98420bfbe22c1c78a339668402584",
+  "policyFamily": "delegation",
+  "policyDecision": "deny",
+  "expectedTerminalStatus": "Failed",
+  "terminalStatus": "Failed",
+  "failureCode": "execution_failed",
+  "evidence": [
+    "publish",
+    "submit",
+    "hosted-custom-policy",
+    "policy-deny-enforced",
+    "observe",
+    "terminal-result"
+  ],
+  "recordedAtUtc": "2026-09-21T03:47:58.389+00:00"
+}

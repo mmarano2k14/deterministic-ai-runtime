@@ -5,16 +5,16 @@
   "topology": "kubernetes",
   "runtimeProvider": "KubernetesPool",
   "transport": "http",
-  "runtimeImage": "multiplexed-ai-runtime:k8s-debug-143",
+  "runtimeImage": "multiplexed-ai-runtime:k8s-debug-150",
   "immutableRuntimeImage": false,
   "kubernetes": {
     "namespaceName": "ai-runtime",
-    "podName": "runtime-pool-pool-5e-http-69a5c9c5-request-69a5",
-    "serviceName": "runtime-pool-pool-5e-http-69a5c9c5-request-69a5-svc",
+    "podName": "runtime-pool-pool-5e-http-223c79f0-request-223c",
+    "serviceName": "runtime-pool-pool-5e-http-223c79f0-request-223c-svc",
     "runtimeInstanceIds": [
-      "pool-5e-http-69a5c9c5-primary",
-      "runtime-pool-2-request-69a5c9c5",
-      "runtime-pool-3-request-69a5c9c5"
+      "pool-5e-http-223c79f0-primary",
+      "runtime-pool-2-request-223c79f0",
+      "runtime-pool-3-request-223c79f0"
     ],
     "runtimeInstanceCount": 3,
     "commandCount": 3,

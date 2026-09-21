@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "core-python-client-dotnet-worker",
+  "status": "passed",
+  "clientLanguage": "python",
+  "workerLanguage": "dotnet",
+  "environmentRef": "matrix-dotnet",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-6f65857e74a258098b951e83c003e25961de43a3b7bc93ba41a991ebbc664341",
+  "executionId": "published-042c63354896d526c09e257b3c08094ac6831ff17f72aa0292accf32c165b2f4",
+  "terminalStatus": "Completed",
+  "outputMarkerVerified": false,
+  "evidence": [
+    "publish",
+    "submit",
+    "observe",
+    "terminal-result",
+    "public-execution-id"
+  ],
+  "recordedAtUtc": "2026-09-21T03:46:25.147+00:00"
+}

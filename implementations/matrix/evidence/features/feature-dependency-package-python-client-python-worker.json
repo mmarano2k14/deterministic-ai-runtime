@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-dependency-package-python-client-python-worker",
+  "status": "passed",
+  "coverageTarget": "deterministic-dependency-packaging",
+  "coverageValues": [
+    "PythonWheelBundle"
+  ],
+  "clientLanguage": "python",
+  "workerLanguage": "python",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-90c6c4cbcf2d0dd0c79e9a604aa7eb5fe517cb80ad8b0b1beaaaf5eff0e50543",
+  "executionId": "published-2e2c553a8fb05d7323a3df4dad461388f6f003844ab2de62a2c85a7a0f9a5d4c",
+  "terminalStatus": "Completed",
+  "packageKind": "PythonWheelBundle",
+  "evidence": [
+    "publish",
+    "submit",
+    "packaged-dependency",
+    "observe",
+    "terminal-result"
+  ],
+  "recordedAtUtc": "2026-09-21T03:47:40.005+00:00"
+}

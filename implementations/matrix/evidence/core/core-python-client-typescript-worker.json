@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "core-python-client-typescript-worker",
+  "status": "passed",
+  "clientLanguage": "python",
+  "workerLanguage": "typescript",
+  "environmentRef": "matrix-typescript@typescript-js-v1-edcab692712615466132cb74f291fb88c51ddc017eab58b7b1dc79d74df30f4a",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-ef47698cd01dc7943dd29c07930717f50cc8fbc26ba4d422d9ed0e9992d2ec98",
+  "executionId": "published-c9e823605ef2ff5f25967424445f490fd7da626549299bedc3e191501beded9d",
+  "terminalStatus": "Completed",
+  "outputMarkerVerified": false,
+  "evidence": [
+    "publish",
+    "submit",
+    "observe",
+    "terminal-result",
+    "public-execution-id"
+  ],
+  "recordedAtUtc": "2026-09-21T03:46:31.646+00:00"
+}

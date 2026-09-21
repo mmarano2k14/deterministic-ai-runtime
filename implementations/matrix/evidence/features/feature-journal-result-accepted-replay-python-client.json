@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-journal-result-accepted-replay-python-client",
+  "status": "passed",
+  "coverageTarget": "journal-result-acceptance",
+  "coverageValues": [
+    "accepted-result-replay"
+  ],
+  "clientLanguage": "python",
+  "workerLanguage": null,
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "operationId": "invocation-611d9d0bf20475a21bb70518ef515385f0d46272c05ebdfd1f2f12d39475c394",
+  "firstCompletionStatus": "Accepted",
+  "replayCompletionStatus": "AlreadyAccepted",
+  "deliveryCount": null,
+  "acceptedCount": null,
+  "alreadyAcceptedCount": null,
+  "leaseRejectedCount": null,
+  "terminalStatus": "Succeeded",
+  "continuationStatus": "Pending",
+  "resultSha256": "ab6c2199f6346481ceba4cb08134002109a5ca5ba3fb0652b3c02252d7653e78",
+  "leaseEpoch": 1,
+  "journalRevision": 2,
+  "evidence": [
+    "mongo-backed-journal-prepare",
+    "lease-epoch-acquired",
+    "result-accepted",
+    "fresh-journal-reload",
+    "identical-result-replay-already-accepted",
+    "pending-continuation-preserved"
+  ]
+}

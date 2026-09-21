@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-publication-pinning-python-client-python-worker",
+  "status": "passed",
+  "coverageTarget": "publication-pinning",
+  "coverageValues": [],
+  "clientLanguage": "python",
+  "workerLanguage": "python",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "originalPublicationRef": "pub-9bf1001b3dce540e16e4e206a3326468945c51e40c219131f9591dc443b47a3f",
+  "replacementPublicationRef": "pub-9c63ecf82eb6cab491d39abba3d35987abe006d5e5b10f321a1db47ae7602da2",
+  "submittedPublicationRef": "pub-9bf1001b3dce540e16e4e206a3326468945c51e40c219131f9591dc443b47a3f",
+  "postRepublishObservedPublicationRef": "pub-9bf1001b3dce540e16e4e206a3326468945c51e40c219131f9591dc443b47a3f",
+  "postRepublishObservedStatus": "Waiting",
+  "terminalObservedPublicationRef": "pub-9bf1001b3dce540e16e4e206a3326468945c51e40c219131f9591dc443b47a3f",
+  "executionId": "published-be0923f89afdab2e4e90856beda4574b9ec4efdc38182db4a7bed38190ca7f80",
+  "terminalStatus": "Completed",
+  "evidence": [
+    "publish-original",
+    "submit-original",
+    "publish-replacement",
+    "observe-original-pin-after-republication",
+    "replacement-poison-not-executed",
+    "terminal-result"
+  ],
+  "recordedAtUtc": "2026-09-21T03:47:20.632+00:00"
+}

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "core-typescript-client-python-worker",
+  "status": "passed",
+  "clientLanguage": "typescript",
+  "workerLanguage": "python",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-44aa503f24e5deb84f328210bd0735ca6b950dc939a4e7b8db465c4a73e51a1c",
+  "executionId": "published-8041fc357c2cd733772cd2235f8de6272f3c273bd3de73c7fcc7d798f5a2f26e",
+  "terminalStatus": "Completed",
+  "evidence": [
+    "publish",
+    "submit",
+    "observe",
+    "terminal-result",
+    "public-execution-id"
+  ],
+  "recordedAtUtc": "2026-09-21T03:46:20.178Z"
+}

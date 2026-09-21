@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-journal-duplicate-delivery-convergence-python-client",
+  "status": "passed",
+  "coverageTarget": "journal-result-acceptance",
+  "coverageValues": [
+    "duplicate-delivery-convergence"
+  ],
+  "clientLanguage": "python",
+  "workerLanguage": null,
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "operationId": "invocation-d7c480fbc782ff4d40ae72a190a9c4e979127f3f7e070bc74bb75f030bccb51d",
+  "firstCompletionStatus": null,
+  "replayCompletionStatus": null,
+  "deliveryCount": 8,
+  "acceptedCount": 1,
+  "alreadyAcceptedCount": 7,
+  "leaseRejectedCount": 0,
+  "terminalStatus": "Succeeded",
+  "continuationStatus": "Pending",
+  "resultSha256": "ff03b4b1b213b96ad3ef27264b832a4b86e83f33986cd1bf639a484031e6890f",
+  "leaseEpoch": 1,
+  "journalRevision": 2,
+  "evidence": [
+    "mongo-backed-journal-prepare",
+    "lease-epoch-acquired",
+    "concurrent-duplicate-deliveries",
+    "single-result-accepted",
+    "duplicates-converged-already-accepted",
+    "pending-continuation-preserved"
+  ]
+}

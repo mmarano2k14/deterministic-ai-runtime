@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-publication-pinning-python-client-dotnet-worker",
+  "status": "passed",
+  "coverageTarget": "publication-pinning",
+  "coverageValues": [],
+  "clientLanguage": "python",
+  "workerLanguage": "dotnet",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "originalPublicationRef": "pub-d1629d6f2f609412f88bbf2493d60a5d93cbeb23a776786be0cf292289be0816",
+  "replacementPublicationRef": "pub-0d6b502d275c440609c635ff2d953dd1b122def0915876ad05b9c836e8623191",
+  "submittedPublicationRef": "pub-d1629d6f2f609412f88bbf2493d60a5d93cbeb23a776786be0cf292289be0816",
+  "postRepublishObservedPublicationRef": "pub-d1629d6f2f609412f88bbf2493d60a5d93cbeb23a776786be0cf292289be0816",
+  "postRepublishObservedStatus": "Waiting",
+  "terminalObservedPublicationRef": "pub-d1629d6f2f609412f88bbf2493d60a5d93cbeb23a776786be0cf292289be0816",
+  "executionId": "published-d704e48d98176370763e744ce24621c4509f66f74ddc187ca4431fbe062643e3",
+  "terminalStatus": "Completed",
+  "evidence": [
+    "publish-original",
+    "submit-original",
+    "publish-replacement",
+    "observe-original-pin-after-republication",
+    "replacement-poison-not-executed",
+    "terminal-result"
+  ],
+  "recordedAtUtc": "2026-09-21T03:46:52.872+00:00"
+}

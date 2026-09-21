@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Multiplexed.AI.Sdk;
 using Multiplexed.AI.Sdk.Authentication;
+using Multiplexed.AI.Sdk.Errors;
 using Multiplexed.AI.Sdk.Contracts.Control;
 using Multiplexed.AI.Sdk.Contracts.Executions;
 using Multiplexed.AI.Sdk.Contracts.Observation;
@@ -9,125 +10,163 @@ using Multiplexed.AI.Sdk.Contracts.Pipelines;
 using Multiplexed.AI.Sdk.Contracts.Publication;
 using Multiplexed.AI.Sdk.Transport;
 
-var options = Arguments.Parse(args);
-if (string.Equals(options.Feature, "dependency-firewall", StringComparison.OrdinalIgnoreCase))
-{
-    await RunDependencyFirewallAsync(options);
-    return;
-}
+return await RunClientAsync(args);
 
-var transportOptions = new AiSdkTransportOptions
+static async Task<int> RunClientAsync(string[] args)
 {
-    CredentialProvider = string.IsNullOrWhiteSpace(options.Token)
-        ? null
-        : new AiSdkStaticCredentialProvider(new AiSdkCredential("Bearer", options.Token)),
-    AdditionalHeaders = string.IsNullOrWhiteSpace(options.AccessContext)
-        ? null
-        : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            [options.AccessContextHeader] = options.AccessContext
-        }
-};
-var client = new AiSdkClient(new AiSdkMcpHttpTransport(new Uri(options.Endpoint), transportOptions));
-
-if (string.Equals(options.Feature, "cancellation", StringComparison.OrdinalIgnoreCase))
-{
-    await RunCancellationAsync(client, options);
-    return;
-}
-if (!string.IsNullOrWhiteSpace(options.Feature))
-{
-    throw new ArgumentException($"Unsupported --feature '{options.Feature}'.");
-}
-
-var source = WorkerSource.Load(options.Worker);
-var marker = options.ScenarioId + "-marker";
-var publication = await client.PublishPipelineAsync(new AiSdkPipelinePublicationRequest
-{
-    Definition = new AiSdkPipelineDefinition
+    var stage = "ARGUMENTS";
+    try
     {
-        Name = "matrix-" + options.ScenarioId,
-        Version = "1",
-        ExecutionLanguage = options.Worker,
-        ExecutionMode = AiSdkExecutionMode.Dag,
-        Steps =
-        [
-            new AiSdkPipelineStepDefinition
-            {
-                Name = "work",
-                StepKey = "custom",
-                Order = 0,
-                ExecutionLanguage = options.Worker,
-                Invocation = new AiSdkInvocationDefinition { Kind = AiSdkInvocationKind.Custom },
-                Input = new Dictionary<string, JsonElement>
-                {
-                    ["marker"] = JsonSerializer.SerializeToElement(marker)
-                }
-            }
-        ]
-    },
-    Functions =
-    [
-        new AiSdkPublicationFunctionUpload
+        var options = Arguments.Parse(args);
+        if (string.Equals(options.Feature, "dependency-firewall", StringComparison.OrdinalIgnoreCase))
         {
-            Site = new AiSdkPublicationCallSite
-            {
-                Kind = AiSdkPublicationFunctionKind.Step,
-                StepName = "work"
-            },
-            EnvironmentRef = options.EnvironmentRef,
-            EntryPointPath = source.EntryPointPath,
-            EntryPointSymbol = source.EntryPointSymbol,
-            Sources =
-            [
-                new AiSdkPublicationFileUpload
+            stage = "DEPENDENCY-FIREWALL";
+            await RunDependencyFirewallAsync(options);
+            return 0;
+        }
+
+        var transportOptions = new AiSdkTransportOptions
+        {
+            CredentialProvider = string.IsNullOrWhiteSpace(options.Token)
+                ? null
+                : new AiSdkStaticCredentialProvider(new AiSdkCredential("Bearer", options.Token)),
+            AdditionalHeaders = string.IsNullOrWhiteSpace(options.AccessContext)
+                ? null
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    Path = source.EntryPointPath,
-                    ContentBase64 = Convert.ToBase64String(source.Bytes)
+                    [options.AccessContextHeader] = options.AccessContext
+                }
+        };
+        var client = new AiSdkClient(new AiSdkMcpHttpTransport(new Uri(options.Endpoint), transportOptions));
+
+        if (string.Equals(options.Feature, "cancellation", StringComparison.OrdinalIgnoreCase))
+        {
+            stage = "CANCELLATION";
+            await RunCancellationAsync(client, options);
+            return 0;
+        }
+        if (!string.IsNullOrWhiteSpace(options.Feature))
+        {
+            throw new ArgumentException($"Unsupported --feature '{options.Feature}'.");
+        }
+
+        Console.WriteLine($"[matrix-dotnet-client] START scenario={options.ScenarioId} worker={options.Worker} topology={options.Topology} runtimeProvider={options.RuntimeProvider}");
+        stage = "SOURCE";
+        var source = WorkerSource.Load(options.Worker);
+        var marker = options.ScenarioId + "-marker";
+        stage = "PUBLISH";
+        Console.WriteLine("[matrix-dotnet-client] PUBLISH start");
+        var publication = await client.PublishPipelineAsync(new AiSdkPipelinePublicationRequest
+        {
+            Definition = new AiSdkPipelineDefinition
+            {
+                Name = "matrix-" + options.ScenarioId,
+                Version = "1",
+                ExecutionLanguage = options.Worker,
+                ExecutionMode = AiSdkExecutionMode.Dag,
+                Steps =
+                [
+                    new AiSdkPipelineStepDefinition
+                    {
+                        Name = "work",
+                        StepKey = "custom",
+                        Order = 0,
+                        ExecutionLanguage = options.Worker,
+                        Invocation = new AiSdkInvocationDefinition { Kind = AiSdkInvocationKind.Custom },
+                        Input = new Dictionary<string, JsonElement>
+                        {
+                            ["marker"] = JsonSerializer.SerializeToElement(marker)
+                        }
+                    }
+                ]
+            },
+            Functions =
+            [
+                new AiSdkPublicationFunctionUpload
+                {
+                    Site = new AiSdkPublicationCallSite
+                    {
+                        Kind = AiSdkPublicationFunctionKind.Step,
+                        StepName = "work"
+                    },
+                    EnvironmentRef = options.EnvironmentRef,
+                    EntryPointPath = source.EntryPointPath,
+                    EntryPointSymbol = source.EntryPointSymbol,
+                    Sources =
+                    [
+                        new AiSdkPublicationFileUpload
+                        {
+                            Path = source.EntryPointPath,
+                            ContentBase64 = Convert.ToBase64String(source.Bytes)
+                        }
+                    ]
                 }
             ]
+        });
+
+        Console.WriteLine($"[matrix-dotnet-client] PUBLISH succeeded publicationRef={publication.PublicationRef}");
+        stage = "SUBMIT";
+        Console.WriteLine("[matrix-dotnet-client] SUBMIT start");
+        var submitted = await client.SubmitExecutionAsync(new AiSdkExecutionSubmissionRequest
+        {
+            PublicationRef = publication.PublicationRef,
+            IdempotencyKey = options.ScenarioId + "-" + Guid.NewGuid().ToString("N"),
+            Input = JsonSerializer.SerializeToElement(new { marker }),
+            Metadata = new Dictionary<string, string>
+            {
+                ["matrix.scenario"] = options.ScenarioId,
+                ["matrix.client"] = "dotnet",
+                ["matrix.worker"] = options.Worker
+            }
+        });
+
+        Console.WriteLine($"[matrix-dotnet-client] SUBMIT succeeded executionId={submitted.ExecutionId} status={submitted.Status}");
+        stage = "OBSERVE";
+        Console.WriteLine($"[matrix-dotnet-client] OBSERVE waiting executionId={submitted.ExecutionId}");
+        var observed = await WaitForTerminalAsync(client, submitted.ExecutionId, TimeSpan.FromSeconds(90));
+        Console.WriteLine($"[matrix-dotnet-client] OBSERVE terminal executionId={submitted.ExecutionId} status={observed.Status}");
+        stage = "RESULT";
+        var result = await client.GetExecutionResultAsync(submitted.ExecutionId);
+        if (result.Status != AiSdkExecutionStatus.Completed)
+        {
+            Console.Error.WriteLine("[matrix-dotnet-client] RESULT failure=" + JsonSerializer.Serialize(result.Failure));
+            throw new InvalidOperationException($"Execution '{submitted.ExecutionId}' ended as '{result.Status}'.");
         }
-    ]
-});
 
-var submitted = await client.SubmitExecutionAsync(new AiSdkExecutionSubmissionRequest
-{
-    PublicationRef = publication.PublicationRef,
-    IdempotencyKey = options.ScenarioId + "-" + Guid.NewGuid().ToString("N"),
-    Input = JsonSerializer.SerializeToElement(new { marker }),
-    Metadata = new Dictionary<string, string>
-    {
-        ["matrix.scenario"] = options.ScenarioId,
-        ["matrix.client"] = "dotnet",
-        ["matrix.worker"] = options.Worker
+        Console.WriteLine($"[matrix-dotnet-client] RESULT status={result.Status}");
+        stage = "EVIDENCE";
+        await Evidence.WriteAsync(options.Evidence, new
+        {
+            schemaVersion = 1,
+            scenarioId = options.ScenarioId,
+            status = "passed",
+            clientLanguage = "dotnet",
+            workerLanguage = options.Worker,
+            endpoint = options.Endpoint,
+            topology = options.Topology,
+            provider = options.Provider,
+            runtimeProvider = options.RuntimeProvider,
+            workerExecutionProvider = options.WorkerExecutionProvider,
+            publicationRef = publication.PublicationRef,
+            executionId = submitted.ExecutionId,
+            terminalStatus = result.Status.ToString(),
+            evidence = new[] { "publish", "submit", "observe", "terminal-result", "public-execution-id" },
+            recordedAtUtc = DateTimeOffset.UtcNow
+        });
+        return 0;
     }
-});
-
-var observed = await WaitForTerminalAsync(client, submitted.ExecutionId, TimeSpan.FromSeconds(90));
-var result = await client.GetExecutionResultAsync(submitted.ExecutionId);
-if (result.Status != AiSdkExecutionStatus.Completed)
-{
-    throw new InvalidOperationException($"Execution '{submitted.ExecutionId}' ended as '{result.Status}'.");
+    catch (Exception exception)
+    {
+        Console.Error.WriteLine($"[matrix-dotnet-client] {stage} FAILED {exception.GetType().FullName}: {exception.Message}");
+        if (exception is AiSdkException sdkException)
+        {
+            // Do not print credentials, request headers, the manifest or uploaded source.
+            Console.Error.WriteLine("[matrix-dotnet-client] SDK error=" + JsonSerializer.Serialize(sdkException.Error));
+        }
+        Console.Error.WriteLine(exception.ToString());
+        return 1;
+    }
 }
-
-await Evidence.WriteAsync(options.Evidence, new
-{
-    schemaVersion = 1,
-    scenarioId = options.ScenarioId,
-    status = "passed",
-    clientLanguage = "dotnet",
-    workerLanguage = options.Worker,
-    endpoint = options.Endpoint,
-    topology = options.Topology,
-    provider = options.Provider,
-    runtimeProvider = options.RuntimeProvider,
-    workerExecutionProvider = options.WorkerExecutionProvider,
-    publicationRef = publication.PublicationRef,
-    executionId = submitted.ExecutionId,
-    terminalStatus = result.Status.ToString(),
-    evidence = new[] { "publish", "submit", "observe", "terminal-result", "public-execution-id" },
-    recordedAtUtc = DateTimeOffset.UtcNow
-});
 
 static async Task<AiSdkExecutionObservation> WaitForTerminalAsync(
     AiSdkClient client,

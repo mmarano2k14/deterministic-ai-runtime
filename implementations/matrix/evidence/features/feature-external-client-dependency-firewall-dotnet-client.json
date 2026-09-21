@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-external-client-dependency-firewall-dotnet-client",
+  "status": "passed",
+  "coverageTarget": "external-client-dependency-firewall",
+  "coverageValues": [],
+  "clientLanguage": "dotnet",
+  "workerLanguage": null,
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "artifactKind": "published-dotnet-client",
+  "sdkRepositoryReferences": [
+    "Multiplexed.AI.Sdk.Contracts"
+  ],
+  "contractRepositoryReferences": [],
+  "publishedRepositoryAssemblies": [
+    "Multiplexed.AI.Matrix.DotNetClient",
+    "Multiplexed.AI.Sdk",
+    "Multiplexed.AI.Sdk.Contracts"
+  ],
+  "forbiddenRepositoryDependencies": [],
+  "evidence": [
+    "sdk-assembly-reference-graph-inspected",
+    "contracts-reference-graph-inspected",
+    "published-client-bundle-inspected",
+    "no-engine-runtime-dependency"
+  ],
+  "recordedAtUtc": "2026-09-21T03:49:17.5056189+00:00"
+}

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "core-python-client-python-worker",
+  "status": "passed",
+  "clientLanguage": "python",
+  "workerLanguage": "python",
+  "environmentRef": "matrix-python",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-e459e0998408bc6a925eb373b91074ee8e2a21d16888df6e42cc1a880612a548",
+  "executionId": "published-d29b0f5d8d7f824dfb35990ef0862bd178d9166d45eceac02f75c8f3f687c647",
+  "terminalStatus": "Completed",
+  "outputMarkerVerified": false,
+  "evidence": [
+    "publish",
+    "submit",
+    "observe",
+    "terminal-result",
+    "public-execution-id"
+  ],
+  "recordedAtUtc": "2026-09-21T03:46:36.586+00:00"
+}

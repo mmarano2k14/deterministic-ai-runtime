@@ -10,8 +10,8 @@
   "provider": "KubernetesPool",
   "runtimeProvider": "KubernetesPool",
   "workerExecutionProvider": "TrustedProcess",
-  "publicationRef": "pub-2a5f3e37e0452305c5d5b923070bc144413d7418c25217169a26d8c37e6a2600",
-  "executionId": "published-a87fd7a22ee7847a916b5f963c1b33739530c7f47a3139a6185075f5ecb6cac4",
+  "publicationRef": "pub-fa9a811d6fb5dd85ceba6a1e31e84f85c97ed746a80cd0ab751e4336c599c6d4",
+  "executionId": "published-31c1619aabd4c3a98dbda2a4665b755ae827483a498457d12a5494b29f76fb63",
   "terminalStatus": "Completed",
   "outputMarkerVerified": true,
   "evidence": [
@@ -21,5 +21,5 @@
     "terminal-result",
     "public-execution-id"
   ],
-  "recordedAtUtc": "2026-09-20T23:47:23.502+00:00"
+  "recordedAtUtc": "2026-09-21T05:29:57.189+00:00"
 }

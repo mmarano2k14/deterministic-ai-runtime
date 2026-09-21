@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-nested-child-dag-python-client-python-worker",
+  "status": "passed",
+  "coverageTarget": "nested-child-dag",
+  "coverageValues": [],
+  "clientLanguage": "python",
+  "workerLanguage": "python",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-6a849d491af82480c2834a2803132f5b1fb34f745c4ccf343366bf07821fee62",
+  "executionId": "published-207ebd4eaaedc8a711f4e54d80a60308a4b736b99c75036cfa5a40679d800531",
+  "terminalStatus": "Completed",
+  "nestedDepth": 2,
+  "definitionPath": "/invoke-child/invoke-grandchild",
+  "rootChildStep": "invoke-child",
+  "nestedChildStep": "invoke-grandchild",
+  "leafStep": "leaf",
+  "rootStepStatus": "Completed",
+  "evidence": [
+    "publish-nested-definition",
+    "submit-root",
+    "nested-child-dispatch",
+    "nested-grandchild-custom-declaration",
+    "parent-continuation",
+    "observe",
+    "terminal-result"
+  ],
+  "recordedAtUtc": "2026-09-21T03:48:17.712+00:00"
+}

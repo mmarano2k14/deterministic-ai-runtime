@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-mcp-effect-completed-local-replay-python-client",
+  "status": "passed",
+  "coverageTarget": "mcp-effect-evidence",
+  "coverageValues": [
+    "completed-local-replay"
+  ],
+  "clientLanguage": "python",
+  "workerLanguage": null,
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-950c08e236d0e59903eaf56cc1c32c67eaaec178586e29d29e05e55a30d13074",
+  "executionId": "published-e3bb383553022ab156c986e6fbb5e33822a2791f59a8e997fba3a43e67959503",
+  "terminalStatus": "Failed",
+  "stepStatus": "Failed",
+  "durableEvidenceStatus": "Completed",
+  "durableEvidenceRevision": 2,
+  "effectId": "mcp-effect-v1-b879f148e129d18ff8bc93a040fa10e9627f808c4c9363f173fe319a8f1e36c5",
+  "retryCount": 1,
+  "physicalCallCount": 1,
+  "durableResultIsError": true,
+  "uncertaintyReasonCode": null,
+  "evidence": [
+    "publish",
+    "submit",
+    "durable-effect-completed",
+    "logical-retry-observed",
+    "completed-result-replayed-locally",
+    "single-physical-tools-call",
+    "terminal-result"
+  ],
+  "recordedAtUtc": "2026-09-21T03:48:22.221+00:00"
+}

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "core-dotnet-client-python-worker",
+  "status": "passed",
+  "clientLanguage": "dotnet",
+  "workerLanguage": "python",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-a33c5bdb70d29db5e93e5ab0932d10630f0e6a2c32df71a7f17176eeb9e98934",
+  "executionId": "published-b92cdf146e1a39dc66f26ab733f34064280af0cb1ccf9c16f96d00940b88348d",
+  "terminalStatus": "Completed",
+  "evidence": [
+    "publish",
+    "submit",
+    "observe",
+    "terminal-result",
+    "public-execution-id"
+  ],
+  "recordedAtUtc": "2026-09-21T03:46:14.9848761+00:00"
+}

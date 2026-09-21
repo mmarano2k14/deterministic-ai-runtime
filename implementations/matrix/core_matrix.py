@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from matrix_plan import assert_valid_plan, load_plan
+from matrix_process import run_scenario_process
 
 ROOT = Path(__file__).resolve().parents[2]
 MATRIX_ROOT = Path(__file__).resolve().parent
@@ -68,9 +69,9 @@ def _command_for(scenario: dict[str, Any], manifest: Path) -> list[str]:
     ]
     if client == "dotnet":
         project = MATRIX_ROOT / "clients" / "dotnet" / "Multiplexed.AI.Matrix.DotNetClient" / "Multiplexed.AI.Matrix.DotNetClient.csproj"
-        return ["dotnet", "run", "--project", str(project), "-c", "Release", "--no-build", "--", *common]
+        return [os.environ.get("MATRIX_DOTNET_EXECUTABLE", "dotnet"), "run", "--project", str(project), "-c", "Release", "--no-build", "--", *common]
     if client == "typescript":
-        return ["node", str(MATRIX_ROOT / "clients" / "typescript" / "run.mjs"), *common]
+        return [os.environ.get("MATRIX_NODE_EXECUTABLE", "node"), str(MATRIX_ROOT / "clients" / "typescript" / "run.mjs"), *common]
     if client == "python":
         return [sys.executable, str(MATRIX_ROOT / "clients" / "python" / "run.py"), *common]
     raise RuntimeError(f"Unsupported client language: {client}")
@@ -85,12 +86,20 @@ def _run_scenario(scenario: dict[str, Any], manifest: Path, no_build: bool) -> N
             "or use the Docker Compose topology."
         )
     EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
-    _run(_command_for(scenario, manifest))
+    # A failed rerun must not leave an earlier PASSED document for this scenario.
+    (EVIDENCE_ROOT / f"{scenario['id']}.json").unlink(missing_ok=True)
+    diagnostic_root = Path(os.environ.get(
+        "MATRIX_CLIENT_LOG_DIR", str(manifest.parent / "diagnostics" / "clients")
+    ))
+    run_scenario_process(
+        _command_for(scenario, manifest), cwd=ROOT,
+        log_path=diagnostic_root / f"{scenario['id']}.log",
+    )
 
 
-def _summary(plan: dict[str, Any]) -> int:
+def _summary(plan: dict[str, Any], scenarios: list[dict[str, Any]] | None = None) -> int:
     rows: list[tuple[str, str]] = []
-    for scenario in plan["coreScenarios"]:
+    for scenario in plan["coreScenarios"] if scenarios is None else scenarios:
         path = EVIDENCE_ROOT / f"{scenario['id']}.json"
         if not path.exists():
             rows.append((scenario["id"], "NOT RUN"))
@@ -133,7 +142,7 @@ def main() -> int:
         _build_prerequisites("typescript")
     for scenario in scenarios:
         _run_scenario(scenario, args.manifest.resolve(), no_build=args.no_build or args.scenario == "all")
-    return _summary(plan)
+    return _summary(plan, scenarios)
 
 
 if __name__ == "__main__":

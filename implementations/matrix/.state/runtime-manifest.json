@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "endpoint": "http://localhost:8081/mcp",
+  "bearerToken": "matrix-e2e-token",
+  "accessContext": "ctx_81c20701eafd44fba612c7764e47f73c",
+  "accessContextHeader": "X-Access-Context",
+  "executionContextTtlSeconds": 3600,
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "effectProbeStateEndpoint": "http://localhost:8090/state",
+  "effectEvidenceEndpoint": "http://localhost:8081/matrix/mcp-effect-evidence",
+  "recoveryEndpoint": "http://localhost:8081/matrix/recovery",
+  "journalResultAcceptanceEndpoint": "http://localhost:8081/matrix/journal-result-acceptance",
+  "environmentRefs": {
+    "dotnet": "matrix-dotnet",
+    "typescript": "matrix-typescript@typescript-js-v1-edcab692712615466132cb74f291fb88c51ddc017eab58b7b1dc79d74df30f4a",
+    "python": "matrix-python"
+  },
+  "containerEnvironmentRefs": {}
+}

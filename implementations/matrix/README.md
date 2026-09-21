@@ -70,6 +70,129 @@ provider
 
 The manifest is harness-local evidence and is not a new public runtime API.
 
+### Local runner failures and targeted reruns
+
+The SDK build stage runs `npm run build` in `implementations/node/sdk` for
+`@multiplexed/ai-sdk`; its build script is `tsc -p tsconfig.json`. This is a local
+library build, not an npm registry publication.
+
+Windows PowerShell 5.1 can wrap redirected native stderr as `ErrorRecord` values.
+Passing those values straight to `Tee-Object` and `Out-Host` can format an
+informational `npm notice` as `NativeCommandError`. The logged native-command
+helper converts each merged output item to its text before saving and displaying
+it. It does not suppress stderr, filter npm notices, change npm configuration,
+or accept a nonzero exit code. Actual compiler failures retain their message and
+stop the runner. Unlogged version probes still return stdout unchanged.
+
+A passing selected `.NET` client / `.NET` worker scenario is not validation of
+the TypeScript client, TypeScript worker, the other core combinations or the
+feature matrix. Those paths require their own successful scenario evidence.
+
+Focused output-formatting regression tests (native cases require PowerShell):
+
+```powershell
+python -m unittest discover -s .\implementations\matrix\tests -p "test_local_native_output.py" -v
+```
+
+The local runner checks every native publish/build command before starting the host. It explicitly enables local hosted-worker profiles, polling and DAG reconciliation, preserves the existing `matrix` RBAC project and replay-safe payload configuration, and does not alter Kubernetes child-role settings.
+
+The five local `dotnet publish` calls pass an absolute destination as one explicit
+`-p:PublishDir=<absolute-path>` argument and retain
+`-p:_CommandLineDefinedOutputPath=true`. They do not rely on the CLI's `-o`/`--output`
+conversion. A bare `PublishDir=<path>` token is not an MSBuild property switch and
+can be interpreted as another project, resulting in `MSB1008` before compilation.
+Explicit property syntax alone does not avoid the .NET 10 output-name problem
+reported in [dotnet/sdk issue 54953](https://github.com/dotnet/sdk/issues/54953).
+That report reproduces an unprefixed output-property token and `MSB1008` with
+`dotnet pack` on SDK 10.0.301 when the output directory is named `dotnet`. The
+local `dotnet publish` failure reported with SDK 10.0.401 has the same malformed
+property signature and ends in `samples/dotnet`; the upstream pack reproduction
+is supporting evidence, not a local publish validation result.
+
+The two .NET function samples now publish into a fresh
+`.state/sample-dotnet-publish-<guid>/` directory. Only after both publishes succeed
+and all three required DLLs are present and non-empty does the runner copy the
+published contents into the existing `.state/samples/dotnet/` directory. The
+`MATRIX_SAMPLE_ROOT` contract, three-language client source readers, package
+closure assembly names and source projects are unchanged. An older DLL in the
+client directory cannot satisfy the new-output check. The unique scratch output
+is cleaned in `finally`; build logs and the client-visible sample files are kept.
+The other three publish destinations are unchanged. The runner does not pin or
+downgrade the installed .NET SDK or bypass a failed build.
+
+Focused sample-staging regression checks (including an isolated real sample
+publish when both PowerShell and .NET 10+ are available):
+
+```powershell
+python -m unittest discover -s .\implementations\matrix\tests -p "test_local_sample_publish.py" -v
+```
+
+The isolated publish copies the three sample projects into a temporary repository,
+uses the runner's actual two publish/staging commands and starts no Redis, MongoDB,
+SDK client, runtime host, Docker or Kubernetes process. Missing toolchains are
+reported as skipped tests, not as successful publishes.
+
+Each publish/build command writes its combined native stdout/stderr to its own log
+while preserving console output. Nonzero exit status still stops the run. These
+logs are included in the failure archive even when failure occurs before any host
+starts. Version probes remain unlogged and return stdout to the caller as before.
+Log encoding follows `Tee-Object` in the selected PowerShell version.
+
+Readiness requires an HTTP health response and, for the runtime, the newly generated manifest. A manifest alone or a completed readiness loop is not a successful readiness check. The existing 30-second probe and 120-second runtime startup budgets remain unchanged.
+
+Local runs save publish/build logs, complete control-plane and MCP-effect-server stdout/stderr, and per-scenario client output in a unique directory:
+
+```text
+implementations/matrix/.state/diagnostics/local-<timestamp>-<id>/
+  publish-runtime.log
+  publish-worker-dotnet.log
+  publish-mcp-effect-server.log
+  publish-sample-dotnet.log
+  publish-sample-packaged-dotnet.log
+  build-client-dotnet.log
+  build-sdk-typescript.log
+  control-plane.stdout.log
+  control-plane.stderr.log
+  mcp-effect-server.stdout.log
+  mcp-effect-server.stderr.log
+  clients/
+    core-dotnet-client-dotnet-worker.log
+  runner-error.txt                        # on failure
+```
+
+Both server streams are drained concurrently. On failure, the runner stops only its own process trees, closes the capture streams, and creates a sibling `local-<timestamp>-<id>.zip`. The manifest, bearer token and access-context header are not deliberately exported. Server output and remote error text may still contain sensitive operational data; inspect diagnostic archives before sharing and keep them out of commits.
+
+The .NET matrix client records `SOURCE`, `PUBLISH`, `SUBMIT`, `OBSERVE`, `RESULT` and `EVIDENCE` failures. It logs the normalized SDK error and returns exit code 1 rather than leaving only an unhandled-process exit. The .NET SDK retains bounded textual and structured diagnostics from the same failed MCP response, without repeating publication/submission or changing retry policy.
+
+To rerun only the first core scenario from the repository root:
+
+```powershell
+$pythonExe = (python -c "import os,sys; print(os.path.realpath(sys.executable))").Trim()
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\implementations\matrix\runtime\local\run.ps1 `
+  -InfrastructureAlreadyRunning -PythonExecutable $pythonExe `
+  -CoreScenario core-dotnet-client-dotnet-worker -CoreOnly
+```
+
+`-CoreOnly` without `-CoreScenario` executes all nine core scenarios but no features. A named core scenario requires `-CoreOnly` and validates only that selection; it is never reported as full matrix closure. Omit both options for the normal core-plus-supported-features run. The runner publishes the local host/workers and builds the client again; no Docker or Kubernetes image build is involved in this local diagnostic path.
+
+Before each selected scenario starts, its prior evidence file is removed. A failed attempt cannot leave an earlier `passed` document for that scenario. Other scenarios' evidence is preserved. Diagnostic capture does not manufacture successful execution evidence.
+
+Check publish argument guards and native logging/quoting independently of the runtime:
+
+```powershell
+python -m unittest discover -s .\implementations\matrix\tests -p "test_local_publish_output.py" -v
+```
+
+The native helper checks use real Python child processes through Windows PowerShell
+or `pwsh`; they do not execute MSBuild, Redis, MongoDB, or SDK scenarios. When no
+PowerShell executable is available, these checks are explicitly skipped. A skipped
+native check is not evidence of Windows command execution.
+
+Local end-to-end execution must be validated separately after these changes. Successful diagnostic-unit or structural tests are not a Windows SDK matrix pass.
+
+
+
 ## Authentication and RBAC
 
 The matrix keeps the normal MCP authentication/context middleware in the path. An explicit harness-only static bearer scheme and an isolated RBAC context are enabled only when `AiMatrixHarness:Enabled=true`.

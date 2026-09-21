@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-external-client-dependency-firewall-python-client",
+  "status": "passed",
+  "coverageTarget": "external-client-dependency-firewall",
+  "coverageValues": [],
+  "clientLanguage": "python",
+  "workerLanguage": null,
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "artifactKind": "python-sdk-source-distribution",
+  "declaredDependencies": [
+    "httpx2>=2.5.0,<3",
+    "mcp>=2.0.0,<3"
+  ],
+  "absoluteImportRoots": [
+    "__future__",
+    "asyncio",
+    "dataclasses",
+    "enum",
+    "httpx2",
+    "json",
+    "mcp",
+    "types",
+    "typing",
+    "urllib"
+  ],
+  "forbiddenDeclaredDependencies": [],
+  "forbiddenAbsoluteImports": [],
+  "evidence": [
+    "pyproject-dependencies-inspected",
+    "sdk-source-imports-inspected",
+    "no-engine-runtime-dependency"
+  ],
+  "recordedAtUtc": null
+}

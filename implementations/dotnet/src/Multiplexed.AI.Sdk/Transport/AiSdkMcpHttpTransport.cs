@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 using Multiplexed.AI.Sdk.Authentication;
 using Multiplexed.AI.Sdk.Contracts.Common;
 using Multiplexed.AI.Sdk.Errors;
@@ -154,10 +155,7 @@ namespace Multiplexed.AI.Sdk.Transport
 
             if (result.IsError is true)
             {
-                return Failure(
-                    AiSdkErrorKind.RemoteFailure,
-                    "remote_tool_error",
-                    $"The remote SDK operation '{request.Operation}' returned an error.");
+                return CreateRemoteToolFailure(request.Operation, result);
             }
 
             if (result.StructuredContent is not { } structuredContent ||
@@ -170,6 +168,43 @@ namespace Multiplexed.AI.Sdk.Transport
             }
 
             return AiSdkTransportResponse.Success(structuredContent.Clone());
+        }
+
+        private static AiSdkTransportResponse CreateRemoteToolFailure(string operation, CallToolResult result)
+        {
+            // Preserve diagnostics from this exact response. Never repeat a write to recover its error.
+            var details = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            var messages = new List<string>();
+            foreach (var item in result.Content ?? [])
+            {
+                if (item is not TextContentBlock text || string.IsNullOrWhiteSpace(text.Text))
+                {
+                    continue;
+                }
+                messages.Add(text.Text.Length <= 4096 ? text.Text : text.Text[..4096]);
+                if (messages.Count == 8)
+                {
+                    break;
+                }
+            }
+            if (messages.Count > 0)
+            {
+                details["remoteContent"] = JsonSerializer.SerializeToElement(messages);
+            }
+            if (result.StructuredContent is { ValueKind: JsonValueKind.Object } structured &&
+                structured.GetRawText().Length <= 8192)
+            {
+                // A cloned element remains valid after the underlying MCP response is disposed.
+                details["remoteStructuredContent"] = structured.Clone();
+            }
+            return AiSdkTransportResponse.Failure(new AiSdkError
+            {
+                Kind = AiSdkErrorKind.RemoteFailure,
+                Code = "remote_tool_error",
+                Message = $"The remote SDK operation '{operation}' returned an error.",
+                IsRetryable = false,
+                Details = details
+            });
         }
 
         private async Task<(Dictionary<string, string>? Headers, AiSdkError? Error)> CreateHeadersAsync(

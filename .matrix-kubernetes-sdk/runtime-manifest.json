@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "endpoint": "http://127.0.0.1:8081/mcp",
   "bearerToken": "matrix-e2e-token",
-  "accessContext": "ctx_d1fffa80ef9641f781745e48d9e861d0",
+  "accessContext": "ctx_046621221a5a4664b8b01c2b5dfe0b6e",
   "accessContextHeader": "X-Access-Context",
   "executionContextTtlSeconds": 3600,
   "topology": "kubernetes",
