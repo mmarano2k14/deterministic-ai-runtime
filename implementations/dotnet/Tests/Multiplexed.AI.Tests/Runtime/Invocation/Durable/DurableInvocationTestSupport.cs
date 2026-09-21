@@ -71,6 +71,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Durable
             private readonly TimeProvider _clock;
             internal int RejectCasCount;
             internal int CasCalls;
+            internal int GetCalls;
             internal bool ThrowAfterNextWrite;
             internal Action? BeforeNextCas;
             internal MemoryStore(TimeProvider clock) => _clock = clock;
@@ -92,6 +93,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Durable
                 AiDurableInvocationIdentity identity, CancellationToken cancellationToken = default)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                Interlocked.Increment(ref GetCalls);
                 AiDurableInvocationRecord? result;
                 lock (_gate) result = _records.TryGetValue(identity, out var current) && current.Definition.Scope == scope ? current : null;
                 await Task.Yield(); // Allow competing callers to read the same revision.

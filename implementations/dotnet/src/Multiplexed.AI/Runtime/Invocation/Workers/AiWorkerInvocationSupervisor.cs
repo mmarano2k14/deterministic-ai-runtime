@@ -45,7 +45,33 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
             if (await _controlPlane.ResolveAsync(cancellationToken).ConfigureAwait(false) != scope.ControlPlaneId)
                 throw new UnauthorizedAccessException("Worker dispatch belongs to a different logical control plane.");
             var current = await _journal.GetAsync(scope, identity, cancellationToken).ConfigureAwait(false);
-            if (current is null) return new(AiWorkerDispatchDisposition.NotReady);
+            return current is null
+                ? new(AiWorkerDispatchDisposition.NotReady)
+                : await DispatchCandidateAsync(scope, current, cancellationToken).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Dispatches an already loaded page candidate. The candidate is a CAS hint only; the
+        /// journal remains authoritative and reloads after a failed first CAS.
+        /// </summary>
+        public async Task<AiWorkerDispatchResult> DispatchAsync(AiDurableInvocationScope scope,
+            AiDurableInvocationRecord candidateSnapshot, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ArgumentNullException.ThrowIfNull(candidateSnapshot);
+            AiDurableInvocationValidation.ValidateScope(scope);
+            AiDurableInvocationValidation.ValidateRecord(candidateSnapshot);
+            AiDurableInvocationValidation.Require(candidateSnapshot.Definition.Scope == scope,
+                "Worker dispatch candidate belongs to a different ownership scope.");
+            if (await _controlPlane.ResolveAsync(cancellationToken).ConfigureAwait(false) != scope.ControlPlaneId)
+                throw new UnauthorizedAccessException("Worker dispatch belongs to a different logical control plane.");
+            return await DispatchCandidateAsync(scope, candidateSnapshot, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task<AiWorkerDispatchResult> DispatchCandidateAsync(AiDurableInvocationScope scope,
+            AiDurableInvocationRecord current, CancellationToken cancellationToken)
+        {
+            var identity = current.Definition.Identity;
             if (AiDurableInvocationValidation.Terminal(current)) return new(AiWorkerDispatchDisposition.AlreadyTerminal, current.OperationId);
             if (current.Lease?.ExpiresAtUtc > _time.GetUtcNow()) return new(AiWorkerDispatchDisposition.NotReady, current.OperationId);
             if (current.Lease is not null && (!_options.AllowExpiredLeaseReassignment || current.Lease.Epoch >= _options.MaxAssignmentEpoch))
@@ -58,7 +84,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
             {
                 // A new physical worker identity never changes the logical operation/effect identities.
                 var workerId = "hosted-" + Guid.NewGuid().ToString("N");
-                leased = await _journal.TryAcquireWorkerLeaseAsync(scope, identity, workerId, _options.LeaseDuration,
+                leased = await _journal.TryAcquireWorkerLeaseAsync(scope, current, workerId, _options.LeaseDuration,
                     _options.AllowExpiredLeaseReassignment, _options.MaxAssignmentEpoch, cancellationToken).ConfigureAwait(false);
                 if (leased is null) return new(AiWorkerDispatchDisposition.NotReady, current.OperationId);
                 using var guard = new AiWorkerLeaseGuard(_journal, leased, _options, _time);

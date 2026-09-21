@@ -6,7 +6,133 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
-## 0.0.9.5 - 2026-09-21- KubernetesPool Matrix SDK
+## 0.0.9.5 - 2026-09-21 - Invocation Correctness Normalization
+
+### Hosted policy ownership revalidation
+
+- Added a shared hosted-policy ownership revalidation primitive used by the Concurrency, Retry, and Delegation publication/preparation paths.
+- Normalized the common security and lifecycle checks across hosted policy families without merging their business-specific decision semantics.
+- Revalidation now consistently covers:
+  - execution identity;
+  - tenant identity;
+  - tenant-group identity;
+  - user identity;
+  - project;
+  - current namespace;
+  - parent execution lifecycle / terminal state.
+- Preserved the existing publication/package I/O boundary and revalidated ownership after external publication/package resolution before worker preparation or invocation proceeds.
+- Corrected the previous validation drift where Retry and Delegation revalidated a narrower ownership set than Concurrency.
+- Preserved family-specific Concurrency, Retry, and Delegation contracts, merge behavior, and decision semantics.
+- No change was made to durable invocation identity, lease ownership, epoch fencing, CAS transitions, stale-result rejection, result acceptance, durable continuation, immutable publication/run pinning, DAG scheduling, or recovery authority.
+
+### Validation
+
+- Added regression coverage for project and namespace drift occurring between the initial durable parent read and the post-publication ownership revalidation.
+- Added equivalent ownership-boundary validation for Retry and Delegation to match the established Concurrency boundary.
+- Targeted ownership-normalization tests were validated successfully in the target environment.
+
+---
+
+## Invocation Execution Language Normalization
+
+### Central execution-language authority
+
+- Consolidated the supported hosted execution languages behind `AiExecutionLanguages`.
+- Established the common language authority through:
+  - `AiExecutionLanguages.DotNet`;
+  - `AiExecutionLanguages.Python`;
+  - `AiExecutionLanguages.TypeScript`;
+  - `AiExecutionLanguages.All`;
+  - `AiExecutionLanguages.IsSupported(...)`.
+- Replaced duplicated literal language arrays and repeated explicit language comparisons across Invocation and hosted execution infrastructure.
+- Updated invocation binding, durable invocation validation, DAG adapters, hosted policy infrastructure, worker polling, worker profile registration, dependency-package validation, and host registration paths to consume the shared language authority where applicable.
+- Preserved the supported language set exactly as:
+  - `dotnet`;
+  - `python`;
+  - `typescript`.
+- Preserved exact language-token behavior; no new language, alias, fallback, or case-insensitive interpretation was introduced.
+- No change was made to worker protocol semantics, publication contracts, durable journal behavior, policy semantics, lease/epoch fencing, result acceptance, continuation, or recovery.
+
+### Validation
+
+- Added coverage verifying that `AiExecutionLanguages.All` contains the exact supported language set without duplicates.
+- Added coverage for `AiExecutionLanguages.IsSupported(...)` acceptance and rejection behavior.
+- Added guards against accidental mutable language registration and against reintroducing duplicated literal language lists in normalized paths.
+- Targeted execution-language normalization tests were validated successfully in the target environment.
+
+---
+
+## Invocation TimeProvider Normalization
+
+### Consistent invocation clock authority
+
+- Replaced remaining direct wall-clock deadline calculations in normalized Invocation policy/MCP paths with the configured `TimeProvider`.
+- Propagated `TimeProvider` through hosted policy factories/adapters and MCP invocation paths so deadlines are derived from a single configurable clock authority.
+- Normalized deadline calculation to use `TimeProvider.GetUtcNow()` while preserving the existing timeout durations and expiration semantics.
+- Retained `TimeProvider.System` as the compatibility fallback for direct constructions that do not supply an explicit provider.
+- Removed direct `DateTimeOffset.UtcNow` usage from the normalized Runtime/Invocation paths covered by this increment.
+- Preserved policy behavior, MCP effect semantics, durable invocation identity, lease/epoch authority, CAS transitions, result acceptance, continuation, and recovery behavior.
+
+### Worker lease-guard timer consistency
+
+- Corrected a timing inconsistency exposed by fake-clock validation of container worker lifecycle durability.
+- The worker lease guard previously used a timer callback that could mark a lease as lost solely because real timer time elapsed, even when the configured `TimeProvider` had not advanced to the lease-expiration boundary.
+- Changed the lease-guard timer callback to re-evaluate remaining lease time through the configured `TimeProvider` before declaring lease loss.
+- When the configured clock still reports remaining lease time, the guard re-arms the timer instead of transitioning to `LeaseLost`.
+- The timer now acts only as a wake-up mechanism; `TimeProvider` remains the time authority.
+- Production behavior with `TimeProvider.System` remains equivalent at the actual lease-expiration boundary.
+- No change was made to lease duration, renewal interval, safety margin, epoch fencing, stale-result rejection, CAS authority, container lifecycle ownership, or durable continuation semantics.
+
+### Validation
+
+- Added deterministic clock-propagation coverage for Concurrency, Retry, Delegation, and MCP invocation deadline calculation.
+- Revalidated the container lifecycle regression in which a cancelled container assignment is redispatched while an old epoch is prevented from winning.
+- Confirmed the expected redispatch result is restored to `Accepted` while stale-epoch fencing remains enforced.
+- Targeted TimeProvider and worker lease-guard validation completed successfully in the target environment.
+
+---
+
+## Increment A Closure
+
+The Invocation correctness-normalization increment now includes:
+
+```text
+Hosted policy ownership normalization
+    -> consistent tenant / user / project / namespace / lifecycle revalidation
+
+Execution-language normalization
+    -> one shared source of truth for dotnet / python / typescript
+
+TimeProvider normalization
+    -> one configurable invocation clock authority
+
+Lease-guard timer consistency
+    -> timer wake-up separated from authoritative clock evaluation
+```
+
+The increment intentionally does not redesign the durable invocation model.
+
+The following authorities remain unchanged in principle:
+
+```text
+immutable invocation identity
+lease ownership
+epoch / fencing semantics
+CAS-based transitions
+stale-result rejection
+result acceptance
+durable continuation
+immutable publication / run pinning
+DAG scheduling
+recovery authority
+```
+
+The next planned Invocation work is dispatch read-amplification reduction: reuse the dispatch candidate snapshot for the first worker-lease CAS attempt and reload the durable record only after genuine CAS contention or rejection.
+
+
+---
+
+## 0.0.9.5 - 2026-09-21 - KubernetesPool Matrix SDK
 
 Validation paragraphs are incremental records of the evidence available for each change. Earlier statements that live execution or closure was pending are retained as historical validation status; the final closure section below records the subsequent successful target-environment result. Packaging test counts refer to successive suite snapshots and must not be added together or treated as live infrastructure runs.
 
