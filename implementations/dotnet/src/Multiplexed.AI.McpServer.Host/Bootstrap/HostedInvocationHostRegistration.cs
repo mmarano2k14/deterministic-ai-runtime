@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Invocation.Durable;
 using Multiplexed.Abstractions.AI.Publication;
 using Multiplexed.AI.McpServer.Host.Configuration;
@@ -61,9 +62,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             services.TryAddSingleton<IAiPublicationEnvironmentCatalog>(environmentCatalog);
             services.TryAddSingleton<IAiPublicationExecutionEnvironmentCatalog>(environmentCatalog);
             services.TryAddSingleton(new AiHostedInvocationEnvironmentSet(
-                EnvironmentReference(processProfiles, publicationOnlyRuntimes, "dotnet"),
-                EnvironmentReference(processProfiles, publicationOnlyRuntimes, "typescript"),
-                EnvironmentReference(processProfiles, publicationOnlyRuntimes, "python"),
+                EnvironmentReference(processProfiles, publicationOnlyRuntimes, AiExecutionLanguages.DotNet),
+                EnvironmentReference(processProfiles, publicationOnlyRuntimes, AiExecutionLanguages.TypeScript),
+                EnvironmentReference(processProfiles, publicationOnlyRuntimes, AiExecutionLanguages.Python),
                 containerProfiles.Select(profile => profile.Runtime).ToArray()));
 
             // Every enabled host resolves durable custom steps, including runtime hosts that do not
@@ -113,7 +114,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             {
                 services.AddAiHostedInvocationWorkerPolling(new AiWorkerPollingOptions(
                     new[] { invocationScope },
-                    new[] { "dotnet", "typescript", "python" },
+                    AiExecutionLanguages.All,
                     pageSize: options.PollPageSize,
                     interval: TimeSpan.FromMilliseconds(options.PollIntervalMilliseconds)));
             }
@@ -153,7 +154,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             var deps = FullFile(options.WorkerDepsPath, ".NET worker deps file");
             var runtimeConfig = FullFile(options.WorkerRuntimeConfigPath, ".NET worker runtimeconfig file");
             var executableHash = Hash(executable);
-            var runtime = new AiPublicationEnvironment(options.Reference, "dotnet", options.RuntimeVersion, executableHash);
+            var runtime = new AiPublicationEnvironment(options.Reference, AiExecutionLanguages.DotNet, options.RuntimeVersion, executableHash);
             var descriptor = Descriptor(executableHash);
             var working = WorkingDirectory(options, worker);
             var profile = AiDotNetWorkerProcessProfile.Create(
@@ -186,7 +187,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             var executable = FullFile(options.ExecutablePath, "Python executable");
             var worker = FullFile(options.WorkerPath, "Python worker loader");
             var executableHash = Hash(executable);
-            var runtime = new AiPublicationEnvironment(options.Reference, "python", options.RuntimeVersion, executableHash);
+            var runtime = new AiPublicationEnvironment(options.Reference, AiExecutionLanguages.Python, options.RuntimeVersion, executableHash);
             var working = WorkingDirectory(options, worker);
             var descriptor = Descriptor(executableHash);
             var profile = AiPythonWorkerProcessProfile.Create(

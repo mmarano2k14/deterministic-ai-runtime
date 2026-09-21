@@ -12,13 +12,16 @@ namespace Multiplexed.AI.Runtime.Invocation
     {
         private readonly IReadOnlyDictionary<string, IAiDelegationPolicyTransport> _transports;
         private readonly TimeSpan _timeout;
+        private readonly TimeProvider _timeProvider;
 
         public AiDelegationPolicyAdapterFactory(
             IEnumerable<IAiDelegationPolicyTransport> transports,
-            AiDelegationPolicyInvocationOptions? options = null)
+            AiDelegationPolicyInvocationOptions? options = null,
+            TimeProvider? timeProvider = null)
         {
             ArgumentNullException.ThrowIfNull(transports);
             _timeout = (options ?? new AiDelegationPolicyInvocationOptions()).EvaluationTimeout;
+            _timeProvider = timeProvider ?? TimeProvider.System;
             if (_timeout <= TimeSpan.Zero || _timeout > TimeSpan.FromSeconds(30))
             {
                 throw new ArgumentOutOfRangeException(nameof(options));
@@ -28,10 +31,7 @@ namespace Multiplexed.AI.Runtime.Invocation
             foreach (var transport in transports)
             {
                 ArgumentNullException.ThrowIfNull(transport);
-                if (transport.ExecutionLanguage is not (
-                    AiExecutionLanguages.DotNet or
-                    AiExecutionLanguages.Python or
-                    AiExecutionLanguages.TypeScript))
+                if (!AiExecutionLanguages.IsSupported(transport.ExecutionLanguage))
                 {
                     throw new InvalidOperationException(
                         "A Delegation policy transport requires a canonical execution language.");
@@ -65,10 +65,7 @@ namespace Multiplexed.AI.Runtime.Invocation
                     !declaration.Kind.Equals("Delegation", StringComparison.OrdinalIgnoreCase)) ||
                 declaration.Invocation.ImplementationRef != invocation.ImplementationRef ||
                 string.IsNullOrWhiteSpace(invocation.ImplementationRef) ||
-                invocation.ExecutionLanguage is not (
-                    AiExecutionLanguages.DotNet or
-                    AiExecutionLanguages.Python or
-                    AiExecutionLanguages.TypeScript) ||
+                !AiExecutionLanguages.IsSupported(invocation.ExecutionLanguage) ||
                 (binding.Scope == AiPolicyBindingScope.Step && binding.OwnerStepName != context.StepName) ||
                 (binding.Scope == AiPolicyBindingScope.Pipeline && binding.OwnerStepName is not null))
             {
@@ -107,7 +104,8 @@ namespace Multiplexed.AI.Runtime.Invocation
                 context.ExecutionId,
                 context.StepName,
                 context.CancellationToken,
-                _timeout);
+                _timeout,
+                _timeProvider);
         }
     }
 }

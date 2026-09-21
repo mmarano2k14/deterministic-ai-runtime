@@ -52,21 +52,13 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Policies
                 ?? throw new InvalidOperationException(
                     "The durable parent is unavailable; custom Delegation evaluation is not permitted.");
 
-            var snapshot = parent.ExecutionContextSnapshot;
-            if (snapshot?.TenantId != request.Context.TenantId ||
-                snapshot.TenantGroupId != request.Context.TenantGroupId ||
-                string.IsNullOrWhiteSpace(snapshot.ContextKey) ||
-                string.IsNullOrWhiteSpace(snapshot.TenantGroupId))
-            {
-                throw new UnauthorizedAccessException(
-                    "Delegation policy ownership does not match the persisted parent execution context.");
-            }
-
-            if (parent.IsTerminal)
-            {
-                throw new InvalidOperationException(
-                    "A terminal parent cannot authorize a custom Delegation evaluation.");
-            }
+            var snapshot = AiHostedPolicyOwnershipRevalidator.ValidateInitial(
+                parent,
+                request.Context.ParentExecutionId,
+                request.Context.TenantId,
+                request.Context.TenantGroupId,
+                "Delegation policy ownership does not match the persisted parent execution context.",
+                "A terminal parent cannot authorize a custom Delegation evaluation.");
 
             var scope = new AiDurableInvocationScope(
                 snapshot.TenantId!,
@@ -91,15 +83,11 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Policies
                         : _dag.GetRecordAsync(request.Context.ParentExecutionId, cancellationToken))
                     .ConfigureAwait(false);
 
-                if (current is null ||
-                    current.IsTerminal ||
-                    current.ExecutionContextSnapshot?.TenantId != scope.TenantId ||
-                    current.ExecutionContextSnapshot.TenantGroupId != scope.TenantGroupId ||
-                    current.ExecutionContextSnapshot.UserId != snapshot.UserId)
-                {
-                    throw new UnauthorizedAccessException(
-                        "Parent ownership or lifecycle changed before custom Delegation evaluation.");
-                }
+                AiHostedPolicyOwnershipRevalidator.RequireCurrent(
+                    current,
+                    request.Context.ParentExecutionId,
+                    snapshot,
+                    "Parent ownership or lifecycle changed before custom Delegation evaluation.");
 
                 guard.RequireCurrent();
                 return result;

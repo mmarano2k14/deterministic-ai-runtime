@@ -55,19 +55,13 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Policies
                 ? _executions.GetRecordAsync(request.Context.ExecutionId, cancellationToken)
                 : _dag.GetRecordAsync(request.Context.ExecutionId, cancellationToken)).ConfigureAwait(false)
                 ?? throw new InvalidOperationException("The durable parent is unavailable; custom policy evaluation is not permitted.");
-            var snapshot = parent.ExecutionContextSnapshot;
-            if (parent.ExecutionId != request.Context.ExecutionId ||
-                snapshot?.TenantId != request.Context.TenantId ||
-                snapshot.TenantGroupId != request.Context.TenantGroupId ||
-                string.IsNullOrWhiteSpace(snapshot.ContextKey) ||
-                string.IsNullOrWhiteSpace(snapshot.TenantGroupId))
-            {
-                throw new UnauthorizedAccessException("Policy ownership does not match the persisted execution context.");
-            }
-            if (parent.IsTerminal)
-            {
-                throw new InvalidOperationException("A terminal parent cannot authorize a new custom policy evaluation.");
-            }
+            var snapshot = AiHostedPolicyOwnershipRevalidator.ValidateInitial(
+                parent,
+                request.Context.ExecutionId,
+                request.Context.TenantId,
+                request.Context.TenantGroupId,
+                "Policy ownership does not match the persisted execution context.",
+                "A terminal parent cannot authorize a new custom policy evaluation.");
 
             var controlPlaneId = await _controlPlane.ResolveAsync(cancellationToken).ConfigureAwait(false);
             var scope = new AiDurableInvocationScope(snapshot.TenantId!, snapshot.TenantGroupId!, controlPlaneId);
@@ -84,15 +78,11 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Policies
                 var current = await (_dag is null
                     ? _executions.GetRecordAsync(request.Context.ExecutionId, cancellationToken)
                     : _dag.GetRecordAsync(request.Context.ExecutionId, cancellationToken)).ConfigureAwait(false);
-                if (current is null || current.IsTerminal ||
-                    current.ExecutionContextSnapshot?.TenantId != scope.TenantId ||
-                    current.ExecutionContextSnapshot.TenantGroupId != scope.TenantGroupId ||
-                    current.ExecutionContextSnapshot.UserId != snapshot.UserId ||
-                    current.ExecutionContextSnapshot.Project != snapshot.Project ||
-                    current.ExecutionContextSnapshot.CurrentNamespace != snapshot.CurrentNamespace)
-                {
-                    throw new UnauthorizedAccessException("Parent ownership or lifecycle changed before custom policy evaluation.");
-                }
+                AiHostedPolicyOwnershipRevalidator.RequireCurrent(
+                    current,
+                    request.Context.ExecutionId,
+                    snapshot,
+                    "Parent ownership or lifecycle changed before custom policy evaluation.");
 
                 guard.RequireCurrent();
                 cancellationToken.ThrowIfCancellationRequested();

@@ -2,6 +2,7 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Publication;
 
 namespace Multiplexed.AI.Runtime.Publication
@@ -30,7 +31,7 @@ namespace Multiplexed.AI.Runtime.Publication
         {
             if (package.Kind != AiPublicationDependencyPackageKind.DotNetAssemblyClosure)
                 throw new InvalidOperationException(".NET assembly-closure validation received another package kind.");
-            if (!string.Equals(runtime.ExecutionLanguage, "dotnet", StringComparison.Ordinal))
+            if (!string.Equals(runtime.ExecutionLanguage, AiExecutionLanguages.DotNet, StringComparison.Ordinal))
                 throw new InvalidOperationException(".NET assembly closures require the .NET execution language.");
             if (!PackageNameRegex().IsMatch(dependencyName))
                 throw new InvalidOperationException("A .NET assembly closure requires a portable package name.");

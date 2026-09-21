@@ -18,7 +18,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable.DI
             services.TryAddScoped<AiDurableInvocationDagContinuationScheduler>();
             services.TryAddScoped<AiDurableInvocationDagContinuationCoordinator>();
             services.TryAddScoped<AiDurableInvocationDagReconciler>();
-            foreach (var language in new[] { "python", "typescript", "dotnet" })
+            foreach (var language in AiExecutionLanguages.All)
                 if (!services.Any(item => item.ServiceType == typeof(IAiStepInvocationAdapterFactory) &&
                     item.ImplementationInstance is AiDurableInvocationStepAdapterFactory factory && factory.ExecutionLanguage == language))
                     services.AddSingleton<IAiStepInvocationAdapterFactory>(new AiDurableInvocationStepAdapterFactory(language));

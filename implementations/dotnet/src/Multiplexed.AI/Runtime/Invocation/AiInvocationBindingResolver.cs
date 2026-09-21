@@ -198,7 +198,7 @@ namespace Multiplexed.AI.Runtime.Invocation
 
         private static void ValidateLanguage(string? language, string owner)
         {
-            if (language is not null && language is not (AiExecutionLanguages.DotNet or AiExecutionLanguages.Python or AiExecutionLanguages.TypeScript))
+            if (language is not null && !AiExecutionLanguages.IsSupported(language))
             {
                 throw new InvalidOperationException(
                     $"{owner} declares unsupported execution language '{language}'. " +

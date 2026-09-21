@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Publication;
 
 namespace Multiplexed.AI.Runtime.Publication
@@ -25,7 +26,7 @@ namespace Multiplexed.AI.Runtime.Publication
         {
             if (package.Kind != AiPublicationDependencyPackageKind.NodeLockedBundle)
                 throw new InvalidOperationException("Node locked-bundle validation received another package kind.");
-            if (!string.Equals(runtime.ExecutionLanguage, "typescript", StringComparison.Ordinal))
+            if (!string.Equals(runtime.ExecutionLanguage, AiExecutionLanguages.TypeScript, StringComparison.Ordinal))
                 throw new InvalidOperationException("Node locked bundles require the TypeScript execution language.");
             if (!PackageNameRegex().IsMatch(dependencyName))
                 throw new InvalidOperationException("A locked Node dependency requires a portable package name.");

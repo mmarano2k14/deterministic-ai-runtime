@@ -10,6 +10,7 @@ using Multiplexed.Abstractions.AI.Publication;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution;
 using Multiplexed.AI.Runtime.Invocation.Workers.Policies;
 using Multiplexed.AI.Runtime.Publication;
+using Multiplexed.AI.Stores;
 using Multiplexed.AI.Tests.Runtime.Publication;
 
 namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Policies
@@ -94,9 +95,47 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Policies
                 fixture.AsAsync(() => CreatePreparer(fixture).PrepareAsync(request)));
         }
 
+        [Fact]
+        public async Task Project_Drift_After_Publication_Is_Rejected()
+        {
+            using var fixture = new PublicationTestSupport.Fixture();
+            var publication = await fixture.PublishAsync(Upload("python"));
+            var run = await fixture.CreateAsync(publication);
+            var function = Assert.Single(publication.Manifest.Functions);
+            var store = new PolicyOwnershipDriftExecutionStore(fixture.Store, snapshot =>
+            {
+                snapshot.Project = "other-project";
+                return snapshot;
+            });
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                fixture.AsAsync(() => CreatePreparer(fixture, store).PrepareAsync(Request(run.ExecutionId, function, "python"))));
+        }
+
+        [Fact]
+        public async Task Namespace_Drift_After_Publication_Is_Rejected()
+        {
+            using var fixture = new PublicationTestSupport.Fixture();
+            var publication = await fixture.PublishAsync(Upload("python"));
+            var run = await fixture.CreateAsync(publication);
+            var function = Assert.Single(publication.Manifest.Functions);
+            var store = new PolicyOwnershipDriftExecutionStore(fixture.Store, snapshot =>
+            {
+                snapshot.CurrentNamespace = "other-namespace";
+                return snapshot;
+            });
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                fixture.AsAsync(() => CreatePreparer(fixture, store).PrepareAsync(Request(run.ExecutionId, function, "python"))));
+        }
+
         private static AiDelegationPolicyPublicationPreparer CreatePreparer(
-            PublicationTestSupport.Fixture fixture) => new(
-                fixture.Store,
+            PublicationTestSupport.Fixture fixture) => CreatePreparer(fixture, fixture.Store);
+
+        private static AiDelegationPolicyPublicationPreparer CreatePreparer(
+            PublicationTestSupport.Fixture fixture,
+            IAiExecutionStore store) => new(
+                store,
                 fixture.Accessor,
                 fixture.ControlPlane,
                 fixture.Services.GetRequiredService<AiPublicationIdentity>(),

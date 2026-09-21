@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Publication;
 
 namespace Multiplexed.AI.Runtime.Publication
@@ -32,7 +33,7 @@ namespace Multiplexed.AI.Runtime.Publication
         {
             if (package.Kind != AiPublicationDependencyPackageKind.PythonWheelBundle)
                 throw new InvalidOperationException("Python wheel validation received another package kind.");
-            if (!string.Equals(runtime.ExecutionLanguage, "python", StringComparison.Ordinal))
+            if (!string.Equals(runtime.ExecutionLanguage, AiExecutionLanguages.Python, StringComparison.Ordinal))
                 throw new InvalidOperationException("Python wheels require the Python execution language.");
             if (files.Count != 2)
                 throw new InvalidOperationException("A Python wheel dependency contains exactly one manifest and one wheel artifact.");

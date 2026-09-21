@@ -12,7 +12,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Policies
         private readonly IAiRetryPolicyCodePreparer _preparer; private readonly IAiWorkerInvocationTransport _transport; private readonly TimeProvider _time;
         public AiHostedRetryPolicyTransport(string executionLanguage, IAiRetryPolicyCodePreparer preparer, IAiWorkerInvocationTransport transport, TimeProvider? timeProvider=null)
         {
-            if(executionLanguage is not (AiExecutionLanguages.DotNet or AiExecutionLanguages.Python or AiExecutionLanguages.TypeScript)) throw new ArgumentOutOfRangeException(nameof(executionLanguage));
+            if(!AiExecutionLanguages.IsSupported(executionLanguage)) throw new ArgumentOutOfRangeException(nameof(executionLanguage));
             ExecutionLanguage=executionLanguage; _preparer=preparer??throw new ArgumentNullException(nameof(preparer)); _transport=transport??throw new ArgumentNullException(nameof(transport)); _time=timeProvider??TimeProvider.System;
         }
         public string ExecutionLanguage { get; }

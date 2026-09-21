@@ -18,17 +18,20 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp
         private readonly IAiMcpToolResolver _resolver;
         private readonly IAiMcpToolTransport _transport;
         private readonly TimeSpan _timeout;
+        private readonly TimeProvider _timeProvider;
 
-        internal AiMcpStepAdapter(
+        public AiMcpStepAdapter(
             AiStepInvocationAdapterContext metadata,
             IAiMcpToolResolver resolver,
             IAiMcpToolTransport transport,
-            TimeSpan timeout)
+            TimeSpan timeout,
+            TimeProvider? timeProvider = null)
         {
             _metadata = metadata;
             _resolver = resolver;
             _transport = transport;
             _timeout = timeout;
+            _timeProvider = timeProvider ?? TimeProvider.System;
         }
 
         public string Name => _metadata.StepName;
@@ -52,7 +55,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp
             using var executionCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken, context.CancellationToken);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(executionCancellation.Token);
-            var deadlineUtc = DateTimeOffset.UtcNow.Add(_timeout);
+            var deadlineUtc = _timeProvider.GetUtcNow().Add(_timeout);
             deadline.CancelAfter(_timeout);
             try
             {

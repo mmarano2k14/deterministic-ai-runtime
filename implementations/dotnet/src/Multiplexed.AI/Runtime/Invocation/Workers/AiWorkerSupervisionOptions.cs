@@ -1,3 +1,4 @@
+using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Invocation.Durable;
 
 namespace Multiplexed.AI.Runtime.Invocation.Workers
@@ -46,7 +47,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
             Scopes = Array.AsReadOnly(scopes.Distinct().ToArray());
             ExecutionLanguages = Array.AsReadOnly(executionLanguages.Distinct(StringComparer.Ordinal).ToArray());
             PageSize = pageSize; Interval = interval ?? TimeSpan.FromSeconds(1);
-            if (Scopes.Count is < 1 or > 1024 || ExecutionLanguages.Count is < 1 or > 3 ||
+            if (Scopes.Count is < 1 or > 1024 || ExecutionLanguages.Count < 1 || ExecutionLanguages.Count > AiExecutionLanguages.All.Count ||
                 pageSize is < 1 or > 100 || Interval < TimeSpan.FromMilliseconds(100) || Interval > TimeSpan.FromMinutes(5))
                 throw new ArgumentException("Polling requires bounded explicit scopes, languages, page size and interval.");
             foreach (var scope in Scopes) Durable.AiDurableInvocationValidation.ValidateScope(scope);

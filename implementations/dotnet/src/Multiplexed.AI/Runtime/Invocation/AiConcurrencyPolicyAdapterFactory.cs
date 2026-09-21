@@ -15,13 +15,16 @@ namespace Multiplexed.AI.Runtime.Invocation
     {
         private readonly IReadOnlyDictionary<string, IAiConcurrencyPolicyTransport> _transports;
         private readonly TimeSpan _timeout;
+        private readonly TimeProvider _timeProvider;
 
         public AiConcurrencyPolicyAdapterFactory(
             IEnumerable<IAiConcurrencyPolicyTransport> transports,
-            AiConcurrencyPolicyInvocationOptions? options = null)
+            AiConcurrencyPolicyInvocationOptions? options = null,
+            TimeProvider? timeProvider = null)
         {
             ArgumentNullException.ThrowIfNull(transports);
             _timeout = (options ?? new AiConcurrencyPolicyInvocationOptions()).EvaluationTimeout;
+            _timeProvider = timeProvider ?? TimeProvider.System;
             if (_timeout <= TimeSpan.Zero || _timeout > TimeSpan.FromSeconds(30))
             {
                 throw new ArgumentOutOfRangeException(nameof(options), "Policy timeout must be positive and at most 30 seconds.");
@@ -32,7 +35,7 @@ namespace Multiplexed.AI.Runtime.Invocation
             {
                 ArgumentNullException.ThrowIfNull(transport);
                 var language = transport.ExecutionLanguage;
-                if (language is not (AiExecutionLanguages.DotNet or AiExecutionLanguages.Python or AiExecutionLanguages.TypeScript))
+                if (!AiExecutionLanguages.IsSupported(language))
                 {
                     throw new InvalidOperationException("A concurrency policy transport requires a canonical execution language.");
                 }
@@ -91,7 +94,7 @@ namespace Multiplexed.AI.Runtime.Invocation
             return new AiConcurrencyPolicyAdapter(
                 transport, binding, tenantId, tenantGroupId,
                 stepContext.ExecutionId, stepContext.StepName, stepContext.StepKey,
-                stepContext.CancellationToken, _timeout);
+                stepContext.CancellationToken, _timeout, _timeProvider);
         }
 
         private static void ValidateBinding(
@@ -112,7 +115,7 @@ namespace Multiplexed.AI.Runtime.Invocation
                 declaration.Invocation.ImplementationRef != invocation.ImplementationRef ||
                 declaration.Invocation.ConnectionRef is not null || declaration.Invocation.Tool is not null ||
                 invocation.ConnectionRef is not null || invocation.Tool is not null ||
-                invocation.ExecutionLanguage is not (AiExecutionLanguages.DotNet or AiExecutionLanguages.Python or AiExecutionLanguages.TypeScript) ||
+                !AiExecutionLanguages.IsSupported(invocation.ExecutionLanguage) ||
                 invocation.LanguageSource is not (AiExecutionLanguageSource.Pipeline or AiExecutionLanguageSource.Step or AiExecutionLanguageSource.Policy) ||
                 !Enum.IsDefined(binding.Scope) ||
                 (binding.Scope == AiPolicyBindingScope.Pipeline && binding.OwnerStepName is not null) ||

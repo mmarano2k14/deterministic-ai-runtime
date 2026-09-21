@@ -1,3 +1,4 @@
+using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Publication;
 
 namespace Multiplexed.AI.Runtime.Publication
@@ -25,15 +26,15 @@ namespace Multiplexed.AI.Runtime.Publication
             {
                 new AiDependencyPackageCapability(
                     AiPublicationDependencyPackageKind.PythonWheelBundle,
-                    "python",
+                    AiExecutionLanguages.Python,
                     AiDependencyPackageExecutionSupport.Hosted),
                 new AiDependencyPackageCapability(
                     AiPublicationDependencyPackageKind.NodeLockedBundle,
-                    "typescript",
+                    AiExecutionLanguages.TypeScript,
                     AiDependencyPackageExecutionSupport.Hosted),
                 new AiDependencyPackageCapability(
                     AiPublicationDependencyPackageKind.DotNetAssemblyClosure,
-                    "dotnet",
+                    AiExecutionLanguages.DotNet,
                     AiDependencyPackageExecutionSupport.Hosted)
             });
 

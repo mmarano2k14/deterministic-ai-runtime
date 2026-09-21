@@ -21,10 +21,10 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Policies
             ArgumentNullException.ThrowIfNull(request); Validate(request);
             var parent=await (_dag is null?_executions.GetRecordAsync(request.Context.ExecutionId,cancellationToken):_dag.GetRecordAsync(request.Context.ExecutionId,cancellationToken)).ConfigureAwait(false)
                 ?? throw new InvalidOperationException("The durable parent is unavailable; custom Retry evaluation is not permitted.");
-            var snapshot=parent.ExecutionContextSnapshot;
-            if(snapshot?.TenantId!=request.Context.TenantId || snapshot.TenantGroupId!=request.Context.TenantGroupId || string.IsNullOrWhiteSpace(snapshot.ContextKey) || string.IsNullOrWhiteSpace(snapshot.TenantGroupId))
-                throw new UnauthorizedAccessException("Retry policy ownership does not match the persisted execution context.");
-            if(parent.IsTerminal) throw new InvalidOperationException("A terminal parent cannot authorize a custom Retry evaluation.");
+            var snapshot=AiHostedPolicyOwnershipRevalidator.ValidateInitial(
+                parent,request.Context.ExecutionId,request.Context.TenantId,request.Context.TenantGroupId,
+                "Retry policy ownership does not match the persisted execution context.",
+                "A terminal parent cannot authorize a custom Retry evaluation.");
             var scope=new AiDurableInvocationScope(snapshot.TenantId!,snapshot.TenantGroupId!,await _controlPlane.ResolveAsync(cancellationToken).ConfigureAwait(false));
             var previous=_accessor.Current; _accessor.Set(ExecutionContextSnapshotMapper.ToExecutionContext(snapshot));
             try
@@ -32,8 +32,9 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Policies
                 var guard=await _identity.AuthorizeAsync(scope,_options.Execute,cancellationToken).ConfigureAwait(false);
                 var result=await _publications.ReadRetryPolicyWorkerCodeAsync(request,guard,cancellationToken).ConfigureAwait(false); guard.RequireCurrent();
                 var current=await (_dag is null?_executions.GetRecordAsync(request.Context.ExecutionId,cancellationToken):_dag.GetRecordAsync(request.Context.ExecutionId,cancellationToken)).ConfigureAwait(false);
-                if(current is null || current.IsTerminal || current.ExecutionContextSnapshot?.TenantId!=scope.TenantId || current.ExecutionContextSnapshot.TenantGroupId!=scope.TenantGroupId || current.ExecutionContextSnapshot.UserId!=snapshot.UserId)
-                    throw new UnauthorizedAccessException("Parent ownership or lifecycle changed before custom Retry evaluation.");
+                AiHostedPolicyOwnershipRevalidator.RequireCurrent(
+                    current,request.Context.ExecutionId,snapshot,
+                    "Parent ownership or lifecycle changed before custom Retry evaluation.");
                 guard.RequireCurrent(); return result;
             }
             finally { if(previous is null)_accessor.Clear(); else _accessor.Set(previous); }

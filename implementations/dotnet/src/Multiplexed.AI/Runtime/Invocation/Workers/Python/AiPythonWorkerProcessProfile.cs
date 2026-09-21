@@ -1,4 +1,5 @@
 using System.Globalization;
+using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Publication;
 
 namespace Multiplexed.AI.Runtime.Invocation.Workers.Python
@@ -19,7 +20,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Python
             IEnumerable<string>? approvedLaunchRoots = null)
         {
             ArgumentNullException.ThrowIfNull(runtime);
-            if (runtime.ExecutionLanguage != "python")
+            if (runtime.ExecutionLanguage != AiExecutionLanguages.Python)
                 throw new NotSupportedException("The Python source loader cannot execute another language.");
             if (!Version.TryParse(runtime.RuntimeVersion, out var version) || version.Major != 3 ||
                 version.Minor is not (12 or 13) || version.Build < 0 || version.Revision != -1 ||

@@ -12,7 +12,7 @@ namespace Multiplexed.AI.Runtime.Invocation
     /// The adapter can only return policy evidence; durable relation mutation remains outside this type.
     /// </summary>
     [AiPolicyDiscoveryIgnore]
-    internal sealed class AiDelegationPolicyAdapter : IAiPolicy, IAiPolicyInvocationIdentity
+    public sealed class AiDelegationPolicyAdapter : IAiPolicy, IAiPolicyInvocationIdentity
     {
         private readonly IAiDelegationPolicyTransport _transport;
         private readonly AiPolicyInvocationBinding _binding;
@@ -23,6 +23,7 @@ namespace Multiplexed.AI.Runtime.Invocation
         private readonly string _parentStepName;
         private readonly CancellationToken _executionCancellation;
         private readonly TimeSpan _timeout;
+        private readonly TimeProvider _timeProvider;
         private readonly string _requestId = Guid.NewGuid().ToString("N");
         private int _started;
 
@@ -35,7 +36,8 @@ namespace Multiplexed.AI.Runtime.Invocation
             string parentExecutionId,
             string parentStepName,
             CancellationToken executionCancellation,
-            TimeSpan timeout)
+            TimeSpan timeout,
+            TimeProvider? timeProvider = null)
         {
             _transport = transport ?? throw new ArgumentNullException(nameof(transport));
             _binding = binding ?? throw new ArgumentNullException(nameof(binding));
@@ -46,6 +48,7 @@ namespace Multiplexed.AI.Runtime.Invocation
             _parentStepName = parentStepName;
             _executionCancellation = executionCancellation;
             _timeout = timeout;
+            _timeProvider = timeProvider ?? TimeProvider.System;
 
             var metadata = new Dictionary<string, string>(StringComparer.Ordinal)
             {
@@ -109,7 +112,7 @@ namespace Multiplexed.AI.Runtime.Invocation
                 _binding.OwnerStepName,
                 _binding.Invocation.ExecutionLanguage!,
                 _binding.Invocation.ImplementationRef!,
-                DateTimeOffset.UtcNow.Add(_timeout),
+                _timeProvider.GetUtcNow().Add(_timeout),
                 new AiDelegationPolicyInput(
                     _tenantId,
                     _tenantGroupId,
