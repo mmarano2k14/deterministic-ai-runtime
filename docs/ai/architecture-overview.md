@@ -1526,7 +1526,7 @@ Plugins remain responsible for domain-specific execution.
 | Durable MCP external-effect evidence | Implemented as an opt-in server boundary with immutable intent, pre-`tools/call` dispatch CAS, `Completed` local replay, `NotSent`/`Uncertain` classification, explicit reconciliation, restart-safe fail-closed behavior, and tenant-scoped Mongo persistence; no generic exactly-once or automatic redelivery claim |
 | Hosted worker physical isolation | Selected Linux/amd64 OCI `SandboxedContainer` provider implemented / validated with fail-closed attestation, cleanup/quarantine, orphan reconciliation, 4 explicit real-engine tests, production Python hosted-worker execution/cancellation, and bounded live matrix closure; not a universal platform or Kubernetes sandbox claim |
 | Public SDK contract/server boundary | Implemented and validated; portable contracts have no engine-DLL dependency and the server boundary exposes publication, submission, observation, result, and cancellation while reusing existing authorities |
-| External language SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python with shared protocol/parity validation, local package smoke, and a fixture-free 37/37 Docker runtime matrix across the `ProcessHostPool` baseline plus bounded `ContainerIsolationProvider` selection scenarios; no engine-DLL dependency |
+| External language SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python with shared protocol/parity validation, local package smoke, and a fixture-free 37/37 Docker runtime matrix with `runtimeProvider=ProcessHostPool` and bounded `ContainerIsolationProvider` worker-selection scenarios; no engine-DLL dependency |
 | CLI / public SDK registry distribution | Planned productization on the same public boundary |
 | Process-host Runtime Pool Manager | Implemented / validated |
 | Independent `PoolId` / `HostId` / `RuntimeInstanceId` identity | Implemented / validated |
@@ -1535,6 +1535,8 @@ Plugins remain responsible for domain-specific execution.
 | Shared durable Runtime Pool failure journal and exact capacity suppression | Implemented / validated |
 | Deterministic assigned-work claim and exact child/full-boundary recovery | Implemented / validated |
 | Kubernetes Runtime Pool Pod with multiple independent child runtimes | Implemented / validated over HTTP and gRPC |
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
 
 ---
 

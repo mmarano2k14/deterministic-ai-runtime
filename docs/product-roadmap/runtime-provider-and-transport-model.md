@@ -72,6 +72,14 @@ The roadmap is to harden, document, expose, and extend it.
 
 ---
 
+## Hosted-worker execution is a separate provider dimension
+
+The runtime evidence now names `runtimeProvider=ProcessHostPool` or `KubernetesPool` separately from `workerExecutionProvider=TrustedProcess` or `ContainerIsolationProvider`. KubernetesPool remains a runtime-hosting provider, not a new hosted-worker invocation transport.
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](../ai/kubernetes-pool-matrix-validation.md).
+
+The Kubernetes external function executes with `HostRuntime` / `TrustedProcess` inside an OCI-packaged runtime Pod. Ephemeral hosted-worker sandbox Pods remain a separate provider capability.
+
 ## Implemented Runtime Pool Transport Model
 
 The platform now has an opt-in process-host Runtime Pool transport model.

@@ -623,6 +623,14 @@ This prevents admission from accidentally assigning work to `mcp-control-plane`.
 
 ---
 
+## Published-code KubernetesPool host roles
+
+The real external Python SDK scenario uses the MCP public boundary for immutable publication and `QueueFirst` execution submission. Its control plane advertises the Linux environment through `PublicationOnlyRuntimes`, with `AiHostedInvocation:EnableLocalWorkerProfiles=false`, `EnableWorkerPolling=false`, and `EnableDagReconciliation=true`. RuntimeInstanceOnly children enable their production worker profiles and polling but keep background DAG reconciliation disabled.
+
+Custom invocation adapters remain registered on runtime children independently of that reconciliation setting. The `matrix` RBAC project is explicitly configured in the context, control plane, and child TRN builder; the matrix bootstrap sets a positive snapshot TTL before persistence. Neither a restored project field nor context-store expiration replaces those host/bootstrap settings.
+
+The recorded result is public `Completed` with the uploaded-function marker verified. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md) for exact configuration keys, diagnostics, and the three-scenario closure boundary.
+
 ## Runtime Instance Identity
 
 The runtime now uses descriptor-based runtime identity.

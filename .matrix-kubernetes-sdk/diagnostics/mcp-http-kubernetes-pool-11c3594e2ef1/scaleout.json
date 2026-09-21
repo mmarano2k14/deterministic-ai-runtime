@@ -1,0 +1,23 @@
+{
+    "watcherRegistered":  true,
+    "watcherReady":  true,
+    "watcherId":  "mcp-scaleout-watcher",
+    "resolvedControlPlaneId":  "matrix-kubernetes-sdk-6ce04c65",
+    "readyAtUtc":  "2026-09-20T23:23:22.2995205+00:00",
+    "requests":  [
+                     {
+                         "requestId":  "scale-out-redispatch-sdk-published-f33de00aae154fba7f8cc60f8ff8332c9417afb6956913eed6eaf874d47db64f-bab88f0999e448dcaf39793e59bdc4f3",
+                         "sharedRunId":  "sdk-published-f33de00aae154fba7f8cc60f8ff8332c9417afb6956913eed6eaf874d47db64f",
+                         "status":  "Fulfilled",
+                         "reason":  "Shared queue redispatch requested replacement runtime capacity.",
+                         "rejectionReason":  null,
+                         "providerHint":  "http",
+                         "requestedTargetInstanceCount":  1,
+                         "createdAtUtc":  "2026-09-20T23:23:24.1512679+00:00",
+                         "observedAtUtc":  "2026-09-20T23:23:24.168086+00:00",
+                         "fulfilledAtUtc":  "2026-09-20T23:23:31.2329592+00:00",
+                         "rejectedAtUtc":  null,
+                         "fulfilledRuntimeInstanceId":  "matrix-kubernetes-runtime-pod-scale-out-f1b6a8698209c7f57a0b0c31"
+                     }
+                 ]
+}

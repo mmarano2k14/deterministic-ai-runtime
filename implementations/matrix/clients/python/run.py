@@ -21,6 +21,7 @@ from multiplexed_ai_sdk import (  # noqa: E402
     AiSdkCredential,
     AiSdkExecutionCancellationRequest,
     AiSdkExecutionMode,
+    AiSdkException,
     AiSdkExecutionStatus,
     AiSdkExecutionStepStatus,
     AiSdkExecutionSubmissionRequest,
@@ -39,8 +40,37 @@ from multiplexed_ai_sdk import (  # noqa: E402
 )
 
 
+def _diagnostic(args: argparse.Namespace, message: str) -> None:
+    line = f"[matrix-python-client] {message}"
+    print(line, flush=True)
+    diagnostic_log = getattr(args, "diagnostic_log", None)
+    if diagnostic_log:
+        path = Path(diagnostic_log).resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(line + "\n")
+
+
+def _diagnostic_failure(args: argparse.Namespace, stage: str, exception: Exception) -> None:
+    if isinstance(exception, AiSdkException):
+        error = exception.error
+        details = json.dumps(error.details, ensure_ascii=False, sort_keys=True, default=str)
+        _diagnostic(
+            args,
+            f"{stage} FAILED AiSdkException kind={error.kind} code={error.code} "
+            f"retryable={str(error.retryable).lower()} message={error.message} details={details}",
+        )
+        return
+    _diagnostic(args, f"{stage} FAILED {type(exception).__name__}: {exception}")
+
+
 async def main() -> int:
     args = _parse_args()
+    _diagnostic(
+        args,
+        f"START scenario={args.scenario_id} worker={args.worker} topology={args.topology} "
+        f"runtimeProvider={args.runtime_provider} environmentRef={args.environment_ref} endpoint={args.endpoint}",
+    )
     if args.feature == "dependency-firewall":
         _run_dependency_firewall(args)
         return 0
@@ -66,56 +96,68 @@ async def main() -> int:
     source = _cancellation_worker_source(args.worker) if args.feature == "cancellation" else _worker_source(args.worker)
     marker = f"{args.scenario_id}-marker"
 
-    publication = await client.publish_pipeline(
-        AiSdkPipelinePublicationRequest(
-            definition=AiSdkPipelineDefinition(
-                name=f"matrix-{args.scenario_id}",
-                version="1",
-                execution_language=args.worker,
-                execution_mode=AiSdkExecutionMode.DAG,
-                steps=(
-                    AiSdkPipelineStepDefinition(
-                        name="work",
-                        step_key="custom",
-                        order=0,
-                        execution_language=args.worker,
-                        invocation=AiSdkInvocationDefinition(kind=AiSdkInvocationKind.CUSTOM),
-                        input={"marker": marker},
-                    ),
-                ),
-            ),
-            functions=(
-                AiSdkPublicationFunctionUpload(
-                    site=AiSdkPublicationCallSite(
-                        kind=AiSdkPublicationFunctionKind.STEP,
-                        step_name="work",
-                    ),
-                    environment_ref=args.environment_ref,
-                    entry_point_path=source["entry_point_path"],
-                    entry_point_symbol=source["entry_point_symbol"],
-                    sources=(
-                        AiSdkPublicationFileUpload(
-                            path=source["entry_point_path"],
-                            content_base64=base64.b64encode(source["bytes"]).decode("ascii"),
+    _diagnostic(args, "PUBLISH start")
+    try:
+        publication = await client.publish_pipeline(
+            AiSdkPipelinePublicationRequest(
+                definition=AiSdkPipelineDefinition(
+                    name=f"matrix-{args.scenario_id}",
+                    version="1",
+                    execution_language=args.worker,
+                    execution_mode=AiSdkExecutionMode.DAG,
+                    steps=(
+                        AiSdkPipelineStepDefinition(
+                            name="work",
+                            step_key="custom",
+                            order=0,
+                            execution_language=args.worker,
+                            invocation=AiSdkInvocationDefinition(kind=AiSdkInvocationKind.CUSTOM),
+                            input={"marker": marker},
                         ),
                     ),
                 ),
-            ),
+                functions=(
+                    AiSdkPublicationFunctionUpload(
+                        site=AiSdkPublicationCallSite(
+                            kind=AiSdkPublicationFunctionKind.STEP,
+                            step_name="work",
+                        ),
+                        environment_ref=args.environment_ref,
+                        entry_point_path=source["entry_point_path"],
+                        entry_point_symbol=source["entry_point_symbol"],
+                        sources=(
+                            AiSdkPublicationFileUpload(
+                                path=source["entry_point_path"],
+                                content_base64=base64.b64encode(source["bytes"]).decode("ascii"),
+                            ),
+                        ),
+                    ),
+                ),
+            )
         )
-    )
+    except Exception as exception:
+        _diagnostic_failure(args, "PUBLISH", exception)
+        raise
+    _diagnostic(args, f"PUBLISH succeeded publicationRef={publication.publication_ref}")
 
-    submitted = await client.submit_execution(
-        AiSdkExecutionSubmissionRequest(
-            publication_ref=publication.publication_ref,
-            idempotency_key=f"{args.scenario_id}-{uuid.uuid4().hex}",
-            input={"marker": marker},
-            metadata={
-                "matrix.scenario": args.scenario_id,
-                "matrix.client": "python",
-                "matrix.worker": args.worker,
-            },
+    _diagnostic(args, "SUBMIT start")
+    try:
+        submitted = await client.submit_execution(
+            AiSdkExecutionSubmissionRequest(
+                publication_ref=publication.publication_ref,
+                idempotency_key=f"{args.scenario_id}-{uuid.uuid4().hex}",
+                input={"marker": marker},
+                metadata={
+                    "matrix.scenario": args.scenario_id,
+                    "matrix.client": "python",
+                    "matrix.worker": args.worker,
+                },
+            )
         )
-    )
+    except Exception as exception:
+        _diagnostic_failure(args, "SUBMIT", exception)
+        raise
+    _diagnostic(args, f"SUBMIT succeeded executionId={submitted.execution_id} status={submitted.status.value}")
 
     if args.feature == "cancellation":
         active = await _wait_for_active_step(client, submitted.execution_id, "work", 30.0)
@@ -153,6 +195,7 @@ async def main() -> int:
                 "cancellationMode": "running-cooperative",
                 "clientLanguage": "python",
                 "workerLanguage": args.worker,
+                "environmentRef": args.environment_ref,
                 "endpoint": args.endpoint,
                 "topology": args.topology,
                 "provider": args.provider,
@@ -182,10 +225,30 @@ async def main() -> int:
     else:
         if args.feature:
             raise ValueError(f"Unsupported --feature '{args.feature}'.")
-        observation = await _wait_for_terminal(client, submitted.execution_id, 90.0)
-        result = await client.get_execution_result(submitted.execution_id)
+        _diagnostic(args, f"OBSERVE waiting executionId={submitted.execution_id}")
+        try:
+            observation = await _wait_for_terminal(client, submitted.execution_id, args.terminal_timeout_seconds)
+        except Exception as exception:
+            _diagnostic_failure(args, "OBSERVE", exception)
+            raise
+        _diagnostic(args, f"OBSERVE terminal executionId={submitted.execution_id} status={observation.status.value}")
+        try:
+            result = await client.get_execution_result(submitted.execution_id)
+        except Exception as exception:
+            _diagnostic_failure(args, "RESULT", exception)
+            raise
+        _diagnostic(args, f"RESULT status={result.status.value}")
         if result.status.value != "Completed":
             raise RuntimeError(f"Execution '{submitted.execution_id}' ended as '{result.status.value}'.")
+        output_marker_verified = False
+        if args.require_output_marker:
+            output_marker_verified = _contains_json_value(result.output, marker)
+            if not output_marker_verified:
+                _diagnostic(args, "MARKER verification failed")
+                raise RuntimeError(
+                    "Completed execution did not expose the published function marker in the terminal result output."
+                )
+            _diagnostic(args, "MARKER verified")
 
         _write_evidence(
             Path(args.evidence),
@@ -195,6 +258,7 @@ async def main() -> int:
                 "status": "passed",
                 "clientLanguage": "python",
                 "workerLanguage": args.worker,
+                "environmentRef": args.environment_ref,
                 "endpoint": args.endpoint,
                 "topology": args.topology,
                 "provider": args.provider,
@@ -203,6 +267,7 @@ async def main() -> int:
                 "publicationRef": publication.publication_ref,
                 "executionId": submitted.execution_id,
                 "terminalStatus": result.status.value,
+                "outputMarkerVerified": output_marker_verified,
                 "evidence": ["publish", "submit", "observe", "terminal-result", "public-execution-id"],
                 "recordedAtUtc": observation.updated_at_utc or None,
             },
@@ -356,6 +421,16 @@ def _cancellation_worker_source(worker: str) -> dict[str, object]:
     raise ValueError(f"Unsupported worker language '{worker}'.")
 
 
+def _contains_json_value(value: object, expected: object) -> bool:
+    if value == expected:
+        return True
+    if isinstance(value, dict):
+        return any(_contains_json_value(item, expected) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_json_value(item, expected) for item in value)
+    return False
+
+
 def _write_evidence(path: Path, document: dict[str, object]) -> None:
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -377,6 +452,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--provider", default="ProcessHostPool")
     parser.add_argument("--runtime-provider", default="ProcessHostPool")
     parser.add_argument("--worker-execution-provider", default="TrustedProcess")
+    parser.add_argument("--require-output-marker", action="store_true")
+    parser.add_argument("--diagnostic-log")
+    parser.add_argument("--terminal-timeout-seconds", type=float, default=90.0)
     parser.add_argument("--manifest")
     args = parser.parse_args()
     if args.manifest:
@@ -390,6 +468,8 @@ def _parse_args() -> argparse.Namespace:
         args.provider = manifest.get("provider", args.provider)
         args.runtime_provider = manifest.get("runtimeProvider", args.runtime_provider)
         args.worker_execution_provider = manifest.get("workerExecutionProvider", args.worker_execution_provider)
+    if args.terminal_timeout_seconds <= 0:
+        parser.error("--terminal-timeout-seconds must be positive")
     if not args.endpoint or not args.environment_ref:
         parser.error("--endpoint and --environment-ref are required unless --manifest supplies them")
     return args

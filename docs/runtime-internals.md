@@ -6371,6 +6371,12 @@ The portable public SDK contract/server boundary is implemented with no engine-D
 
 ---
 
+### KubernetesPool public-SDK validation
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](ai/kubernetes-pool-matrix-validation.md).
+
+The enabled host registers custom invocation adapters independently of background DAG reconciliation. The matrix keeps reconciliation on the control plane and worker polling on runtime children, with positive context snapshot TTL and explicit host-owned RBAC project alignment. Runtime-host OCI packaging is distinct from hosted-worker isolation.
+
 ### Client / SDK Boundary
 
 The repository now contains an independent public contract assembly and an explicit server adapter for publication, execution submission, observation, result retrieval, and cancellation.

@@ -37,6 +37,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 throw new InvalidOperationException("AiMatrixHarness requires an explicit manifest path and bearer token.");
             }
 
+            if (options.ExecutionContextTtlSeconds <= 0)
+            {
+                throw new InvalidOperationException("AiMatrixHarness:ExecutionContextTtlSeconds must be greater than zero.");
+            }
+
             var namespaceEntry = new NamespaceEntry
             {
                 Name = options.Namespace,
@@ -59,7 +64,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 TenantId = options.TenantId,
                 TenantGroupId = options.TenantGroupId,
                 CurrentNamespace = options.Namespace,
-                Namespaces = new List<NamespaceEntry> { namespaceEntry }
+                Namespaces = new List<NamespaceEntry> { namespaceEntry },
+                // Store expiry does not populate the TTL copied into durable snapshots and pool bootstrap arguments.
+                TtlSeconds = options.ExecutionContextTtlSeconds
             };
             var contextKey = await _contexts.StoreAsync(context).ConfigureAwait(false);
             var containerEnvironmentRefs = _environments.ContainerRuntimes
@@ -76,6 +83,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 bearerToken = options.BearerToken,
                 accessContext = contextKey,
                 accessContextHeader = "X-Access-Context",
+                executionContextTtlSeconds = context.TtlSeconds,
                 topology = options.Topology,
                 provider = options.Provider,
                 runtimeProvider = options.RuntimeProvider,
@@ -86,9 +94,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 journalResultAcceptanceEndpoint = options.JournalResultAcceptanceEndpoint,
                 environmentRefs = new
                 {
-                    dotnet = _environments.DotNetReference,
-                    typescript = _environments.TypeScriptReference,
-                    python = _environments.PythonReference
+                    dotnet = EnvironmentReference(options.DotNetEnvironmentRef, _environments.DotNetReference),
+                    typescript = EnvironmentReference(options.TypeScriptEnvironmentRef, _environments.TypeScriptReference),
+                    python = EnvironmentReference(options.PythonEnvironmentRef, _environments.PythonReference)
                 },
                 containerEnvironmentRefs
             };
@@ -103,6 +111,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
         }
 
         public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        private static string EnvironmentReference(string? configured, string fallback) =>
+            string.IsNullOrWhiteSpace(configured) ? fallback : configured;
 
         private static string Trn(AiMatrixHarnessOptions options, string resource, string feature, string action) =>
             $"trn:{options.Project}:{options.Namespace}:{resource}:{feature}:{action}";

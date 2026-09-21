@@ -156,9 +156,15 @@ The historical TRX evidence above is now supplemented by a separate live public-
 
 The final matrix run is fixture-free at the execution layer: the `implementations/matrix/fixtures` tree is not required. Reusable public SDK samples provide publishable user code, while execution uses the production hosted workers.
 
-The executed provider boundary is exact: the original 33 scenarios remain the Docker `ProcessHostPool` baseline, while four additional scenarios close `TrustedProcess` versus `SandboxedContainer` and `HostRuntime` versus `OciImage` selection across `ProcessHostPool` and `ContainerIsolationProvider`. This does not imply `KubernetesPool` parity or a rerun of all baseline scenarios under container isolation.
+The executed provider boundary is exact: the original 33 scenarios remain the Docker `ProcessHostPool` baseline, while four additional scenarios close `TrustedProcess` versus `SandboxedContainer` and `HostRuntime` versus `OciImage` selection under `runtimeProvider=ProcessHostPool` with explicit worker-execution provider selection. This does not imply `KubernetesPool` parity or a rerun of all baseline scenarios under container isolation.
 
 See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the exact scenario counts and non-claims.
+
+## KubernetesPool external SDK evidence
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
+The current external Kubernetes path is Python-to-Python using `HostRuntime` and `TrustedProcess` in the runtime Pod. The image contains the three production language workers, but worker presence is not evidence of executing all three in Kubernetes. Historical TRX artifacts and their hashes below are unchanged and are not reclassified as Kubernetes SDK results.
 
 ## Artifact integrity
 

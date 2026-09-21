@@ -1,6 +1,8 @@
 # External SDK Libraries
 
-**Status:** Implemented and validated for .NET, TypeScript/JavaScript, and Python client packages. The live fixture-free Docker runtime matrix is GREEN at 37/37 scenarios: the existing 33-scenario `ProcessHostPool` baseline plus four provider/artifact-selection scenarios spanning `ProcessHostPool` and `ContainerIsolationProvider`. Public registry publication and the standalone runtime CLI remain separate productization work.
+**Status:** Implemented and validated for .NET, TypeScript/JavaScript, and Python client packages. The live fixture-free Docker runtime matrix is GREEN at 37/37 scenarios: the existing 33-scenario `ProcessHostPool` baseline plus four provider/artifact-selection scenarios using `runtimeProvider=ProcessHostPool` with explicit trusted-process/container-isolation worker selection. Public registry publication and the standalone runtime CLI remain separate productization work.
+
+A separate **3/3 KubernetesPool** closure adds live HTTP routing, hierarchical recovery, and Python SDK-to-Python `TrustedProcess` execution with `Completed` and an uploaded-function marker verified. This is not full Kubernetes client/worker parity or Kubernetes sandbox-Pod validation. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
 
 ## Purpose
 
@@ -87,7 +89,15 @@ The published-function samples represent code an external SDK consumer supplies 
 
 The standalone MCP effect server is a controlled external service sample used to validate durable outbound-effect evidence without turning the matrix harness into another runtime authority.
 
-See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the 37/37 live closure and its exact provider boundaries.
+See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the 37/37 Docker closure and its exact provider dimensions. The Kubernetes scope is described below and in [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
+## KubernetesPool execution scope
+
+The validated external Kubernetes path is the Python SDK publishing a function to `matrix-kubernetes-python`, followed by `QueueFirst` submission through the public MCP boundary and execution by the production Python `TrustedProcess` worker inside a KubernetesPool runtime Pod. The public result must reach `Completed` and include the uploaded-function marker.
+
+The SDK does not create Pods, choose runtime ownership, or reconcile the DAG. The control plane advertises the remote environment and owns reconciliation; runtime children own hosted-worker polling. Package parity across three SDK languages does not extend this one Python-to-Python Kubernetes scenario into a full cross-language matrix.
+
+Run instructions and evidence limits are in [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
 
 ## Shared client semantics
 

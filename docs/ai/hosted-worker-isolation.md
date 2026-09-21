@@ -207,6 +207,8 @@ The live matrix does not imply that all earlier `ProcessHostPool` scenarios were
 
 ## Kubernetes boundary
 
+A separate real KubernetesPool public-SDK scenario is now validated: Python SDK publication/execution reaches `Completed` with the uploaded-function marker verified, using `workerExecutionProvider=TrustedProcess` and the `HostRuntime` publication artifact inside the Runtime Pool OCI image. That result proves runtime hosting and trusted worker execution, not OCI worker isolation in Kubernetes. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
 The current isolated provider is an OCI/container-engine implementation for the selected Linux/amd64 target. It is not Docker-in-Docker logic for `KubernetesPool`, and it does not claim that current Kubernetes runtime Pods automatically provide the same hosted-code sandbox.
 
 A future Kubernetes physical provider can materialize the same logical isolation requirement as an ephemeral worker Pod using Kubernetes-native security/resource/network controls. That provider must remain behind the same hosted-worker boundary and preserve the same journal, lease/epoch, result-acceptance, DAG, and recovery authorities.

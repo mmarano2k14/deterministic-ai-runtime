@@ -74,6 +74,7 @@ class AiSdkMcpHttpTransport:
                 "remote_failure",
                 "remote_tool_error",
                 f"The remote SDK operation '{request.operation}' returned an error.",
+                details=_remote_tool_error_details(result),
             )
         if not isinstance(result.structured_content, dict):
             return _failure(
@@ -161,5 +162,47 @@ def _is_timeout(exc: Exception) -> bool:
     return isinstance(exc, TimeoutError) or "Timeout" in type(exc).__name__
 
 
-def _failure(kind: str, code: str, message: str) -> AiSdkTransportResponse:
-    return AiSdkTransportResponse(error=AiSdkError(kind=kind, code=code, message=message))  # type: ignore[arg-type]
+def _remote_tool_error_details(result: object) -> AiSdkJsonObject:
+    # MCP tool errors are already normalized by the server into the same CallToolResult.
+    # Preserve bounded textual diagnostics from that exact response instead of issuing a
+    # second non-idempotent tool call solely to discover why publication/submission failed.
+    details: AiSdkJsonObject = {}
+    messages: list[str] = []
+    for item in getattr(result, "content", None) or []:
+        text = getattr(item, "text", None)
+        if text is None and isinstance(item, dict):
+            text = item.get("text")
+        if isinstance(text, str) and text.strip():
+            messages.append(text[:4096])
+        if len(messages) >= 8:
+            break
+    if messages:
+        details["remoteContent"] = messages
+
+    structured = getattr(result, "structured_content", None)
+    if isinstance(structured, dict):
+        # Keep only ordinary JSON values and bound the rendered payload. The server owns
+        # this document; transport diagnostics must never turn into an unbounded echo.
+        try:
+            import json
+
+            rendered = json.dumps(structured, ensure_ascii=False, separators=(",", ":"), default=str)
+            if len(rendered) <= 8192:
+                decoded = json.loads(rendered)
+                if isinstance(decoded, dict):
+                    details["remoteStructuredContent"] = decoded
+        except (TypeError, ValueError):
+            pass
+    return details
+
+
+def _failure(
+    kind: str,
+    code: str,
+    message: str,
+    *,
+    details: AiSdkJsonObject | None = None,
+) -> AiSdkTransportResponse:
+    return AiSdkTransportResponse(
+        error=AiSdkError(kind=kind, code=code, message=message, details=details or {})
+    )  # type: ignore[arg-type]

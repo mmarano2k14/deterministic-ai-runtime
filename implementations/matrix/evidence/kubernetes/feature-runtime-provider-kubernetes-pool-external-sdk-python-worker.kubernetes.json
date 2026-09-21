@@ -1,0 +1,42 @@
+{
+    "schemaVersion":  1,
+    "scenarioId":  "feature-runtime-provider-kubernetes-pool-external-sdk-python-worker",
+    "status":  "passed",
+    "topology":  "kubernetes",
+    "runtimeProvider":  "KubernetesPool",
+    "workerExecutionProvider":  "TrustedProcess",
+    "submitMode":  "QueueFirst",
+    "scaleOutWatcherReady":  true,
+    "runtimeImage":  "multiplexed-ai-runtime:matrix-sdk",
+    "immutableRuntimeImage":  false,
+    "namespaceName":  "ai-runtime",
+    "poolId":  "mcp-http-kubernetes-pool-c2b06848618a",
+    "podNames":  [
+                     "runtime-pool-7g-mcp-http-kubernetes-pool-c2b068486-375d801acf8f"
+                 ],
+    "readyPodNames":  [
+                          "runtime-pool-7g-mcp-http-kubernetes-pool-c2b068486-375d801acf8f"
+                      ],
+    "serviceNames":  [
+                         "runtime-pool-7g-mcp-http-kubernetes-pool-c2b068486-3-121e4dae1a"
+                     ],
+    "runtimeContainerImages":  [
+                                   "multiplexed-ai-runtime:matrix-sdk"
+                               ],
+    "authority":  {
+                      "controlPlaneWorkerPolling":  false,
+                      "controlPlaneDagReconciliation":  true,
+                      "runtimeWorkerPolling":  true,
+                      "runtimeDagReconciliation":  false
+                  },
+    "evidenceKinds":  [
+                          "external-sdk-publication",
+                          "publication-only-runtime-identity",
+                          "control-plane-worker-polling-disabled",
+                          "runtime-worker-polling-enabled",
+                          "scale-out-watcher-ready",
+                          "kubernetes-runtime-pool-ready",
+                          "published-function-terminal-result"
+                      ],
+    "recordedAtUtc":  "2026-09-20T23:47:24.8323062Z"
+}

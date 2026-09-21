@@ -2,6 +2,8 @@
 
 **Status:** Branch-closure validation completed for the public contract and server boundary. This evidence is scoped to that boundary; the later .NET, TypeScript/JavaScript, and Python SDK libraries have their own closure evidence in [External SDK Libraries Validation](external-sdk-libraries-validation.md).
 
+Later live evidence supplements this contract/server-boundary validation: the Docker matrix is 37/37, and the separate KubernetesPool closure is 3/3, including Python SDK publication/execution with `Completed` and a verified uploaded-function marker. These counts do not change the historical contract-test totals. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
 ## Validation scope
 
 The validation boundary covers two separate concerns:

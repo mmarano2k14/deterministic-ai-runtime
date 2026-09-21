@@ -1,0 +1,458 @@
+{
+    "Pods":  [
+                 {
+                     "apiVersion":  "v1",
+                     "kind":  "Pod",
+                     "metadata":  {
+                                      "annotations":  {
+                                                          "multiplexed.ai/pod-request-id":  "61889c0b77062f7179b3bc5d",
+                                                          "multiplexed.ai/pool-id":  "mcp-http-kubernetes-pool-11c3594e2ef1",
+                                                          "multiplexed.ai/runtime-instance-count":  "1"
+                                                      },
+                                      "creationTimestamp":  "2026-09-20T23:23:24Z",
+                                      "generation":  1,
+                                      "labels":  {
+                                                     "app.kubernetes.io/component":  "runtime-pool",
+                                                     "app.kubernetes.io/instance":  "runtime-pool-7g-mcp-http-kubernetes-pool-11c3594e2-61889c0b7706",
+                                                     "app.kubernetes.io/name":  "multiplexed-ai-runtime-pool",
+                                                     "multiplexed.ai/runtime-pool":  "true",
+                                                     "multiplexed.ai/transport":  "http"
+                                                 },
+                                      "name":  "runtime-pool-7g-mcp-http-kubernetes-pool-11c3594e2-61889c0b7706",
+                                      "namespace":  "ai-runtime",
+                                      "resourceVersion":  "1427559",
+                                      "uid":  "89657d66-385b-482c-94e4-6a02da10721d"
+                                  },
+                     "spec":  {
+                                  "containers":  [
+                                                     {
+                                                         "args":  [
+                                                                      "--AiMcpHost:Mode=RuntimeInstanceOnly",
+                                                                      "--AiMcpHost:Port=8080",
+                                                                      "--Kestrel:Endpoints:RuntimePool:Url=http://0.0.0.0:8080",
+                                                                      "--Kestrel:Endpoints:RuntimePool:Protocols=Http1",
+                                                                      "--Kestrel:Endpoints:Readiness:Url=http://0.0.0.0:8081",
+                                                                      "--Kestrel:Endpoints:Readiness:Protocols=Http1",
+                                                                      "--ConnectionStrings:Redis=host.minikube.internal:6379,abortConnect=false,syncTimeout=45000,asyncTimeout=45000",
+                                                                      "--ConnectionStrings:Mongo=mongodb://host.minikube.internal:27017/?directConnection=true",
+                                                                      "--Mongo:DatabaseName=multiplexed-ai-mcp-http-tests",
+                                                                      "--OpenAI:ApiKey=kubernetes-runtime-pool-7g-not-used",
+                                                                      "--AiEngine:ControlPlane:ControlPlaneId=matrix-kubernetes-sdk-6ce04c65",
+                                                                      "--AiRuntimeInstanceRegistration:Enabled=False",
+                                                                      "--AiLocalRuntimeInstancePool:Enabled=False",
+                                                                      "--AiKubernetesRuntimePoolInPod:Enabled=True",
+                                                                      "--AiKubernetesRuntimePoolInPod:PoolId=mcp-http-kubernetes-pool-11c3594e2ef1",
+                                                                      "--AiKubernetesRuntimePoolInPod:PodUidFilePath=/var/run/multiplexed/pod/uid",
+                                                                      "--AiKubernetesRuntimePoolInPod:RuntimeInstanceIdPrefix=runtime-pool",
+                                                                      "--AiKubernetesRuntimePoolInPod:ControlPlaneId=matrix-kubernetes-sdk-6ce04c65",
+                                                                      "--AiKubernetesRuntimePoolInPod:ProviderName=http",
+                                                                      "--AiKubernetesRuntimePoolInPod:TransportName=http",
+                                                                      "--AiKubernetesRuntimePoolInPod:StableTransportPort=8080",
+                                                                      "--AiKubernetesRuntimePoolInPod:InitialProcessCount=1",
+                                                                      "--AiKubernetesRuntimePoolInPod:MinimumProcessCount=1",
+                                                                      "--AiKubernetesRuntimePoolInPod:MaximumProcessCount=1",
+                                                                      "--AiKubernetesRuntimePoolInPod:StartupParallelism=1",
+                                                                      "--AiKubernetesRuntimePoolInPod:ShutdownTimeoutSeconds=30",
+                                                                      "--AiKubernetesRuntimePoolInPod:DotnetExecutablePath=/usr/share/dotnet/dotnet",
+                                                                      "--AiKubernetesRuntimePoolInPod:RuntimeHostAssemblyPath=/app/Multiplexed.AI.McpServer.Host.dll",
+                                                                      "--AiKubernetesRuntimePoolInPod:WorkingDirectory=/app",
+                                                                      "--AiKubernetesRuntimePoolInPod:EndpointHost=127.0.0.1",
+                                                                      "--AiKubernetesRuntimePoolInPod:WorkerCountPerInstance=2",
+                                                                      "--AiKubernetesRuntimePoolInPod:MaxConcurrentRunsPerInstance=2",
+                                                                      "--AiKubernetesRuntimePoolInPod:LocalQueueCapacity=10",
+                                                                      "--AiKubernetesRuntimePoolInPod:IsolationMode=Shared",
+                                                                      "--AiKubernetesRuntimePoolInPod:PreferDedicatedCapacity=False",
+                                                                      "--AiKubernetesRuntimePoolInPod:AllowSharedFallback=True",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildStartupTimeout=00:01:00",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildReadinessPollInterval=00:00:00.5000000",
+                                                                      "--AiKubernetesRuntimePoolInPod:HeartbeatInterval=00:00:02",
+                                                                      "--AiKubernetesRuntimePoolInPod:RedisConnectionString=host.minikube.internal:6379,abortConnect=false,syncTimeout=45000,asyncTimeout=45000",
+                                                                      "--AiKubernetesRuntimePoolInPod:MongoConnectionString=mongodb://host.minikube.internal:27017/?directConnection=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:MongoDatabaseName=multiplexed-ai-mcp-http-tests",
+                                                                      "--AiKubernetesRuntimePoolInPod:OpenAiApiKey=kubernetes-runtime-pool-7g-not-used",
+                                                                      "--AiKubernetesRuntimePoolInPod:ContextKey=ctx_f68b124306ec47b0a6c502f85b83fa53",
+                                                                      "--AiKubernetesRuntimePoolInPod:Project=matrix",
+                                                                      "--AiKubernetesRuntimePoolInPod:UserId=matrix-user",
+                                                                      "--AiKubernetesRuntimePoolInPod:TenantId=matrix-tenant",
+                                                                      "--AiKubernetesRuntimePoolInPod:TenantGroupId=matrix-group",
+                                                                      "--AiKubernetesRuntimePoolInPod:CurrentNamespace=default",
+                                                                      "--AiKubernetesRuntimePoolInPod:SnapshotTtlSeconds=3600",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiDecisionLedger__Provider=mongo",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__Observability__EnableInMemoryRecording=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__Observability__EnableTracing=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__Observability__Tracing__Mode=Mongo",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__Observability__Tracing__MongoCollectionName=ai_runtime_traces",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__PayloadStore__Enabled=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__PayloadStore__Mongo__ConnectionString=mongodb://host.minikube.internal:27017/?directConnection=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__PayloadStore__Mongo__DatabaseName=multiplexed-ai-mcp-http-tests",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__PayloadStore__Mongo__Enabled=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__PayloadStore__Provider=mongo-redis",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__PayloadStore__RedisCache__Enabled=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__PayloadStore__RequireReplaySafePayloads=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__Snapshots__Enabled=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__Snapshots__Mongo__ConnectionString=mongodb://localhost:27017",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__Snapshots__Mongo__DatabaseName=multiplexed-ai-mcp-http-tests",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiEngine__Snapshots__Mongo__Enabled=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiExecutionReplay__MetadataStore__Mongo__CollectionName=ai_execution_replay_metadata",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiExecutionReplay__MetadataStore__Provider=mongo",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__ControlPlaneId=matrix-kubernetes-sdk-6ce04c65",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__DotNet__ExecutablePath=/usr/share/dotnet/dotnet",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__DotNet__Reference=matrix-kubernetes-dotnet",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__DotNet__RuntimeVersion=10.0.12",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__DotNet__WorkerDepsPath=/app/workers/dotnet/Multiplexed.AI.HostedInvocation.DotNetWorker.deps.json",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__DotNet__WorkerPath=/app/workers/dotnet/Multiplexed.AI.HostedInvocation.DotNetWorker.dll",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__DotNet__WorkerRuntimeConfigPath=/app/workers/dotnet/Multiplexed.AI.HostedInvocation.DotNetWorker.runtimeconfig.json",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__DotNet__WorkingDirectory=/app/workers/dotnet",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__Enabled=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__EnableDagReconciliation=false",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__EnableLocalWorkerProfiles=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__EnableWorkerPolling=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__MaxConcurrentProcesses=3",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__PollIntervalMilliseconds=250",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__PollPageSize=16",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__Python__ExecutablePath=/usr/local/bin/python3.12",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__Python__Reference=matrix-kubernetes-python",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__Python__RuntimeVersion=3.12.14",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__Python__WorkerPath=/app/workers/python/worker.py",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__Python__WorkingDirectory=/app/workers/python",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__TenantGroupId=matrix-group",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__TenantId=matrix-tenant",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__TypeScript__ExecutablePath=/usr/local/bin/node",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__TypeScript__Reference=matrix-kubernetes-typescript",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__TypeScript__RuntimeVersion=22.23.2",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__TypeScript__WorkerPath=/app/workers/typescript/worker.mjs",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiHostedInvocation__TypeScript__WorkingDirectory=/app/workers/typescript",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiObservability__Ledger__Provider=mongo",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiPayloadStore__Enabled=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiPayloadStore__Provider=mongo-redis",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiPayloadStore__RequireReplaySafePayloads=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiTenantRuntimeSettings__Enabled=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiTenantRuntimeSettings__Provider=Configuration",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiTenantRuntimeSettings__Tenants__0__AllowSharedFallback=True",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiTenantRuntimeSettings__Tenants__0__IsolationMode=Shared",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiTenantRuntimeSettings__Tenants__0__LocalQueueCapacity=10",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiTenantRuntimeSettings__Tenants__0__MaxConcurrentRunsPerInstance=2",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiTenantRuntimeSettings__Tenants__0__MaxRuntimeInstances=1",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiTenantRuntimeSettings__Tenants__0__PreferDedicatedCapacity=False",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiTenantRuntimeSettings__Tenants__0__RuntimeInstanceIdPrefix=matrix-kubernetes-runtime",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiTenantRuntimeSettings__Tenants__0__TenantGroupId=matrix-group",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiTenantRuntimeSettings__Tenants__0__TenantId=matrix-tenant",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:AiTenantRuntimeSettings__Tenants__0__WorkerCountPerInstance=2",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:ConnectionStrings__Mongo=mongodb://host.minikube.internal:27017/?directConnection=true",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:ConnectionStrings__Redis=host.minikube.internal:6379,abortConnect=false",
+                                                                      "--AiKubernetesRuntimePoolInPod:ChildEnvironmentVariables:Mongo__DatabaseName=multiplexed-ai-mcp-http-tests",
+                                                                      "--AiKubernetesRuntimePoolInPod:RuntimeInstances:0:Ordinal=1",
+                                                                      "--AiKubernetesRuntimePoolInPod:RuntimeInstances:0:RuntimeInstanceId=matrix-kubernetes-runtime-pod-scale-out-f1b6a8698209c7f57a0b0c31",
+                                                                      "--AiKubernetesRuntimePoolInPod:RuntimeInstances:0:TransportPort=18080"
+                                                                  ],
+                                                         "env":  [
+                                                                     {
+                                                                         "name":  "AiKubernetesRuntimePoolInPod__KubernetesNamespace",
+                                                                         "valueFrom":  {
+                                                                                           "fieldRef":  {
+                                                                                                            "apiVersion":  "v1",
+                                                                                                            "fieldPath":  "metadata.namespace"
+                                                                                                        }
+                                                                                       }
+                                                                     },
+                                                                     {
+                                                                         "name":  "AiKubernetesRuntimePoolInPod__KubernetesPodName",
+                                                                         "valueFrom":  {
+                                                                                           "fieldRef":  {
+                                                                                                            "apiVersion":  "v1",
+                                                                                                            "fieldPath":  "metadata.name"
+                                                                                                        }
+                                                                                       }
+                                                                     },
+                                                                     {
+                                                                         "name":  "AiKubernetesRuntimePoolInPod__KubernetesNodeName",
+                                                                         "valueFrom":  {
+                                                                                           "fieldRef":  {
+                                                                                                            "apiVersion":  "v1",
+                                                                                                            "fieldPath":  "spec.nodeName"
+                                                                                                        }
+                                                                                       }
+                                                                     }
+                                                                 ],
+                                                         "image":  "multiplexed-ai-runtime:matrix-sdk",
+                                                         "imagePullPolicy":  "Never",
+                                                         "name":  "runtime-pool",
+                                                         "ports":  [
+                                                                       {
+                                                                           "containerPort":  8080,
+                                                                           "name":  "pool-http",
+                                                                           "protocol":  "TCP"
+                                                                       },
+                                                                       {
+                                                                           "containerPort":  8081,
+                                                                           "name":  "pool-ready",
+                                                                           "protocol":  "TCP"
+                                                                       },
+                                                                       {
+                                                                           "containerPort":  18080,
+                                                                           "name":  "runtime-1",
+                                                                           "protocol":  "TCP"
+                                                                       }
+                                                                   ],
+                                                         "readinessProbe":  {
+                                                                                "failureThreshold":  90,
+                                                                                "httpGet":  {
+                                                                                                "path":  "/runtime-pool/readiness",
+                                                                                                "port":  8081,
+                                                                                                "scheme":  "HTTP"
+                                                                                            },
+                                                                                "periodSeconds":  1,
+                                                                                "successThreshold":  1,
+                                                                                "timeoutSeconds":  1
+                                                                            },
+                                                         "resources":  {
+
+                                                                       },
+                                                         "terminationMessagePath":  "/dev/termination-log",
+                                                         "terminationMessagePolicy":  "File",
+                                                         "volumeMounts":  [
+                                                                              {
+                                                                                  "mountPath":  "/var/run/multiplexed/pod",
+                                                                                  "name":  "pod-identity",
+                                                                                  "readOnly":  true
+                                                                              },
+                                                                              {
+                                                                                  "mountPath":  "/var/run/secrets/kubernetes.io/serviceaccount",
+                                                                                  "name":  "kube-api-access-gvvv9",
+                                                                                  "readOnly":  true
+                                                                              }
+                                                                          ]
+                                                     }
+                                                 ],
+                                  "dnsPolicy":  "ClusterFirst",
+                                  "enableServiceLinks":  true,
+                                  "nodeName":  "minikube",
+                                  "preemptionPolicy":  "PreemptLowerPriority",
+                                  "priority":  0,
+                                  "restartPolicy":  "Never",
+                                  "schedulerName":  "default-scheduler",
+                                  "securityContext":  {
+
+                                                      },
+                                  "serviceAccount":  "default",
+                                  "serviceAccountName":  "default",
+                                  "terminationGracePeriodSeconds":  30,
+                                  "tolerations":  [
+                                                      {
+                                                          "effect":  "NoExecute",
+                                                          "key":  "node.kubernetes.io/not-ready",
+                                                          "operator":  "Exists",
+                                                          "tolerationSeconds":  300
+                                                      },
+                                                      {
+                                                          "effect":  "NoExecute",
+                                                          "key":  "node.kubernetes.io/unreachable",
+                                                          "operator":  "Exists",
+                                                          "tolerationSeconds":  300
+                                                      }
+                                                  ],
+                                  "volumes":  [
+                                                  {
+                                                      "downwardAPI":  {
+                                                                          "defaultMode":  420,
+                                                                          "items":  [
+                                                                                        {
+                                                                                            "fieldRef":  {
+                                                                                                             "apiVersion":  "v1",
+                                                                                                             "fieldPath":  "metadata.uid"
+                                                                                                         },
+                                                                                            "path":  "uid"
+                                                                                        }
+                                                                                    ]
+                                                                      },
+                                                      "name":  "pod-identity"
+                                                  },
+                                                  {
+                                                      "name":  "kube-api-access-gvvv9",
+                                                      "projected":  {
+                                                                        "defaultMode":  420,
+                                                                        "sources":  [
+                                                                                        {
+                                                                                            "serviceAccountToken":  {
+                                                                                                                        "expirationSeconds":  3607,
+                                                                                                                        "path":  "token"
+                                                                                                                    }
+                                                                                        },
+                                                                                        {
+                                                                                            "configMap":  {
+                                                                                                              "items":  [
+                                                                                                                            {
+                                                                                                                                "key":  "ca.crt",
+                                                                                                                                "path":  "ca.crt"
+                                                                                                                            }
+                                                                                                                        ],
+                                                                                                              "name":  "kube-root-ca.crt"
+                                                                                                          }
+                                                                                        },
+                                                                                        {
+                                                                                            "downwardAPI":  {
+                                                                                                                "items":  [
+                                                                                                                              {
+                                                                                                                                  "fieldRef":  {
+                                                                                                                                                   "apiVersion":  "v1",
+                                                                                                                                                   "fieldPath":  "metadata.namespace"
+                                                                                                                                               },
+                                                                                                                                  "path":  "namespace"
+                                                                                                                              }
+                                                                                                                          ]
+                                                                                                            }
+                                                                                        }
+                                                                                    ]
+                                                                    }
+                                                  }
+                                              ]
+                              },
+                     "status":  {
+                                    "conditions":  [
+                                                       {
+                                                           "lastProbeTime":  null,
+                                                           "lastTransitionTime":  "2026-09-20T23:23:25Z",
+                                                           "observedGeneration":  1,
+                                                           "status":  "True",
+                                                           "type":  "PodReadyToStartContainers"
+                                                       },
+                                                       {
+                                                           "lastProbeTime":  null,
+                                                           "lastTransitionTime":  "2026-09-20T23:23:24Z",
+                                                           "observedGeneration":  1,
+                                                           "status":  "True",
+                                                           "type":  "Initialized"
+                                                       },
+                                                       {
+                                                           "lastProbeTime":  null,
+                                                           "lastTransitionTime":  "2026-09-20T23:23:27Z",
+                                                           "observedGeneration":  1,
+                                                           "status":  "True",
+                                                           "type":  "Ready"
+                                                       },
+                                                       {
+                                                           "lastProbeTime":  null,
+                                                           "lastTransitionTime":  "2026-09-20T23:23:27Z",
+                                                           "observedGeneration":  1,
+                                                           "status":  "True",
+                                                           "type":  "ContainersReady"
+                                                       },
+                                                       {
+                                                           "lastProbeTime":  null,
+                                                           "lastTransitionTime":  "2026-09-20T23:23:24Z",
+                                                           "observedGeneration":  1,
+                                                           "status":  "True",
+                                                           "type":  "PodScheduled"
+                                                       }
+                                                   ],
+                                    "containerStatuses":  [
+                                                              {
+                                                                  "containerID":  "docker://de841350e1b6db388427ddff27c78b65c3250164bf66ca0ec1a8474c94a026cc",
+                                                                  "image":  "multiplexed-ai-runtime:matrix-sdk",
+                                                                  "imageID":  "docker://sha256:b1c1ca8cd9e6bbb39d54cb90b4afe6ae74c4b995212a60a1fe6cab6cdca8cb1d",
+                                                                  "lastState":  {
+
+                                                                                },
+                                                                  "name":  "runtime-pool",
+                                                                  "ready":  true,
+                                                                  "resources":  {
+
+                                                                                },
+                                                                  "restartCount":  0,
+                                                                  "started":  true,
+                                                                  "state":  {
+                                                                                "running":  {
+                                                                                                "startedAt":  "2026-09-20T23:23:25Z"
+                                                                                            }
+                                                                            },
+                                                                  "volumeMounts":  [
+                                                                                       {
+                                                                                           "mountPath":  "/var/run/multiplexed/pod",
+                                                                                           "name":  "pod-identity",
+                                                                                           "readOnly":  true,
+                                                                                           "recursiveReadOnly":  "Disabled"
+                                                                                       },
+                                                                                       {
+                                                                                           "mountPath":  "/var/run/secrets/kubernetes.io/serviceaccount",
+                                                                                           "name":  "kube-api-access-gvvv9",
+                                                                                           "readOnly":  true,
+                                                                                           "recursiveReadOnly":  "Disabled"
+                                                                                       }
+                                                                                   ]
+                                                              }
+                                                          ],
+                                    "hostIP":  "192.168.49.2",
+                                    "hostIPs":  [
+                                                    {
+                                                        "ip":  "192.168.49.2"
+                                                    }
+                                                ],
+                                    "observedGeneration":  1,
+                                    "phase":  "Running",
+                                    "podIP":  "10.244.2.78",
+                                    "podIPs":  [
+                                                   {
+                                                       "ip":  "10.244.2.78"
+                                                   }
+                                               ],
+                                    "qosClass":  "BestEffort",
+                                    "startTime":  "2026-09-20T23:23:24Z"
+                                }
+                 }
+             ],
+    "Services":  [
+                     {
+                         "apiVersion":  "v1",
+                         "kind":  "Service",
+                         "metadata":  {
+                                          "annotations":  {
+                                                              "multiplexed.ai/pod-request-id":  "61889c0b77062f7179b3bc5d",
+                                                              "multiplexed.ai/pool-id":  "mcp-http-kubernetes-pool-11c3594e2ef1",
+                                                              "multiplexed.ai/runtime-instance-count":  "1"
+                                                          },
+                                          "creationTimestamp":  "2026-09-20T23:23:24Z",
+                                          "labels":  {
+                                                         "app.kubernetes.io/component":  "runtime-pool",
+                                                         "app.kubernetes.io/instance":  "runtime-pool-7g-mcp-http-kubernetes-pool-11c3594e2-61889c0b7706",
+                                                         "app.kubernetes.io/name":  "multiplexed-ai-runtime-pool",
+                                                         "multiplexed.ai/runtime-pool":  "true",
+                                                         "multiplexed.ai/transport":  "http"
+                                                     },
+                                          "name":  "runtime-pool-7g-mcp-http-kubernetes-pool-11c3594e2-6-4195165776",
+                                          "namespace":  "ai-runtime",
+                                          "resourceVersion":  "1427544",
+                                          "uid":  "3ad76adf-bcf0-47e9-b3d0-a26cbfad668b"
+                                      },
+                         "spec":  {
+                                      "clusterIP":  "10.109.159.93",
+                                      "clusterIPs":  [
+                                                         "10.109.159.93"
+                                                     ],
+                                      "internalTrafficPolicy":  "Cluster",
+                                      "ipFamilies":  [
+                                                         "IPv4"
+                                                     ],
+                                      "ipFamilyPolicy":  "SingleStack",
+                                      "ports":  [
+                                                    {
+                                                        "appProtocol":  "http",
+                                                        "name":  "pool-http",
+                                                        "port":  8080,
+                                                        "protocol":  "TCP",
+                                                        "targetPort":  8080
+                                                    }
+                                                ],
+                                      "selector":  {
+                                                       "app.kubernetes.io/instance":  "runtime-pool-7g-mcp-http-kubernetes-pool-11c3594e2-61889c0b7706"
+                                                   },
+                                      "sessionAffinity":  "None",
+                                      "type":  "ClusterIP"
+                                  },
+                         "status":  {
+                                        "loadBalancer":  {
+
+                                                         }
+                                    }
+                     }
+                 ]
+}

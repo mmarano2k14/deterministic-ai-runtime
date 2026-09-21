@@ -10,6 +10,8 @@ Minikube provides the local Kubernetes cluster. Docker Desktop provides the cont
 
 ## 1. Source of Truth for the Runtime Image
 
+This section describes the historical Kubernetes integration-test image. The external public-SDK scenario has a second, explicit image authority: `RuntimeImage` in `run-kubernetes-pool-sdk-execution.ps1`, defaulting to `multiplexed-ai-runtime:matrix-sdk`, built from the matrix Runtime Pool Dockerfile. [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md) records the successful SDK scenario and the scope of each image.
+
 Do not treat a documentation tag as permanent configuration.
 
 The authoritative image name used by the Kubernetes integration scenarios is defined in:
@@ -35,12 +37,12 @@ KubernetesSdkScenarioConstants.Namespace
 The current documented example uses:
 
 ```text
-RuntimeImage    = multiplexed-ai-runtime:k8s-debug-131
+RuntimeImage    = multiplexed-ai-runtime:k8s-debug-143
 ImagePullPolicy = Never
 Namespace       = ai-runtime
 ```
 
-If `RuntimeImage` changes in source, build and load the exact new value. Do not keep using `k8s-debug-131` simply because it appears in this tutorial.
+If `RuntimeImage` changes in source, build and load the exact new value. Do not keep using `k8s-debug-143` simply because it appears in this tutorial.
 
 Before building, verify the current values directly from source:
 
@@ -54,7 +56,7 @@ Select-String `
 
 ## 2. Dockerfile Source
 
-The runtime image is built from:
+The historical integration-test runtime image is built from:
 
 ```text
 implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Dockerfile
@@ -85,6 +87,8 @@ ENTRYPOINT ["dotnet", "Multiplexed.AI.McpServer.Host.dll"]
 ```
 
 Because the Dockerfile copies repository content using paths rooted at `implementations/dotnet/...`, the Docker build context must be the **repository root**.
+
+The SDK Runtime Pool image is built from `implementations/matrix/runtime/kubernetes/runtime-pool.Dockerfile`. It packages the MCP host plus the production .NET, TypeScript, and Python hosted workers. The historical host Dockerfile above does not supply that same worker-image composition. Both workflows use the repository root as their build context.
 
 ---
 
@@ -193,14 +197,14 @@ For the current documented image value:
 ```powershell
 docker build `
   -f .\implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Dockerfile `
-  -t multiplexed-ai-runtime:k8s-debug-131 `
+  -t multiplexed-ai-runtime:k8s-debug-143 `
   .
 ```
 
 Equivalent one-line command:
 
 ```powershell
-docker build -f .\implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Dockerfile -t multiplexed-ai-runtime:k8s-debug-131 .
+docker build -f .\implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Dockerfile -t multiplexed-ai-runtime:k8s-debug-143 .
 ```
 
 Verify the image exists in Docker Desktop:
@@ -247,7 +251,7 @@ The current documented local contract is:
 
 ```text
 Namespace            = ai-runtime
-RuntimeImage         = multiplexed-ai-runtime:k8s-debug-131
+RuntimeImage         = multiplexed-ai-runtime:k8s-debug-143
 ImagePullPolicy      = Never
 
 GatewayName          = ai-runtime-gateway
@@ -507,7 +511,7 @@ After building the image in Docker Desktop, load the exact source-defined image 
 Current example:
 
 ```powershell
-minikube image load multiplexed-ai-runtime:k8s-debug-131
+minikube image load multiplexed-ai-runtime:k8s-debug-143
 ```
 
 Verify:
@@ -519,7 +523,7 @@ minikube image ls | Select-String "multiplexed-ai-runtime"
 Output may appear as:
 
 ```text
-docker.io/library/multiplexed-ai-runtime:k8s-debug-131
+docker.io/library/multiplexed-ai-runtime:k8s-debug-143
 ```
 
 That normalized name is valid.
@@ -812,7 +816,7 @@ First verify the exact source value in `KubernetesSdkScenarioConstants.RuntimeIm
 
 ```powershell
 docker images | Select-String "multiplexed-ai-runtime"
-minikube image load multiplexed-ai-runtime:k8s-debug-131
+minikube image load multiplexed-ai-runtime:k8s-debug-143
 minikube image ls | Select-String "multiplexed-ai-runtime"
 ```
 
@@ -841,7 +845,7 @@ Do not compensate for infrastructure starvation by increasing correctness timeou
 From the repository root, build the image first:
 
 ```powershell
-docker build -f .\implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Dockerfile -t multiplexed-ai-runtime:k8s-debug-131 .
+docker build -f .\implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Dockerfile -t multiplexed-ai-runtime:k8s-debug-143 .
 ```
 
 Then bootstrap Minikube:
@@ -877,7 +881,7 @@ spec:
   controllerName: gateway.envoyproxy.io/gatewayclass-controller
 "@ | kubectl apply -f -
 
-minikube image load multiplexed-ai-runtime:k8s-debug-131
+minikube image load multiplexed-ai-runtime:k8s-debug-143
 
 docker inspect minikube --format "Memory={{.HostConfig.Memory}} MemorySwap={{.HostConfig.MemorySwap}} NanoCpus={{.HostConfig.NanoCpus}}"
 
@@ -915,7 +919,7 @@ Whenever the runtime image version changes:
 Example:
 
 ```powershell
-$runtimeImage = "multiplexed-ai-runtime:k8s-debug-131" # copy exact current source value
+$runtimeImage = "multiplexed-ai-runtime:k8s-debug-143" # copy exact current source value
 
 docker build `
   -f .\implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Dockerfile `
@@ -927,6 +931,21 @@ minikube image ls | Select-String "multiplexed-ai-runtime"
 ```
 
 The source constant, Docker tag, and Minikube-loaded image must always agree.
+
+### External SDK Runtime Pool workflow
+
+Run from the repository root after the shared cluster/Gateway/store prerequisites are ready:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+& .\implementations\matrix\runtime\kubernetes\run-kubernetes-pool-sdk-execution.ps1
+```
+
+This runner builds the SDK image unless `-SkipImageBuild` is supplied, loads it into Minikube with `--overwrite`, resolves canonical executable paths and exact versions/hashes, publishes the local control-plane host, generates the Kubernetes profile, and runs the external Python client. Rebuild when host/worker files baked into the image change; a profile-only change does not require rebuilding unchanged image contents.
+
+The generated profile uses a positive 3600-second context snapshot TTL, a publication-only control plane, runtime-child worker polling, and the same `matrix` RBAC project in the context and both host TRN builders. Do not copy local Windows interpreter paths into child profiles or treat the serialized project field as the child's host configuration.
+
+The final closure requires the preserved routing/recovery evidence as well as this SDK result. Missing routing evidence is regenerated automatically using the historical image; missing recovery evidence is not silently regenerated. Logs and current-pool failure bundles are retained under `.matrix-kubernetes-sdk` before cleanup. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md) for exact paths, outcome checks, and non-claims.
 
 ---
 

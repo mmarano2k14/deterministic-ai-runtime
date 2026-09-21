@@ -2,6 +2,8 @@
 
 Status: Implemented and validated for both the historical one-runtime-per-Pod Kubernetes mode and the additive KubernetesPool mode with several independent runtime processes per Pod, HTTP/gRPC transport preservation, layered readiness, child replacement, full Pod failure recovery, bounded capacity, warm reuse, replay, ledger, lifecycle, and forensics evidence.
 
+A separate **3/3 KubernetesPool** closure adds live HTTP routing, hierarchical recovery, and Python SDK-to-Python `TrustedProcess` execution with `Completed` and an uploaded-function marker verified. This is not full Kubernetes client/worker parity or Kubernetes sandbox-Pod validation. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
 This document is the canonical architecture reference for Kubernetes-hosted runtime instances in the Deterministic AI Runtime.
 
 Related documents:
@@ -863,6 +865,20 @@ See [Runtime Pool Production Validation](runtime-pool-production-validation.md).
 
 ---
 
+## KubernetesPool published-code hosting
+
+The external Python SDK scenario now validates publication through MCP, `QueueFirst` submission, KubernetesPool scale-out, production Python worker execution, and a public `Completed` result containing the uploaded-function marker. It reuses the existing Runtime Pool lifecycle, routing, membership, and recovery paths. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
+KubernetesPool is the runtime-hosting dimension. The validated hosted-worker execution dimension is `TrustedProcess`; using an OCI image for the Runtime Pool does not turn it into `ContainerIsolationProvider` or an ephemeral function-sandbox Pod.
+
+The selected host configuration keeps publication-only environment registration and DAG reconciliation on the control plane, and local production worker profiles/polling on RuntimeInstanceOnly children. Invocation adapters are registered independently of background reconciliation. Positive snapshot TTL, matching publication/worker identity, replay-safe payload storage, and aligned RBAC project configuration are required across that boundary.
+
+### Runtime Pool image authority
+
+The `AiKubernetesRuntimePoolHost` section supports the historical `RuntimeImage` setting and opt-in `RuntimeImageRepository` plus `RuntimeImageDigest`, resolved before Pod creation. `RequireImmutableRuntimeImage` rejects mutable references; incomplete repository/digest values, invalid digests, and ambiguous image authorities fail closed. These settings belong to Runtime Pool host creation and do not change worker-isolation policy.
+
+The successful SDK evidence used `multiplexed-ai-runtime:matrix-sdk`; routing evidence used `multiplexed-ai-runtime:k8s-debug-143`. Both are tagged-image records. Strict-image configuration support is not a claim that the recorded live run used digest enforcement.
+
 ## Testing Model
 
 Kubernetes tests should be classified by the boundary they prove.
@@ -1009,13 +1025,13 @@ The Kubernetes implementation must preserve these invariants:
 
 ## Local Kubernetes Image and Environment Contract
 
-The integration scenarios take their runtime image from the shared source contract:
+The historical integration scenarios take their runtime image from the shared source contract:
 
 ```text
 implementations\dotnet\Tests\Multiplexed.AI.McpServer.Tests.Integration\Scenarios\Production\Providers\Base\KubernetesSdkScenarioConstants.cs
 ```
 
-`KubernetesSdkScenarioConstants.RuntimeImage` is the authority for the image tag. The current documented example is `multiplexed-ai-runtime:k8s-debug-131`, but operators should always verify the source constant before building or loading an image.
+`KubernetesSdkScenarioConstants.RuntimeImage` is the authority for the image tag. The current documented example is `multiplexed-ai-runtime:k8s-debug-143`, but operators should always verify the source constant before building or loading an image.
 
 The image is built from:
 
@@ -1026,11 +1042,13 @@ implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Dockerfile
 From the repository root:
 
 ```powershell
-docker build -f .\implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Dockerfile -t multiplexed-ai-runtime:k8s-debug-131 .
-minikube image load multiplexed-ai-runtime:k8s-debug-131
+docker build -f .\implementations\dotnet\src\Multiplexed.AI.McpServer.Host\Dockerfile -t multiplexed-ai-runtime:k8s-debug-143 .
+minikube image load multiplexed-ai-runtime:k8s-debug-143
 ```
 
 Because the test contract uses `ImagePullPolicy = Never`, the exact image must already be present in Minikube.
+
+The external SDK Runtime Pool has a separate image authority: the `RuntimeImage` runner parameter and `implementations/matrix/runtime/kubernetes/runtime-pool.Dockerfile` (default `multiplexed-ai-runtime:matrix-sdk`). Its image includes production hosted workers. Use `run-kubernetes-pool-sdk-execution.ps1` for that build/load/profile/execution workflow rather than substituting the generic host-only image. [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md) documents rebuild versus `-SkipImageBuild` usage and failure diagnostics.
 
 For the complete fresh-cluster setup, Gateway API/Envoy installation, Redis/Mongo connectivity checks, resource sizing, image build/load flow, and crash diagnostics, see [Local Kubernetes and Minikube Environment](kubernetes-local-environment.md).
 

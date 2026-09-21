@@ -1,0 +1,60 @@
+// Wide parallel DAG test: validates concurrent execution of multiple independent branches and synchronization at a single final step.
+{
+  "pipelines": [
+    {
+      "name": "dag-wide-parallel",
+      "version": 1,
+      "executionMode": "Dag",
+      "steps": [
+        {
+          "name": "root",
+          "stepKey": "hello-world",
+          "order": 1
+        },
+
+        {
+          "name": "p1",
+          "stepKey": "hello-world",
+          "order": 2,
+          "dependsOn": [ "root" ],
+          "config": { "delayMs": 200 }
+        },
+        {
+          "name": "p2",
+          "stepKey": "hello-world",
+          "order": 3,
+          "dependsOn": [ "root" ],
+          "config": { "delayMs": 200 }
+        },
+        {
+          "name": "p3",
+          "stepKey": "hello-world",
+          "order": 4,
+          "dependsOn": [ "root" ],
+          "config": { "delayMs": 200 }
+        },
+        {
+          "name": "p4",
+          "stepKey": "hello-world",
+          "order": 5,
+          "dependsOn": [ "root" ],
+          "config": { "delayMs": 200 }
+        },
+        {
+          "name": "p5",
+          "stepKey": "hello-world",
+          "order": 6,
+          "dependsOn": [ "root" ],
+          "config": { "delayMs": 200 }
+        },
+
+        {
+          "name": "final",
+          "stepKey": "hello-world",
+          "order": 7,
+          "dependsOn": [ "p1", "p2", "p3", "p4", "p5" ]
+        }
+      ]
+    }
+  ]
+}

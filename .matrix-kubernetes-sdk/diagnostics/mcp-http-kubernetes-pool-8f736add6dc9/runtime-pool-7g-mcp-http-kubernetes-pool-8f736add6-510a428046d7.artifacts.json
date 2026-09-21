@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "scope": "selected-runtime-files-not-whole-image",
+  "status": "match",
+  "localImageId": "sha256:d5e593cc790e4d925cfcb9335b45d348bf45b188e9307310467a231da8f491b8",
+  "namespace": "ai-runtime",
+  "pod": "runtime-pool-7g-mcp-http-kubernetes-pool-8f736add6-510a428046d7",
+  "container": "runtime-pool",
+  "hashes": {
+    "/app/Multiplexed.AI.McpServer.Host.dll": "5b0f853db1284963ee964f8bb87b53b78f9562c03509851aa068b990463594ba",
+    "/app/Multiplexed.AI.McpServer.dll": "ff6114d112d0c5bfbb1772025bf7f2349e52d86cf61b6b200230a5f2aff4d6a4",
+    "/app/Multiplexed.AI.dll": "d4419545e173a2ceabf7df026bb51e7db5965020d6c36ef3de7044a9bb89cf1b",
+    "/app/Multiplexed.Abstractions.dll": "b52f7ce5cfae6cc75162b9567acce99718ad1b8f85ad65b7655d0a446b26e8fb",
+    "/app/workers/dotnet/Multiplexed.AI.HostedInvocation.DotNetWorker.dll": "d312d3fabb265b2f672f38d464b41270250aaad550d4ad5fe04c444d97d71166",
+    "/app/workers/typescript/worker.mjs": "ae06626508b08ebed765432a893519ec3dc48e4fa176aeb617a756cbe5a4302e",
+    "/app/workers/python/worker.py": "57fed162ddd81bdfb215163a753c851a865f45624c1b7b06a20b42a513469464",
+    "/usr/local/bin/python3.12": "4dbf3143240288fb2170257ffaa7bd030cdda5d2703d1f5f30b627042267e2e3"
+  },
+  "differences": []
+}

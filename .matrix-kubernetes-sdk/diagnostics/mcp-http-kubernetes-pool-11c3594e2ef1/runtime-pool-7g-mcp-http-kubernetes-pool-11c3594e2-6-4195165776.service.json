@@ -1,0 +1,51 @@
+{
+    "apiVersion": "v1",
+    "kind": "Service",
+    "metadata": {
+        "annotations": {
+            "multiplexed.ai/pod-request-id": "61889c0b77062f7179b3bc5d",
+            "multiplexed.ai/pool-id": "mcp-http-kubernetes-pool-11c3594e2ef1",
+            "multiplexed.ai/runtime-instance-count": "1"
+        },
+        "creationTimestamp": "2026-09-20T23:23:24Z",
+        "labels": {
+            "app.kubernetes.io/component": "runtime-pool",
+            "app.kubernetes.io/instance": "runtime-pool-7g-mcp-http-kubernetes-pool-11c3594e2-61889c0b7706",
+            "app.kubernetes.io/name": "multiplexed-ai-runtime-pool",
+            "multiplexed.ai/runtime-pool": "true",
+            "multiplexed.ai/transport": "http"
+        },
+        "name": "runtime-pool-7g-mcp-http-kubernetes-pool-11c3594e2-6-4195165776",
+        "namespace": "ai-runtime",
+        "resourceVersion": "1427544",
+        "uid": "3ad76adf-bcf0-47e9-b3d0-a26cbfad668b"
+    },
+    "spec": {
+        "clusterIP": "10.109.159.93",
+        "clusterIPs": [
+            "10.109.159.93"
+        ],
+        "internalTrafficPolicy": "Cluster",
+        "ipFamilies": [
+            "IPv4"
+        ],
+        "ipFamilyPolicy": "SingleStack",
+        "ports": [
+            {
+                "appProtocol": "http",
+                "name": "pool-http",
+                "port": 8080,
+                "protocol": "TCP",
+                "targetPort": 8080
+            }
+        ],
+        "selector": {
+            "app.kubernetes.io/instance": "runtime-pool-7g-mcp-http-kubernetes-pool-11c3594e2-61889c0b7706"
+        },
+        "sessionAffinity": "None",
+        "type": "ClusterIP"
+    },
+    "status": {
+        "loadBalancer": {}
+    }
+}

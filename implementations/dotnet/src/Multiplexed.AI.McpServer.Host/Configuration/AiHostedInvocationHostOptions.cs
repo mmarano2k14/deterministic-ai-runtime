@@ -10,12 +10,16 @@ namespace Multiplexed.AI.McpServer.Host.Configuration
         public int MaxConcurrentProcesses { get; set; } = 6;
         public int PollPageSize { get; set; } = 16;
         public int PollIntervalMilliseconds { get; set; } = 250;
+        public bool EnableWorkerPolling { get; set; } = true;
+        public bool EnableDagReconciliation { get; set; } = true;
+        public bool EnableLocalWorkerProfiles { get; set; } = true;
         public string TenantId { get; set; } = "matrix-tenant";
         public string TenantGroupId { get; set; } = "matrix-group";
         public string ControlPlaneId { get; set; } = "matrix-control";
         public AiHostedRuntimeOptions DotNet { get; set; } = new();
         public AiHostedRuntimeOptions TypeScript { get; set; } = new();
         public AiHostedRuntimeOptions Python { get; set; } = new();
+        public List<AiHostedPublicationOnlyRuntimeOptions> PublicationOnlyRuntimes { get; set; } = new();
         public AiHostedContainerWorkersOptions Container { get; set; } = new();
     }
 
@@ -28,6 +32,20 @@ namespace Multiplexed.AI.McpServer.Host.Configuration
         public string? WorkerDepsPath { get; set; }
         public string? WorkerRuntimeConfigPath { get; set; }
         public string? WorkingDirectory { get; set; }
+    }
+
+    /// <summary>
+    /// One exact runtime identity available for publication on another runtime host. The current host
+    /// advertises this environment but does not install a local worker executable for it.
+    /// </summary>
+    public sealed class AiHostedPublicationOnlyRuntimeOptions
+    {
+        public string Reference { get; set; } = string.Empty;
+        public string ExecutionLanguage { get; set; } = string.Empty;
+        public string RuntimeVersion { get; set; } = string.Empty;
+        public string RuntimeSha256 { get; set; } = string.Empty;
+        public string OperatingSystem { get; set; } = "linux";
+        public string Architecture { get; set; } = "amd64";
     }
 
     /// <summary>

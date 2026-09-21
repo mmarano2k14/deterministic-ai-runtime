@@ -187,6 +187,12 @@ This matrix layer proves provider/artifact selection through the real public SDK
 
 These layers are complementary and must not be collapsed into one generic "container isolation passed" claim.
 
+## Separate Kubernetes runtime-host evidence
+
+The KubernetesPool branch closes three runtime-host scenarios, including external Python SDK -> Python `TrustedProcess` execution with `Completed` and a verified uploaded-function marker. This is independent of the three isolation-evidence layers above. An OCI-packaged Runtime Pool host is not evidence of `ContainerIsolationProvider` execution in Kubernetes.
+
+The selected-provider limitations below therefore remain valid. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
 ## Bounded claims
 
 The final evidence supports the selected provider/platform boundary only.

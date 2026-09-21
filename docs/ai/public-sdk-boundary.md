@@ -197,6 +197,7 @@ The external clients remain thin wrappers over the stable portable contracts and
 
 ## Related documentation
 
+- [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md)
 - [Public SDK Boundary Validation](public-sdk-boundary-validation.md)
 - [External SDK Libraries](external-sdk-libraries.md)
 - [External SDK Libraries Validation](external-sdk-libraries-validation.md)

@@ -377,6 +377,23 @@ cancel   -> no automatic retry
 
 The server remains authoritative for durable idempotency, publication pinning, scheduling, recovery, journal leases/epochs, result acceptance, and finalization.
 
+## Run the KubernetesPool Python scenario
+
+The validated Kubernetes SDK path publishes the Python sample through MCP, submits with `QueueFirst`, runs it with the production Python `TrustedProcess` worker inside a Runtime Pool Pod, and checks the uploaded marker in the public `Completed` result.
+
+From the repository root, with the existing Minikube/Gateway and Redis/MongoDB environment ready:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+& .\implementations\matrix\runtime\kubernetes\run-kubernetes-pool-sdk-execution.ps1
+```
+
+Use `-SkipImageBuild` only when the SDK Runtime Pool image already includes the current host and production workers. The runner still loads and probes it and generates a fresh control-plane profile. The generic historical Kubernetes test image is not a substitute for this SDK image.
+
+See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md) for prerequisites, the distinct routing/recovery evidence inputs, bootstrap configuration, and diagnostic collection. This one Python-to-Python scenario does not validate the full cross-language Kubernetes matrix.
+
 ## Validation reference
 
 The external SDK path represented here is exercised by the fixture-free Docker runtime matrix. See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the exact 37/37 executed coverage, including the bounded `ProcessHostPool` / `ContainerIsolationProvider` provider-selection closure and its non-claims.
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).

@@ -178,7 +178,12 @@ class CoreMatrixTests(unittest.TestCase):
         self.assertIn("Scopes = new[] { invocationScope }", registration)
         self.assertIn("AddAiDurableInvocationDagReconciliation", registration)
         self.assertIn("new[] { invocationScope }", registration)
-        self.assertNotIn("services.AddAiDurableInvocationDag();", registration)
+        # Adapter capability is required on runtime hosts even when the control plane owns reconciliation.
+        self.assertIn("services.AddAiDurableInvocationDag();", registration)
+        self.assertLess(registration.index("services.AddAiDurableInvocationDag();"),
+                        registration.index("if (options.EnableDagReconciliation)"))
+        self.assertIn("if (options.EnableDagReconciliation)", registration)
+        self.assertIn("if (options.EnableWorkerPolling)", registration)
 
     def test_process_topologies_align_control_plane_identity_and_discovery_key(self) -> None:
         docker = (MATRIX_ROOT / "runtime" / "docker" / "runtime-entrypoint.sh").read_text(encoding="utf-8-sig")

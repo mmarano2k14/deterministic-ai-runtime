@@ -401,6 +401,10 @@ The server-side foundation now includes real Python, TypeScript, and .NET functi
 | MCP auditability | Stable `EffectId`/`RequestDigest` identity, immutable durable intent, pre-`tools/call` dispatch fencing, confirmed `Completed` replay, `NotSent`/`Uncertain` evidence, explicit reconciliation, tenant-scoped Mongo persistence, and restart-safe fail-closed behavior are available when the durable journal is configured. This is not a generic exactly-once or automatic-redelivery guarantee. |
 | SDK availability | Portable public SDK contracts, the authorized publication/execution server boundary, and independent .NET, TypeScript/JavaScript, and Python SDK client packages are implemented and validated. The fixture-free Docker runtime matrix is GREEN at 37/37 scenarios, comprising the existing `ProcessHostPool` baseline plus bounded `ContainerIsolationProvider` provider/artifact-selection closure. Public registry publication and the standalone CLI remain separate productization work. |
 
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](ai/kubernetes-pool-matrix-validation.md).
+
+This bounded result does not close production packaging, multi-node fault domains, control-plane failover, or Kubernetes sandbox-worker isolation.
+
 Targeted language/publication results are documented in [Hosted Multilanguage Validation](ai/hosted-multilanguage-validation.md); contracts and limits are documented in [Hosted Multilanguage Execution](ai/hosted-multilanguage-execution.md). The public contract/server boundary is documented in [Public SDK Boundary](ai/public-sdk-boundary.md) with closure evidence in [Public SDK Boundary Validation](ai/public-sdk-boundary-validation.md). The independent clients, command-line build/test/package instructions, cross-language parity, package-smoke evidence, and live fixture-free matrix closure are documented in [External SDK Libraries](ai/external-sdk-libraries.md), [External SDK Libraries Validation](ai/external-sdk-libraries-validation.md), and [Multilanguage Runtime Matrix Validation](ai/multilanguage-runtime-matrix-validation.md). The selected physical isolation provider is documented in [Hosted Worker Isolation](ai/hosted-worker-isolation.md) with final evidence in [Hosted Worker Isolation Validation](ai/hosted-worker-isolation-validation.md). Durable outbound MCP effects are documented separately in [Durable MCP Effect Evidence](ai/durable-mcp-effect-evidence.md) and [Durable MCP Effect Evidence Validation](ai/durable-mcp-effect-evidence-validation.md). Published custom Child DAG support remains bounded to the exercised nested depth. Hosted policy support is also finite: `Retention` remains native-only and policy taxonomy values without independent checkpoints are not advertised as hosted. The isolation evidence is bounded to the selected Linux/amd64 Docker-compatible provider and does not certify every OCI implementation, Kubernetes sandbox-Pod hosting, arbitrary package-manager installation or native package ecosystems, unlimited published-custom nesting, database-failover behavior for that path, or arbitrary future policy families.
 
 ---
@@ -416,9 +420,9 @@ The following areas are still evolving:
 - OpenTelemetry exporters
 - Prometheus/Grafana integration
 - Kubernetes deployment package
-- Kubernetes pod/deployment scale-out adapter
+- broader Kubernetes deployment/autoscaler integration beyond the validated Pod/Runtime Pool scale-out path
 - Redis command queue runtime provider
-- gRPC runtime provider
+- broader gRPC deployment/interoperability hardening beyond the validated runtime provider
 - production multi-control-plane leader election
 - full provider capability negotiation
 - database-backed tenant runtime settings provider

@@ -1,8 +1,10 @@
 # Multilanguage Runtime Matrix Validation
 
-**Status:** GREEN - 37/37 Docker scenarios passed across the documented `ProcessHostPool` and `ContainerIsolationProvider` boundaries, with the matrix fixture tree removed from the execution path.
+**Status:** GREEN - 37/37 Docker scenarios passed with `runtimeProvider=ProcessHostPool` and the documented `TrustedProcess` / `ContainerIsolationProvider` worker-execution boundaries, with the matrix fixture tree removed from the execution path.
 
-**Evidence date:** 2026-09-19
+A separate **3/3 KubernetesPool** closure adds live HTTP routing, hierarchical recovery, and Python SDK-to-Python `TrustedProcess` execution with `Completed` and an uploaded-function marker verified. This is not full Kubernetes client/worker parity or Kubernetes sandbox-Pod validation. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
+**Docker evidence date:** 2026-09-19. **KubernetesPool documentation update:** 2026-09-21.
 
 ## Purpose
 
@@ -20,14 +22,13 @@ External application / SDK client
         -> MCP Streamable HTTP
         -> public SDK server boundary
         -> immutable publication
-        -> runtime admission
-        -> provider/artifact selection
+        -> runtime admission / runtimeProvider=ProcessHostPool
+        -> pinned hosted-worker environment and artifact selection
              HostRuntime
-               -> ProcessHostPool
-               -> TrustedProcess
+               -> workerExecutionProvider=TrustedProcess
                -> production hosted worker
              OciImage
-               -> ContainerIsolationProvider
+               -> workerExecutionProvider=ContainerIsolationProvider
                -> SandboxedContainer
                -> sibling worker container through host Docker socket
                -> production Python hosted worker
@@ -87,9 +88,11 @@ The final Docker verifier reported:
 | Worker-isolation-provider selection | 2/2 | `TrustedProcess` and `SandboxedContainer` selection |
 | Isolation-artifact selection | 2/2 | `HostRuntime` and `OciImage` selection |
 | External-client dependency firewall | 3/3 | .NET, TypeScript, and Python clients remain outside engine/runtime implementation dependencies |
-| **Total** | **37/37** | **Docker; providers=`ProcessHostPool` + `ContainerIsolationProvider`** |
+| **Total** | **37/37** | **Docker; `runtimeProvider=ProcessHostPool`; `workerExecutionProvider=TrustedProcess` or bounded `ContainerIsolationProvider`** |
 
 The verifier also confirmed:
+
+Historical console excerpts below retain the legacy `providers` label. Current evidence records `runtimeProvider` separately from `workerExecutionProvider`; that legacy label must not be interpreted as two alternative runtime-hosting topologies.
 
 ```text
 9/9 production-like Docker ProcessHostPool scenarios passed.
@@ -159,13 +162,10 @@ Provider-specific reconciliation/idempotency remains necessary where external tr
 The added closure proves that the runtime distinguishes:
 
 ```text
-HostRuntime
-    -> TrustedProcess
-    -> ProcessHostPool
-
-OciImage
-    -> SandboxedContainer
-    -> ContainerIsolationProvider
+runtimeProvider=ProcessHostPool
+    -> HostRuntime -> workerExecutionProvider=TrustedProcess
+    -> OciImage -> SandboxedContainer
+                -> workerExecutionProvider=ContainerIsolationProvider
 ```
 
 The `OciImage` path is digest-pinned and is executed as a sibling container through the host Docker socket. The live OCI scenarios in this matrix use the production Python hosted worker.
@@ -185,6 +185,18 @@ The 37/37 result must not be cited as proof of:
 - every deployment topology or failure schedule.
 
 Kubernetes runtime-pool capabilities documented elsewhere remain separate evidence domains. A Kubernetes hosted-code sandbox provider must be validated independently rather than inferred from the local/CI Docker closure.
+
+## KubernetesPool closure and cross-topology accounting
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
+| Evidence domain | Accepted scenarios | Scope |
+|---|---:|---|
+| Preserved fixture-free Docker matrix | 37/37 | `ProcessHostPool`; the existing trusted-process baseline and bounded OCI worker-selection scenarios. |
+| KubernetesPool matrix | 3/3 | Routing; hierarchical recovery; external Python SDK -> production Python worker via `TrustedProcess`. |
+| Cross-topology coverage record | 40 | The two scoped evidence sets, not every scenario on every topology. |
+
+The Kubernetes SDK result uses the `HostRuntime` publication artifact inside a Runtime Pool OCI image. It does not establish Kubernetes `ContainerIsolationProvider` execution. The canonical Kubernetes guide records image provenance, host-role settings, commands, diagnostic bundles, and retained-evidence limits.
 
 ## Canonical Docker command
 

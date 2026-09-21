@@ -111,7 +111,50 @@ When an exact runtime image is already available to the cluster, the runner can 
 
 Lifecycle and recovery evidence reuses the existing `HttpKubernetesRuntimePoolFullFailureProductionScenarioTests.Http_KubernetesPool_EventDriven_Canary_Should_Reuse_The_Same_FullFailure_Scenario` production canary. The runner at `implementations/matrix/runtime/kubernetes/run-kubernetes-pool-recovery.ps1` does not create a second recovery harness. It only requests a machine-readable evidence document while the existing engine proves an exact in-Pod runtime-process failure, a distinct busy-Pod failure, replacement capacity, recovery forensics, runtime ownership convergence, parent replay, recursive Child DAG terminal convergence, ledger/trace/lifecycle consistency, and warm-pool reuse.
 
-The recovery sidecar is verified by `recovery_verifier.py` against `kubernetes-pool-recovery-v1.json`. Like the live-execution sidecar, it preserves the canonical Docker `37/37` baseline until final KubernetesPool matrix closure. A GREEN recovery claim is made only after the real EventDriven production canary succeeds on the target Kubernetes environment and the generated evidence passes the recovery verifier.
+The recovery sidecar is verified by `recovery_verifier.py` against `kubernetes-pool-recovery-v1.json`. Like the live-execution sidecar, it preserves the canonical Docker `37/37` baseline until final KubernetesPool matrix closure. The target-environment recovery run must succeed before its evidence can participate in final closure.
+
+### KubernetesPool external SDK publication and execution
+
+The final Kubernetes sidecar closes the public-boundary gap rather than adding another Kubernetes engine. `run-kubernetes-pool-sdk-execution.ps1` builds or consumes a Runtime Pool OCI image that contains the existing MCP host plus the production hosted .NET, TypeScript and Python workers, loads that image into Minikube, composes the existing production `KubernetesPool` settings, and starts the real control-plane host.
+
+The control plane advertises an exact Linux Python publication identity through `PublicationOnlyRuntimes` while its durable worker poller is disabled. `RuntimeInstanceOnly` children inside the existing KubernetesPool Pod receive the matching production Python worker profile and own worker polling, while DAG reconciliation remains on the control plane. This separates publication authority from the physical runtime host without adding a Kubernetes-specific worker transport or a second journal/recovery authority.
+
+The external Python SDK then publishes the reusable sample function through the public MCP boundary, submits it against the publication-only Kubernetes runtime identity, waits for terminal completion and requires the unique uploaded-function marker to be present in the public terminal result. A completed status without that marker fails the scenario. Live Kubernetes evidence additionally requires the Runtime Pool Pod, readiness, stable Service and configured Runtime Pool image to be observable for the same pool id.
+
+The scenario is described by `kubernetes-pool-external-sdk-v1.json` and verified by `sdk_verifier.py`. The final runner expects the already-executed live-routing and recovery evidence files to remain under `implementations/matrix/evidence/kubernetes`, so it can close the branch without rerunning the long full-failure canary.
+
+```powershell
+& .\implementations\matrix\runtime\kubernetes\run-kubernetes-pool-sdk-execution.ps1
+```
+
+Before publication, the runner probes the local runtime image with `runtime_image_probe.py`. The helper resolves executable aliases inside that image with `readlink -e`, then uses the canonical targets for version probes, the Python executable hash and the generated child profiles. In particular, `/usr/local/bin/python3` is a discovery path, not an approved launch-path declaration. The production launch-path guard remains unchanged and continues to reject symbolic links. Node version discovery does not impose a 22/24 version allowlist.
+
+The helper invokes Docker with argument vectors and no shell, preserving Windows PowerShell 5.1 compatibility. Probe results are retained in `.matrix-kubernetes-sdk/runtime-image-identity.json`; all probes use the same inspected local image ID. That local image ID is not treated as a Kubernetes repository manifest digest or as evidence of execution in the cluster.
+
+Only this external-SDK profile disables immediate provider cleanup after a failed readiness check. Before the runner's existing `finally` cleanup, diagnostics capture the exact current pool's Pod descriptions, container logs, Service data and scale-out state under `.matrix-kubernetes-sdk/diagnostics/<pool-id>/`. Historical pools are excluded. These local diagnostic files can contain deployment configuration and should be reviewed before sharing. Readiness timeouts, shared-queue behavior and production cleanup defaults are unchanged.
+
+The matrix bootstrap sets `AiMatrixHarness:ExecutionContextTtlSeconds` explicitly (default `3600`) on the seeded RBAC context before storing it. This is the snapshot TTL copied into durable run/scale-out state and then into `AiKubernetesRuntimePoolInPod:SnapshotTtlSeconds`; it does not change the RBAC context store's session idle timeout or the Kubernetes readiness timeout. A nonpositive configured value fails before the context or client manifest is created. Normal hosts remain unaffected while the harness is disabled.
+
+The SDK manifest records `executionContextTtlSeconds`, and the Kubernetes runner checks that it is a positive integer before starting the external client. The runner continues inspecting the current pool after its first appearance: a `Failed` or `Succeeded` Pod before client completion triggers scoped diagnostics and fails the scenario without waiting solely for the generic scale-out readiness timeout. Neither a positive TTL nor a running Pod counts as execution proof; terminal `Completed` and the uploaded-function marker remain required.
+
+A no-infrastructure C# regression exercises matrix context seeding, JSON persistence through a context-store test double, the real snapshot mapper, the real Kubernetes argument factory, configuration binding, and the unchanged in-Pod validator. It also covers explicit positive TTLs, invalid TTL rejection before seeding, disabled-harness behavior, and continued rejection of nonpositive snapshot TTLs. Run it with:
+
+```powershell
+dotnet test .\implementations\dotnet\Tests\Multiplexed.AI.McpServer.Tests.Integration\Multiplexed.AI.McpServer.Tests.Integration.csproj -c Debug --filter "FullyQualifiedName~MatrixHarnessBootstrapHostedServiceTests" --logger "console;verbosity=minimal" --nologo
+```
+
+After changing the compiled host bootstrap, run the external-SDK runner without `-SkipImageBuild` to rebuild and load the runtime image together with the freshly published local control-plane host. Existing routing/recovery evidence is retained; no automatic rerun of the long recovery canary is introduced.
+
+
+When only the runner, probe or test-profile settings change, an already-current runtime image can be reused with `-SkipImageBuild`. Changes to runtime or worker code baked into the image still require a rebuild and Minikube reload. Neither the image probe nor the structural tests replace the real uploaded-function marker check required for final closure.
+
+Optional `-RequireImmutableImage` enforcement requires the Runtime Pool image itself to use exact `repository@sha256:<digest>` form; immutable SDK publication is always required by the normal publication path.
+
+### KubernetesPool cross-topology closure
+
+`kubernetes-pool-closure-v1.json` records the closure model explicitly as a preserved **37-scenario Docker baseline plus three independently executed KubernetesPool scenarios**: live command routing, hierarchical failure/recovery convergence, and external SDK publication/execution. `closure_verifier.py` delegates to each existing Kubernetes evidence verifier and checks that the canonical Docker plan still contains exactly 37 unique scenarios.
+
+When all three Kubernetes evidence documents are valid, the coverage record is **40 executed scenarios across two topologies (37 Docker + 3 Kubernetes)**. This is deliberately **not** described as a homogeneous `40/40` topology matrix; the Docker baseline and KubernetesPool sidecars have different scopes. No final KubernetesPool closure claim is made until the external-SDK runner succeeds on the real target cluster and the closure verifier accepts the accumulated evidence.
 
 ## Bound feature scenarios
 
@@ -212,3 +255,121 @@ The previous baseline comprised 33 executed scenarios and closed at `33/33` unde
 ## Fixture-free execution artifacts
 
 The matrix does not own worker-function fixtures. External clients publish reusable sample artifacts from `implementations/sdk/samples/published-functions`, while execution is performed by the production hosted-invocation workers under `implementations/dotnet/workers`, `implementations/node/workers`, and `implementations/python/workers`. Durable MCP effect scenarios use the standalone sample MCP server under `implementations/sdk/samples/mcp-effect-server`.
+
+
+### KubernetesPool post-readiness failure diagnostics
+
+The SDK runner retains both control-plane output streams from process startup in
+`.matrix-kubernetes-sdk/control-plane.stdout.log` and `control-plane.stderr.log`.
+Both streams are drained concurrently to files using .NET stream-copy tasks; the
+control-plane output is no longer inherited solely by the terminal. Runner and
+SDK progress remain visible. After a failure, a short control-plane tail is printed
+to the console while the complete available files are retained.
+
+Pod log capture requests all available lines (`--tail=-1`) for the exact current
+pool, including previous container logs when a restart is recorded. A bounded
+collection failure is reported and never replaces the original SDK error. This
+cannot recover logs already rotated or removed by the cluster.
+
+On failure, the runner captures Pod diagnostics before stopping the owning host,
+then drains and closes the host output streams before creating a ZIP under
+`.matrix-kubernetes-sdk/diagnostics/<pool-id>-<timestamp>.zip`. The final console
+line `Failure bundle:` identifies that archive. The bundle includes SDK logs,
+control-plane logs, the local image identity, scale-out state, resource state,
+and available Pod evidence. Full profiles and access-context manifests are not
+added to the bundle. Logs can still contain operational or sensitive details and
+should be handled accordingly.
+
+`runtime_artifact_probe.py` compares SHA-256 hashes of the same eight explicitly
+named runtime/worker files in the already-probed local Docker image and the running
+Pod. The result is `match`, `mismatch`, or `unavailable`, with per-file differences.
+It is read-only diagnostic evidence, not a replacement execution result or a
+whole-image identity assertion. Failure or missing `pods/exec` permission is
+reported as `unavailable`, never as a match. Docker index/manifest IDs and CRI
+configuration IDs are not directly compared.
+
+These capture changes do not modify engine code, runtime-image contents, image
+loading, publication, queue dispatch, admission, scheduling, recovery, or existing
+execution deadlines. An already-current runtime image can be reused:
+
+```powershell
+& .\implementations\matrix\runtime\kubernetes\run-kubernetes-pool-sdk-execution.ps1 -SkipImageBuild
+```
+
+A fulfilled scale-out and a Ready Pod are not evidence that the uploaded function
+completed. Final closure still requires the public `Completed` result and the
+verified uploaded-function marker.
+
+
+### Hosted custom DAG adapters on runtime-only hosts
+
+Every enabled `AiHostedInvocation` host registers the existing durable DAG adapter
+core through `AddAiDurableInvocationDag()`. This installs the `Custom/python`,
+`Custom/typescript`, and `Custom/dotnet` factories independently of the optional
+background reconciliation loop. Installing the core does not start that loop.
+
+The Kubernetes profile retains its role split: the control plane enables durable
+invocation reconciliation without local worker polling; runtime children enable
+local worker profiles and worker polling with `EnableDagReconciliation=false`.
+Disabling reconciliation must not remove the adapters required to resolve a
+published custom DAG. The enabled/disabled capability boundary, explicit-DAG
+requirement, and prohibition on native fallback remain unchanged.
+
+Registration regressions exercise the production host bootstrap and pipeline
+resolver without starting infrastructure or invoking worker executables:
+
+```powershell
+dotnet test .\implementations\dotnet\Tests\Multiplexed.AI.McpServer.Tests.Integration\Multiplexed.AI.McpServer.Tests.Integration.csproj -c Debug --filter "FullyQualifiedName~HostedInvocationHostRegistrationTests" --logger "console;verbosity=minimal" --nologo
+```
+
+The host bootstrap is compiled into the runtime image. After this change, rebuild
+and load the image by running the SDK scenario without `-SkipImageBuild`:
+
+```powershell
+& .\implementations\matrix\runtime\kubernetes\run-kubernetes-pool-sdk-execution.ps1
+```
+
+A successful enqueue or Ready Pod still does not prove completion. A custom
+adapter failure during `create-execution` can be present in the Pod logs while
+the SDK observation expires without a terminal result. Diagnose it from the
+retained run logs; do not infer successful worker execution from queue admission.
+The final assertion remains `Completed` with the uploaded-function marker verified.
+
+### Kubernetes external-SDK RBAC project alignment
+
+The matrix profile uses one explicit project (`matrix`) for all three configuration
+boundaries:
+
+```text
+Seeded execution context: AiMatrixHarness:Project
+Control-plane TRN builder: Multiplexed.Rbac.Core:Project
+Runtime-child TRN builder: AiKubernetesRuntimePoolHost:ChildEnvironmentVariables:Multiplexed.Rbac.Core__Project
+```
+
+Snapshot.Project does not configure TrnBuilder. The snapshot carries execution
+ownership and exact grants, while the RBAC engine constructs targets using the
+host-owned `Multiplexed.Rbac.Core:Project` setting. Without the child setting, its
+builder falls back to `rbac-demo`, so an existing exact grant such as
+`trn:matrix:default:code:publication:execute` cannot authorize the resulting target.
+The existing in-Pod command-line/environment path carries the child setting;
+no context permissions are added, no worker identity is synthesized, and no RBAC
+or publication guard is bypassed.
+
+The runner validates equality of all three explicit profile values before
+starting the control plane and reports `RBAC project aligned`. The parent project
+is supplied by the composed profile rather than a separate command-line override.
+This checks profile consistency, not live authorization or successful execution.
+
+`HttpKubernetesPoolExternalSdkRbacTests` covers the real bootstrap context,
+JSON snapshot restoration, production in-Pod command-line serialization, .NET
+environment binding, RBAC registration and publication target authorization.
+Missing or foreign host projects, missing execute permission, foreign tenant/group/
+control-plane scope, an absent live context and unrelated capabilities remain
+denied. A permitted request still fails when its immutable run binding is absent.
+These isolated tests do not execute uploaded code or replace the real Kubernetes
+scenario.
+
+This adjustment changes the test profile and runner, not runtime-image code.
+An image already containing the hosted DAG adapter registration can be reused with
+`-SkipImageBuild`. Final success still requires the public SDK result `Completed`
+and the uploaded function marker to be verified.

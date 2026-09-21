@@ -688,13 +688,14 @@ Distributed execution is designed to handle:
 | Distributed multi-runtime-instance execution | Implemented / validated foundations |
 | Retention and replay compatibility | Implemented / validated foundations |
 | Archive-backed resolver reconstruction after retention | Foundation available |
-| Kubernetes deployment scenario | Planned |
+| Kubernetes runtime hosting | Implemented / separately validated; this does not imply every execution-control scenario was rerun through the Kubernetes SDK profile |
 | Enterprise demo scenario | Planned |
 
 ---
 
 ## Related Documents
 
+- [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md)
 - [Architecture Overview](architecture-overview.md)
 - [Distributed Concurrency and Throttling](distributed-concurrency-throttling.md)
 - [Retry and Recovery](retry-and-recovery.md)

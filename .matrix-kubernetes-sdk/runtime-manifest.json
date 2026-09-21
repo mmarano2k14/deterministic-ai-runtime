@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "endpoint": "http://127.0.0.1:8081/mcp",
+  "bearerToken": "matrix-e2e-token",
+  "accessContext": "ctx_d1fffa80ef9641f781745e48d9e861d0",
+  "accessContextHeader": "X-Access-Context",
+  "executionContextTtlSeconds": 3600,
+  "topology": "kubernetes",
+  "provider": "KubernetesPool",
+  "runtimeProvider": "KubernetesPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "effectProbeStateEndpoint": "http://localhost:8090/state",
+  "effectEvidenceEndpoint": "http://localhost:8081/matrix/mcp-effect-evidence",
+  "recoveryEndpoint": "http://localhost:8081/matrix/recovery",
+  "journalResultAcceptanceEndpoint": "http://localhost:8081/matrix/journal-result-acceptance",
+  "environmentRefs": {
+    "dotnet": "",
+    "typescript": "",
+    "python": "matrix-kubernetes-python"
+  },
+  "containerEnvironmentRefs": {}
+}

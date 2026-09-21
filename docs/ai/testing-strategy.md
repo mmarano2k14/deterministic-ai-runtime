@@ -70,7 +70,7 @@ The purpose of the testing strategy is to validate that the runtime behaves like
 
 ## Hosted Multilanguage Validation Evidence
 
-[Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the historical supplied results for invocation durability, environment/provider admission, launch paths, Python/TypeScript/.NET execution, custom `Concurrency` policies, outgoing MCP, and real MongoDB/Redis integration. [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) records the later fixture-free 37/37 Docker closure: the 33-scenario `ProcessHostPool` baseline plus four worker-isolation-provider and isolation-artifact-selection scenarios spanning `ProcessHostPool` and `ContainerIsolationProvider`.
+[Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the historical supplied results for invocation durability, environment/provider admission, launch paths, Python/TypeScript/.NET execution, custom `Concurrency` policies, outgoing MCP, and real MongoDB/Redis integration. [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) records the later fixture-free 37/37 Docker closure: the 33-scenario `ProcessHostPool` baseline plus four worker-isolation-provider and isolation-artifact-selection scenarios using `runtimeProvider=ProcessHostPool` with explicit trusted-process/container-isolation worker selection.
 
 The broad invocation/publication artifact contains 1,098 passing results and 54 individual skipped results. Dedicated Python, TypeScript, and infrastructure artifacts execute the previously inactive paths. Counts overlap and must not be presented as one combined run or an additive unique-test total.
 
@@ -85,6 +85,12 @@ The earlier trusted-process capability-refusal and symbolic-link tests validate 
 The deterministic layer proves immutable intent, pre-call dispatch fencing, same-effect concurrency, local `Completed` replay, conservative `NotSent`/`Uncertain` handling, explicit reconciliation, crash windows, restart behavior, and tenant scope. The outbound layer proves where the selected real transport crosses the `tools/call` boundary. MongoDB tests count only when a test connection string is configured and the tests actually execute; `SKIP` is not persistence evidence.
 
 The branch does not claim generic exactly-once external side effects, provider-specific idempotency, automatic redelivery, or a universal reconciliation mechanism.
+
+## KubernetesPool public-SDK closure
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
+The external Python function runs through `HostRuntime` / `TrustedProcess` inside the Runtime Pool Pod. This does not reinterpret the historical HTTP/gRPC production profiles as a new all-language SDK matrix, prove control-plane crash recovery, or provide a Kubernetes sandbox-worker guarantee.
 
 ## Hosted Worker Isolation Evidence
 

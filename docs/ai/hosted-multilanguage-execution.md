@@ -1,12 +1,14 @@
 # Hosted Multilanguage Execution
 
-**Status:** Implemented server-side foundation with targeted execution, persistence, authorization, restoration validation, a selected OCI-backed `SandboxedContainer` provider, an opt-in durable MCP external-effect evidence boundary, a portable public SDK contract/server boundary, and independently consumable .NET, TypeScript/JavaScript, and Python external SDKs. The fixture-free Docker runtime matrix is GREEN at 37/37 scenarios across the existing `ProcessHostPool` baseline plus bounded `ContainerIsolationProvider` provider/artifact-selection closure. Kubernetes sandbox-Pod provider and broader hostile-code/platform guarantees remain separate deliverables.
+**Status:** Implemented server-side foundation with targeted execution, persistence, authorization, restoration validation, a selected OCI-backed `SandboxedContainer` provider, an opt-in durable MCP external-effect evidence boundary, a portable public SDK contract/server boundary, and independently consumable .NET, TypeScript/JavaScript, and Python external SDKs. The fixture-free Docker runtime matrix is GREEN at 37/37 scenarios with `runtimeProvider=ProcessHostPool` and bounded `ContainerIsolationProvider` worker/artifact-selection coverage. Kubernetes sandbox-Pod provider and broader hostile-code/platform guarantees remain separate deliverables.
+
+A separate **3/3 KubernetesPool** closure adds live HTTP routing, hierarchical recovery, and Python SDK-to-Python `TrustedProcess` execution with `Completed` and an uploaded-function marker verified. This is not full Kubernetes client/worker parity or Kubernetes sandbox-Pod validation. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
 
 ## Purpose and scope
 
 Hosted execution allows the existing DAG runtime to invoke published Python, TypeScript, and .NET functions without giving those functions orchestration authority. The same language infrastructure also evaluates custom `Concurrency`, `Retry`, and `Delegation` policies at their existing family checkpoints. Outbound MCP is a separate invocation mode, not another language or a replacement for the inbound MCP control plane.
 
-This reference covers the implemented contracts and their limits. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the historical language/publication evidence, while [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) records the current fixture-free 37/37 live SDK-to-runtime closure. [Hosted Worker Isolation](hosted-worker-isolation.md) documents the selected OCI provider, and [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) separates deterministic provider tests from real Docker/Linux enforcement evidence. [Durable MCP Effect Evidence](durable-mcp-effect-evidence.md) documents outbound-effect fencing/reconciliation, with validation boundaries in [Durable MCP Effect Evidence Validation](durable-mcp-effect-evidence-validation.md).
+This reference covers the implemented contracts and their limits. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the historical language/publication evidence, while [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) records the fixture-free 37/37 Docker SDK-to-runtime closure; [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md) records the separate three-scenario KubernetesPool closure. [Hosted Worker Isolation](hosted-worker-isolation.md) documents the selected OCI provider, and [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) separates deterministic provider tests from real Docker/Linux enforcement evidence. [Durable MCP Effect Evidence](durable-mcp-effect-evidence.md) documents outbound-effect fencing/reconciliation, with validation boundaries in [Durable MCP Effect Evidence Validation](durable-mcp-effect-evidence-validation.md).
 
 | Capability | Current boundary |
 |---|---|
@@ -57,6 +59,26 @@ A result may arrive before `Park`; the sequence is not an ordering assumption th
 | Continuation acknowledgement | Observation of the exact applied result and terminal parent state. |
 
 A hosted function worker is not a trusted `RuntimeInstance`. Its assignment lease does not replace the DAG claim. It cannot issue `Park`, choose a successor, grant permissions, or operate the runtime stores. The worker response is data; lifecycle decisions remain server-side.
+
+## Runtime-host topology and hosted-function execution
+
+`runtimeProvider` identifies the runtime-host topology (`ProcessHostPool` or `KubernetesPool`). `workerExecutionProvider` identifies the hosted-function boundary (`TrustedProcess` or `ContainerIsolationProvider`). KubernetesPool is not a third hosted-worker invocation transport.
+
+For the validated external-SDK Kubernetes profile, an OCI image packages the runtime host and production workers, while the publication artifact remains `HostRuntime` and the Python function uses `TrustedProcess` inside the Pod. This is not a Kubernetes sandbox-Pod implementation.
+
+### Publication-only control plane and runtime workers
+
+| `AiHostedInvocation` option | Control plane | RuntimeInstanceOnly child |
+|---|---|---|
+| `EnableLocalWorkerProfiles` | `false` | `true` |
+| `EnableWorkerPolling` | `false` | `true` |
+| `EnableDagReconciliation` | `true` | `false` |
+
+The control plane advertises the exact remote environment through `PublicationOnlyRuntimes`, rather than hashing or executing a local Windows interpreter for a Linux worker. The child receives matching environment identity and canonical launch paths.
+
+Every enabled hosted-invocation host registers `AddAiDurableInvocationDag()` independently of reconciliation. Runtime-only hosts need the custom invocation adapters to prepare steps even when `AddAiDurableInvocationDagReconciliation(...)` is disabled. This preserves the existing control-plane reconciliation/runtime-worker polling split without duplicating scheduling or result-acceptance authority.
+
+The selected matrix profile also preserves replay-safe `mongo-redis` payloads, initializes a positive context snapshot TTL before persistence, and aligns the context project with both host-owned RBAC TRN builders. The exact settings and validation limits are documented in [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
 
 ## Language resolution and contextual binding
 

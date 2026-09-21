@@ -549,8 +549,9 @@ Implemented foundation:
 - independent .NET, TypeScript/JavaScript, and Python external SDK clients;
 - shared protocol manifest and cross-language parity fixtures;
 - local NuGet/npm/wheel build-install-import smoke validation;
-- fixture-free 37/37 Docker runtime matrix: the existing 33-scenario `ProcessHostPool` baseline plus four isolation-provider/artifact-selection scenarios spanning `ProcessHostPool` and `ContainerIsolationProvider`;
-- reusable public published-function samples plus an initial .NET/TypeScript/Python SDK quickstart.
+- fixture-free 37/37 Docker runtime matrix: the existing 33-scenario `ProcessHostPool` baseline plus four isolation-provider/artifact-selection scenarios using `runtimeProvider=ProcessHostPool` with explicit trusted-process/container-isolation worker selection;
+- reusable public published-function samples plus an initial .NET/TypeScript/Python SDK quickstart;
+- a separate 3/3 KubernetesPool closure covering HTTP routing, hierarchical runtime/Pod recovery, and Python SDK publication/execution with `Completed` and the uploaded-function marker verified. The combined record is 37 Docker + 3 Kubernetes scenarios, not a homogeneous 40-scenario topology matrix. See [KubernetesPool Matrix Validation](ai/kubernetes-pool-matrix-validation.md).
 
 Remaining productization work:
 

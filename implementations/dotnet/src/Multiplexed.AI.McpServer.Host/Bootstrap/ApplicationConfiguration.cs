@@ -1,7 +1,11 @@
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Hosting;
+using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
+using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.Invocation.Mcp;
 using Multiplexed.Abstractions.AI.Invocation.Mcp.Durable;
+using Multiplexed.Abstractions.AI.Publication;
 using Multiplexed.AI.McpServer.Host.Configuration;
 using Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Kubernetes.InPod;
 using Multiplexed.AI.Runtime.Invocation.Mcp;
@@ -36,6 +40,8 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             app.MapHealthChecks("/health");
             ConfigureMatrixMcpEffectEvidenceEndpoint(app);
+            ConfigureMatrixPublicationEnvironmentDiagnosticsEndpoint(app);
+            ConfigureMatrixScaleOutDiagnosticsEndpoint(app);
             ConfigureMatrixRecoveryAndJournalEndpoints(app);
 
             switch (hostOptions.Mode)
@@ -141,6 +147,131 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                         uncertaintyReasonCode = effect.Uncertainty?.ReasonCode,
                         retryCount = step?.RetryState?.RetryCount,
                         stepStatus = step?.Status.ToString()
+                    });
+                });
+        }
+
+        /// <summary>
+        /// Exposes the exact matrix publication environment selected by the external SDK runner.
+        /// The endpoint is diagnostic-only and never creates, mutates, or selects runtime capacity.
+        /// </summary>
+        private static void ConfigureMatrixPublicationEnvironmentDiagnosticsEndpoint(WebApplication app)
+        {
+            var matrix = app.Configuration.GetSection("AiMatrixHarness").Get<AiMatrixHarnessOptions>()
+                ?? new AiMatrixHarnessOptions();
+            if (!matrix.Enabled)
+            {
+                return;
+            }
+
+            app.MapGet(
+                "/matrix/publication-environment/{reference}",
+                (string reference, IAiPublicationEnvironmentCatalog catalog) =>
+                {
+                    ArgumentException.ThrowIfNullOrWhiteSpace(reference);
+                    var runtime = catalog.Find(reference);
+                    if (runtime is null)
+                    {
+                        return Results.NotFound(new
+                        {
+                            found = false,
+                            reference
+                        });
+                    }
+
+                    var descriptor =
+                        (catalog as IAiPublicationExecutionEnvironmentCatalog)?
+                            .FindExecutionDescriptor(reference);
+
+                    return Results.Ok(new
+                    {
+                        found = true,
+                        runtime.Reference,
+                        runtime.ExecutionLanguage,
+                        runtime.RuntimeVersion,
+                        runtime.RuntimeSha256,
+                        executionDescriptor = descriptor is null
+                            ? null
+                            : new
+                            {
+                                descriptor.OperatingSystem,
+                                descriptor.Architecture,
+                                artifactKind = descriptor.Artifact.Kind.ToString(),
+                                descriptor.Artifact.Digest,
+                                descriptor.Artifact.MediaType,
+                                isolationTier = descriptor.Requirements.IsolationTier.ToString(),
+                                pathProtection = descriptor.Requirements.PathProtection.ToString()
+                            }
+                    });
+                });
+        }
+
+        /// <summary>
+        /// Exposes bounded matrix-only scale-out readiness and request diagnostics.
+        /// The endpoint does not create capacity; it only reports the existing watcher/store authorities.
+        /// </summary>
+        private static void ConfigureMatrixScaleOutDiagnosticsEndpoint(WebApplication app)
+        {
+            var matrix = app.Configuration.GetSection("AiMatrixHarness").Get<AiMatrixHarnessOptions>()
+                ?? new AiMatrixHarnessOptions();
+            if (!matrix.Enabled)
+            {
+                return;
+            }
+
+            app.MapGet(
+                "/matrix/scaleout",
+                async (
+                    IEnumerable<IHostedService> hostedServices,
+                    IAiRuntimeScaleOutRequestStore requestStore,
+                    CancellationToken cancellationToken) =>
+                {
+                    var watcher = hostedServices
+                        .OfType<AiRuntimeScaleOutRequestWatcherHostedService>()
+                        .SingleOrDefault();
+
+                    var controlPlaneId = watcher?.ResolvedControlPlaneId;
+                    IReadOnlyCollection<AiRuntimeScaleOutRequestRecord> requests =
+                        Array.Empty<AiRuntimeScaleOutRequestRecord>();
+                    if (!string.IsNullOrWhiteSpace(controlPlaneId))
+                    {
+                        requests = await requestStore
+                            .ListAsync(
+                                new AiRuntimeScaleOutRequestQuery
+                                {
+                                    ControlPlaneId = controlPlaneId,
+                                    IncludeExpired = true,
+                                    MaxResults = 100
+                                },
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+
+                    return Results.Ok(new
+                    {
+                        watcherRegistered = watcher is not null,
+                        watcherReady = watcher?.IsReady ?? false,
+                        watcherId = watcher?.WatcherId,
+                        resolvedControlPlaneId = controlPlaneId,
+                        readyAtUtc = watcher?.ReadyAtUtc,
+                        requests = requests
+                            .OrderBy(request => request.CreatedAtUtc)
+                            .Select(request => new
+                            {
+                                requestId = request.RequestId,
+                                sharedRunId = request.SharedRunId,
+                                status = request.Status.ToString(),
+                                reason = request.Reason,
+                                rejectionReason = request.RejectionReason,
+                                providerHint = request.ProviderHint,
+                                requestedTargetInstanceCount = request.RequestedTargetInstanceCount,
+                                createdAtUtc = request.CreatedAtUtc,
+                                observedAtUtc = request.ObservedAtUtc,
+                                fulfilledAtUtc = request.FulfilledAtUtc,
+                                rejectedAtUtc = request.RejectedAtUtc,
+                                fulfilledRuntimeInstanceId = request.FulfilledRuntimeInstanceId
+                            })
+                            .ToArray()
                     });
                 });
         }

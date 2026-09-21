@@ -14,6 +14,7 @@ from multiplexed_ai_sdk import (  # noqa: E402
     AiSdkTransportRequest,
     AiSdkTransportResponse,
 )
+from multiplexed_ai_sdk.mcp_http_transport import _remote_tool_error_details  # noqa: E402
 
 
 class FlakyTransport(AiSdkMcpHttpTransport):
@@ -29,6 +30,17 @@ class FlakyTransport(AiSdkMcpHttpTransport):
         return AiSdkTransportResponse(result={"schemaVersion": 1})
 
 
+class _TextContent:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class _ToolErrorResult:
+    def __init__(self) -> None:
+        self.content = [_TextContent("InvalidOperationException: exact runtime environment mismatch")]
+        self.structured_content = {"code": "publication_failed", "retryable": False}
+
+
 class AiSdkMcpHttpTransportTests(unittest.IsolatedAsyncioTestCase):
     def test_rejects_non_http_endpoint(self) -> None:
         with self.assertRaises(ValueError):
@@ -37,6 +49,17 @@ class AiSdkMcpHttpTransportTests(unittest.IsolatedAsyncioTestCase):
     def test_validates_safe_read_attempt_configuration(self) -> None:
         with self.assertRaises(ValueError):
             AiSdkTransportOptions(safe_read_max_attempts=0)
+
+    def test_remote_tool_error_preserves_same_call_diagnostics(self) -> None:
+        details = _remote_tool_error_details(_ToolErrorResult())
+        self.assertEqual(
+            ["InvalidOperationException: exact runtime environment mismatch"],
+            details["remoteContent"],
+        )
+        self.assertEqual(
+            {"code": "publication_failed", "retryable": False},
+            details["remoteStructuredContent"],
+        )
 
     async def test_unsupported_protocol_fails_before_io(self) -> None:
         transport = FlakyTransport(0)

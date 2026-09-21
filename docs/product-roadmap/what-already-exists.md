@@ -51,7 +51,7 @@ The current foundation already covers several critical areas required for produc
 - observability direction through logs, metrics, traces, telemetry, provider/transport signals, lifecycle events, memory/context events, and decision history;
 - integration and reliability testing direction;
 - security and encryption hardening direction;
-- an implemented portable public SDK contract/server boundary plus independent .NET, TypeScript/JavaScript, and Python SDK clients, with a fixture-free 37/37 Docker runtime closure across the `ProcessHostPool` baseline and bounded `ContainerIsolationProvider` provider/artifact-selection scenarios; public registry distribution and CLI productization remain separate;
+- an implemented portable public SDK contract/server boundary plus independent .NET, TypeScript/JavaScript, and Python SDK clients, with a fixture-free 37/37 Docker runtime closure with `runtimeProvider=ProcessHostPool` and bounded `ContainerIsolationProvider` worker/artifact-selection scenarios; public registry distribution and CLI productization remain separate;
 - memory, context, and reasoning lifecycle direction;
 - Kubernetes-ready architecture direction.
 
@@ -1229,7 +1229,7 @@ See:
 
 ## 31. Kubernetes-Ready Architecture Direction
 
-The architecture is already moving toward Kubernetes-ready runtime execution.
+The architecture already executes through real Kubernetes and KubernetesPool hosts. The mapping below describes implemented runtime-hosting concepts, not a claim that full production deployment packaging is complete.
 
 The important concepts already align with Kubernetes-style deployment:
 
@@ -1242,6 +1242,8 @@ The important concepts already align with Kubernetes-style deployment:
 - shared controller direction can support scheduling decisions.
 
 This foundation is now exercised by real Kubernetes host and KubernetesPool scenarios. Broader production packaging, multi-node operations, autoscaling integration, and managed deployment profiles remain separate operational work.
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](../ai/kubernetes-pool-matrix-validation.md).
 
 ---
 
@@ -1844,12 +1846,12 @@ The project already has strong foundations in the following areas:
 | Integration and reliability testing | Foundation exists |
 | Testing and reliability strategy | Foundation exists / active direction |
 | Public SDK contract/server boundary | Implemented / validated foundation |
-| External SDK client libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python, including fixture-free 37/37 Docker runtime closure across the `ProcessHostPool` baseline and bounded `ContainerIsolationProvider` selection scenarios |
+| External SDK client libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python, including fixture-free 37/37 Docker runtime closure with `runtimeProvider=ProcessHostPool` and bounded `ContainerIsolationProvider` worker-selection scenarios; separate 3/3 KubernetesPool closure including Python SDK execution with `Completed` and a verified marker |
 | CLI and public SDK registry distribution | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |
 | Memory decay policy direction | Productization target |
-| Kubernetes-ready architecture direction | Foundation exists |
+| Kubernetes runtime hosting | Implemented / bounded validation, including separate three-scenario KubernetesPool closure; production deployment hardening remains separate |
 | Dashboard product layer | Planned on existing foundation |
 | Pipeline builder product layer | Planned on existing foundation |
 | Multi-tenant readiness | Direction exists |

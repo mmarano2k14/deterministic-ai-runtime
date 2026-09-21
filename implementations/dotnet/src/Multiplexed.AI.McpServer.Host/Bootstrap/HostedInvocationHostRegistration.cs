@@ -34,10 +34,9 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
 
             Validate(options);
 
-            var dotnet = CreateDotNet(options.DotNet);
-            var typescript = CreateTypeScript(options.TypeScript);
-            var python = CreatePython(options.Python);
-            var processProfiles = new[] { dotnet.Profile, typescript.Profile, python.Profile };
+            var processProfiles = options.EnableLocalWorkerProfiles
+                ? CreateLocalWorkerProfiles(options)
+                : Array.Empty<AiWorkerProcessProfile>();
             foreach (var profile in processProfiles)
             {
                 // Deployment-owned launch paths are validated before any durable invocation can park.
@@ -47,32 +46,42 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             var containerProfiles = options.Container.Enabled
                 ? CreateContainers(options.Container)
                 : Array.Empty<AiContainerWorkerProfile>();
+            var publicationOnlyRuntimes = CreatePublicationOnlyRuntimes(options.PublicationOnlyRuntimes);
             var environments = processProfiles.Select(profile => profile.Runtime)
                 .Concat(containerProfiles.Select(profile => profile.Runtime))
+                .Concat(publicationOnlyRuntimes.Select(runtime => runtime.Runtime))
                 .ToArray();
             var descriptors = processProfiles
                 .Select(profile => (Reference: profile.Runtime.Reference, Descriptor: profile.ExecutionDescriptor!))
                 .Concat(containerProfiles.Select(profile => (Reference: profile.Runtime.Reference, Descriptor: profile.ExecutionDescriptor)))
+                .Concat(publicationOnlyRuntimes.Select(runtime => (Reference: runtime.Runtime.Reference, Descriptor: runtime.Descriptor)))
                 .ToDictionary(item => item.Reference, item => item.Descriptor, StringComparer.Ordinal);
 
             var environmentCatalog = new AiConfiguredPublicationEnvironmentCatalog(environments, descriptors);
             services.TryAddSingleton<IAiPublicationEnvironmentCatalog>(environmentCatalog);
             services.TryAddSingleton<IAiPublicationExecutionEnvironmentCatalog>(environmentCatalog);
             services.TryAddSingleton(new AiHostedInvocationEnvironmentSet(
-                dotnet.Profile.Runtime.Reference,
-                typescript.Profile.Runtime.Reference,
-                python.Profile.Runtime.Reference,
+                EnvironmentReference(processProfiles, publicationOnlyRuntimes, "dotnet"),
+                EnvironmentReference(processProfiles, publicationOnlyRuntimes, "typescript"),
+                EnvironmentReference(processProfiles, publicationOnlyRuntimes, "python"),
                 containerProfiles.Select(profile => profile.Runtime).ToArray()));
 
-            // Custom hosted steps remain durable DAG invocations. The control-plane reconciler owns
-            // continuation scheduling after a worker result is durably accepted; workers never resume the DAG.
+            // Every enabled host resolves durable custom steps, including runtime hosts that do not
+            // run reconciliation. Core registration installs adapters without starting a hosted loop.
+            services.AddAiDurableInvocationDag();
+
+            // The control-plane reconciler owns continuation scheduling after durable result acceptance.
+            // Runtime hosts keep their existing execution/worker path without a second reconciliation loop.
             var invocationScope = new AiDurableInvocationScope(options.TenantId, options.TenantGroupId, options.ControlPlaneId);
-            services.AddAiDurableInvocationDagReconciliation(new AiDurableInvocationDagReconciliationOptions
+            if (options.EnableDagReconciliation)
             {
-                Scopes = new[] { invocationScope },
-                Interval = TimeSpan.FromMilliseconds(options.PollIntervalMilliseconds),
-                BatchSize = options.PollPageSize
-            });
+                services.AddAiDurableInvocationDagReconciliation(new AiDurableInvocationDagReconciliationOptions
+                {
+                    Scopes = new[] { invocationScope },
+                    Interval = TimeSpan.FromMilliseconds(options.PollIntervalMilliseconds),
+                    BatchSize = options.PollPageSize
+                });
+            }
 
             services.AddAiImmutablePublications(new AiPublicationOptions(
                 new AiPublicationCapability("code", "publication", "publish"),
@@ -100,11 +109,41 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             services.AddAiHostedRetryPolicyExecution();
             services.AddAiHostedDelegationPolicyExecution();
 
-            services.AddAiHostedInvocationWorkerPolling(new AiWorkerPollingOptions(
-                new[] { invocationScope },
-                new[] { "dotnet", "typescript", "python" },
-                pageSize: options.PollPageSize,
-                interval: TimeSpan.FromMilliseconds(options.PollIntervalMilliseconds)));
+            if (options.EnableWorkerPolling)
+            {
+                services.AddAiHostedInvocationWorkerPolling(new AiWorkerPollingOptions(
+                    new[] { invocationScope },
+                    new[] { "dotnet", "typescript", "python" },
+                    pageSize: options.PollPageSize,
+                    interval: TimeSpan.FromMilliseconds(options.PollIntervalMilliseconds)));
+            }
+        }
+
+        private static AiWorkerProcessProfile[] CreateLocalWorkerProfiles(AiHostedInvocationHostOptions options)
+        {
+            var dotnet = CreateDotNet(options.DotNet);
+            var typescript = CreateTypeScript(options.TypeScript);
+            var python = CreatePython(options.Python);
+            return new[] { dotnet.Profile, typescript.Profile, python.Profile };
+        }
+
+        private static string EnvironmentReference(
+            IReadOnlyList<AiWorkerProcessProfile> processProfiles,
+            IReadOnlyList<(AiPublicationEnvironment Runtime, AiPublicationExecutionDescriptor Descriptor)> publicationOnlyRuntimes,
+            string executionLanguage)
+        {
+            var local = processProfiles
+                .Select(profile => profile.Runtime)
+                .SingleOrDefault(runtime => string.Equals(runtime.ExecutionLanguage, executionLanguage, StringComparison.OrdinalIgnoreCase));
+            if (local is not null)
+            {
+                return local.Reference;
+            }
+
+            var remote = publicationOnlyRuntimes
+                .Select(runtime => runtime.Runtime)
+                .SingleOrDefault(runtime => string.Equals(runtime.ExecutionLanguage, executionLanguage, StringComparison.OrdinalIgnoreCase));
+            return remote?.Reference ?? string.Empty;
         }
 
         private static (AiWorkerProcessProfile Profile, string Hash) CreateDotNet(AiHostedRuntimeOptions options)
@@ -155,6 +194,36 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 environment: WorkerEnvironment(), executionDescriptor: descriptor,
                 approvedLaunchRoots: LaunchRoots(executable, working));
             return (profile, executableHash);
+        }
+
+        private static (AiPublicationEnvironment Runtime, AiPublicationExecutionDescriptor Descriptor)[]
+            CreatePublicationOnlyRuntimes(IReadOnlyList<AiHostedPublicationOnlyRuntimeOptions>? options)
+        {
+            var configured = options ?? Array.Empty<AiHostedPublicationOnlyRuntimeOptions>();
+            var runtimes = new List<(AiPublicationEnvironment, AiPublicationExecutionDescriptor)>(configured.Count);
+            foreach (var item in configured)
+            {
+                ArgumentNullException.ThrowIfNull(item);
+                AiPublicationExecutionDescriptors.ValidateDigest("sha256:" + item.RuntimeSha256);
+                var runtime = new AiPublicationEnvironment(
+                    item.Reference,
+                    item.ExecutionLanguage,
+                    item.RuntimeVersion,
+                    item.RuntimeSha256);
+                var descriptor = new AiPublicationExecutionDescriptor
+                {
+                    OperatingSystem = item.OperatingSystem,
+                    Architecture = item.Architecture,
+                    Artifact = new AiPublicationEnvironmentArtifact(
+                        AiPublicationEnvironmentArtifactKind.HostRuntime,
+                        "sha256:" + item.RuntimeSha256,
+                        AiPublicationExecutionDescriptors.HostRuntimeMediaType),
+                    Requirements = ProcessRequirements()
+                };
+                AiPublicationExecutionDescriptors.Validate(descriptor, runtime);
+                runtimes.Add((runtime, descriptor));
+            }
+            return runtimes.ToArray();
         }
 
         private static AiContainerWorkerProfile[] CreateContainers(AiHostedContainerWorkersOptions options)
@@ -317,11 +386,34 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     throw new InvalidOperationException("AiHostedInvocation requires an explicit tenant, tenant-group and control-plane scope.");
                 }
             }
-            foreach (var runtime in new[] { options.DotNet, options.TypeScript, options.Python })
+            if (options.EnableLocalWorkerProfiles)
             {
-                if (string.IsNullOrWhiteSpace(runtime.Reference) || string.IsNullOrWhiteSpace(runtime.RuntimeVersion))
+                foreach (var runtime in new[] { options.DotNet, options.TypeScript, options.Python })
                 {
-                    throw new InvalidOperationException("Every hosted invocation runtime requires an immutable reference and exact version.");
+                    if (string.IsNullOrWhiteSpace(runtime.Reference) || string.IsNullOrWhiteSpace(runtime.RuntimeVersion))
+                    {
+                        throw new InvalidOperationException("Every enabled local hosted invocation runtime requires an immutable reference and exact version.");
+                    }
+                }
+            }
+            if (options.PublicationOnlyRuntimes is null || options.PublicationOnlyRuntimes.Count > 16)
+            {
+                throw new InvalidOperationException("AiHostedInvocation publication-only runtime count is invalid.");
+            }
+            if (options.PublicationOnlyRuntimes.Count > 0 && options.EnableWorkerPolling)
+            {
+                throw new InvalidOperationException(
+                    "Publication-only runtimes require worker polling to be disabled on this host.");
+            }
+            foreach (var runtime in options.PublicationOnlyRuntimes)
+            {
+                if (runtime is null || string.IsNullOrWhiteSpace(runtime.Reference) ||
+                    string.IsNullOrWhiteSpace(runtime.ExecutionLanguage) || string.IsNullOrWhiteSpace(runtime.RuntimeVersion) ||
+                    string.IsNullOrWhiteSpace(runtime.RuntimeSha256) || string.IsNullOrWhiteSpace(runtime.OperatingSystem) ||
+                    string.IsNullOrWhiteSpace(runtime.Architecture))
+                {
+                    throw new InvalidOperationException(
+                        "Every publication-only runtime requires an exact reference, language, version, hash and platform.");
                 }
             }
             if (options.Container.Enabled)

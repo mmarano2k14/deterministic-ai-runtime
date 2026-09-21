@@ -1342,7 +1342,9 @@ This means the product can evolve from a developer-defined runtime into a visual
 
 ## 30. Developer Experience, API, SDK, and CLI Foundation
 
-The project now has both the runtime foundation and an implemented public SDK contract/server boundary for the first developer-facing publication/execution surface. The external .NET, TypeScript/JavaScript, and Python clients are additionally closed through a fixture-free 37/37 Docker runtime matrix using public SDK samples and production hosted workers: 33 baseline `ProcessHostPool` scenarios plus four provider/artifact-selection scenarios spanning `ProcessHostPool` and `ContainerIsolationProvider`.
+The project now has both the runtime foundation and an implemented public SDK contract/server boundary for the first developer-facing publication/execution surface. The external .NET, TypeScript/JavaScript, and Python clients are additionally closed through a fixture-free 37/37 Docker runtime matrix using public SDK samples and production hosted workers: 33 baseline `ProcessHostPool` scenarios plus four provider/artifact-selection scenarios using `runtimeProvider=ProcessHostPool` with explicit trusted-process/container-isolation worker selection.
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](../ai/kubernetes-pool-matrix-validation.md).
 
 The developer experience direction can build on:
 
@@ -1555,13 +1557,13 @@ AI workflow execution becomes credible only when reliability is tested, not just
 
 ## 34. Kubernetes-Ready Foundation
 
-The architecture is aligned with a Kubernetes-style deployment model.
+The architecture is exercised by real Kubernetes host and KubernetesPool scenarios. Deployment concepts below remain useful, but runtime hosting is no longer only a future alignment target.
 
 The mapping is natural:
 
 | Runtime Concept | Kubernetes-Style Interpretation |
 |---|---|
-| Runtime instance | Process, container, or pod |
+| Runtime instance | Independent runtime process; KubernetesPool can host several per Pod, whose UID identifies the physical failure boundary. |
 | Worker | Local execution slot inside a runtime instance |
 | Shared queue | Global work queue |
 | Local queue | Instance-local work queue |
@@ -1570,7 +1572,7 @@ The mapping is natural:
 | Observability | Logs, metrics, traces, dashboards |
 | Replay and ledger | Audit and diagnostic layer |
 
-This foundation allows the platform to move toward a Kubernetes demo and future production deployment model.
+The additional public-SDK KubernetesPool closure is validated, including Python function execution through the public boundary. Production deployment packaging, multi-node operations, and managed-hosting hardening remain separate work. See [KubernetesPool Matrix Validation](../ai/kubernetes-pool-matrix-validation.md).
 
 ---
 
@@ -1692,7 +1694,7 @@ It is the foundation for a complete AI workflow execution platform.
 | Execution control and state lifecycle | Foundation exists |
 | Testing and reliability strategy | Foundation exists / active direction |
 | Public SDK contract/server boundary | Implemented / validated foundation |
-| External SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python, including fixture-free 37/37 Docker runtime closure across the `ProcessHostPool` baseline and bounded `ContainerIsolationProvider` selection scenarios |
+| External SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python, including fixture-free 37/37 Docker runtime closure with `runtimeProvider=ProcessHostPool` and bounded `ContainerIsolationProvider` worker-selection scenarios; separate 3/3 KubernetesPool closure including Python SDK execution with `Completed` and a verified marker |
 | CLI / public SDK registry distribution / broader API productization | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |
