@@ -1,0 +1,240 @@
+# Runtime Pool Delivery Status and Future Scale-Out Work
+
+## Deterministic AI Runtime Platform
+
+**Current status:** Runtime Pool identity, ProcessHostPool, KubernetesPool, HTTP/gRPC transport preservation, hierarchical child and full-boundary failure recovery, operator-triggered external parent-boundary failure, shared durable failure authority, warm reuse, bounded capacity, replay, ledger, lifecycle, and forensics proofs are implemented and validated. The complementary nine-row deterministic semantic adversarial matrix is also green across HTTP/gRPC × ProcessHostPool/KubernetesPool.
+
+This document keeps the historical filename for stable documentation links, but it now describes delivered capability and the remaining distributed-scale work rather than an implementation sequence.
+
+---
+
+## Product Objective
+
+Runtime Pools evolve hosting from one execution identity per physical boundary into reusable, warm, independently addressable capacity.
+
+```text
+control plane
+    -> select exact runtime capacity
+    -> route through provider/pool boundary
+    -> execute on independent runtime identity
+    -> isolate runtime or host failure
+    -> recover exact assigned work
+    -> reuse repaired capacity
+```
+
+A tenant is not permanently mapped to one process or one Pod.
+
+---
+
+## Delivered Runtime Pool Foundation
+
+### Identity and Membership
+
+Implemented:
+
+- `PoolId`;
+- immutable `HostId`;
+- independent `RuntimeInstanceId`;
+- immutable `RouteId` where route incarnation applies;
+- typed tenant identity;
+- explicit runtime and host failure scopes;
+- active and historical membership separation.
+
+### ProcessHostPool
+
+Implemented and validated:
+
+- multiple external parent ProcessHosts;
+- multiple real child runtime processes per parent;
+- stable HTTP and gRPC pool command paths;
+- exact child routing with no sibling fallback;
+- targeted child replacement;
+- full parent ProcessHost replacement;
+- bounded warm capacity and reuse.
+
+### KubernetesPool
+
+Implemented and validated:
+
+- multiple real runtime processes inside one Kubernetes Pod;
+- Pod UID as a physical failure-boundary identity;
+- independent child runtime identities;
+- child replacement while the Pod survives;
+- distinct full Pod deletion and replacement;
+- exact failed-membership recovery;
+- bounded Pod and runtime capacity;
+- HTTP and gRPC transport preservation.
+
+The historical one-runtime-per-Pod Kubernetes mode remains available separately.
+
+### Durable Failure and Lifecycle Evidence
+
+Implemented:
+
+- shared MongoDB Runtime Pool failure journal;
+- exact failure identity and scope;
+- runtime and host-membership suppression;
+- append-only MongoDB Runtime Lifecycle Journal;
+- recovery-forensics correlation;
+- exact current-incident proof without deleting historical evidence.
+
+### Recovery
+
+Implemented and validated:
+
+- exact assigned-work enumeration;
+- deterministic recovery claims;
+- in-flight resume with the same `ExecutionId`;
+- durable `SharedRunId` redispatch for local-queued work;
+- exact one-run child recovery;
+- exact five-run full-boundary recovery across the current 3 × 5, 5 × 5, and 7 × 5 closure profiles;
+- warm reuse without intermediate cleanup.
+
+---
+
+## Production Validation Matrix
+
+Automatic full-boundary failure:
+
+```text
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
+```
+
+Operator-triggered external full-boundary failure:
+
+```text
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
+```
+
+Current closure profiles range from 3 × 5 to 7 × 5 parent/runtime capacity. The automatic matrix closes 1950 DAGs and 97500 logical steps; the external-manual matrix repeats the same workload profiles. Across both trigger modes this is 3900 completed DAGs, 195000 logical steps, 16 child-runtime failures, 16 full-boundary failures, and 96 exact recoveries.
+
+The largest single closure profile is gRPC ProcessHostPool `7 × 5 × 20 × 2`: 35 reusable runtime slots, 700 DAGs per cycle, 1400 DAGs and 70000 logical steps per scenario. Because both the automatic-parent-failure and external-manual-parent-kill variants are green at that profile, gRPC ProcessHostPool alone contributes 2800 completed DAGs, 140000 logical steps, 4 child-runtime failures, 4 full ProcessHost failures, and 24 exact recoveries to the closure evidence.
+
+See [Runtime Pool Production Validation](../ai/runtime-pool-production-validation.md).
+
+### Semantic adversarial closure
+
+A complementary bounded matrix now targets nine semantic failure schedules across all four Runtime Pool provider/transport combinations:
+
+```text
+Baseline
+CrashEarly
+ChildInvocationBoundary
+ContinuationConsume
+Depth2RuntimeFailure
+Depth3RuntimeFailure
+SeedA
+SeedB
+SeedC
+```
+
+```text
+4 provider/transport combinations × 9 rows = 36 validated rows
+```
+
+This closes deterministic coverage for the selected schedules without claiming exhaustive state-space exploration. Recovery-of-recovery, dedicated recursive-child replay, multi-node fault domains, and multi-control-plane recovery ownership remain separate roadmap items.
+
+See [Adversarial Runtime Validation Matrix](../ai/adversarial-runtime-validation-matrix.md).
+
+---
+
+## Remaining Distributed-Scale Work
+
+### Multi-Control-Plane Recovery Ownership
+
+Future hardening should make recovery-claim ownership and completion semantics durable across independently running control planes.
+
+The goal is to preserve the same exact claim boundary when leadership changes or several control planes race to recover the same failure.
+
+### Redis Cluster Compatibility
+
+Define and validate:
+
+- key-slot boundaries;
+- hash-tag strategy;
+- atomic Lua boundaries;
+- tenant/cell partitioning;
+- failover behavior;
+- distributed recovery-claim durability;
+- pool route and membership durability where required.
+
+### Multi-Node Kubernetes Scale
+
+Expand validation from local-cluster bounded Pod capacity into:
+
+- multiple worker nodes;
+- node pressure and rescheduling;
+- cluster autoscaler integration;
+- cell-based capacity placement;
+- fault-domain-aware selection.
+
+### Managed Hosting and Operations
+
+Productization still requires:
+
+- production deployment packaging;
+- operational SLOs;
+- dashboards and alerting;
+- multi-control-plane leadership;
+- tenant quotas and capacity governance;
+- managed Redis/Mongo operational profiles;
+- security and secret-management hardening.
+
+---
+
+## Production Deployment Direction
+
+```text
+multiple Kubernetes nodes
+    -> multiple Runtime Pool Pods
+        -> multiple warm runtime processes per Pod
+            -> one or more workers per runtime
+```
+
+Supporting control-plane services include:
+
+- shared admission queue;
+- tenant-aware capacity selection;
+- bounded scale-out;
+- backpressure;
+- durable failure history;
+- exact recovery ownership;
+- replay, ledger, tracing, metrics, and forensics.
+
+---
+
+## Non-Goals
+
+Runtime Pool architecture does not:
+
+- map one tenant permanently to one process;
+- make transport routing responsible for scheduling;
+- make providers own recovery;
+- remove the historical one-runtime-per-Pod Kubernetes mode;
+- treat metadata as correctness authority;
+- hide ambiguous fallback behind retries.
+
+---
+
+## Public SDK KubernetesPool closure
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](../ai/kubernetes-pool-matrix-validation.md).
+
+This validation preserves the existing runtime membership, physical failure authority, recovery, and transport boundaries. It does not close the remaining multi-control-plane, cluster-failover, or multi-node work above.
+
+## Related Documents
+
+- [Runtime Pool Architecture](../ai/runtime-pool-architecture.md)
+- [Runtime Pool Identity Model](../ai/runtime-pool-identity-model.md)
+- [Runtime Pool Failure Recovery](../ai/runtime-pool-failure-recovery.md)
+- [Runtime Pool Failure Authority](../ai/runtime-pool-failure-authority.md)
+- [Runtime Pool Production Validation](../ai/runtime-pool-production-validation.md)
+- [Durable Runtime Lifecycle Journal](../ai/runtime-lifecycle-journal.md)
+- [Runtime Provider and Transport Model](runtime-provider-and-transport-model.md)
+- [Testing and Reliability Strategy](testing-and-reliability-strategy.md)

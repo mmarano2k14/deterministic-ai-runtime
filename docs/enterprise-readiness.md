@@ -1,0 +1,521 @@
+# Enterprise Readiness
+
+This document maps core enterprise AI execution questions to the current runtime design.
+
+The goal is to be clear and honest about what is implemented, what is available as a foundation, and what remains planned.
+
+The runtime should not be positioned as a finished commercial platform yet. It is better described as an advanced, test-driven execution infrastructure project with production-style correctness evidence across Redis, MCP, HTTP/gRPC transports, ProcessHostPool, KubernetesPool, exact runtime and host-boundary failure isolation, shared durable failure authority, deterministic recovery claims, replay, ledger, lifecycle, trace, forensics, and multi-tenant isolation boundaries.
+
+---
+
+## Status Legend
+
+| Status | Meaning |
+|---|---|
+| Implemented | The runtime has current implementation and integration-test coverage or validated behavior. |
+| Foundation available | The runtime has the core building blocks, but the public API, documentation, or production hardening is still evolving. |
+| Planned | The capability is identified as roadmap work. |
+
+---
+
+## Enterprise Readiness Matrix
+
+| Enterprise Question | Runtime Answer | Implementation Mechanism | Evidence / Tests | Status |
+|---|---|---|---|---|
+| What happens if a worker crashes? | The runtime can recover stale `Running` steps and make them eligible again without consuming retry budget as a normal step failure. | Redis-backed DAG state, claim ownership, claimed timestamps, stale running-step recovery, recovery count. | Integration coverage around worker recovery, retry/recovery separation, distributed execution scenarios. | Implemented |
+| Can one physical host boundary expose several independently selectable runtime instances? | Yes. ProcessHostPool and KubernetesPool both keep the parent boundary separate from child execution identity. Each child owns an independent `RuntimeInstanceId`; ProcessHostPool also uses immutable `RouteId` incarnations for exact forwarding. | Runtime Pool Manager, typed membership, exact route registry where applicable, HTTP/gRPC transport preservation, bounded capacity, real child processes. | Final HTTP/gRPC ProcessHostPool and KubernetesPool scenarios validate 3 boundaries × 5 runtimes, child replacement, full-boundary replacement, and warm reuse. | Implemented / validated |
+| Can one durable DAG delegate to another DAG and resume safely? | Yes, through native durable Child DAG composition. The parent parks in `WaitingForExternal`, child identity and input are durable, completion precedes continuation, and the same parent `ExecutionId` resumes. Canonical Child DAG/continuation and recovery facts are observed through the centralized Event Manager. | Existing DAG engine, Child DAG relation/snapshot state, Policy Engine, shared queue, runtime recovery, replay, Ledger, tracing, Runtime Lifecycle Journal, canonical events, and Forensics. | Recursive validation is green through Depth3, including `3×3×3×2×Depth3` and larger `5×5×5×2×Depth3` high-scale scenarios with real runtime/parent-boundary failure and EventDriven recovery observation. | **Implemented / validated at recursive Depth3 boundary** |
+| Can a failed child be isolated without removing healthy sibling capacity? | Yes. A runtime-instance failure records one exact durable failure fact and suppresses only the failed `RuntimeInstanceId`; the ProcessHost or Pod remains alive and healthy sibling identities remain valid. | Durable `FailureId`, runtime-scoped failure observation, exact safety projection, typed membership, suppression-aware routing/capacity. | Final ProcessHostPool and KubernetesPool proofs kill one child after at least 25/50 steps, preserve four siblings, recover one run, and restore bounded membership. | Implemented / validated |
+| Can two recovery coordinators recover the same failed-runtime inventory? | No. The exact inventory is fingerprinted and protected by one atomic active recovery claim. | Deterministic `ClaimId`, unique `LeaseId`, active lease validation, stale-lease rejection, explicit release authority. | Concurrent tests validate one winner and nineteen denied coordinators; final process proof validates one acquired and one denied coordinator. | Implemented / validated |
+| What happens if a runtime process dies while work is assigned to it? | The runtime separates runtime health from execution recovery. Unsafe capacity is suppressed, assigned work is reconciled, in-flight executions can resume from the same durable `ExecutionId`, and local queued work can be redispatched through the durable `SharedRunId`. | `RuntimeInstanceHealthReconciler`, `ExecutionRecoveryReconciler`, shared run store, shared queue, runtime run execution index, DAG store, registry/capacity, replay/ledger/trace evidence, recovery forensics. | Real HTTP `RuntimeInstanceOnly` process-kill scenarios validate recovery after external OS process death, including in-flight DAG resume and local queued redispatch. | Implemented / validated |
+| How do you prevent duplicate executions? | Only one worker can own a step at a time. Stale or competing workers cannot complete or fail a step they do not own. | Redis Lua atomic claim scripts, claim tokens, ownership validation on complete/fail transitions. | Multi-worker and distributed claim tests validate single ownership and convergence. | Implemented |
+| How do you replay a workflow? | Completed executions can be snapshotted and restored from terminal snapshot foundations. Replay can detect existing live state or restore deleted live state. MCP process-boundary scenarios also validate replay report, replay ledger, and replay trace after recovery. | MongoDB snapshots, replay service/foundations, `ExecutionId`-based snapshot restoration, deterministic replay fingerprint validation, replay report/ledger/trace retrieval through MCP tools. | Tests validate `AlreadyExists`, restore after live deletion, fingerprint equality, and process-boundary replay proof after real runtime recovery. | Implemented foundation / validated |
+| How do you audit an AI decision? | Execution state, step outputs, retry metadata, retention metadata, snapshots, ledger events, trace records, and recovery forensics provide audit foundations. | Execution records, step states, persisted payloads, terminal snapshots, execution-correlated ledger, control-plane causal-chain ledger, runtime tracing, recovery forensics. | Current evidence exists through state/snapshot/observability tests and process-boundary replay/ledger/trace validation. Public audit APIs and dashboards remain roadmap work. | Foundation available / validated in scenarios |
+| How do you limit concurrency? | Concurrency can be limited locally and across distributed workers/runtime instances. Provider, model, operation, execution, pipeline, step, and instance scopes are supported. | Policy-driven concurrency engine, `config.concurrency`, Redis ZSET lease gate, Lua-style atomic admission, lease expiration. | Tests validate Redis lease semantics, provider/model/operation throttling, admission denial, and release on failed claim. | Implemented |
+| How do you resolve execution context safely? | The runtime resolves input bindings, previous step outputs, payload references, provider/model/operation metadata, and policy contexts through helper layers instead of scattering context-building logic across the engine. | Context resolution helpers, input resolver, step context builder, payload resolver, provider context helper, policy context builders, RAG context resolver. | Runtime usage and tests validate input binding resolution, provider/model/operation propagation, payload rehydration, RAG context resolution, and replay-safe comparison foundations. | Foundation available |
+| How do you pause/resume/cancel safely? | Execution control state blocks new claims and coordinates state transitions without corrupting DAG state. Cancellation can override natural completion during finalization. | `IAiExecutionControlService`, Redis control state, control gate, claim blocking, cancellation finalization override. | Integration tests cover pause, resume, cancel, claim blocking, `Pausing -> Paused`, `Resuming -> Running`, cancellation override. | Implemented |
+| How do you control human-in-the-loop? | Executions can be moved to `WaitingForInput`, new claims are blocked, and external input can be submitted to resume execution. | Durable execution control state, waiting key, waiting step name, submitted input payload, `SubmitHumanInputAsync`. | Integration tests cover waiting for input and human input submission. | Implemented |
+| How do you keep memory/state bounded? | The runtime separates hot state from cold payloads and can compact or evict completed data while preserving resolver access. | Retention engine, retention triggers, compaction, eviction, payload externalization, MongoDB payload store, rehydration resolver. | Tests validate retention safety, archived payload resolution, and resolver consistency after eviction. | Implemented |
+| How do you coordinate multiple runtime instances? | Runtime instances coordinate through Redis-backed state instead of direct communication. Claims, leases, concurrency admission, shared queue ownership, registry visibility, capacity descriptors, and dispatch ownership are coordinated through distributed state. | Redis DAG store, Lua atomic step claiming, Redis shared run store, Redis shared queue, Redis runtime registry, Redis runtime capacity store, Redis admission reservation store, runtime instance identity foundations. | Distributed multi-runtime-instance, shared queue, MCP, HTTP pooled runtime, and aggressive distributed scenario tests validate safe convergence and dispatch ownership. | Implemented |
+| How do you prove race-condition safety under real process loss? | The runtime uses adversarial parallel scenarios with exact pre-crash inventories, durable crash gates, real operating-system process kills, safe tenants, replay, ledger, trace, forensics, and independent HTTP/gRPC validation. The harness separates infrastructure saturation, lifecycle defects, recovery convergence defects, and harness races. | Real external process hosts, stable scale-out deduplication, readiness lifecycle, shared queue claims, runtime execution index, durable DAG state, recovery reconcilers, tenant-scoped evidence, and server-side Redis/MongoDB counters. | P10–P30 form the repeatable validation range. HTTP and gRPC P35 completed 35/35 with 105 tenants, 315 DAG executions, 70 real process kills, and 210 affected jobs recovered per transport. | Implemented / validated |
+| Does the runtime depend on the language or semantic content of a step? | No. The runtime owns execution semantics rather than model semantics. Steps may be RAG, LLM calls, MCP tools, network services, database operations, human approval, or code implemented in any language behind a supported adapter. | Step plugins and provider adapters return results into the same admission, policy, ownership, retry, retention, eviction, recovery, replay, and observability lifecycle. | Architecture and process-host tests validate the execution protocol independently of step business meaning. Workload-specific latency, side effects, streaming, and provider limits remain policy and adapter concerns. | Implemented architecture boundary |
+| How do you prove deterministic convergence? | Final execution status and completed outputs are derived from state, not execution order. Replay fingerprints validate restored terminal state. | DAG dependency rules, explicit state transitions, atomic claims, retry state, terminal finalization, deterministic fingerprint checks. | Tests validate large DAG completion, multi-worker convergence, retry convergence, replay fingerprint equality, and recovery convergence after real process death. | Implemented |
+| How do you submit work when no runtime capacity exists? | Admission can return `RequestScaleOut` instead of rejecting or queueing blindly. The shared run is persisted as `ScaleOutRequested`, a Redis scale-out request is created, and capacity can be created by a provider-backed scale-out flow. | Direct-dispatch submit mode, `IAiRunAdmissionController`, `StoreBackedAiRuntimeScaleOutRequestPublisher`, `RedisAiRuntimeScaleOutRequestStore`, `AiRuntimeScaleOutRequestWatcherHostedService`, `AiRuntimeScaleOutProviderSelector`. | MCP Redis local scale-out tests validate zero initial runtime capacity, `ScaleOutRequested`, persisted scale-out request, watcher processing, and fulfilled request. | Implemented |
+| How do you scale local runtime capacity without bypassing the architecture? | Scale-out is a provider capability, not a separate scheduler. The local provider can create a new isolated local runtime instance through the local runtime scaler while preserving the local queue ownership boundary. | `IAiRuntimeScaleOutProvider` extends `IAiRuntimeInstanceProvider`; `LocalAiRuntimeInstanceProvider`; `IAiLocalRuntimeInstanceScaler`; `AiLocalRuntimeInstanceScaler`; local runtime instance host/factory; runtime registration and capacity publication. | Local provider scale-out tests, local scaler tests, provider selector tests, and MCP Redis local scale-out tests validate dynamic runtime creation and registration. | Implemented |
+| How do you launch real runtime capacity instead of fake test capacity? | The HTTP provider delegates host lifecycle to the Runtime Host Manager. In process mode, a real `RuntimeInstanceOnly` process starts, self-registers, publishes capacity, becomes visible, and is then used through the normal dispatch path. | `IAiRuntimeHostManager`, `AiRuntimeHostCreationManager`, `ProcessAiRuntimeHostCreationStrategy`, HTTP scale-out provider, Redis discovery/registry/capacity, readiness wait. | MCP production runtime scenario tests validate real child process launch, registration, capacity visibility, dispatch, DAG completion, retention, ledger, trace, and replay across process boundaries. | Implemented / validated |
+| How do you ensure a scale-out-created run is actually executed? | A fulfilled scale-out request requeues the original shared run. The normal shared queue pump claims it, performs dispatch-time admission using newly visible capacity, dispatches to the created runtime instance, and the local runtime executes the DAG. | `IAiScaleOutFulfilledRunRequeueService`, `AiScaleOutFulfilledRunRequeueService`, `IAiSharedQueue`, `IAiSharedQueuePump`, dispatch-time admission, provider dispatch, local runtime queue, local background controller. | The final MCP test validates `ScaleOutRequestStatus=Fulfilled`, `SharedRunStatus=Dispatched`, assigned runtime instance, `LocalRunId`, `ExecutionId`, and `RuntimeRunStatus=completed`. | Implemented |
+| How do you prove one tenant's runtime crash does not contaminate another tenant? | Tenant context is durable execution input. Crash recovery queries, replay, ledger, trace, and forensics remain tenant-scoped. A safe tenant should continue normally and should not receive recovery records for another tenant's failure. | Durable `ExecutionContextSnapshot`, tenant-aware registry/capacity filtering, tenant-aware admission, tenant-scoped recovery forensics, ledger isolation checks, replay/trace queries scoped by tenant/run/execution identity. | Multi-tenant process-kill validation proves impacted tenants recover while the safe tenant completes normally with recovered work count `0`, recovery forensics count `0`, and no cross-tenant ledger leakage. | Implemented / validated |
+| How do you inspect the recovery path after a crash? | Recovery is treated as evidence, not only as a successful final status. Forensics records show which work was detected, why it was recoverable, how it was redispatched or resumed, and which replacement runtime received it. | Runtime recovery forensics records, control-plane ledger causal-chain entries, execution trace timeline, replay report, replay ledger, replay trace. | Process-host crash scenarios validate readable forensics, causal-chain counts, replay proof, ledger proof, trace proof, and safe tenant absence from recovery evidence. | Implemented / validated |
+| How do you prepare this for Kubernetes scaling? | Kubernetes host lifecycle and KubernetesPool are implemented behind the same provider/host-manager architecture while HTTP/gRPC remain transport providers. The validated pool reuses bounded Pod capacity and recovers both child-runtime and full-Pod failure. | Kubernetes Runtime Host Manager, Kubernetes SDK lifecycle, Gateway/Service transport exposure, KubernetesPool in-Pod process manager, registry/capacity publication, shared queue, durable failure/lifecycle evidence. | Historical one-runtime-per-Pod Kubernetes tests plus final HTTP/gRPC KubernetesPool scenarios validate real Pod resources, child replacement, full Pod deletion/replacement, warm reuse, and final cleanup. | Implemented / validated within current cluster scope |
+
+---
+
+## Current Strengths
+
+The current runtime is strongest in these areas:
+
+- deterministic DAG execution
+- Redis-backed distributed coordination
+- Redis Lua atomic state transitions
+- context resolution and helper foundations
+- retry and recovery safety
+- runtime process crash recovery across real `RuntimeInstanceOnly` processes
+- stale step recovery versus runtime crash recovery separation
+- bounded hot state through retention and compaction
+- provider/model/operation throttling
+- execution control state
+- background queue control
+- shared runtime controller and shared queue coordination
+- Redis-backed shared run and shared queue persistence
+- runtime instance registry and capacity visibility
+- Redis-backed admission reservations
+- provider-based local and HTTP pooled runtime dispatch
+- HTTP runtime provider hardening
+- Runtime Host Manager process-host provisioning
+- Redis-backed scale-out request lifecycle
+- local runtime scale-out from zero executable capacity
+- HTTP process-host scale-out from zero executable capacity
+- fulfilled scale-out shared run requeue
+- MCP-validated scale-out dispatch and execution completion
+- tenant-aware Shared/Dedicated/Hybrid isolation
+- multi-tenant crash isolation with safe tenant non-impact
+- replay and snapshot foundations
+- ledger, trace, replay report, replay ledger, and replay trace validation across process boundaries
+- runtime recovery forensics
+- control-plane causal-chain proof
+- integration-test-driven validation
+- adversarial HTTP/gRPC process-host concurrency validation through P35
+- content-agnostic step execution boundary
+- stable single-flight recovery scale-out identity
+
+---
+
+## Validated Runtime Pool Evidence
+
+### Final Hierarchical Runtime Pool Matrix
+
+Automatic full-boundary failure:
+
+```text
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
+```
+
+Operator-triggered external full-boundary failure:
+
+```text
+gRPC + ProcessHostPool   PASS
+HTTP + ProcessHostPool   PASS
+gRPC + KubernetesPool    PASS
+HTTP + KubernetesPool    PASS
+```
+
+The current closure profiles intentionally differ by transport/host model. The largest is gRPC ProcessHostPool at `7 × 5 × 20 × 2`: 7 parent ProcessHosts, 5 independent runtimes each, 35 reusable runtime slots, 20 submission iterations per cycle, 700 DAGs per cycle, 1,400 DAGs / 70,000 logical steps per scenario, and 12 exact recoveries. Its automatic and operator-triggered external-parent variants are both green, giving 2,800 DAGs / 140,000 logical steps of combined evidence for this profile alone. gRPC KubernetesPool closes at 5 × 5; both HTTP variants close at 3 × 5. Every individual scenario performs two child failures, two distinct full-boundary failures, warm reuse across two cycles, and final cleanup only after cycle two.
+
+One automatic matrix completes 1,950 DAGs and 97,500 logical steps. The external-manual matrix repeats the same workload profiles. Across both modes this is 3,900 completed DAGs, 195,000 logical steps, 32 failure incidents (16 child and 16 full-boundary), 96 exact recoveries, and 3,900 replay proofs. Eight full-boundary failures are performed by an operator outside the test after an exact target is armed.
+
+See [`ai/runtime-pool-production-validation.md`](ai/runtime-pool-production-validation.md).
+
+
+The Runtime Pool now proves a reusable warm-capacity model across both ProcessHostPool and KubernetesPool rather than a permanent one-runtime-per-process or one-runtime-per-Pod mapping.
+
+Validated capabilities include:
+
+- several real external `RuntimeInstanceOnly` children under one logical pool;
+- exact `PoolId`, `HostId`, `RuntimeInstanceId`, and `RouteId` separation;
+- stable HTTP and gRPC pool endpoints;
+- exact route forwarding with no sibling fallback;
+- route draining and active forwarding leases;
+- targeted child replacement;
+- first-class failure journaling;
+- exact capacity suppression;
+- exact assigned-work enumeration;
+- deterministic recovery fingerprints;
+- atomic recovery claims;
+- stale lease rejection;
+- claimed recovery through existing ownership and transition services.
+
+The final regression gates passed:
+
+```text
+Process HTTP P10
+Process gRPC P10
+Kubernetes HTTP historical-mode regression: P5
+Kubernetes gRPC historical-mode regression: P5
+
+gRPC + KubernetesPool hierarchical production proof: PASS
+HTTP + KubernetesPool hierarchical production proof: PASS
+```
+
+The P5 Kubernetes results remain compatibility evidence for the historical one-runtime-per-Pod mode. Separate KubernetesPool production scenarios now validate several independent runtime processes per Pod, exact child replacement, full Pod failure recovery, warm reuse, and bounded capacity over both HTTP and gRPC.
+
+---
+
+## Validated Scale-Out Evidence
+
+The Redis/local scale-out flow is validated end-to-end through MCP integration tests.
+
+Validated evidence:
+
+```text
+Initial ActiveLocalInstances = 0
+Admission = RequestScaleOut
+SharedRun.Status = ScaleOutRequested
+ScaleOutRequest.Status = Fulfilled
+ScaleOutRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+ActiveLocalInstances = 1
+SharedRun.Status = Dispatched
+AssignedRuntimeInstanceId = host-...:mcp-scaleout-runtime-1
+QueueStatus = Dispatched
+LocalRunId = available
+ExecutionId = available
+RuntimeRunStatus = completed
+```
+
+This proves:
+
+- a run can be submitted when no executable runtime capacity exists
+- admission can request scale-out
+- the scale-out request is persisted in Redis
+- the watcher can observe and process the request
+- the provider selector can resolve the local scale-out-capable provider
+- the local scaler can create and start a new runtime instance
+- the new runtime instance registers and publishes capacity
+- the scale-out request is marked fulfilled
+- the original shared run is requeued
+- the normal shared queue pump dispatches the requeued run
+- the created runtime instance executes the run to completion
+
+---
+
+## Validated Process-Host Crash Recovery Evidence
+
+The runtime also validates recovery when the failed participant is not an in-memory fixture, but a real external runtime host process.
+
+Validated scenario shape:
+
+```text
+Shared control plane
+    ↓
+HTTP provider
+    ↓
+Runtime Host Manager
+    ↓
+real RuntimeInstanceOnly child processes
+    ↓
+tenant runtime processes killed
+    ↓
+health reconciliation suppresses unsafe capacity
+    ↓
+execution recovery reconciles assigned work
+    ↓
+replacement runtime capacity becomes visible
+    ↓
+in-flight work resumes
+    ↓
+local queued work is redispatched
+    ↓
+replay / ledger / trace / forensics proof is readable
+```
+
+The most complete validation uses three tenants:
+
+```text
+Tenant A
+    runtime process killed
+    1 in-flight execution recovered by DAG resume
+    2 local queued runs recovered by redispatch
+
+Tenant B
+    runtime process killed
+    1 in-flight execution recovered by DAG resume
+    2 local queued runs recovered by redispatch
+
+Tenant C
+    runtime process not killed
+    3 runs complete normally
+    recovered work = 0
+    recovery forensics = 0
+```
+
+This matters because it proves something more precise than “the run eventually completed”.
+
+It proves that:
+
+- in-flight DAG execution identity is durable
+- `ExecutionId` is preserved for in-flight recovery
+- local queued work can be recovered even when no `ExecutionId` existed yet
+- `SharedRunId` remains the durable submission identity for local queued redispatch
+- `LocalRunId` remains attempt-local and may change after recovery
+- unsafe runtime capacity is not selected for new work
+- the HTTP provider reports transport failure but does not own recovery
+- recovery is performed by the control-plane recovery components
+- unrelated tenant work is not marked as recovered
+- replay, ledger, trace, and forensics remain readable after recovery
+
+Representative proof:
+
+```text
+Total submitted runs = 9
+Total replay proofs = 9 / 9
+Impacted tenants recovered work = 6
+Safe tenant recovered work = 0
+Safe tenant recovery forensics = 0
+CrossTenantLedgerLeakDetected = false
+SafeTenantRecoveryLeakDetected = false
+SafeTenantNonImpactValidated = true
+```
+
+This is not presented as a benchmark.
+
+It is better understood as a contract test: if a runtime claims durable execution, it should be able to show not only that failed work recovered, but also that unrelated tenants remained untouched.
+
+---
+
+## Recovery Boundary
+
+The recovery design intentionally separates responsibilities.
+
+```text
+RuntimeInstanceHealthReconciler
+    detects stale / unsafe / draining runtime capacity
+    prevents unsafe capacity from being selected for new work
+
+ExecutionRecoveryReconciler
+    enumerates work already assigned to unsafe runtime capacity
+    recovers in-flight DAG executions
+    redispatches local queued shared runs
+
+HTTP provider
+    reports transport / endpoint failure signals
+    dispatches over HTTP when capacity is safe
+    does not own runtime recovery
+    does not kill, restart, or replace runtimes
+
+Local runtime queue
+    is volatile
+    is not the source of truth
+
+Durable truth
+    shared run store
+    shared queue
+    runtime run execution index
+    DAG store
+    registry / capacity
+    ledger / trace / forensics / replay evidence
+```
+
+This boundary keeps recovery from becoming an accidental side effect of the transport layer.
+
+The provider can observe that a runtime endpoint is unreachable.
+
+The control plane decides whether the runtime is unsafe.
+
+The recovery reconciler decides what assigned work must be recovered.
+
+---
+
+
+## Adversarial Concurrency Validation Evidence
+
+The local concurrency campaign intentionally concentrates more lifecycle pressure than a production topology should.
+
+P35 represents:
+
+```text
+35 scenarios
+105 tenants
+315 real 50-step DAG executions
+70 real process kills
+210 affected jobs recovered
+15,750 logical DAG step completions
+```
+
+The final HTTP run also measured 4,191,448 server-side Redis and MongoDB operations and 18.29 GiB of datastore traffic.
+
+The correct interpretation is not that one machine defines production capacity.
+
+The result is that ownership, execution identity, safe-tenant isolation, recovery, replay, ledger, trace, and forensics remained correct while local capacity degraded.
+
+Production should distribute the same protocol across warm runtime pools, tenant-aware cells, bounded scale-out, multiple nodes, and managed or clustered datastores.
+
+A complementary semantic adversarial matrix now adds exact failure-boundary coverage across all four Runtime Pool provider/transport combinations:
+
+```text
+KubernetesPool / gRPC    9 / 9 VERIFIED
+KubernetesPool / HTTP    9 / 9 VERIFIED
+ProcessHostPool / gRPC   9 / 9 VERIFIED
+ProcessHostPool / HTTP   9 / 9 VERIFIED
+------------------------------------------
+Total                   36 / 36 VERIFIED
+```
+
+Each row runs two execution cycles and requires exact recursive child-step accounting, parent replay, recovery attribution, ownership convergence, and zero ownership-transition violations. The raw xUnit archive is indexed with per-file SHA-256 hashes. This semantic matrix complements rather than replaces the older P35 pressure campaign.
+
+See:
+
+- [Concurrency Hardening and Adversarial Validation](ai/concurrency-hardening-and-adversarial-validation.md)
+- [Adversarial Runtime Validation Matrix](ai/adversarial-runtime-validation-matrix.md)
+- [Adversarial Runtime Validation Evidence Index](ai/adversarial-runtime-validation-evidence-index.md)
+
+
+## Runtime Pool Boundaries
+
+The current Runtime Pool implementation is production-oriented but intentionally scoped.
+
+Implemented:
+
+- process-host pool lifecycle;
+- stable HTTP and gRPC routing;
+- exact runtime-instance failure isolation;
+- exact claimed recovery;
+- real child-process replacement.
+
+Still required for distributed production pooling:
+
+- multi-control-plane durable recovery-claim ownership and completion semantics;
+- Pod UID to `HostId` mapping;
+- host-wide suppression after Pod loss;
+- durable distributed failure/safety/claim stores;
+- multi-control-plane claim ownership;
+- hierarchical runtime/Pod/node capacity selection;
+- Redis Cluster key-slot and failover validation.
+
+The existing Kubernetes mode remains one `RuntimeInstanceOnly` runtime per Pod/Service.
+
+---
+
+## Hosted Multilanguage Execution Boundary
+
+The server-side foundation now includes real Python, TypeScript, and .NET function execution, immutable publication and whole-run pinning, deterministic dependency packaging, published custom Child DAG binding, durable invocation results, existing-DAG continuation, hosted custom `Concurrency`, `Retry`, and `Delegation` policies, authorized outbound MCP, and an opt-in durable MCP external-effect evidence boundary.
+
+| Enterprise concern | Current answer |
+|---|---|
+| Code/dependency changes during a run | Published code, deterministic dependency bundles, and environment identity remain pinned, including unstarted root and published-child call sites. Supported package forms are pure-Python wheels, locked Node source bundles, and managed .NET assembly closures; newer publications do not replace material already pinned to a run. |
+| Published Child DAGs | An allocated `ChildExecutionId` is immutably bound before dispatch to the original publication and exact nested definition. Native-only child subtrees remain on the historical unbound path. |
+| Function-process replacement | Journal leases and epochs govern hosted-function result authority; the existing DAG applies the accepted result. Outbound MCP can separately use durable effect fencing/evidence, but ambiguous external-provider truth still requires provider-specific reconciliation/idempotency or operator handling. |
+| Tenant code isolation | The trusted-process provider remains for explicitly approved trusted execution and rejects stronger requirements. A separate selected Linux/amd64 OCI `SandboxedContainer` provider enforces exact-image, non-root, deny-all-network, read-only-root, bounded tmpfs, dropped-capability, `no-new-privileges`, CPU/memory/PID, cleanup/quarantine, and restart-orphan controls before tenant material is released. |
+| Policy authority | Hosted `Concurrency`, `Retry`, and `Delegation` workers return family-specific evidence only. Admission, retry budget/state transitions, delegation relation CAS, child allocation, dispatch, recovery, and continuation remain server-owned. |
+| MCP auditability | Stable `EffectId`/`RequestDigest` identity, immutable durable intent, pre-`tools/call` dispatch fencing, confirmed `Completed` replay, `NotSent`/`Uncertain` evidence, explicit reconciliation, tenant-scoped Mongo persistence, and restart-safe fail-closed behavior are available when the durable journal is configured. This is not a generic exactly-once or automatic-redelivery guarantee. |
+| SDK availability | Portable public SDK contracts, the authorized publication/execution server boundary, and independent .NET, TypeScript/JavaScript, and Python SDK client packages are implemented and validated. The fixture-free Docker runtime matrix is GREEN at 37/37 scenarios, comprising the existing `ProcessHostPool` baseline plus bounded `ContainerIsolationProvider` provider/artifact-selection closure. Public registry publication and the standalone CLI remain separate productization work. |
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](ai/kubernetes-pool-matrix-validation.md).
+
+This bounded result does not close production packaging, multi-node fault domains, control-plane failover, or Kubernetes sandbox-worker isolation.
+
+Targeted language/publication results are documented in [Hosted Multilanguage Validation](ai/hosted-multilanguage-validation.md); contracts and limits are documented in [Hosted Multilanguage Execution](ai/hosted-multilanguage-execution.md). The public contract/server boundary is documented in [Public SDK Boundary](ai/public-sdk-boundary.md) with closure evidence in [Public SDK Boundary Validation](ai/public-sdk-boundary-validation.md). The independent clients, command-line build/test/package instructions, cross-language parity, package-smoke evidence, and live fixture-free matrix closure are documented in [External SDK Libraries](ai/external-sdk-libraries.md), [External SDK Libraries Validation](ai/external-sdk-libraries-validation.md), and [Multilanguage Runtime Matrix Validation](ai/multilanguage-runtime-matrix-validation.md). The selected physical isolation provider is documented in [Hosted Worker Isolation](ai/hosted-worker-isolation.md) with final evidence in [Hosted Worker Isolation Validation](ai/hosted-worker-isolation-validation.md). Durable outbound MCP effects are documented separately in [Durable MCP Effect Evidence](ai/durable-mcp-effect-evidence.md) and [Durable MCP Effect Evidence Validation](ai/durable-mcp-effect-evidence-validation.md). Published custom Child DAG support remains bounded to the exercised nested depth. Hosted policy support is also finite: `Retention` remains native-only and policy taxonomy values without independent checkpoints are not advertised as hosted. The isolation evidence is bounded to the selected Linux/amd64 Docker-compatible provider and does not certify every OCI implementation, Kubernetes sandbox-Pod hosting, arbitrary package-manager installation or native package ecosystems, unlimited published-custom nesting, database-failover behavior for that path, or arbitrary future policy families.
+
+---
+
+## Honest Boundaries
+
+The project should not be presented as a finished commercial platform yet.
+
+The following areas are still evolving:
+
+- production-grade public replay API
+- production dashboard and operator UI
+- OpenTelemetry exporters
+- Prometheus/Grafana integration
+- Kubernetes deployment package
+- broader Kubernetes deployment/autoscaler integration beyond the validated Pod/Runtime Pool scale-out path
+- Redis command queue runtime provider
+- broader gRPC deployment/interoperability hardening beyond the validated runtime provider
+- production multi-control-plane leader election
+- full provider capability negotiation
+- database-backed tenant runtime settings provider
+- public SDK registry distribution, standalone CLI packaging, and broader public API polish
+- enterprise sample applications
+- continued documentation refinement beyond Phase 0 V1
+
+The following should be described as validated foundations rather than future work:
+
+- HTTP provider hardening
+- Runtime Host Manager process-host provisioning
+- real `RuntimeInstanceOnly` process launch
+- process-boundary replay / ledger / trace validation
+- runtime health to execution recovery boundary
+- real runtime process crash recovery
+- safe tenant non-impact during crash recovery
+- runtime recovery forensics
+
+---
+
+## Ecosystem Positioning
+
+Deterministic AI Runtime is not intended to replace agent frameworks, workflow orchestrators, data pipeline tools, observability platforms, or distributed infrastructure.
+
+Existing tools are strong in their own domains.
+
+This runtime focuses on a specific architectural problem:
+
+```text
+deterministic, distributed, state-driven AI execution
+```
+
+That means the project is focused on runtime guarantees such as:
+
+- distributed step ownership
+- Redis Lua coordination
+- retry and recovery separation
+- runtime process crash recovery
+- bounded hot state
+- context resolution
+- provider/model/operation throttling
+- execution control state
+- human-in-the-loop control
+- shared queue ownership
+- provider-based runtime dispatch
+- provider-based scale-out lifecycle
+- replay foundations
+- ledger and trace evidence
+- deterministic convergence
+- tenant-aware runtime isolation
+
+For a detailed comparison with existing tools and categories, see:
+
+- [Comparison with Existing Tools](comparison-existing-tools.md)
+
+---
+
+## Enterprise Positioning
+
+The project is best positioned as:
+
+> A deterministic AI execution runtime for production-grade AI workloads.
+
+It is especially relevant for teams exploring how to move from prompt-level or agent-demo AI systems toward reliable execution infrastructure.
+
+The key architectural message is:
+
+> AI orchestration becomes a distributed systems problem once it reaches production.
+
+A more recent way to describe the runtime is:
+
+> When a runtime process dies, the execution should not become guesswork. The system should know what was running, what was only queued, what can resume, what must be redispatched, and which tenants were never affected.
+
+The repository should be presented as an advanced reference implementation and evolving infrastructure project.
+
+It should be positioned seriously, without overstating its maturity.
+
+---
+
+## Related Documents
+
+- [Architecture Overview](ai/architecture-overview.md)
+- [Retry and Recovery](ai/retry-and-recovery.md)
+- [Runtime Process Crash Recovery](ai/runtime-process-crash-recovery.md)
+- [Runtime Recovery Forensics](ai/runtime-recovery-forensics.md)
+- [Multi-Tenant Runtime Crash Isolation](ai/multi-tenant-runtime-crash-isolation.md)
+- [Control-Plane Ledger Causal Chain](ai/control-plane-ledger-causal-chain.md)
+- [Recovery Replay Ledger Trace Proof](ai/recovery-replay-ledger-trace-proof.md)
+- [Runtime Control Plane](ai/runtime-control-plane.md)
+- [HTTP Runtime Provider](ai/http-runtime-provider.md)
+- [MCP Production Runtime Scenario Framework](ai/mcp-production-runtime-scenario-framework.md)
+- [Execution-Correlated Ledger](ai/execution-correlated-ledger.md)
+- [Observability](ai/observability.md)
+- [Testing Strategy](ai/testing-strategy.md)
+- [Concurrency Hardening and Adversarial Validation](ai/concurrency-hardening-and-adversarial-validation.md)
+- [Comparison with Existing Tools](comparison-existing-tools.md)
