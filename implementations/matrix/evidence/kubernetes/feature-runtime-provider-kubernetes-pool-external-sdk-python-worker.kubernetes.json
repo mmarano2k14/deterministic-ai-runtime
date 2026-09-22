@@ -10,15 +10,15 @@
     "runtimeImage":  "multiplexed-ai-runtime:matrix-sdk",
     "immutableRuntimeImage":  false,
     "namespaceName":  "ai-runtime",
-    "poolId":  "mcp-http-kubernetes-pool-81abf4a8ce5f",
+    "poolId":  "mcp-http-kubernetes-pool-6460a20047e3",
     "podNames":  [
-                     "runtime-pool-7g-mcp-http-kubernetes-pool-81abf4a8c-0da3bc30cdc5"
+                     "runtime-pool-7g-mcp-http-kubernetes-pool-6460a2004-6983211c45c9"
                  ],
     "readyPodNames":  [
-                          "runtime-pool-7g-mcp-http-kubernetes-pool-81abf4a8c-0da3bc30cdc5"
+                          "runtime-pool-7g-mcp-http-kubernetes-pool-6460a2004-6983211c45c9"
                       ],
     "serviceNames":  [
-                         "runtime-pool-7g-mcp-http-kubernetes-pool-81abf4a8c-0-f0fbd00026"
+                         "runtime-pool-7g-mcp-http-kubernetes-pool-6460a2004-6-cf76b7beff"
                      ],
     "runtimeContainerImages":  [
                                    "multiplexed-ai-runtime:matrix-sdk"
@@ -38,5 +38,5 @@
                           "kubernetes-runtime-pool-ready",
                           "published-function-terminal-result"
                       ],
-    "recordedAtUtc":  "2026-09-21T05:29:59.1901023Z"
+    "recordedAtUtc":  "2026-09-21T23:40:14.6667016Z"
 }

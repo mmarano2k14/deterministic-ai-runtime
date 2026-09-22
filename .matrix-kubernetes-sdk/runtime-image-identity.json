@@ -1,7 +1,7 @@
 {
     "schemaVersion":  1,
     "runtimeImage":  "multiplexed-ai-runtime:matrix-sdk",
-    "localImageId":  "sha256:65256ca443009e01fe465baf3d5571e43e0433170344e1b281bdc8f877468ada",
+    "localImageId":  "sha256:68291e75e464375acebe52a2eb2ad57ef96a4b0ad711ba9b2f9a25c213551785",
     "operatingSystem":  "linux",
     "architecture":  "amd64",
     "dotnet":  {

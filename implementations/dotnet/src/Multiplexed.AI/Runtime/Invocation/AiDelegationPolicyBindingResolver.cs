@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Delegation;
 using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Pipeline;
@@ -61,32 +60,11 @@ namespace Multiplexed.AI.Runtime.Invocation
         private static bool TryRead(
             IReadOnlyDictionary<string, object?> config,
             out AiChildDelegationPolicyDefinition? definition)
-        {
-            var matches = config
-                .Where(pair => pair.Key.Equals(AiChildDelegationPolicyDefinition.ConfigKey, StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-
-            if (matches.Length > 1)
-            {
-                throw new InvalidOperationException("Ambiguous 'delegation' policy configuration casing.");
-            }
-
-            if (matches.Length == 0)
-            {
-                definition = null;
-                return false;
-            }
-
-            if (matches[0].Value is null)
-            {
-                definition = null;
-                return true;
-            }
-
-            definition = matches[0].Value as AiChildDelegationPolicyDefinition
-                ?? JsonSerializer.Deserialize<AiChildDelegationPolicyDefinition>(JsonSerializer.Serialize(matches[0].Value))
-                ?? throw new InvalidOperationException("Invalid 'delegation' policy definition.");
-            return true;
-        }
+            => AiPolicyDeclarationReader.TryRead(
+                config,
+                AiChildDelegationPolicyDefinition.ConfigKey,
+                "Ambiguous 'delegation' policy configuration casing.",
+                "Invalid 'delegation' policy definition.",
+                out definition);
     }
 }

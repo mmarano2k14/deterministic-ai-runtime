@@ -11,8 +11,8 @@
   "provider": "ProcessHostPool",
   "runtimeProvider": "ProcessHostPool",
   "workerExecutionProvider": "TrustedProcess",
-  "publicationRef": "pub-85cf9b02c694921bcfb7d7e9464e2a8b5ea3fcd2a188af8b31cde3f6b71926e9",
-  "executionId": "published-5adbf110fbff6930f753e6d79c91698340077b6a98cf69b8ed1ab55c7c9637d2",
+  "publicationRef": "pub-2adce16266add931a9d66138e7ad093ba8ee775dc9241b7a3053e4fa937d5c25",
+  "executionId": "published-8443b16a3b4f13a58beb485b402ba0dc64f0326dc19e02cef787072c74a29f4b",
   "terminalStatus": "Completed",
   "nestedDepth": 2,
   "definitionPath": "/invoke-child/invoke-grandchild",
@@ -29,5 +29,5 @@
     "observe",
     "terminal-result"
   ],
-  "recordedAtUtc": "2026-09-21T03:48:06.276+00:00"
+  "recordedAtUtc": "2026-09-21T23:13:18.595+00:00"
 }

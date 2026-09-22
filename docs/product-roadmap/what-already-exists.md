@@ -27,8 +27,10 @@ The current foundation already covers several critical areas required for produc
 - policy engine foundation;
 - pluggable policy-by-context model;
 - hosted custom policy execution for `Concurrency`, `Retry`, and `Delegation` through separate family contracts at their existing checkpoints;
+- a hardened durable invocation journal path with shared hosted-policy ownership revalidation, centralized execution-language/time authority, first-CAS dispatch snapshot reuse, classified CAS outcomes, keyset continuation fairness, and measured MongoDB dispatch/continuation index selection;
 - deterministic dependency packaging for pure-Python wheels, locked Node source bundles, and managed .NET assembly closures, all bound to immutable publication/environment material without runtime package-manager resolution;
 - selected OCI hosted-worker isolation for Linux/amd64 with exact image digests, fail-closed applied-state attestation, denied egress, read-only root plus bounded tmpfs, non-root/capability restrictions, CPU/memory/PID limits, lifecycle cleanup/quarantine, restart orphan reconciliation, and explicit real-engine Docker/Linux proof;
+- shared private worker stdio protocol handling across trusted-process and container transports while retaining separate process/container lifecycle and security ownership;
 - explicit native-only `Retention` boundary and explicit non-hosted status for policy kinds without independent runtime checkpoints;
 - RBAC-aware execution context direction;
 - ARN-inspired resource scoping direction;

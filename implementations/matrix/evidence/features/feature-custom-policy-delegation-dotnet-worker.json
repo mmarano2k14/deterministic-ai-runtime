@@ -13,8 +13,8 @@
   "provider": "ProcessHostPool",
   "runtimeProvider": "ProcessHostPool",
   "workerExecutionProvider": "TrustedProcess",
-  "publicationRef": "pub-f10162a2618048c37b59be6778f4fbdb45b1e8028f0a0f2bc3fa549878de5a97",
-  "executionId": "published-a86eb897117d2bc0e8806692f36a1f5202b98420bfbe22c1c78a339668402584",
+  "publicationRef": "pub-d5d2edf0d3a0c64ff6f21e553fd90caf6e6860c2c7adb02165c824462c1558fc",
+  "executionId": "published-c222c865f2b0d59327c4d8d931370cc931d56b473cc8589e665ea16f2664cf28",
   "policyFamily": "delegation",
   "policyDecision": "deny",
   "expectedTerminalStatus": "Failed",
@@ -28,5 +28,5 @@
     "observe",
     "terminal-result"
   ],
-  "recordedAtUtc": "2026-09-21T03:47:58.389+00:00"
+  "recordedAtUtc": "2026-09-21T23:13:10.713+00:00"
 }

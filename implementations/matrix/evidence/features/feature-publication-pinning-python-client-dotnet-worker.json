@@ -11,13 +11,13 @@
   "provider": "ProcessHostPool",
   "runtimeProvider": "ProcessHostPool",
   "workerExecutionProvider": "TrustedProcess",
-  "originalPublicationRef": "pub-d1629d6f2f609412f88bbf2493d60a5d93cbeb23a776786be0cf292289be0816",
-  "replacementPublicationRef": "pub-0d6b502d275c440609c635ff2d953dd1b122def0915876ad05b9c836e8623191",
-  "submittedPublicationRef": "pub-d1629d6f2f609412f88bbf2493d60a5d93cbeb23a776786be0cf292289be0816",
-  "postRepublishObservedPublicationRef": "pub-d1629d6f2f609412f88bbf2493d60a5d93cbeb23a776786be0cf292289be0816",
+  "originalPublicationRef": "pub-ee79be03b5f22c4970fd54d2008afee53a2b46572895e6e95138b082e7d1aef7",
+  "replacementPublicationRef": "pub-f80a3d23526be1dabc35c7f461408a7c204fb6e4678c9abe4dca6a13887ddf3b",
+  "submittedPublicationRef": "pub-ee79be03b5f22c4970fd54d2008afee53a2b46572895e6e95138b082e7d1aef7",
+  "postRepublishObservedPublicationRef": "pub-ee79be03b5f22c4970fd54d2008afee53a2b46572895e6e95138b082e7d1aef7",
   "postRepublishObservedStatus": "Waiting",
-  "terminalObservedPublicationRef": "pub-d1629d6f2f609412f88bbf2493d60a5d93cbeb23a776786be0cf292289be0816",
-  "executionId": "published-d704e48d98176370763e744ce24621c4509f66f74ddc187ca4431fbe062643e3",
+  "terminalObservedPublicationRef": "pub-ee79be03b5f22c4970fd54d2008afee53a2b46572895e6e95138b082e7d1aef7",
+  "executionId": "published-bfe4b9b9bd08b8e3ceba5143253bbf971149fcb3ebf016143f09ed424d4e34ed",
   "terminalStatus": "Completed",
   "evidence": [
     "publish-original",
@@ -27,5 +27,5 @@
     "replacement-poison-not-executed",
     "terminal-result"
   ],
-  "recordedAtUtc": "2026-09-21T03:46:52.872+00:00"
+  "recordedAtUtc": "2026-09-21T23:12:04.502+00:00"
 }

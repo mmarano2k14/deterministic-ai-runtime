@@ -78,6 +78,33 @@ Cold-restoration tests reconstruct services and serialized state; a real .NET wo
 
 The earlier trusted-process capability-refusal and symbolic-link tests validate declared process-provider boundaries; they do not become sandbox evidence retroactively. A separate OCI isolation suite now validates the selected `SandboxedContainer` provider, including explicit real Docker/Linux enforcement tests. Historical MCP identity/transport tests likewise remain evidence for their original boundary; durable external-effect fencing/replay/reconciliation has a separate suite and must not be inferred from those older artifacts. The existing production harnesses and historical evidence below are unchanged.
 
+## Durable Invocation Journal hardening validation
+
+The Invocation hardening work has its own targeted proof ladder in addition to the historical runtime matrices.
+
+It covers:
+
+```text
+hosted policy ownership revalidation
+execution-language authority
+TimeProvider propagation
+worker lease-guard fake-clock behavior
+dispatch snapshot -> first lease CAS
+classified CAS outcomes
+continuation keyset fairness
+process/container stdio protocol parity
+MongoDB attribution
+dispatch/continuation production query plans
+```
+
+The controlled MongoDB tests use temporary databases and `explain("executionStats")` to compare candidate indexes before production promotion. The final production-plan test verifies the exact index hint used by each branch.
+
+The performance experiments are not substitutes for correctness tests. A candidate index is rejected if it improves one distribution while materially regressing another, even if average command counts fall.
+
+At documentation-review time, targeted Invocation tests and the final production query-plan verification are green. Broader legacy/new runtime matrix revalidation is being rerun before branch closure. Historical matrix evidence is not relabeled as a fresh run.
+
+See [Durable Invocation Journal and Hosted Worker Authority](durable-invocation-journal.md) and [MongoDB Performance Diagnostics](mongodb-performance-diagnostics.md).
+
 ## Durable MCP Effect Evidence
 
 [Durable MCP Effect Evidence Validation](durable-mcp-effect-evidence-validation.md) separates three proof layers: deterministic durable-effect state/authority tests, the existing real outbound MCP boundary/compatibility suite, and opt-in MongoDB persistence/reconstruction tests.

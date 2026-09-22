@@ -110,9 +110,9 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable
             AiDurableInvocationValidation.ValidateLease(lease);
             cancellationToken.ThrowIfCancellationRequested();
             var frozen = AiDurableInvocationValidation.Freeze(result);
+            var current = await GetAsync(scope, identity, cancellationToken).ConfigureAwait(false);
             for (var attempt = 0; attempt < MaxCasAttempts; attempt++)
             {
-                var current = await GetAsync(scope, identity, cancellationToken).ConfigureAwait(false);
                 if (current is null) return AiDurableInvocationCompletionStatus.NotFound;
                 if (AiDurableInvocationValidation.Terminal(current))
                 {
@@ -132,8 +132,14 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable
                     ContinuationStatus = AiDurableInvocationContinuationStatus.Pending
                 };
                 AiDurableInvocationValidation.ValidateTransition(current, updated);
-                if (await _store.TryReplaceAsync(current, updated, cancellationToken).ConfigureAwait(false))
+                var outcome = await TryReplaceClassifiedAsync(scope, identity, current, updated, cancellationToken)
+                    .ConfigureAwait(false);
+                if (outcome.Kind == AiDurableInvocationCasOutcomeKind.Applied)
                     return AiDurableInvocationCompletionStatus.Accepted;
+                if (outcome.Kind == AiDurableInvocationCasOutcomeKind.AuthorityPredicateRejected)
+                    return AiDurableInvocationCompletionStatus.LeaseRejected;
+                current = outcome.CurrentRecord ??
+                    await GetAsync(scope, identity, cancellationToken).ConfigureAwait(false);
             }
             throw Contended();
         }
@@ -207,16 +213,38 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable
             Func<AiDurableInvocationRecord, DateTimeOffset, AiDurableInvocationRecord?> change,
             CancellationToken cancellationToken)
         {
+            var current = await GetAsync(scope, identity, cancellationToken).ConfigureAwait(false);
             for (var attempt = 0; attempt < MaxCasAttempts; attempt++)
             {
-                var current = await GetAsync(scope, identity, cancellationToken).ConfigureAwait(false);
                 if (current is null) return null;
                 var updated = change(current, AtLeast(Now(), current.UpdatedAtUtc));
                 if (updated is null || updated == current) return updated;
                 AiDurableInvocationValidation.ValidateTransition(current, updated);
-                if (await _store.TryReplaceAsync(current, updated, cancellationToken).ConfigureAwait(false)) return updated;
+                var outcome = await TryReplaceClassifiedAsync(scope, identity, current, updated, cancellationToken)
+                    .ConfigureAwait(false);
+                if (outcome.Kind == AiDurableInvocationCasOutcomeKind.Applied) return updated;
+                if (outcome.Kind == AiDurableInvocationCasOutcomeKind.AuthorityPredicateRejected) throw AuthorityRejected();
+                current = outcome.CurrentRecord ??
+                    await GetAsync(scope, identity, cancellationToken).ConfigureAwait(false);
             }
             throw Contended();
+        }
+
+        private async Task<AiDurableInvocationCasOutcome> TryReplaceClassifiedAsync(
+            AiDurableInvocationScope scope, AiDurableInvocationIdentity identity,
+            AiDurableInvocationRecord expected, AiDurableInvocationRecord replacement,
+            CancellationToken cancellationToken)
+        {
+            if (_store is IAiDurableInvocationClassifiedCasStore classified)
+                return await classified.TryReplaceClassifiedAsync(expected, replacement, cancellationToken).ConfigureAwait(false);
+
+            if (await _store.TryReplaceAsync(expected, replacement, cancellationToken).ConfigureAwait(false))
+                return AiDurableInvocationCasOutcome.Applied();
+
+            // Legacy stores cannot classify the rejection. Treat it as contention, reload
+            // durable truth once, and preserve the pre-existing retry semantics.
+            return AiDurableInvocationCasOutcome.RevisionConflict(
+                await GetAsync(scope, identity, cancellationToken).ConfigureAwait(false));
         }
 
         private DateTimeOffset Now() => AiDurableInvocationValidation.Milliseconds(_time.GetUtcNow());
@@ -231,7 +259,9 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable
             if (duration < TimeSpan.FromMilliseconds(1) || duration > TimeSpan.FromMinutes(5) || duration.Ticks % TimeSpan.TicksPerMillisecond != 0)
                 throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be an integral 1..300000 milliseconds.");
         }
+        private static InvalidOperationException AuthorityRejected() =>
+            new("Invocation CAS was rejected by an authoritative storage predicate; retrying the same transition would not change the durable authority decision.");
         private static InvalidOperationException Contended() =>
-            new("Invocation CAS attempts were exhausted; contention or clock/lease rejection must be reconciled without changing logical identity.");
+            new("Invocation CAS attempts were exhausted; contention must be reconciled without changing logical identity.");
     }
 }

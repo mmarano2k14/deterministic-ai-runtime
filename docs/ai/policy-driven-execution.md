@@ -496,6 +496,26 @@ The existing RBAC engine authorizes the selected implementation before execution
 
 Technical output/transport failures remain technical failures. They cannot become implicit `Allow`, `Retry`, or `Approve`. No universal boolean policy protocol, replacement policy engine, or custom-policy lifecycle authority is introduced.
 
+### Shared hosted-policy infrastructure
+
+The three hosted policy families now share only the security/lifecycle infrastructure that must remain identical:
+
+```text
+load durable parent
+restore persisted execution context
+authorize publication
+resolve immutable publication/package material
+revalidate ExecutionId / tenant / group / user / project / namespace / lifecycle
+prepare the hosted worker
+```
+
+`Concurrency`, `Retry`, and `Delegation` still own different request/response contracts and different runtime decisions. The common infrastructure does not define a universal policy result.
+
+Retry and Delegation also share declaration-reading mechanics such as case-insensitive lookup and duplicate-case rejection. Family-specific merge/precedence rules remain explicit; Concurrency keeps its established resolver behavior.
+
+Invocation deadline calculation uses the configured `TimeProvider`, allowing deterministic clock-skew/lease tests without changing policy timeouts.
+
+
 `Retention` remains native-only in the current capability matrix. `Timeout`, `CircuitBreaker`, `RateLimit`, `Validation`, and `Routing` do not currently have independent hosted policy checkpoints. `retry.timeout.default` and `retry.rate-limit.default` remain native `Retry` policies rather than separate family engines.
 
 See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md#hosted-custom-policy-families) and [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) for the implemented boundary and validation evidence.

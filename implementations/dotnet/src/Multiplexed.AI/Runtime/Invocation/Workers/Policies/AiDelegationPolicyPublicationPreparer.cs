@@ -1,6 +1,5 @@
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.Invocation;
-using Multiplexed.Abstractions.AI.Invocation.Durable;
 using Multiplexed.Abstractions.AI.Invocation.Workers;
 using Multiplexed.AI.Runtime.Invocation.Durable;
 using Multiplexed.AI.Runtime.Publication;
@@ -12,12 +11,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Policies
     /// <summary>Restores the durable parent owner and materializes the exact pinned Delegation implementation.</summary>
     public sealed class AiDelegationPolicyPublicationPreparer : IAiDelegationPolicyCodePreparer
     {
-        private readonly IAiExecutionStore _executions;
-        private readonly IAiDagExecutionStore? _dag;
-        private readonly IExecutionContextAccessor _accessor;
-        private readonly IAiControlPlaneIdResolver _controlPlane;
-        private readonly AiPublicationIdentity _identity;
-        private readonly AiPublicationOptions _options;
+        private readonly AiHostedPolicyPublicationPreparationCore _core;
         private readonly AiImmutablePublicationStore _publications;
 
         public AiDelegationPolicyPublicationPreparer(
@@ -29,80 +23,29 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Policies
             AiImmutablePublicationStore publications,
             IAiDagExecutionStore? dag = null)
         {
-            _executions = executions;
-            _accessor = accessor;
-            _controlPlane = controlPlane;
-            _identity = identity;
-            _options = options;
-            _publications = publications;
-            _dag = dag;
+            _core = new AiHostedPolicyPublicationPreparationCore(executions, accessor, controlPlane, identity, options, dag);
+            _publications = publications ?? throw new ArgumentNullException(nameof(publications));
         }
 
-        public async Task<AiWorkerCodeBundle> PrepareAsync(
+        public Task<AiWorkerCodeBundle> PrepareAsync(
             AiDelegationPolicyRequest request,
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(request);
+            cancellationToken.ThrowIfCancellationRequested();
             Validate(request);
 
-            var parent = await (_dag is null
-                    ? _executions.GetRecordAsync(request.Context.ParentExecutionId, cancellationToken)
-                    : _dag.GetRecordAsync(request.Context.ParentExecutionId, cancellationToken))
-                .ConfigureAwait(false)
-                ?? throw new InvalidOperationException(
-                    "The durable parent is unavailable; custom Delegation evaluation is not permitted.");
-
-            var snapshot = AiHostedPolicyOwnershipRevalidator.ValidateInitial(
-                parent,
+            return _core.PrepareAsync(
+                request,
                 request.Context.ParentExecutionId,
                 request.Context.TenantId,
                 request.Context.TenantGroupId,
+                "The durable parent is unavailable; custom Delegation evaluation is not permitted.",
                 "Delegation policy ownership does not match the persisted parent execution context.",
-                "A terminal parent cannot authorize a custom Delegation evaluation.");
-
-            var scope = new AiDurableInvocationScope(
-                snapshot.TenantId!,
-                snapshot.TenantGroupId!,
-                await _controlPlane.ResolveAsync(cancellationToken).ConfigureAwait(false));
-
-            var previous = _accessor.Current;
-            _accessor.Set(ExecutionContextSnapshotMapper.ToExecutionContext(snapshot));
-            try
-            {
-                var guard = await _identity
-                    .AuthorizeAsync(scope, _options.Execute, cancellationToken)
-                    .ConfigureAwait(false);
-
-                var result = await _publications
-                    .ReadDelegationPolicyWorkerCodeAsync(request, guard, cancellationToken)
-                    .ConfigureAwait(false);
-                guard.RequireCurrent();
-
-                var current = await (_dag is null
-                        ? _executions.GetRecordAsync(request.Context.ParentExecutionId, cancellationToken)
-                        : _dag.GetRecordAsync(request.Context.ParentExecutionId, cancellationToken))
-                    .ConfigureAwait(false);
-
-                AiHostedPolicyOwnershipRevalidator.RequireCurrent(
-                    current,
-                    request.Context.ParentExecutionId,
-                    snapshot,
-                    "Parent ownership or lifecycle changed before custom Delegation evaluation.");
-
-                guard.RequireCurrent();
-                return result;
-            }
-            finally
-            {
-                if (previous is null)
-                {
-                    _accessor.Clear();
-                }
-                else
-                {
-                    _accessor.Set(previous);
-                }
-            }
+                "A terminal parent cannot authorize a custom Delegation evaluation.",
+                "Parent ownership or lifecycle changed before custom Delegation evaluation.",
+                (value, guard, ct) => _publications.ReadDelegationPolicyWorkerCodeAsync(value, guard, ct),
+                cancellationToken);
         }
 
         private static void Validate(AiDelegationPolicyRequest request)
@@ -127,8 +70,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Policies
                 request.Scope == "Pipeline" && request.OwnerStepName is not null ||
                 request.Scope == "Step" && request.OwnerStepName != request.Context.ParentCallSiteId)
             {
-                throw new InvalidOperationException(
-                    "Custom Delegation scope does not match its parent call site.");
+                throw new InvalidOperationException("Custom Delegation scope does not match its parent call site.");
             }
 
             if (request.DeadlineUtc.Offset != TimeSpan.Zero)

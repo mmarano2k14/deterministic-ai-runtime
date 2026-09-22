@@ -64,7 +64,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Durable
             internal void Set(DateTimeOffset value) => Interlocked.Exchange(ref _milliseconds, value.ToUnixTimeMilliseconds());
         }
 
-        internal sealed class MemoryStore : IAiDurableInvocationStore
+        internal sealed class MemoryStore : IAiDurableInvocationStore, IAiDurableInvocationClassifiedCasStore, IAiDurableInvocationContinuationPageStore
         {
             private readonly object _gate = new();
             private readonly Dictionary<AiDurableInvocationIdentity, AiDurableInvocationRecord> _records = new();
@@ -119,6 +119,12 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Durable
             }
 
             public async Task<bool> TryReplaceAsync(AiDurableInvocationRecord expected, AiDurableInvocationRecord replacement,
+                CancellationToken cancellationToken = default) =>
+                (await TryReplaceClassifiedAsync(expected, replacement, cancellationToken).ConfigureAwait(false)).Kind ==
+                AiDurableInvocationCasOutcomeKind.Applied;
+
+            public async Task<AiDurableInvocationCasOutcome> TryReplaceClassifiedAsync(
+                AiDurableInvocationRecord expected, AiDurableInvocationRecord replacement,
                 CancellationToken cancellationToken = default)
             {
                 await Task.Yield();
@@ -127,19 +133,27 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Durable
                 {
                     CasCalls++;
                     var action = BeforeNextCas; BeforeNextCas = null; action?.Invoke();
-                    if (RejectCasCount > 0) { RejectCasCount--; return false; }
-                    if (!_records.TryGetValue(expected.Definition.Identity, out var current) || current != expected) return false;
+                    if (RejectCasCount > 0)
+                    {
+                        RejectCasCount--;
+                        _records.TryGetValue(expected.Definition.Identity, out var rejectedCurrent);
+                        return AiDurableInvocationCasOutcome.RevisionConflict(rejectedCurrent);
+                    }
+                    if (!_records.TryGetValue(expected.Definition.Identity, out var current) || current != expected)
+                        return AiDurableInvocationCasOutcome.RevisionConflict(current);
                     var now = _clock.GetUtcNow();
                     if (expected.Status == AiDurableInvocationStatus.Leased)
                     {
                         var replaces = replacement.Status == AiDurableInvocationStatus.Leased && replacement.Lease!.Epoch != expected.Lease!.Epoch;
-                        if (replaces ? expected.Lease!.ExpiresAtUtc > now : expected.Lease!.ExpiresAtUtc <= now) return false;
+                        if (replaces ? expected.Lease!.ExpiresAtUtc > now : expected.Lease!.ExpiresAtUtc <= now)
+                            return AiDurableInvocationCasOutcome.AuthorityPredicateRejected();
                     }
                     if (replacement.Status == AiDurableInvocationStatus.Leased &&
-                        (replacement.Lease!.ExpiresAtUtc <= now || replacement.Lease.ExpiresAtUtc > now.AddMinutes(5))) return false;
+                        (replacement.Lease!.ExpiresAtUtc <= now || replacement.Lease.ExpiresAtUtc > now.AddMinutes(5)))
+                        return AiDurableInvocationCasOutcome.AuthorityPredicateRejected();
                     _records[expected.Definition.Identity] = replacement;
                     MaybeThrowAfterWrite();
-                    return true;
+                    return AiDurableInvocationCasOutcome.Applied();
                 }
             }
 
@@ -156,14 +170,26 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Durable
             }
 
             public Task<IReadOnlyList<AiDurableInvocationRecord>> ListContinuationCandidatesAsync(AiDurableInvocationScope scope,
-                int maxCount, CancellationToken cancellationToken = default)
+                int maxCount, CancellationToken cancellationToken = default) =>
+                ListContinuationPageAsync(scope, maxCount, null, cancellationToken);
+
+            public Task<IReadOnlyList<AiDurableInvocationRecord>> ListContinuationPageAsync(AiDurableInvocationScope scope,
+                int maxCount, AiDurableInvocationContinuationCursor? after = null, CancellationToken cancellationToken = default)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 lock (_gate)
-                    return Task.FromResult<IReadOnlyList<AiDurableInvocationRecord>>(_records.Values.Where(record =>
+                {
+                    IEnumerable<AiDurableInvocationRecord> query = _records.Values.Where(record =>
                         record.Definition.Scope == scope && record.ContinuationStatus is
-                            AiDurableInvocationContinuationStatus.Pending or AiDurableInvocationContinuationStatus.Scheduled)
-                        .OrderBy(record => record.UpdatedAtUtc).ThenBy(record => record.OperationId, StringComparer.Ordinal).Take(maxCount).ToArray());
+                            AiDurableInvocationContinuationStatus.Pending or AiDurableInvocationContinuationStatus.Scheduled);
+                    if (after is not null)
+                        query = query.Where(record => record.UpdatedAtUtc > after.UpdatedAtUtc ||
+                            record.UpdatedAtUtc == after.UpdatedAtUtc &&
+                            string.CompareOrdinal(record.OperationId, after.OperationId) > 0);
+                    return Task.FromResult<IReadOnlyList<AiDurableInvocationRecord>>(query
+                        .OrderBy(record => record.UpdatedAtUtc).ThenBy(record => record.OperationId, StringComparer.Ordinal)
+                        .Take(maxCount).ToArray());
+                }
             }
 
             private void MaybeThrowAfterWrite()

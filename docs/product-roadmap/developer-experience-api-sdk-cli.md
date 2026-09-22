@@ -190,7 +190,7 @@ Implemented boundary capabilities include:
 - submission idempotency keys;
 - dependency isolation from engine DLLs.
 
-The language-specific client packaging layer is now implemented for .NET, TypeScript/JavaScript, and Python. Future client evolution can add replay, ledger, diagnostics, richer polling/wait helpers, and CLI workflows only as corresponding public server capabilities are exposed, without moving runtime authority into the client.
+The language-specific client packaging layer is now implemented for .NET, TypeScript/JavaScript, and Python. The next planned SDK-v1 capability is `execution.watch()`: an ordered, authorized execution-change stream with an initial snapshot, public sequence/cursor, reconnect/resume, gap detection, and resynchronization. It is not implemented yet. Future client evolution can add replay, ledger, diagnostics, richer helpers, and CLI workflows only as corresponding public server capabilities are exposed, without moving runtime authority into the client.
 
 The SDK should not hide the runtime model too much. It should make the important concepts easier to use while preserving server ownership of execution.
 
@@ -828,6 +828,7 @@ Developer experience should continue improving through:
 - configuration samples;
 - public SDK registry distribution/versioning;
 - CLI direction;
+- `execution.watch()` realtime/resume semantics;
 - diagnostics;
 - error model;
 - policy authoring examples;

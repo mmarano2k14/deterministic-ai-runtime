@@ -140,6 +140,27 @@ An attached container-engine client exiting unexpectedly is not sufficient proof
 
 No competing capacity scheduler is introduced.
 
+## Shared stdio protocol, separate lifecycle authority
+
+Trusted-process and OCI-container execution now reuse a common private stdio session for the protocol mechanics that are intentionally identical:
+
+```text
+request framing
+ready handshake
+heartbeat processing
+result frame parsing
+EOF validation
+frame-size limits
+deadline / timeout handling
+bounded protocol diagnostics
+```
+
+This refactoring does **not** merge physical lifecycle or security responsibilities.
+
+Trusted-process execution still owns executable validation, process launch, process cleanup, and trusted-process capability rules. Container execution still owns OCI launch, engine attestation, ownership labels, force removal, and cleanup/quarantine.
+
+The shared session returns protocol results to the selected transport; it does not become process/container lifecycle, lease, result-acceptance, DAG, or recovery authority.
+
 ## Restart orphan reconciliation
 
 Every isolated profile carries a server-owned `ContainerOwnerScope`. Launched containers receive managed-worker and owner-scope labels.
@@ -228,6 +249,7 @@ These layers must not be conflated. See [Hosted Worker Isolation Validation](hos
 ## Related documentation
 
 - [Hosted Multilanguage Execution](hosted-multilanguage-execution.md)
+- [Durable Invocation Journal and Hosted Worker Authority](durable-invocation-journal.md)
 - [Hosted Multilanguage Validation](hosted-multilanguage-validation.md)
 - [Deterministic Dependency Packaging](deterministic-dependency-packaging.md)
 - [Testing Strategy](testing-strategy.md)

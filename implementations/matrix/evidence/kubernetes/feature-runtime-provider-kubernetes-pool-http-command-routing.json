@@ -9,12 +9,12 @@
   "immutableRuntimeImage": false,
   "kubernetes": {
     "namespaceName": "ai-runtime",
-    "podName": "runtime-pool-pool-5e-http-223c79f0-request-223c",
-    "serviceName": "runtime-pool-pool-5e-http-223c79f0-request-223c-svc",
+    "podName": "runtime-pool-pool-5e-http-56e3370b-request-56e3",
+    "serviceName": "runtime-pool-pool-5e-http-56e3370b-request-56e3-svc",
     "runtimeInstanceIds": [
-      "pool-5e-http-223c79f0-primary",
-      "runtime-pool-2-request-223c79f0",
-      "runtime-pool-3-request-223c79f0"
+      "pool-5e-http-56e3370b-primary",
+      "runtime-pool-2-request-56e3370b",
+      "runtime-pool-3-request-56e3370b"
     ],
     "runtimeInstanceCount": 3,
     "commandCount": 3,

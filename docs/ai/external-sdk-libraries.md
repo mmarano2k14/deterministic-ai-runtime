@@ -43,6 +43,9 @@ sdk.execution.result
 sdk.execution.cancel
 ```
 
+The next planned SDK-v1 surface is `sdk.execution.watch`. It is not part of the current five-operation protocol yet. The intended client shapes are idiomatic async streams (`IAsyncEnumerable`, `AsyncIterable`, `AsyncIterator`) over one language-neutral public event contract, with server-side authorization and resume/resync semantics.
+
+
 The canonical language-neutral protocol manifest is:
 
 ```text
@@ -123,6 +126,8 @@ submit   -> no automatic transport retry
 observe  -> bounded safe-read transport retry
 result   -> bounded safe-read transport retry
 cancel   -> no automatic transport retry
+
+future watch -> reconnect from last accepted public sequence; never resubmit the execution
 ```
 
 This restriction is intentional. SDK convenience code does not become a second idempotency or business-effect retry authority.

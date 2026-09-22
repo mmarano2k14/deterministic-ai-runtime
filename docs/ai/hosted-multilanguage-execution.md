@@ -82,6 +82,8 @@ The selected matrix profile also preserves replay-safe `mongo-redis` payloads, i
 
 ## Language resolution and contextual binding
 
+Supported hosted execution languages are centralized through the shared execution-language authority (`dotnet`, `python`, `typescript`). Individual Invocation paths should not maintain independent language allowlists.
+
 For a custom function, the explicit local language overrides the pipeline default:
 
 ```text
@@ -145,6 +147,26 @@ An early result stays available until the persisted wait or exact application ca
 The local, batch, distributed, and Redis failure paths preserve a custom result and its receipt where required, instead of retaining only an error message. Native failures without such a receipt keep their existing behavior. This is an extension of result persistence, not a replacement scheduler or recovery engine.
 
 A stable operation key and local duplicate acceptance do not guarantee exactly-once effects in a remote system. Expired-assignment reexecution is disabled by default in the supervised dispatch path. Explicitly permitted reassignment still requires an appropriate external idempotency or reconciliation contract.
+
+### Invocation hardening and persistence behavior
+
+The durable invocation path now separates discovery/efficiency concerns from mutation authority more explicitly:
+
+```text
+dispatch candidate snapshot
+    -> first lease CAS without a redundant point read
+    -> classified CAS outcome
+       -> RevisionConflict: reevaluate/retry when legal
+       -> AuthorityPredicateRejected: stop retrying
+```
+
+Continuation fairness uses non-authoritative keyset paging rather than durable revision/timestamp writes whose only purpose is scanner rotation.
+
+MongoDB dispatch discovery is hybrid: Prepared work uses an index ordered by `(updatedAt, _id)`, while expired leased work retains the existing `leaseExpiresAt`-oriented index. The two bounded pages are merged deterministically before worker-lease acquisition. Continuation uses a v2 filter/order-aware index.
+
+The worker transports also share one private stdio protocol/session implementation for framing, readiness, heartbeats, result envelopes, EOF validation, and timeout handling. Trusted-process and container lifecycle/security remain separate.
+
+See [Durable Invocation Journal and Hosted Worker Authority](durable-invocation-journal.md) for the complete authority and measured-query boundary.
 
 ## Hosted process transport
 

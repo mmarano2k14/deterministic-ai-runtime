@@ -65,7 +65,10 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
                 // Cancellation requests termination immediately, including while a store renewal is awaiting I/O.
                 cancellation = token.Register(() => RequestStop(process));
                 stderr = DrainStderrAsync();
-                var exchange = ExchangeAsync();
+                var exchange = AiWorkerStdioSession.ExchangeAsync(
+                    request, bytes, process.StandardInput.BaseStream, process.StandardOutput.BaseStream,
+                    process.StandardInput.Close, heartbeat, AwaitTerminalBoundaryAsync, _options, _time, token,
+                    "Worker exited before its required protocol frame.");
                 Observe(exchange);
                 var result = await exchange.WaitAsync(token).ConfigureAwait(false);
                 await stderr.WaitAsync(_options.ShutdownTimeout, _time, token).ConfigureAwait(false);
@@ -103,43 +106,11 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
                 }
             }
 
-            async Task<AiDurableInvocationResult> ExchangeAsync()
+            async Task AwaitTerminalBoundaryAsync(CancellationToken waitToken)
             {
-                var reader = new AiWorkerJsonLineReader(process.StandardOutput.BaseStream, _options.MaxFrameBytes);
-                var write = WriteRequestAsync(); Observe(write);
-                await write.WaitAsync(_options.StartupTimeout, _time, token).ConfigureAwait(false);
-                var first = await ReadFrameAsync(_options.StartupTimeout).ConfigureAwait(false);
-                if (first.Type != "ready") throw new InvalidOperationException("The worker must acknowledge readiness before results or heartbeats.");
-                await heartbeat(token).ConfigureAwait(false);
-                for (var count = 1; count < _options.MaxFrames; count++)
-                {
-                    var frame = await ReadFrameAsync(_options.HeartbeatTimeout).ConfigureAwait(false);
-                    if (frame.Type == "heartbeat") { await heartbeat(token).ConfigureAwait(false); continue; }
-                    if (frame.Type != "result" || frame.Result is null)
-                        throw new InvalidOperationException("The worker emitted an invalid lifecycle sequence.");
-                    var eof = reader.ReadAsync(token); Observe(eof);
-                    if (await eof.WaitAsync(_options.ShutdownTimeout, _time, token).ConfigureAwait(false) is not null)
-                        throw new InvalidOperationException("The worker emitted data after its terminal result.");
-                    await process.WaitForExitAsync(token).WaitAsync(_options.ShutdownTimeout, _time, token).ConfigureAwait(false);
-                    if (process.ExitCode != 0) throw new IOException("Worker process exited unsuccessfully after its result.");
-                    return frame.Result;
-                }
-                throw new InvalidOperationException("Worker frame count exceeds the configured limit.");
-
-                async Task<AiWorkerInvocationFrame> ReadFrameAsync(TimeSpan timeout)
-                {
-                    var read = reader.ReadAsync(token); Observe(read);
-                    var json = await read.WaitAsync(timeout, _time, token).ConfigureAwait(false)
-                        ?? throw new EndOfStreamException("Worker exited before its required protocol frame.");
-                    return AiWorkerInvocationProtocol.ReadFrame(json, request);
-                }
-            }
-            async Task WriteRequestAsync()
-            {
-                await process.StandardInput.BaseStream.WriteAsync(bytes.AsMemory(), token).ConfigureAwait(false);
-                await process.StandardInput.BaseStream.WriteAsync(new byte[] { (byte)'\n' }.AsMemory(), token).ConfigureAwait(false);
-                await process.StandardInput.BaseStream.FlushAsync(token).ConfigureAwait(false);
-                process.StandardInput.Close();
+                await process.WaitForExitAsync(waitToken).ConfigureAwait(false);
+                if (process.ExitCode != 0)
+                    throw new IOException("Worker process exited unsuccessfully after its result.");
             }
             async Task DrainStderrAsync()
             {

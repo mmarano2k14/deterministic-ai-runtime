@@ -1,7 +1,9 @@
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Multiplexed.Abstractions.AI.Invocation.Mcp.Durable;
+using Multiplexed.AI.Runtime.Invocation.Durable.Mongo;
+using Multiplexed.AI.Runtime.Observability.Performance;
 
 namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable.Mongo
 {
@@ -36,11 +38,11 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable.Mongo
         {
             AiMcpEffectEvidenceValidation.ValidateAddress(scope, effectId);
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
-            var document = await _collection.Find(
-                    AiMcpEffectEvidenceMongoCodec.IdentityFilter(scope, effectId),
-                    new FindOptions { Collation = Ordinal })
-                .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
-            return document is null ? null : AiMcpEffectEvidenceMongoCodec.Decode(document);
+            return await ReadWithoutIndexSetupAsync(
+                scope,
+                effectId,
+                AiMongoAttributionOperations.McpEffectGet,
+                cancellationToken).ConfigureAwait(false);
         }
 
         public async Task<AiMcpEffectEvidenceRecord> GetOrCreateAsync(
@@ -51,20 +53,32 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable.Mongo
             AiMcpEffectEvidenceValidation.Require(prepared.Status == AiMcpEffectEvidenceStatus.Prepared,
                 "Only Prepared MCP effect evidence can be inserted.");
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
+            var insertMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.McpEffectPrepareInsert,
+                AiMongoAttributionCommands.Insert,
+                requestedDocuments: 1);
             try
             {
                 await _collection.InsertOneAsync(
                     AiMcpEffectEvidenceMongoCodec.Encode(prepared),
                     cancellationToken: cancellationToken).ConfigureAwait(false);
+                insertMeasurement.Succeed();
                 return prepared;
+            }
+            catch (OperationCanceledException)
+            {
+                insertMeasurement.Cancel();
+                throw;
             }
             catch (MongoWriteException exception) when (exception.WriteError.Category == ServerErrorCategory.DuplicateKey)
             {
+                insertMeasurement.Fail(duplicateKeyRetry: true);
                 for (var attempt = 0; attempt < 8; attempt++)
                 {
                     var existing = await ReadWithoutIndexSetupAsync(
                         prepared.Scope,
                         prepared.Intent.Effect.EffectId,
+                        AiMongoAttributionOperations.McpEffectGet,
                         cancellationToken).ConfigureAwait(false);
                     if (existing is not null)
                     {
@@ -84,6 +98,11 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable.Mongo
                     "Duplicate MCP effect identity is not yet authoritatively readable; reconcile the same effect before dispatch.",
                     exception);
             }
+            catch
+            {
+                insertMeasurement.Fail();
+                throw;
+            }
         }
 
         public async Task<bool> TryReplaceAsync(
@@ -93,14 +112,24 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable.Mongo
         {
             AiMcpEffectEvidenceValidation.ValidateTransition(expected, replacement);
             await EnsureIndexesAsync(cancellationToken).ConfigureAwait(false);
-            var result = await _collection.ReplaceOneAsync(
-                AiMcpEffectEvidenceMongoCodec.ReplacementFilter(expected),
-                AiMcpEffectEvidenceMongoCodec.Encode(replacement),
-                new ReplaceOptions { IsUpsert = false, Collation = Ordinal },
-                cancellationToken).ConfigureAwait(false);
-            if (!result.IsAcknowledged)
-                throw new InvalidOperationException("MCP effect evidence replacement was not acknowledged.");
-            return result.ModifiedCount == 1;
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.McpEffectCas,
+                AiMongoAttributionCommands.Update,
+                requestedDocuments: 1);
+            try
+            {
+                var applied = await MongoDurableCasInfrastructure.ReplaceOneAsync(
+                    _collection,
+                    AiMcpEffectEvidenceMongoCodec.ReplacementFilter(expected),
+                    AiMcpEffectEvidenceMongoCodec.Encode(replacement),
+                    Ordinal,
+                    "MCP effect evidence replacement was not acknowledged.",
+                    cancellationToken).ConfigureAwait(false);
+                measurement.Succeed(applied ? 1 : 0);
+                return applied;
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         public async Task<IReadOnlyList<AiMcpEffectEvidenceRecord>> ListReconciliationCandidatesAsync(
@@ -127,23 +156,43 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp.Durable.Mongo
                     }
                 }
             };
-            var documents = await _collection.Find(filter, new FindOptions { Collation = Ordinal })
-                .Sort(new BsonDocument { { "updatedAt", 1 }, { "_id", 1 } })
-                .Limit(maxCount)
-                .ToListAsync(cancellationToken).ConfigureAwait(false);
-            return documents.Select(AiMcpEffectEvidenceMongoCodec.Decode).ToArray();
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                AiMongoAttributionOperations.McpEffectReconcileScan,
+                AiMongoAttributionCommands.Find,
+                requestedDocuments: maxCount);
+            try
+            {
+                var documents = await _collection.Find(filter, new FindOptions { Collation = Ordinal })
+                    .Sort(new BsonDocument { { "updatedAt", 1 }, { "_id", 1 } })
+                    .Limit(maxCount)
+                    .ToListAsync(cancellationToken).ConfigureAwait(false);
+                measurement.Succeed(documents.Count);
+                return documents.Select(AiMcpEffectEvidenceMongoCodec.Decode).ToArray();
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         private async Task<AiMcpEffectEvidenceRecord?> ReadWithoutIndexSetupAsync(
             AiMcpEffectEvidenceScope scope,
             string effectId,
+            string operation,
             CancellationToken cancellationToken)
         {
-            var document = await _collection.Find(
-                    AiMcpEffectEvidenceMongoCodec.IdentityFilter(scope, effectId),
-                    new FindOptions { Collation = Ordinal })
-                .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
-            return document is null ? null : AiMcpEffectEvidenceMongoCodec.Decode(document);
+            var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                operation,
+                AiMongoAttributionCommands.Find);
+            try
+            {
+                var document = await _collection.Find(
+                        AiMcpEffectEvidenceMongoCodec.IdentityFilter(scope, effectId),
+                        new FindOptions { Collation = Ordinal })
+                    .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+                measurement.Succeed(document is null ? 0 : 1);
+                return document is null ? null : AiMcpEffectEvidenceMongoCodec.Decode(document);
+            }
+            catch (OperationCanceledException) { measurement.Cancel(); throw; }
+            catch { measurement.Fail(); throw; }
         }
 
         private async Task EnsureIndexesAsync(CancellationToken cancellationToken)

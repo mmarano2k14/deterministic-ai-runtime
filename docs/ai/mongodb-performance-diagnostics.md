@@ -282,6 +282,145 @@ The snapshot path remains latency-sensitive, so no stable snapshot-latency perce
 
 ---
 
+## Durable Invocation Journal: measured query and write-amplification hardening
+
+A later Invocation-focused pass extended the same measurement-first rule to hosted-function journal persistence.
+
+The changes are intentionally separated from the earlier runtime-wide MongoDB command-reduction result above.
+
+### Read and write amplification
+
+The Invocation path now:
+
+- reuses a dispatch-page candidate for the first worker-lease CAS instead of point-reading the same durable record again;
+- reuses a current durable record returned by classified CAS conflict handling instead of issuing another redundant read;
+- distinguishes `RevisionConflict` from `AuthorityPredicateRejected`, preventing retry storms when MongoDB authoritative predicates reject a transition;
+- uses process-local keyset continuation paging instead of durable revision/timestamp writes whose only purpose was scanner fairness;
+- attributes Invocation and MCP-effect operations by semantic operation type.
+
+Attribution keys include:
+
+```text
+Mongo.Invocation.Get
+Mongo.Invocation.PrepareInsert
+Mongo.Invocation.DispatchScan
+Mongo.Invocation.ContinuationScan
+Mongo.Invocation.CAS
+Mongo.Invocation.ResultAcceptance
+
+Mongo.McpEffect.Get
+Mongo.McpEffect.PrepareInsert
+Mongo.McpEffect.ReconcileScan
+Mongo.McpEffect.CAS
+```
+
+### Query-plan baseline
+
+A controlled 10,000-document experiment exposed large scan/sort amplification in the original dispatch and continuation indexes. A representative baseline returned 100 records while examining about 5,000 keys/documents and performing a blocking sort for both query families.
+
+The experiment deliberately tested multiple candidate index orders rather than changing production indexes from static inspection.
+
+### Dispatch: why one replacement index was rejected
+
+A global sort-first dispatch index reduced Prepared/mixed scans dramatically, but regressed a lease-heavy distribution:
+
+```text
+live-lease-heavy
+current expiry-oriented index:
+    1,000 keys / 1,000 docs / ~8 ms
+
+global sort-first:
+    9,100 keys / 100 docs / ~35 ms
+```
+
+The global replacement was therefore rejected.
+
+### Production hybrid dispatch strategy
+
+Production discovery is split into two bounded branches:
+
+```text
+Prepared
+    -> ix_durable_invocation_dispatch_prepared_v2
+    -> ordered by updatedAt, _id
+
+Expired Leased
+    -> ix_durable_invocation_dispatch
+    -> leaseExpiresAt-oriented filter
+```
+
+The two pages are merged by `(UpdatedAtUtc, OperationId)`, deduplicated, and truncated to the requested page size.
+
+H4 experiments verified first-page semantic equivalence across Prepared-dense, lease-heavy, and realistic mixed populations.
+
+Representative scan counts:
+
+```text
+prepared dense
+current: 10,000 keys / 10,000 docs
+hybrid:     100 keys /    100 docs
+
+live-lease-heavy
+current: 1,000 keys / 1,000 docs
+hybrid:  1,000 keys / 1,000 docs
+
+realistic mix
+current: 7,000 keys / 7,000 docs
+hybrid:  3,100 keys / 3,100 docs
+```
+
+### Continuation v2 index
+
+The selected continuation index is:
+
+```text
+controlPlaneId
+tenantId
+tenantGroupId
+continuationStatus
+status
+updatedAt
+_id
+```
+
+The final production `explain("executionStats")` run returned 100 continuation records with 100 keys and 100 documents examined through the v2 index and ordered `SORT_MERGE` index ranges.
+
+### Final production-plan verification
+
+The final measurement preserved the actual production hints:
+
+```text
+Prepared       -> ix_durable_invocation_dispatch_prepared_v2
+Expired Leased -> ix_durable_invocation_dispatch
+Continuation   -> ix_durable_invocation_continuation_v2
+```
+
+One controlled run reported:
+
+```text
+Prepared
+    100 returned
+    100 keys examined
+    100 docs examined
+
+Expired Leased probe
+    2,500 expired + 2,500 live
+    100 returned
+    2,500 keys examined
+    2,500 docs examined
+
+Continuation
+    100 returned
+    100 keys examined
+    100 docs examined
+```
+
+The millisecond figures from a single local MongoDB run are not throughput guarantees. The durable evidence is the query shape, selected index, examined-key/document counts, and semantic-equivalence tests.
+
+See [Durable Invocation Journal and Hosted Worker Authority](durable-invocation-journal.md).
+
+---
+
 ## Optimizations Deliberately Rejected
 
 ### Decision-ledger sequence range allocation

@@ -928,6 +928,37 @@ See:
 
 ---
 
+## Durable Hosted Invocation Foundation
+
+Published hosted-function execution now has a hardened durable invocation boundary in addition to the general worker foundation.
+
+The journal preserves:
+
+```text
+immutable invocation identity
+frozen publication/input
+worker lease
+assignment epoch
+result acceptance CAS
+durable continuation obligation
+```
+
+Recent hardening reduces persistence amplification without changing those authorities:
+
+- dispatch-page snapshots feed the first lease CAS directly;
+- CAS outcomes distinguish revision contention from authoritative predicate rejection;
+- continuation fairness uses non-authoritative keyset paging instead of durable fairness-only writes;
+- hosted policy ownership checks share one tenant/user/project/namespace/lifecycle boundary;
+- supported hosted languages use one shared registry;
+- invocation timing uses `TimeProvider`;
+- process and container workers share stdio protocol handling while keeping physical lifecycle/security separate;
+- MongoDB dispatch discovery uses a measured hybrid Prepared/expired-leased strategy;
+- continuation paging uses the selected filter/order-aware v2 index.
+
+See [Durable Invocation Journal and Hosted Worker Authority](../ai/durable-invocation-journal.md).
+
+---
+
 ## 23. Storage Foundation
 
 The architecture separates fast runtime coordination from durable audit and history storage.

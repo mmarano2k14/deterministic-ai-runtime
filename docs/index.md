@@ -31,6 +31,7 @@ Focused AI runtime documentation is organized under:
 | [`ai/hosted-worker-isolation.md`](ai/hosted-worker-isolation.md) | Selected OCI hosted-worker isolation architecture: provider routing, exact-image admission, applied-state attestation, tenant-material release gate, lifecycle cleanup/quarantine, and orphan reconciliation. |
 | [`ai/hosted-worker-isolation-validation.md`](ai/hosted-worker-isolation-validation.md) | Isolation evidence separating deterministic provider tests, 4 explicit real Docker/Linux enforcement/worker-execution tests, and the 37/37 public-SDK runtime-matrix closure. |
 | [`ai/durable-mcp-effect-evidence.md`](ai/durable-mcp-effect-evidence.md) | Durable outbound MCP effect identity, immutable intent, pre-call dispatch fencing, `Completed` replay, `NotSent`/`Uncertain` classification, explicit reconciliation, restart behavior, and authority boundaries. |
+| [`ai/durable-invocation-journal.md`](ai/durable-invocation-journal.md) | Durable hosted-function invocation authority: frozen identity/input, worker lease and epoch fencing, classified CAS outcomes, read/write amplification reductions, continuation keyset fairness, shared stdio protocol boundaries, MongoDB attribution, and measured production index strategy. |
 | [`ai/durable-mcp-effect-evidence-validation.md`](ai/durable-mcp-effect-evidence-validation.md) | Validation layers for durable MCP effects: deterministic state/authority proofs, real outbound `tools/call` boundary tests, and opt-in MongoDB persistence/reconstruction evidence. |
 | [`ai/child-dag-composition.md`](ai/child-dag-composition.md) | Implemented / validated durable Child DAG composition with `WaitingForExternal`, deterministic continuation, native recursive Depth3 validation, published custom Child DAG integration, EventDriven recovery observation, warm reuse, replay, lifecycle, Ledger, trace, and Forensics evidence. |
 | [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | Multi-tenant control-plane isolation, RBAC execution-context propagation, durable `ExecutionContextSnapshot`, tenant-aware registry/capacity/admission, Shared/Dedicated/Hybrid runtime visibility, and tenant-aware scale-out. |
@@ -122,9 +123,10 @@ Start with:
 30. [`ai/observability-tracing.md`](ai/observability-tracing.md)
 31. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
 32. [`ai/redis-performance-diagnostics.md`](ai/redis-performance-diagnostics.md)
-33. [`ai/mongodb-performance-diagnostics.md`](ai/mongodb-performance-diagnostics.md)
-34. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-35. [`runtime-internals.md`](runtime-internals.md)
+33. [`ai/durable-invocation-journal.md`](ai/durable-invocation-journal.md)
+34. [`ai/mongodb-performance-diagnostics.md`](ai/mongodb-performance-diagnostics.md)
+35. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+36. [`runtime-internals.md`](runtime-internals.md)
 
 This path gives both the strategic positioning and the complete technical depth.
 
@@ -165,11 +167,12 @@ Start with:
 31. [`ai/observability-tracing.md`](ai/observability-tracing.md)
 32. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
 33. [`ai/redis-performance-diagnostics.md`](ai/redis-performance-diagnostics.md)
-34. [`ai/mongodb-performance-diagnostics.md`](ai/mongodb-performance-diagnostics.md)
-35. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-36. [`ai/testing-strategy.md`](ai/testing-strategy.md)
-37. [`runtime-internals.md`](runtime-internals.md)
-38. [`roadmap.md`](roadmap.md)
+34. [`ai/durable-invocation-journal.md`](ai/durable-invocation-journal.md)
+35. [`ai/mongodb-performance-diagnostics.md`](ai/mongodb-performance-diagnostics.md)
+36. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+37. [`ai/testing-strategy.md`](ai/testing-strategy.md)
+38. [`runtime-internals.md`](runtime-internals.md)
+39. [`roadmap.md`](roadmap.md)
 
 This path gives the current architecture, configuration model, RBAC/context propagation model, tenant isolation model, control-plane/runtime split, extension model, technical reference, and next planned improvements.
 

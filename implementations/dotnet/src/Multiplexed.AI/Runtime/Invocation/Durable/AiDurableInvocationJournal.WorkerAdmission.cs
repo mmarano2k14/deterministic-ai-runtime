@@ -54,11 +54,15 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable
                     Lease = new AiDurableInvocationLease(workerId, epoch, Guid.NewGuid().ToString("N"), now.Add(duration))
                 };
                 AiDurableInvocationValidation.ValidateTransition(current, updated);
-                if (await _store.TryReplaceAsync(current, updated, cancellationToken).ConfigureAwait(false)) return updated;
+                var outcome = await TryReplaceClassifiedAsync(scope, identity, current, updated, cancellationToken)
+                    .ConfigureAwait(false);
+                if (outcome.Kind == AiDurableInvocationCasOutcomeKind.Applied) return updated;
+                if (outcome.Kind == AiDurableInvocationCasOutcomeKind.AuthorityPredicateRejected) return null;
 
-                // The dispatch-page snapshot is a hint only. Once its CAS loses, reload durable
-                // truth before reevaluating admission. This preserves the existing fencing model.
-                current = await GetAsync(scope, identity, cancellationToken).ConfigureAwait(false);
+                // The dispatch-page snapshot is a hint only. A genuine revision conflict may
+                // provide the latest durable snapshot directly; legacy stores reload once.
+                current = outcome.CurrentRecord ??
+                    await GetAsync(scope, identity, cancellationToken).ConfigureAwait(false);
                 if (current is null) return null;
             }
             throw Contended();

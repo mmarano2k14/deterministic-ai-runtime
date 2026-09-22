@@ -27,7 +27,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers
         }
 
         [Fact]
-        public async Task Failed_First_Candidate_Cas_Reloads_Durable_Truth_Before_Retry()
+        public async Task Classified_First_Candidate_Cas_Conflict_Reuses_Durable_Truth_Without_Point_Read()
         {
             var (journal, store, _) = DurableInvocationTestSupport.Create();
             var candidate = await journal.PrepareAsync(DurableInvocationTestSupport.Definition());
@@ -43,7 +43,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers
                 maxAssignmentEpoch: 8);
 
             Assert.NotNull(leased);
-            Assert.Equal(1, store.GetCalls);
+            Assert.Equal(0, store.GetCalls);
             Assert.Equal(2, store.CasCalls);
             Assert.Equal(1, leased!.Lease!.Epoch);
         }

@@ -51,12 +51,13 @@ The distributed Redis/MongoDB composition separates these authorities:
 | Who may advance a live DAG operation? | **Redis DAG state, claims, tokens, and Lua transitions.** Redis is active state, not a disposable cache. |
 | What data and definition are retained? | **MongoDB records, payloads, and snapshots.** Published functions additionally use an immutable publication and run pin. |
 | Which hosted-function result may be applied? | **Durable Invocation Journal** in MongoDB: frozen inputs, lease/epoch, result, and continuation obligation. |
+| How is hosted-function work discovered efficiently? | **Durable Invocation dispatch queries** use separate Prepared and expired-leased discovery branches; discovery snapshots remain hints while lease/epoch/CAS remain authority. |
 | What failed, and who may recover it? | **Runtime Pool Failure Journal** records the incident; **Recovery Claim Store** controls mutation. The registry describes current runtime/capacity state. |
 | What happened, and why? | **Decision Ledger, Runtime Lifecycle Journal, and Recovery Forensics** retain evidence, not replacement execution authority. |
 
 There is no single cross-store transaction. Atomic transitions protect individual boundaries; continuation and reconciliation bring their states into agreement. **Logs and realtime notifications are not proof of durable application.**
 
-Details: [distributed execution](distributed-execution.md), [failure authority](runtime-pool-failure-authority.md), [event observation](engine-event-observation.md).
+Details: [distributed execution](distributed-execution.md), [durable invocation journal](durable-invocation-journal.md), [failure authority](runtime-pool-failure-authority.md), [event observation](engine-event-observation.md).
 
 ## 3. Five invariants to keep in mind
 
@@ -64,7 +65,7 @@ Details: [distributed execution](distributed-execution.md), [failure authority](
 
 **Tenant ownership survives the request.** The execution-context snapshot carries `TenantId` across queueing, dispatch, and recovery. Background execution restores it rather than depending on the original request.
 
-**Only current authority may mutate.** DAG claims protect transitions; hosted-function leases and epochs protect result acceptance. An obsolete function worker cannot gain DAG authority by returning a result.
+**Only current authority may mutate.** DAG claims protect transitions; hosted-function leases and epochs protect result acceptance. An obsolete function worker cannot gain DAG authority by returning a result. Dispatch-page snapshots and continuation scan cursors are optimization/discovery state only; MongoDB CAS and the existing DAG transitions remain authoritative.
 
 **Hosted results: recorded, scheduled, and applied are different.** A result arriving before `Park` remains journaled. Queue acceptance is not application; acknowledgement requires the exact result receipt and terminal parent state.
 

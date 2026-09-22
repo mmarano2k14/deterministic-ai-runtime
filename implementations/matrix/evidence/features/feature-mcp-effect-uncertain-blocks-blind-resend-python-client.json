@@ -14,12 +14,12 @@
   "runtimeProvider": "ProcessHostPool",
   "workerExecutionProvider": "TrustedProcess",
   "publicationRef": "pub-862763d446a101b3cc703bed354446926e379039204a9f69760208fd28b2e1dd",
-  "executionId": "published-80ed7ec84faebc4b48a3b7332123d60efecc48b7450848eb8ee3e0c0220f2913",
+  "executionId": "published-68cf00b94fb1c7fe8404a06a4dd918eb5523a472ca79b5404a53475e5d44d5d9",
   "terminalStatus": "Failed",
   "stepStatus": "Failed",
   "durableEvidenceStatus": "Uncertain",
   "durableEvidenceRevision": 2,
-  "effectId": "mcp-effect-v1-013dfe6c4057d3ebc2ed8f6a69ca1118a0426da32e6c9af6e5a109e1c9d02786",
+  "effectId": "mcp-effect-v1-52ceeecaa6d09886d865fd7c847bc1243f07f9e719713a8e182ac9160865ca24",
   "retryCount": 1,
   "physicalCallCount": 1,
   "durableResultIsError": null,
@@ -33,5 +33,5 @@
     "single-physical-tools-call",
     "terminal-result"
   ],
-  "recordedAtUtc": "2026-09-21T03:48:34.2+00:00"
+  "recordedAtUtc": "2026-09-21T23:13:48.144+00:00"
 }

@@ -102,8 +102,9 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Durable
             var staleClock = new DurableInvocationTestSupport.Clock(); staleClock.Set(leased.UpdatedAtUtc);
             var staleCaller = new AiDurableInvocationJournal(fixture.NewStore(), staleClock);
             await Task.Delay(TimeSpan.FromSeconds(2.5));
-            await Assert.ThrowsAsync<InvalidOperationException>(() => staleCaller.CompleteAsync(DurableInvocationTestSupport.Scope,
-                DurableInvocationTestSupport.Identity, leased.Lease!, DurableInvocationTestSupport.Result()));
+            Assert.Equal(AiDurableInvocationCompletionStatus.LeaseRejected,
+                await staleCaller.CompleteAsync(DurableInvocationTestSupport.Scope,
+                    DurableInvocationTestSupport.Identity, leased.Lease!, DurableInvocationTestSupport.Result()));
             Assert.Null((await journal.GetAsync(DurableInvocationTestSupport.Scope, DurableInvocationTestSupport.Identity))!.Result);
             var next = (await journal.TryAcquireLeaseAsync(DurableInvocationTestSupport.Scope, DurableInvocationTestSupport.Identity,
                 "worker-b", TimeSpan.FromMinutes(1)))!;

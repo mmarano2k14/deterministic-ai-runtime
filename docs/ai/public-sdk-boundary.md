@@ -145,6 +145,11 @@ sdk.execution.result
 sdk.execution.cancel
 ```
 
+The next planned SDK-v1 capability is `sdk.execution.watch`. It is **not implemented by the current boundary yet**. The intended design is an authorized, ordered public projection with an initial snapshot, sequence/cursor, reconnect/resume, gap detection, and resynchronization semantics. Durable server state remains authoritative; client disconnect must not cancel the durable execution.
+
+The watch contract must remain application-facing and must not expose raw invocation-journal records, leases, epochs, runtime placement, Pod names, or other future Admin/Ops data.
+
+
 The server boundary reuses existing authorities rather than duplicating them:
 
 - immutable publication and compilation;
@@ -184,7 +189,7 @@ Still separate from this boundary:
 - standalone CLI packaging;
 - public NuGet/npm/Python-registry publication;
 - broader HTTP/Gateway productization where desired;
-- replay/ledger/forensics client surfaces beyond the implemented publication/execution boundary;
+- realtime `execution.watch` streaming, replay/ledger/forensics client surfaces beyond the implemented publication/execution boundary;
 - generated API documentation and long-term compatibility/deprecation policy;
 - Kubernetes-native hosted sandbox-Pod materialization.
 

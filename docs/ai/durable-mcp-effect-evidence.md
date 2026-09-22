@@ -187,6 +187,9 @@ The durable address includes `TenantId`, `TenantGroupId`, and `EffectId`. Wrong-
 
 `MongoAiMcpEffectEvidenceStore` provides the durable store with:
 
+> Persistence implementation note: Invocation and MCP-effect stores share only low-level MongoDB CAS/replace plumbing and diagnostic infrastructure where behavior is identical. Their state machines, filters, authority predicates, retry rules, and domain transitions remain separate. See [Durable Invocation Journal and Hosted Worker Authority](durable-invocation-journal.md).
+
+
 - unique `(TenantId, TenantGroupId, EffectId)` identity;
 - immutable-intent conflict detection;
 - revision CAS for state changes;

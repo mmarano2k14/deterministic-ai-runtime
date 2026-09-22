@@ -31,7 +31,7 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Durable.Dag
         }
 
         [Fact]
-        public async Task Oldest_Retained_Batch_Cannot_Starve_Other_Tenant_Candidates()
+        public async Task Keyset_Fairness_Reaches_Candidates_Beyond_First_Batch_Without_Durable_Deferral_Writes()
         {
             using var fixture = await CreateAsync();
             for (var index = 0; index < 105; index++)
@@ -42,13 +42,47 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Durable.Dag
                 var leased = (await fixture.Journal.TryAcquireLeaseAsync(Scope, definition.Identity, "worker", TimeSpan.FromSeconds(30)))!;
                 await fixture.Journal.CompleteAsync(Scope, definition.Identity, leased.Lease!, new AiDurableInvocationResult(true, "{}"));
             }
-            var before = await fixture.JournalStore.ListContinuationCandidatesAsync(Scope, 100);
-            var pass = await fixture.Reconciler.ReconcileAsync(Scope, 100);
-            Assert.Equal(100, pass.Candidates);
-            Assert.Equal(100, pass.Errors); // Parent absence is retained, never silently acknowledged.
-            var after = await fixture.JournalStore.ListContinuationCandidatesAsync(Scope, 100);
-            Assert.Equal(5, after.Take(5).Count(item => !before.Any(old => old.OperationId == item.OperationId)));
-            Assert.All(after, item => Assert.Equal(AiDurableInvocationContinuationStatus.Pending, item.ContinuationStatus));
+
+            var writesBefore = fixture.JournalStore.CasCalls;
+            var first = await fixture.Reconciler.ReconcilePageAsync(Scope, 100, null);
+            Assert.Equal(100, first.Candidates);
+            Assert.Equal(100, first.Errors); // Parent absence is retained, never silently acknowledged.
+            Assert.NotNull(first.NextCursor);
+            Assert.False(first.Wrapped);
+
+            var second = await fixture.Reconciler.ReconcilePageAsync(Scope, 100, first.NextCursor);
+            Assert.Equal(5, second.Candidates);
+            Assert.Equal(5, second.Errors);
+            Assert.NotNull(second.NextCursor);
+            Assert.False(second.Wrapped);
+            Assert.Equal(writesBefore, fixture.JournalStore.CasCalls);
+
+            var wrapped = await fixture.Reconciler.ReconcilePageAsync(Scope, 100, second.NextCursor);
+            Assert.Equal(100, wrapped.Candidates);
+            Assert.True(wrapped.Wrapped);
+            Assert.Equal(writesBefore, fixture.JournalStore.CasCalls);
+            Assert.All(await fixture.JournalStore.ListContinuationCandidatesAsync(Scope, 100),
+                item => Assert.Equal(AiDurableInvocationContinuationStatus.Pending, item.ContinuationStatus));
+        }
+
+        [Fact]
+        public async Task Continuation_Page_Uses_Exclusive_UpdatedAt_OperationId_Cursor()
+        {
+            using var fixture = await CreateAsync();
+            for (var index = 0; index < 3; index++)
+            {
+                var definition = DurableInvocationTestSupport.Definition() with
+                    { Identity = Identity with { ExecutionId = $"cursor-{index:D3}" } };
+                await fixture.Journal.PrepareAsync(definition);
+                var leased = (await fixture.Journal.TryAcquireLeaseAsync(Scope, definition.Identity, "worker", TimeSpan.FromSeconds(30)))!;
+                await fixture.Journal.CompleteAsync(Scope, definition.Identity, leased.Lease!, new AiDurableInvocationResult(true, "{}"));
+            }
+            var page = await fixture.JournalStore.ListContinuationPageAsync(Scope, 2);
+            Assert.Equal(2, page.Count);
+            var cursor = new AiDurableInvocationContinuationCursor(page[^1].UpdatedAtUtc, page[^1].OperationId);
+            var tail = await fixture.JournalStore.ListContinuationPageAsync(Scope, 2, cursor);
+            Assert.Single(tail);
+            Assert.DoesNotContain(tail, item => page.Any(first => first.OperationId == item.OperationId));
         }
 
         [Theory]
