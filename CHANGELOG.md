@@ -6,6 +6,446 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 0.0.9.5 - 2026-09-23 - SDK Watch, Execution Control and Replay
+
+## Scope
+
+Extend the external SDK surface with ordered execution observation, execution-control commands, human-input submission, deterministic replay validation, and the runtime wake behavior required to continue an existing execution after a durable control transition.
+
+The work applies consistently to the .NET, TypeScript / JavaScript, and Python external SDKs and preserves the existing public-boundary, RBAC, execution-ownership, DAG, durable-invocation, recovery, and result-acceptance authorities.
+
+---
+
+## Public SDK Surface
+
+The shared public protocol now exposes ten operations:
+
+```text
+sdk.publish_pipeline
+sdk.execution.submit
+sdk.execution.observe
+sdk.execution.watch
+sdk.execution.result
+sdk.execution.cancel
+sdk.execution.pause
+sdk.execution.resume
+sdk.execution.input.submit
+sdk.execution.replay
+```
+
+`observe`, `watch`, and `result` remain safe-read operations.
+
+Command-side operations are not automatically retried:
+
+```text
+publish
+submit
+cancel
+pause
+resume
+input.submit
+replay
+```
+
+Automatic command retries remain excluded until an explicit durable public-command idempotency contract exists.
+
+---
+
+## Execution Watch
+
+Added ordered public execution observation through `sdk.execution.watch`.
+
+### Public semantics
+
+```text
+observe()
+    = authoritative point-in-time public snapshot
+
+watch()
+    = ordered public observation stream
+```
+
+The Watch surface is observational only and does not own execution transitions.
+
+### Client APIs
+
+Added native asynchronous iteration patterns for all external SDKs:
+
+```text
+.NET
+IAsyncEnumerable<AiSdkExecutionWatchEvent>
+
+TypeScript
+AsyncIterable<AiSdkExecutionWatchEvent>
+
+Python
+AsyncIterator<AiSdkExecutionWatchEvent>
+```
+
+### Cursor and recovery behavior
+
+Added support for:
+
+- monotonic public per-execution sequencing;
+- resumable cursors;
+- initial snapshots;
+- duplicate-sequence suppression;
+- gap detection;
+- authoritative resynchronization;
+- expired-cursor handling;
+- fail-closed handling of regressing sequence values.
+
+The public sequence remains independent from internal Mongo revisions, worker epochs, leases, DAG revisions, or runtime tokens.
+
+### Bounded consumption and retention
+
+Watch consumption was bounded to avoid unbounded subscriber materialization.
+
+Default server-side values:
+
+```text
+RetainedPublicEventLimit = 4096
+LedgerReadBatchSize      = 256
+PollInterval             = 100 ms
+```
+
+Public Watch retention remains separate from durable Decision Ledger retention.
+
+### Distributed ProcessHost visibility
+
+The Watch-only ProcessHost path uses durable Decision Ledger persistence so control-plane and runtime processes observe the same event source across process boundaries.
+
+---
+
+## Execution Control
+
+Added public Pause and Resume operations:
+
+```text
+sdk.execution.pause
+sdk.execution.resume
+```
+
+with server-side capabilities:
+
+```text
+execution/control/pause
+execution/control/resume
+```
+
+The public boundary continues to enforce authorization, execution ownership, immutable run pinning, tenant scope, project scope, namespace scope, and user scope before invoking runtime control authority.
+
+---
+
+## Cooperative Pause
+
+Hardened DAG step claiming so Pause is re-checked before a new claim is committed.
+
+The claim path now performs late execution-control fences around candidate selection and policy/concurrency evaluation.
+
+Behavior:
+
+```text
+already-running work may drain
+new claims stop after Pause becomes authoritative
+```
+
+This preserves cooperative Pause without forcibly invalidating already-running durable work.
+
+### Durable custom-function pause semantics
+
+A hosted custom-function step may legitimately transition:
+
+```text
+WaitingForExternal
+    -> Ready
+```
+
+after its durable external result arrives.
+
+The continuation still requires a new DAG claim.
+
+Therefore a valid paused state is:
+
+```text
+executionStatus = Waiting
+firstStatus     = Ready
+secondStatus    = Pending
+```
+
+This state proves that the durable result arrived while Pause prevented the continuation claim.
+
+---
+
+## Resume Wake / Re-enqueue
+
+Fixed the case where Resume changed durable execution-control state to runnable but the physical run had already been released and was not scheduled again.
+
+Accepted Resume now:
+
+```text
+updates the existing durable control state
+    -> makes the existing execution runnable
+    -> requests wake/re-enqueue through the existing shared runtime scheduling authority
+    -> continues the same execution
+```
+
+The wake path preserves:
+
+```text
+same ExecutionId
+same immutable publication/run pin
+same durable DAG
+same execution ownership
+```
+
+No new execution, queue, scheduler, DAG engine, or recovery authority is introduced.
+
+The wake operation is treated as:
+
+```text
+ensure the existing runnable execution is scheduled
+```
+
+rather than unconditional creation of another physical run.
+
+---
+
+## Human Input
+
+Added the public operation:
+
+```text
+sdk.execution.input.submit
+```
+
+with capability:
+
+```text
+execution/control/input
+```
+
+The operation maps to the existing durable human-input authority.
+
+Accepted human input can make an execution runnable again and uses the same shared runtime wake/re-enqueue path as Resume.
+
+Rejected or unauthorized input does not schedule the execution.
+
+No separate public approval/rejection command model was introduced; the public primitive remains generic typed input submission.
+
+---
+
+## Deterministic Replay
+
+Added the public operation:
+
+```text
+sdk.execution.replay
+```
+
+with capability:
+
+```text
+replay/execution/run
+```
+
+Current replay behavior is deterministic replay/validation of the existing execution.
+
+It does not:
+
+```text
+create a new ExecutionId
+clone the original execution
+re-run LLM calls
+re-issue external business effects
+```
+
+Replay remains bound to the existing persisted execution evidence and runtime replay authority.
+
+---
+
+## Runtime Pool Host Build Closure
+
+Hardened RuntimePool E2E build behavior so the host layout used by child runtime processes is built with the test configuration.
+
+The test project now ensures the external MCP host artifacts are available before RuntimePool launch.
+
+Required host artifacts include:
+
+```text
+Multiplexed.AI.McpServer.Host.dll
+Multiplexed.AI.McpServer.Host.deps.json
+Multiplexed.AI.McpServer.Host.runtimeconfig.json
+```
+
+This avoids stale or incomplete RuntimePool host layouts during real process-boundary validation.
+
+---
+
+## Multilanguage Control Parity
+
+Aligned .NET, TypeScript, and Python Control E2E pause-gate assertions with the durable invocation lifecycle.
+
+All clients now recognize:
+
+```text
+Waiting / Ready / Pending
+```
+
+as the expected positive Pause proof for the hosted-function continuation path.
+
+---
+
+## Inline Control Worker Source Encoding
+
+Corrected the TypeScript matrix client generation of inline control-worker source.
+
+Changes:
+
+- replaced literal backslash-n sequences in generated TypeScript worker source with real newline characters;
+- replaced literal backslash-n sequences in generated Python worker source with real newline characters in the same helper;
+- used explicit UTF-8 encoding for the affected generated source payloads.
+
+This allows generated worker source to execute correctly and publish its durable invocation result instead of remaining indefinitely in `WaitingForExternal`.
+
+This correction is limited to validation-source generation and does not change runtime or public SDK contracts.
+
+---
+
+## Authorization and Ownership
+
+All new public operations preserve the existing execution ownership model.
+
+Control and replay commands are authorized against the existing immutable execution/run pin and public access context.
+
+No cross-tenant, cross-project, cross-namespace, or cross-user control wake is permitted.
+
+For unauthorized Resume or Human Input:
+
+```text
+durable state remains unchanged
+wake request count remains zero
+```
+
+---
+
+## Compatibility
+
+No existing execution identity model was replaced.
+
+No persistence schema migration is required by this workstream.
+
+No new DAG engine, queue, scheduler, replay authority, recovery authority, or result-acceptance path was introduced.
+
+The following existing invariants remain authoritative:
+
+- lease authority;
+- worker epoch fencing;
+- durable claim/CAS fencing;
+- stale-result rejection;
+- DAG scheduling and transitions;
+- DAG finalization;
+- Child DAG durability;
+- recovery identity;
+- durable invocation journal identity;
+- immutable publication/run pinning;
+- execution ownership;
+- hosted worker lifecycle ownership;
+- Watch sequence semantics;
+- Watch retention semantics.
+
+The external SDKs remain independent from engine assemblies, internal CLR contracts, MongoDB, Redis, DAG stores, invocation-journal implementations, and control-plane implementation classes.
+
+---
+
+## Validation
+
+### Watch
+
+Real MCP/HTTP Watch E2E passed for all three external SDKs:
+
+```text
+.NET        PASS
+TypeScript PASS
+Python     PASS
+```
+
+Validated behavior includes public Watch transport, ordered observation, reconnect/resume behavior, cursor handling, authoritative resynchronization, RBAC enforcement, and bounded consumption.
+
+### Execution Control and Replay
+
+Real MCP/HTTP execution-control E2E passed for all three external SDKs:
+
+```text
+control-dotnet-client-dotnet-worker:         PASSED
+control-typescript-client-typescript-worker: PASSED
+control-python-client-python-worker:         PASSED
+```
+
+The validated flow covers:
+
+```text
+pause
+pause-gated continuation
+resume
+wake/re-enqueue of the existing execution
+human input submission
+wake/re-enqueue after accepted input
+replay validation
+terminal convergence
+```
+
+The real Pause proof observed across the clients is:
+
+```text
+executionStatus='Waiting'
+firstStatus='Ready'
+secondStatus='Pending'
+gated='True'
+```
+
+The TypeScript matrix client syntax was checked with `node --check`.
+
+Generated TypeScript inline worker source was materialized and syntax-checked.
+
+Generated Python inline worker source was materialized and compiled with `py_compile`.
+
+---
+
+## Validation Scope
+
+The Watch and execution-control E2E campaigns are separate from the existing SDK runtime matrix and KubernetesPool closure evidence.
+
+They must not be merged into a synthetic combined scenario count.
+
+Existing validation counts remain independently scoped:
+
+```text
+Docker SDK matrix        37 / 37
+KubernetesPool closure    3 / 3
+```
+
+The Watch and Control E2E results prove public SDK behavior for the exercised MCP/HTTP ProcessHost-based validation paths.
+
+They do not claim full Kubernetes execution-control parity or broader topology coverage that was not explicitly executed.
+
+---
+
+## Limitations
+
+The current Watch stream remains an observation projection and is not an execution authority.
+
+Historical control and human-input event classes are not implicitly added to the existing Watch sequence when doing so would alter previously established sequence behavior.
+
+Current replay validates the existing execution and does not create a second logical execution.
+
+Command-side automatic retry remains disabled.
+
+The matrix harness remains internal validation infrastructure and is not required by normal SDK consumers.
+
+
+---
+
 ## 0.0.9.5 - 2026-09-22 - Invocation Durability, Correctness and Performance
 
 ## Scope
