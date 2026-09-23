@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -91,6 +92,37 @@ namespace Multiplexed.Abstractions.AI.Execution.Control
             string? reason = null,
             string? requestedBy = null,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Requests that an execution wait for input using an explicit continuation mode.
+        /// </summary>
+        /// <remarks>
+        /// The default implementation preserves compatibility for existing execution-gate waits.
+        /// Implementations that support exact parked-step continuation must override this overload.
+        /// </remarks>
+        Task<AiExecutionControlState> MarkWaitingForInputAsync(
+            string executionId,
+            string waitingKey,
+            string? waitingStepName,
+            string? reason,
+            string? requestedBy,
+            AiExecutionInputWaitMode inputWaitMode,
+            CancellationToken cancellationToken = default)
+        {
+            if (inputWaitMode != AiExecutionInputWaitMode.ExecutionGate)
+            {
+                throw new NotSupportedException(
+                    $"Execution input wait mode '{inputWaitMode}' is not supported by this control service implementation.");
+            }
+
+            return MarkWaitingForInputAsync(
+                executionId,
+                waitingKey,
+                waitingStepName,
+                reason,
+                requestedBy,
+                cancellationToken);
+        }
 
         /// <summary>
         /// Submits external or human input for an execution that is waiting for input.

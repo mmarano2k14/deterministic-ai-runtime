@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.ControlPlane.Execution;
@@ -104,6 +106,145 @@ namespace Multiplexed.AI.Tests.Runtime.PublicSdk
             Assert.Equal($"sdk-control-wake-{run.ExecutionId}-submitinput-21", wake.RequestedSharedRunId);
             Assert.Equal(run.ExecutionId, wake.RunRequest?.RequestedExecutionId);
             Assert.Equal("SubmitInput", wake.Metadata["control.wake.action"]);
+        }
+
+        [Fact]
+        public async Task SubmitInput_Parked_Waiting_Step_Submits_Exact_ExternalWait_Continuation()
+        {
+            using var fixture = new PublicationTestSupport.Fixture();
+            var publication = await fixture.PublishAsync();
+            var run = await fixture.CreateAsync(publication);
+            await SetExecutionStatusAsync(fixture, run.ExecutionId, AiExecutionStatus.Waiting);
+            await SetStepStatusAsync(fixture, run.ExecutionId, "first", AiStepExecutionStatus.WaitingForExternal);
+
+            var record = await fixture.Store.GetRecordAsync(run.ExecutionId)
+                ?? throw new InvalidOperationException("Execution record was not created.");
+            var controller = new RecordingSharedRuntimeController(SourceRun(record));
+            var state = State(run.ExecutionId, AiExecutionControlAction.SubmitInput, version: 31);
+            state.WaitingKey = "approval:published";
+            state.WaitingStepName = "first";
+            state.InputWaitMode = AiExecutionInputWaitMode.ExternalWaitStep;
+            state.InputReceivedAtUtc = DateTime.UtcNow;
+            var control = new StubExecutionControlPlane(state);
+            var boundary = CreateBoundary(fixture, controller, control);
+
+            var response = await fixture.AsAsync(() => boundary.SubmitInputAsync(
+                run.ExecutionId,
+                new AiSdkExecutionInputSubmissionRequest
+                {
+                    WaitingKey = "approval:published",
+                    WaitingStepName = "first",
+                    Input = JsonSerializer.SerializeToElement(new { approved = true })
+                }));
+
+            Assert.True(response.Accepted);
+            var wake = Assert.Single(controller.Submissions);
+            var hash = InputContinuationHash(run.ExecutionId, "first", "approval:published");
+            Assert.Equal($"sdk-input-continuation-{hash}", wake.RequestedSharedRunId);
+            Assert.Equal(AiSharedRuntimeSubmitMode.QueueFirst, wake.SubmitModeOverride);
+            Assert.Null(wake.RunRequest?.RequestedExecutionId);
+            var continuation = Assert.IsType<AiRuntimeExternalWaitContinuation>(wake.RunRequest?.ExternalWaitContinuation);
+            Assert.Equal(run.ExecutionId, continuation.ExecutionId);
+            Assert.Equal("first", continuation.StepName);
+            Assert.Equal($"sdk-input-continuation:{hash}", continuation.ContinuationId);
+            Assert.Equal("public-sdk-input-continuation", wake.Source);
+            Assert.Equal(0, controller.GetRunCalls);
+        }
+
+        [Fact]
+        public async Task SubmitInput_ExternalWaitStep_StillRunning_Submits_Durable_Exact_Continuation()
+        {
+            using var fixture = new PublicationTestSupport.Fixture();
+            var publication = await fixture.PublishAsync();
+            var run = await fixture.CreateAsync(publication);
+            await SetStepAndExecutionStatusAsync(
+                fixture,
+                run.ExecutionId,
+                "first",
+                AiStepExecutionStatus.Running,
+                AiExecutionStatus.Running);
+
+            var record = await fixture.Store.GetRecordAsync(run.ExecutionId)
+                ?? throw new InvalidOperationException("Execution record was not created.");
+            var controller = new RecordingSharedRuntimeController(SourceRun(record));
+            var state = State(run.ExecutionId, AiExecutionControlAction.SubmitInput, version: 32);
+            state.WaitingKey = "approval:early";
+            state.WaitingStepName = "first";
+            state.InputWaitMode = AiExecutionInputWaitMode.ExternalWaitStep;
+            state.InputReceivedAtUtc = DateTime.UtcNow;
+            var boundary = CreateBoundary(
+                fixture,
+                controller,
+                new StubExecutionControlPlane(state));
+
+            var response = await fixture.AsAsync(() => boundary.SubmitInputAsync(
+                run.ExecutionId,
+                new AiSdkExecutionInputSubmissionRequest
+                {
+                    WaitingKey = "approval:early",
+                    WaitingStepName = "first",
+                    Input = JsonSerializer.SerializeToElement(new { approved = true })
+                }));
+
+            Assert.True(response.Accepted);
+            var wake = Assert.Single(controller.Submissions);
+            var hash = InputContinuationHash(run.ExecutionId, "first", "approval:early");
+            Assert.Equal($"sdk-input-continuation-{hash}", wake.RequestedSharedRunId);
+            Assert.Equal(AiSharedRuntimeSubmitMode.QueueFirst, wake.SubmitModeOverride);
+            Assert.Null(wake.RunRequest?.RequestedExecutionId);
+            var continuation = Assert.IsType<AiRuntimeExternalWaitContinuation>(
+                wake.RunRequest?.ExternalWaitContinuation);
+            Assert.Equal(run.ExecutionId, continuation.ExecutionId);
+            Assert.Equal("first", continuation.StepName);
+            Assert.Equal(0, controller.GetRunCalls);
+        }
+
+        private static string InputContinuationHash(string executionId, string stepName, string waitingKey)
+        {
+            var identity = string.Concat(executionId, "\n", stepName, "\n", waitingKey);
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant();
+        }
+
+        private static async Task SetStepAndExecutionStatusAsync(
+            PublicationTestSupport.Fixture fixture,
+            string executionId,
+            string stepName,
+            AiStepExecutionStatus stepStatus,
+            AiExecutionStatus executionStatus)
+        {
+            var record = await fixture.Store.GetRecordAsync(executionId)
+                ?? throw new InvalidOperationException("Execution record was not created.");
+            var state = await fixture.Store.GetStateAsync(executionId)
+                ?? throw new InvalidOperationException("Execution state was not created.");
+            if (!state.Steps.TryGetValue(stepName, out var step))
+            {
+                step = new AiStepState { StepName = stepName };
+                state.Steps[stepName] = step;
+            }
+
+            step.Status = stepStatus;
+            record.Status = executionStatus;
+            await fixture.Store.CreateAsync(record, state);
+        }
+
+        private static async Task SetStepStatusAsync(
+            PublicationTestSupport.Fixture fixture,
+            string executionId,
+            string stepName,
+            AiStepExecutionStatus status)
+        {
+            var record = await fixture.Store.GetRecordAsync(executionId)
+                ?? throw new InvalidOperationException("Execution record was not created.");
+            var state = await fixture.Store.GetStateAsync(executionId)
+                ?? throw new InvalidOperationException("Execution state was not created.");
+            if (!state.Steps.TryGetValue(stepName, out var step))
+            {
+                step = new AiStepState { StepName = stepName };
+                state.Steps[stepName] = step;
+            }
+            step.Status = status;
+            record.Status = AiExecutionStatus.Waiting;
+            await fixture.Store.CreateAsync(record, state);
         }
 
         private static async Task SetExecutionStatusAsync(
@@ -224,6 +365,17 @@ namespace Multiplexed.AI.Tests.Runtime.PublicSdk
                     Success = true,
                     SharedRunId = request.RequestedSharedRunId,
                     ExecutionId = request.RunRequest?.RequestedExecutionId,
+                    Run = new AiSharedRunRecord
+                    {
+                        SharedRunId = request.RequestedSharedRunId!,
+                        Status = AiSharedRunStatus.Submitted,
+                        RunRequest = request.RunRequest!,
+                        ExecutionContextSnapshot = request.RunRequest?.ExecutionContextSnapshot ?? _sourceRun.ExecutionContextSnapshot,
+                        PipelineKey = request.PipelineKey,
+                        SubmittedAtUtc = DateTimeOffset.UtcNow,
+                        UpdatedAtUtc = DateTimeOffset.UtcNow,
+                        Metadata = request.Metadata
+                    },
                     StartedAtUtc = DateTimeOffset.UtcNow,
                     CompletedAtUtc = DateTimeOffset.UtcNow
                 });

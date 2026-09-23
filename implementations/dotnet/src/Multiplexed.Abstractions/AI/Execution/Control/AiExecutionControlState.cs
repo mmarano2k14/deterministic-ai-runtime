@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace Multiplexed.Abstractions.AI.Execution.Control
@@ -49,6 +49,11 @@ namespace Multiplexed.Abstractions.AI.Execution.Control
         /// Gets or sets the step name that caused the execution to wait for input, when applicable.
         /// </summary>
         public string? WaitingStepName { get; set; }
+
+        /// <summary>
+        /// Gets or sets how submitted input reactivates this waiting boundary.
+        /// </summary>
+        public AiExecutionInputWaitMode InputWaitMode { get; set; } = AiExecutionInputWaitMode.ExecutionGate;
 
         /// <summary>
         /// Gets or sets durable input submitted for a waiting execution.

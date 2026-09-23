@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Options;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.ControlPlane.Execution;
@@ -523,7 +525,26 @@ namespace Multiplexed.AI.McpServer.PublicSdk
 
             RequireOwner(record, scope, pin);
 
-            if (record.IsTerminal || record.Status != AiExecutionStatus.Waiting)
+            if (record.IsTerminal)
+            {
+                return;
+            }
+
+            if (expectedAction == AiExecutionControlAction.SubmitInput &&
+                await TryScheduleInputExternalWaitContinuationAsync(
+                        scope,
+                        pin,
+                        record,
+                        controlState,
+                        controlResult.CorrelationId,
+                        reason,
+                        cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                return;
+            }
+
+            if (record.Status != AiExecutionStatus.Waiting)
             {
                 return;
             }
@@ -637,6 +658,151 @@ namespace Multiplexed.AI.McpServer.PublicSdk
                 throw new InvalidOperationException(
                     $"Execution control wake returned execution '{wakeResult.ExecutionId}', expected '{pin.ExecutionId}'.");
             }
+        }
+
+        private async Task<bool> TryScheduleInputExternalWaitContinuationAsync(
+            AiDurableInvocationScope scope,
+            AiPublicationRunPin pin,
+            AiExecutionRecord record,
+            AiExecutionControlState controlState,
+            string? correlationId,
+            string? reason,
+            CancellationToken cancellationToken)
+        {
+            if (controlState.InputWaitMode != AiExecutionInputWaitMode.ExternalWaitStep ||
+                string.IsNullOrWhiteSpace(controlState.WaitingKey) ||
+                string.IsNullOrWhiteSpace(controlState.WaitingStepName) ||
+                !controlState.InputReceivedAtUtc.HasValue)
+            {
+                return false;
+            }
+
+            var executionState = await _dagExecutions
+                .GetStateAsync(pin.ExecutionId, cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new KeyNotFoundException(
+                    $"Execution state '{pin.ExecutionId}' was not found while scheduling its input continuation.");
+
+            if (!executionState.Steps.TryGetValue(controlState.WaitingStepName, out var waitingStep))
+            {
+                throw new InvalidOperationException(
+                    $"Execution '{pin.ExecutionId}' does not contain waiting input step '{controlState.WaitingStepName}'.");
+            }
+
+            if (waitingStep.Status is not (AiStepExecutionStatus.Running or AiStepExecutionStatus.WaitingForExternal))
+            {
+                return false;
+            }
+
+            if (record.ExecutionMode != AiExecutionMode.Dag)
+            {
+                throw new InvalidOperationException(
+                    $"Execution '{pin.ExecutionId}' is not a DAG execution and cannot continue waiting step '{controlState.WaitingStepName}'.");
+            }
+
+            if (string.IsNullOrWhiteSpace(record.PipelineName))
+            {
+                throw new InvalidOperationException(
+                    $"Execution '{pin.ExecutionId}' has no pipeline name required for input continuation dispatch.");
+            }
+
+            var snapshot = record.ExecutionContextSnapshot
+                ?? throw new InvalidOperationException(
+                    $"Execution '{pin.ExecutionId}' has no durable execution context snapshot required for input continuation dispatch.");
+
+            if (!string.Equals(snapshot.TenantId, scope.TenantId, StringComparison.Ordinal) ||
+                !string.Equals(snapshot.TenantGroupId, scope.TenantGroupId, StringComparison.Ordinal) ||
+                !string.Equals(snapshot.Project, pin.Partition.Project, StringComparison.Ordinal) ||
+                !string.Equals(snapshot.CurrentNamespace, pin.Partition.Namespace, StringComparison.Ordinal) ||
+                !string.Equals(snapshot.UserId, pin.UserId, StringComparison.Ordinal))
+            {
+                throw new UnauthorizedAccessException(
+                    $"Execution '{pin.ExecutionId}' input-continuation ownership does not match the public SDK scope.");
+            }
+
+            var continuationHash = CreateInputContinuationHash(
+                pin.ExecutionId,
+                controlState.WaitingStepName,
+                controlState.WaitingKey);
+            var continuationId = "sdk-input-continuation:" + continuationHash;
+            var sharedRunId = "sdk-input-continuation-" + continuationHash;
+            var continuation = new AiRuntimeExternalWaitContinuation
+            {
+                ExecutionId = pin.ExecutionId,
+                StepName = controlState.WaitingStepName,
+                ContinuationId = continuationId
+            };
+
+            var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["control.wake"] = "true",
+                ["control.wake.executionId"] = pin.ExecutionId,
+                ["control.wake.action"] = AiExecutionControlAction.SubmitInput.ToString(),
+                ["control.wake.version"] = controlState.Version.ToString(CultureInfo.InvariantCulture),
+                [AiRuntimeExternalWaitMetadataKeys.Continuation] = "true",
+                [AiRuntimeExternalWaitMetadataKeys.ContinuationId] = continuationId,
+                [AiRuntimeExternalWaitMetadataKeys.ExecutionId] = pin.ExecutionId,
+                [AiRuntimeExternalWaitMetadataKeys.Step] = controlState.WaitingStepName,
+                ["input.waitingKey"] = controlState.WaitingKey
+            };
+
+            var continuationResult = await _controller
+                .SubmitRunAsync(
+                    new AiSharedRuntimeControllerRequest
+                    {
+                        Operation = AiSharedRuntimeControllerOperation.SubmitRun,
+                        RequestedSharedRunId = sharedRunId,
+                        SubmitModeOverride = AiSharedRuntimeSubmitMode.QueueFirst,
+                        TenantId = scope.TenantId,
+                        PipelineKey = record.PipelineName,
+                        CorrelationId = string.IsNullOrWhiteSpace(correlationId) ? continuationId : correlationId,
+                        RequestedBy = pin.UserId,
+                        Source = "public-sdk-input-continuation",
+                        Reason = reason ?? "Submitted input resumes the exact parked execution step.",
+                        Metadata = metadata,
+                        RunRequest = new AiRuntimePipelineRunRequest
+                        {
+                            PipelineName = record.PipelineName,
+                            ExternalWaitContinuation = continuation,
+                            ExecutionContextSnapshot = snapshot,
+                            Metadata = metadata
+                        }
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (!continuationResult.Success || continuationResult.Run is null)
+            {
+                throw new InvalidOperationException(
+                    continuationResult.FailureReason ??
+                    continuationResult.Message ??
+                    $"Execution '{pin.ExecutionId}' input continuation was not accepted.");
+            }
+
+            var acceptedContinuation = continuationResult.Run.RunRequest.ExternalWaitContinuation;
+            if (!string.Equals(continuationResult.SharedRunId, sharedRunId, StringComparison.Ordinal) ||
+                acceptedContinuation is null ||
+                !string.Equals(acceptedContinuation.ExecutionId, continuation.ExecutionId, StringComparison.Ordinal) ||
+                !string.Equals(acceptedContinuation.StepName, continuation.StepName, StringComparison.Ordinal) ||
+                !string.Equals(acceptedContinuation.ContinuationId, continuation.ContinuationId, StringComparison.Ordinal) ||
+                !string.IsNullOrWhiteSpace(continuationResult.Run.RunRequest.RequestedExecutionId))
+            {
+                throw new InvalidOperationException(
+                    $"Execution '{pin.ExecutionId}' input continuation did not preserve the exact execution and waiting-step identity.");
+            }
+
+            return true;
+        }
+
+        private static string CreateInputContinuationHash(
+            string executionId,
+            string stepName,
+            string waitingKey)
+        {
+            var identity = string.Concat(executionId, "\n", stepName, "\n", waitingKey);
+            return Convert
+                .ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)))
+                .ToLowerInvariant();
         }
 
         private async Task<(AiDurableInvocationScope Scope, AiPublicationRunPin Pin, AiExecutionRecord Record)> RequireExecutionAccessAsync(

@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Observability;
 using Multiplexed.Abstractions.AI.Observability.Context;
@@ -218,6 +218,17 @@ namespace Multiplexed.AI.Runtime.Execution.Instance.Worker
                                 cancellationToken)
                             .ConfigureAwait(false))
                     {
+                        if (await _engine.TryResumeSubmittedInputWaitAsync(
+                                executionId,
+                                cancellationToken)
+                            .ConfigureAwait(false))
+                        {
+                            _logger.Engine.LogInformation(
+                                $"[AI WORKER] Submitted input reactivated the exact parked step before runtime release. ExecutionId='{executionId}', RuntimeInstanceId='{runtimeInstanceId}', WorkerId='{workerId}', Cycles='{cycle}'.");
+
+                            continue;
+                        }
+
                         _logger.Engine.LogInformation(
                             $"[AI WORKER] Runtime instance worker released an externally waiting execution. ExecutionId='{executionId}', RuntimeInstanceId='{runtimeInstanceId}', WorkerId='{workerId}', Cycles='{cycle}'.");
 

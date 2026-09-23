@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: multiplexed-interactive-agent-sdk-demo-python
+Version: 0.0.0.dev0
+Summary: Interactive external SDK consumer demo for the Deterministic AI Runtime.
+Requires-Python: >=3.10
+Requires-Dist: multiplexed-ai-sdk==0.0.0.dev0

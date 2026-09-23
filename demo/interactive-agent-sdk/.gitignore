@@ -1,0 +1,8 @@
+.packages/
+typescript/node_modules/
+typescript/dist/
+dotnet/bin/
+dotnet/obj/
+python/.venv/
+**/__pycache__/
+*.pyc

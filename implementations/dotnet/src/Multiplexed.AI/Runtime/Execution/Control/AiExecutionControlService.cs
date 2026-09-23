@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -160,7 +160,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
         }
 
         /// <inheritdoc />
-        public async Task<AiExecutionControlState> MarkWaitingForInputAsync(
+        public Task<AiExecutionControlState> MarkWaitingForInputAsync(
             string executionId,
             string waitingKey,
             string? waitingStepName = null,
@@ -168,11 +168,36 @@ namespace Multiplexed.AI.Runtime.Execution.Control
             string? requestedBy = null,
             CancellationToken cancellationToken = default)
         {
+            return MarkWaitingForInputAsync(
+                executionId,
+                waitingKey,
+                waitingStepName,
+                reason,
+                requestedBy,
+                AiExecutionInputWaitMode.ExecutionGate,
+                cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public async Task<AiExecutionControlState> MarkWaitingForInputAsync(
+            string executionId,
+            string waitingKey,
+            string? waitingStepName,
+            string? reason,
+            string? requestedBy,
+            AiExecutionInputWaitMode inputWaitMode,
+            CancellationToken cancellationToken = default)
+        {
             ValidateExecutionId(executionId);
 
             if (string.IsNullOrWhiteSpace(waitingKey))
             {
                 throw new ArgumentException("Waiting key cannot be null, empty, or whitespace.", nameof(waitingKey));
+            }
+
+            if (!Enum.IsDefined(typeof(AiExecutionInputWaitMode), inputWaitMode))
+            {
+                throw new ArgumentOutOfRangeException(nameof(inputWaitMode), inputWaitMode, "Unknown execution input wait mode.");
             }
 
             var state = await ApplyTransitionAsync(
@@ -183,7 +208,8 @@ namespace Multiplexed.AI.Runtime.Execution.Control
                         waitingKey,
                         waitingStepName,
                         reason,
-                        requestedBy),
+                        requestedBy,
+                        inputWaitMode),
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -906,7 +932,8 @@ namespace Multiplexed.AI.Runtime.Execution.Control
             string waitingKey,
             string? waitingStepName,
             string? reason,
-            string? requestedBy)
+            string? requestedBy,
+            AiExecutionInputWaitMode inputWaitMode)
         {
             var state = CloneOrCreate(existing, executionId);
 
@@ -915,13 +942,27 @@ namespace Multiplexed.AI.Runtime.Execution.Control
                 return state;
             }
 
+            var sameWaitingIdentity =
+                state.Status == AiExecutionControlStatus.WaitingForInput &&
+                state.PendingAction == AiExecutionControlAction.WaitForInput &&
+                string.Equals(state.WaitingKey, waitingKey, StringComparison.Ordinal) &&
+                string.Equals(state.WaitingStepName, waitingStepName, StringComparison.Ordinal) &&
+                state.InputWaitMode == inputWaitMode;
+
             state.Status = AiExecutionControlStatus.WaitingForInput;
             state.PendingAction = AiExecutionControlAction.WaitForInput;
             state.WaitingKey = waitingKey;
             state.WaitingStepName = waitingStepName;
+            state.InputWaitMode = inputWaitMode;
             state.Reason = reason;
             state.RequestedBy = requestedBy;
-            state.WaitingStartedAtUtc ??= DateTime.UtcNow;
+
+            if (!sameWaitingIdentity)
+            {
+                state.Input = new Dictionary<string, object?>(StringComparer.Ordinal);
+                state.InputReceivedAtUtc = null;
+                state.WaitingStartedAtUtc = DateTime.UtcNow;
+            }
 
             return state;
         }
@@ -947,6 +988,14 @@ namespace Multiplexed.AI.Runtime.Execution.Control
             if (state.Status is AiExecutionControlStatus.Cancelled or AiExecutionControlStatus.Cancelling)
             {
                 return state;
+            }
+
+            if (state.Status != AiExecutionControlStatus.WaitingForInput ||
+                state.PendingAction != AiExecutionControlAction.WaitForInput)
+            {
+                throw new InvalidOperationException(
+                    $"Execution '{executionId}' is not currently accepting input. " +
+                    $"Status='{state.Status}', PendingAction='{state.PendingAction}'.");
             }
 
             if (!string.Equals(state.WaitingKey, waitingKey, StringComparison.Ordinal))
@@ -1247,6 +1296,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
                 [AiExecutionControlMetadataKeys.RequestedBy] = state.RequestedBy ?? string.Empty,
                 ["waiting.key"] = state.WaitingKey ?? string.Empty,
                 ["waiting.step.name"] = state.WaitingStepName ?? string.Empty,
+                ["waiting.input.mode"] = state.InputWaitMode.ToString(),
                 ["input.keys.count"] = state.Input.Count.ToString(),
                 ["version"] = state.Version.ToString()
             };
@@ -1279,6 +1329,7 @@ namespace Multiplexed.AI.Runtime.Execution.Control
                 RequestedBy = existing.RequestedBy,
                 WaitingKey = existing.WaitingKey,
                 WaitingStepName = existing.WaitingStepName,
+                InputWaitMode = existing.InputWaitMode,
                 Input = new Dictionary<string, object?>(existing.Input, StringComparer.Ordinal),
                 Version = existing.Version,
                 UpdatedAtUtc = existing.UpdatedAtUtc,
