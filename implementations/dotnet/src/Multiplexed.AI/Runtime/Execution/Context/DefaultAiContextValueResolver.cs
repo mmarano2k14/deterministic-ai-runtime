@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Context;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
@@ -117,6 +117,73 @@ namespace Multiplexed.AI.Runtime.Execution.Context
                 .ConfigureAwait(false);
 
             return ConvertValue<T>(value);
+        }
+
+        /// <summary>
+        /// Resolves a required runtime path without applying raw/literal fallback.
+        /// </summary>
+        public async Task<T> ResolveRequiredPathAsync<T>(
+            AiStepExecutionContext context,
+            string path,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(context);
+            ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
+            if (!LooksLikeResolvablePath(path))
+            {
+                throw new InvalidOperationException(
+                    $"Required runtime path '{path}' is not a supported runtime path expression.");
+            }
+
+            var metrics = GetMetrics(context);
+
+            metrics?.RecordResolveStarted(
+                context.ExecutionId,
+                context.StepName,
+                path);
+
+            try
+            {
+                var result = await TryResolvePathAsync(context, path, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (!result.Found)
+                {
+                    metrics?.RecordResolveMiss(
+                        context.ExecutionId,
+                        context.StepName,
+                        path);
+
+                    throw new InvalidOperationException(
+                        $"Required runtime path '{path}' could not be resolved.");
+                }
+
+                metrics?.RecordResolveSuccess(
+                    context.ExecutionId,
+                    context.StepName,
+                    path);
+
+                var value = ConvertValue<T>(result.Value);
+
+                if (value is null)
+                {
+                    throw new InvalidOperationException(
+                        $"Required runtime path '{path}' resolved to null.");
+                }
+
+                return value;
+            }
+            catch (Exception ex) when (ex is not InvalidOperationException)
+            {
+                metrics?.RecordResolveFailed(
+                    context.ExecutionId,
+                    context.StepName,
+                    path,
+                    ex);
+
+                throw;
+            }
         }
 
         /// <summary>
