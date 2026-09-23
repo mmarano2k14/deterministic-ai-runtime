@@ -12,5 +12,13 @@ namespace Multiplexed.AI.Sdk.Contracts.Common
         public const int ExecutionResult = 1;
         public const int ExecutionCancellationRequest = 1;
         public const int ExecutionCancellationResponse = 1;
+        public const int ExecutionControlRequest = 1;
+        public const int ExecutionControlResponse = 1;
+        public const int ExecutionInputSubmissionRequest = 1;
+        public const int ExecutionReplayRequest = 1;
+        public const int ExecutionReplayResponse = 1;
+        public const int ExecutionWatchRequest = 1;
+        public const int ExecutionWatchEvent = 1;
+        public const int ExecutionWatchResyncRequired = 1;
     }
 }

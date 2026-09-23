@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable
+from typing import Any
 from urllib.parse import urlparse
 
 from .errors import AiSdkError
 from .json_types import AiSdkJsonObject
-from .protocol import AI_SDK_OPERATION_RETRY, AI_SDK_OPERATIONS, AI_SDK_PROTOCOL_VERSION
+from .protocol import AI_SDK_OPERATION_RETRY, AI_SDK_PROTOCOL_VERSION
 from .transport import AiSdkTransportOptions, AiSdkTransportRequest, AiSdkTransportResponse
 
 
@@ -64,7 +66,8 @@ class AiSdkMcpHttpTransport:
         if isinstance(headers, AiSdkError):
             return AiSdkTransportResponse(error=headers)
 
-        async with httpx2.AsyncClient(headers=headers or None) as http_client:
+        timeout = _create_http_timeout(httpx2, self._options)
+        async with httpx2.AsyncClient(headers=headers or None, timeout=timeout) as http_client:
             transport = streamable_http_client(self._endpoint, http_client=http_client)
             async with Client(transport) as client:
                 result = await client.call_tool(request.operation, request.arguments)
@@ -113,24 +116,73 @@ class AiSdkMcpHttpTransport:
         return headers
 
 
+def _create_http_timeout(httpx2_module: Any, options: AiSdkTransportOptions) -> object:
+    # MCP's Streamable HTTP client uses a deliberately long read timeout because a
+    # server may keep a solicited response stream open while work is in progress.
+    # Supplying our own AsyncClient for auth/headers means we must preserve that
+    # transport characteristic explicitly instead of inheriting the HTTP client's
+    # much shorter generic defaults.
+    return httpx2_module.Timeout(
+        connect=options.connect_timeout_seconds,
+        read=options.read_timeout_seconds,
+        write=options.write_timeout_seconds,
+        pool=options.pool_timeout_seconds,
+    )
+
+
+def _exception_leaves(exc: Exception) -> Iterable[Exception]:
+    nested = getattr(exc, "exceptions", None)
+    if isinstance(nested, (tuple, list)) and nested:
+        emitted = False
+        for child in nested:
+            if isinstance(child, Exception):
+                emitted = True
+                yield from _exception_leaves(child)
+        if emitted:
+            return
+    yield exc
+
+
+def _primary_transport_exception(exc: Exception) -> Exception:
+    leaves = tuple(_exception_leaves(exc))
+    for leaf in leaves:
+        if _status_code(leaf) is not None or _is_timeout(leaf) or _is_network_exception(leaf):
+            return leaf
+    return leaves[0] if leaves else exc
+
+
 def _is_retryable_transport_failure(exc: Exception) -> bool:
-    status = _status_code(exc)
-    if status is not None:
-        return status in (408, 429) or status >= 500
-    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+    for leaf in _exception_leaves(exc):
+        status = _status_code(leaf)
+        if status is not None:
+            if status in (408, 429) or status >= 500:
+                return True
+            continue
+        if _is_network_exception(leaf):
+            return True
+    return False
+
+
+def _is_network_exception(exc: Exception) -> bool:
+    if _is_timeout(exc) or isinstance(exc, (ConnectionError, OSError)):
         return True
     return type(exc).__name__ in {
         "ConnectError",
         "NetworkError",
         "ReadError",
+        "ReadTimeout",
         "TimeoutException",
         "TransportError",
         "WriteError",
+        "WriteTimeout",
+        "PoolTimeout",
+        "ConnectTimeout",
     }
 
 
 def _normalize_transport_failure(exc: Exception, retryable: bool) -> AiSdkTransportResponse:
-    status = _status_code(exc)
+    primary = _primary_transport_exception(exc)
+    status = _status_code(primary)
     if status == 401:
         return _failure("authentication", "authentication_failed", "The SDK transport was not authenticated.")
     if status == 403:
@@ -139,12 +191,19 @@ def _normalize_transport_failure(exc: Exception, retryable: bool) -> AiSdkTransp
             "authorization_failed",
             "The SDK transport is not authorized for the requested operation.",
         )
+
+    message = str(primary) or type(primary).__name__
+    details: AiSdkJsonObject = {"exceptionType": type(primary).__name__}
+    if primary is not exc:
+        details["exceptionGroupType"] = type(exc).__name__
+
     return AiSdkTransportResponse(
         error=AiSdkError(
             kind="transport",
-            code="transport_timeout" if _is_timeout(exc) else "transport_failure",
-            message=str(exc) or type(exc).__name__,
+            code="transport_timeout" if _is_timeout(primary) else "transport_failure",
+            message=message,
             retryable=retryable,
+            details=details,
         )
     )
 

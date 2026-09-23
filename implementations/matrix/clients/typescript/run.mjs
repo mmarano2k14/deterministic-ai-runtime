@@ -24,7 +24,11 @@ const client = new AiSdkClient(
       : undefined,
   }),
 );
-const source = args.feature === "cancellation"
+if (args.feature === "control") {
+  await runControl(client, args, root);
+  process.exit(0);
+}
+const source = ["cancellation", "watch"].includes(args.feature)
   ? await cancellationWorkerSource(root, args.worker)
   : await workerSource(root, args.worker);
 const marker = `${args.scenarioId}-marker`;
@@ -121,6 +125,76 @@ if (args.feature === "cancellation") {
     ],
     recordedAtUtc: terminal.updatedAtUtc,
   });
+} else if (args.feature === "watch") {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45_000);
+  const publicSequences = [];
+  const publicEventTypes = [];
+  let sawSnapshot = false;
+  let sawEvent = false;
+  let sawResync = false;
+
+  try {
+    for await (const item of client.watchExecution({
+      executionId: submitted.executionId,
+      includeInitialSnapshot: true,
+    }, controller.signal)) {
+      if (item.executionId !== submitted.executionId) {
+        throw new Error("Watch returned an event for a different execution.");
+      }
+      if (item.sequence != null) publicSequences.push(item.sequence);
+      if (item.kind === "Snapshot") sawSnapshot = true;
+      else if (item.kind === "Event") {
+        sawEvent = true;
+        if (item.eventType) publicEventTypes.push(item.eventType);
+      } else if (item.kind === "ResyncRequired") {
+        sawResync = true;
+      }
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!sawSnapshot) throw new Error("Watch E2E did not receive the authoritative initial snapshot.");
+  if (!sawEvent) throw new Error("Watch E2E did not receive any incremental public event after the snapshot.");
+  if (sawResync) throw new Error("Nominal Watch E2E unexpectedly required resynchronization.");
+  if (publicSequences.length < 2 || publicSequences.slice(1).some((value, index) => value <= publicSequences[index])) {
+    throw new Error("Watch E2E did not observe a strictly increasing public sequence.");
+  }
+
+  const result = await client.getExecutionResult(submitted.executionId);
+  if (result.status !== "Completed") {
+    throw new Error(`Watch E2E execution '${submitted.executionId}' ended as '${result.status}', expected 'Completed'.`);
+  }
+
+  await writeEvidence(args.evidence, {
+    schemaVersion: 1,
+    scenarioId: args.scenarioId,
+    status: "passed",
+    coverageTarget: "execution-watch-e2e",
+    coverageValues: [],
+    clientLanguage: "typescript",
+    workerLanguage: args.worker,
+    endpoint: args.endpoint,
+    topology: args.topology,
+    provider: args.provider,
+    runtimeProvider: args.runtimeProvider,
+    workerExecutionProvider: args.workerExecutionProvider,
+    publicationRef: publication.publicationRef,
+    executionId: submitted.executionId,
+    initialSnapshotObserved: sawSnapshot,
+    incrementalEventObserved: sawEvent,
+    resyncObserved: sawResync,
+    publicSequences,
+    publicEventTypes,
+    terminalStatus: result.status,
+    evidence: [
+      "publish", "submit", "sdk-execution-watch", "mcp-http-public-boundary",
+      "initial-snapshot", "ordered-incremental-event", "terminal-watch-convergence",
+      "terminal-result", "public-execution-id",
+    ],
+    recordedAtUtc: new Date().toISOString(),
+  });
 } else {
   if (args.feature) throw new Error(`Unsupported --feature '${args.feature}'.`);
   await waitForTerminal(client, submitted.executionId, 90_000);
@@ -146,6 +220,326 @@ if (args.feature === "cancellation") {
     evidence: ["publish", "submit", "observe", "terminal-result", "public-execution-id"],
     recordedAtUtc: new Date().toISOString(),
   });
+}
+
+
+async function runControl(client, args, root) {
+  console.log(`[matrix-typescript-client] CONTROL START scenario=${args.scenarioId} worker=${args.worker}`);
+
+  const pausePublication = await publishControlPipeline(client, args, root, "pause");
+  const pauseExecution = await submitControlExecution(client, args, pausePublication.publicationRef, "pause");
+  const pauseWatch = startControlWatch(client, pauseExecution.executionId, 75_000);
+  await waitForWatchActiveStep(pauseWatch.firstStepActive, pauseExecution.executionId, "first", 30_000);
+
+  const pause = await client.pauseExecution(pauseExecution.executionId, { reason: "matrix-control-e2e-pause" });
+  if (!pause.accepted || pause.executionId !== pauseExecution.executionId) {
+    throw new Error("Public pause operation was not accepted for the submitted execution.");
+  }
+  const pauseGateVerified = await waitForPauseGate(client, pauseExecution.executionId, 20_000);
+  if (!pauseGateVerified) throw new Error("Pause did not gate the dependent second step.");
+
+  const resume = await client.resumeExecution(pauseExecution.executionId, { reason: "matrix-control-e2e-resume" });
+  if (!resume.accepted || resume.executionId !== pauseExecution.executionId) {
+    throw new Error("Public resume operation was not accepted for the paused execution.");
+  }
+  const pauseResult = await waitForCompletedResult(client, pauseExecution.executionId, 45_000);
+  const pauseWatchEvidence = await pauseWatch.completion;
+  if (pauseWatchEvidence.resyncObserved) throw new Error("Pause/resume unexpectedly forced Watch resynchronization.");
+
+  const inputPublication = await publishControlPipeline(client, args, root, "input");
+  const inputExecution = await submitControlExecution(client, args, inputPublication.publicationRef, "input");
+  const inputWatch = startControlWatch(client, inputExecution.executionId, 75_000);
+  await waitForWatchActiveStep(inputWatch.firstStepActive, inputExecution.executionId, "first", 30_000);
+  const waitingKey = `approval:${args.scenarioId}:${crypto.randomUUID().replaceAll("-", "")}`;
+  await seedWaitingForInput(args.endpoint, inputExecution.executionId, waitingKey, "second");
+  const inputGateVerified = await waitForPauseGate(client, inputExecution.executionId, 20_000);
+  if (!inputGateVerified) throw new Error("Waiting-for-input did not gate the dependent second step.");
+
+  const input = await client.submitExecutionInput(inputExecution.executionId, {
+    waitingKey,
+    waitingStepName: "second",
+    reason: "matrix-control-e2e-approval",
+    input: { approved: true, source: "matrix" },
+  });
+  if (!input.accepted || input.executionId !== inputExecution.executionId || !input.state?.inputReceivedAtUtc) {
+    throw new Error("Public human-input submission was not durably acknowledged.");
+  }
+  const inputResult = await waitForCompletedResult(client, inputExecution.executionId, 45_000);
+  const inputWatchEvidence = await inputWatch.completion;
+  if (inputWatchEvidence.resyncObserved) throw new Error("Human-input flow unexpectedly forced Watch resynchronization.");
+
+  const replayPublication = await publishSingleReplayPipeline(client, args, root);
+  const replayExecution = await submitControlExecution(client, args, replayPublication.publicationRef, "replay");
+  await waitForCompletedResult(client, replayExecution.executionId, 45_000);
+  const replay = await client.replayExecution(replayExecution.executionId, {
+    includeDiagnostics: true,
+    reason: "matrix-control-e2e-replay",
+  });
+  if (!replay.succeeded || replay.deterministic === false) {
+    throw new Error(`Public replay validation failed: ${replay.message ?? replay.failureReason ?? "unknown"}`);
+  }
+
+  await writeEvidence(args.evidence, {
+    schemaVersion: 1,
+    scenarioId: args.scenarioId,
+    status: "passed",
+    coverageTarget: "execution-control-replay-e2e",
+    clientLanguage: "typescript",
+    workerLanguage: args.worker,
+    endpoint: args.endpoint,
+    topology: args.topology,
+    provider: args.provider,
+    runtimeProvider: args.runtimeProvider,
+    workerExecutionProvider: args.workerExecutionProvider,
+    pauseExecutionId: pauseExecution.executionId,
+    pauseAccepted: pause.accepted,
+    pauseGateVerified,
+    resumeAccepted: resume.accepted,
+    pauseResumeTerminalStatus: pauseResult.status,
+    inputExecutionId: inputExecution.executionId,
+    inputWaitSeeded: true,
+    inputAccepted: input.accepted,
+    inputGateVerified,
+    inputTerminalStatus: inputResult.status,
+    replayExecutionId: replayExecution.executionId,
+    replaySucceeded: replay.succeeded,
+    replayDeterministic: replay.deterministic,
+    watchResyncObserved: pauseWatchEvidence.resyncObserved || inputWatchEvidence.resyncObserved,
+    watchSnapshotsObserved: pauseWatchEvidence.snapshotObserved && inputWatchEvidence.snapshotObserved,
+    watchIncrementalEventsObserved: pauseWatchEvidence.eventObserved && inputWatchEvidence.eventObserved,
+    evidence: [
+      "publish", "submit", "sdk-execution-watch", "sdk-execution-pause", "pause-gated-next-step",
+      "sdk-execution-resume", "resume-terminal-convergence", "matrix-wait-input-production-authority",
+      "sdk-execution-input-submit", "input-terminal-convergence", "sdk-execution-replay",
+      "replay-validation-succeeded", "mcp-http-public-boundary",
+    ],
+    recordedAtUtc: new Date().toISOString(),
+  });
+}
+
+async function publishControlPipeline(client, args, root, suffix) {
+  const { slow, fast } = await controlWorkerSources(root, args.worker);
+  return client.publishPipeline({
+    definition: {
+      name: `matrix-${args.scenarioId}-${suffix}`,
+      version: "1",
+      executionLanguage: args.worker,
+      executionMode: "Dag",
+      steps: [
+        { name: "first", stepKey: "custom", order: 0, executionLanguage: args.worker, invocation: { kind: "Custom" }, dependsOn: [], input: { marker: `${args.scenarioId}-first` }, config: {} },
+        { name: "second", stepKey: "custom", order: 1, executionLanguage: args.worker, invocation: { kind: "Custom" }, dependsOn: ["first"], input: { marker: `${args.scenarioId}-second` }, config: {} },
+      ],
+      config: {},
+    },
+    functions: [uploadForStep(slow, args.environmentRef, "first"), uploadForStep(fast, args.environmentRef, "second")],
+  });
+}
+
+async function publishSingleReplayPipeline(client, args, root) {
+  const source = await workerSource(root, args.worker);
+  return client.publishPipeline({
+    definition: {
+      name: `matrix-${args.scenarioId}-replay`, version: "1", executionLanguage: args.worker, executionMode: "Dag",
+      steps: [{ name: "work", stepKey: "custom", order: 0, executionLanguage: args.worker, invocation: { kind: "Custom" }, dependsOn: [], input: { marker: `${args.scenarioId}-replay` }, config: {} }],
+      config: {},
+    },
+    functions: [uploadForStep(source, args.environmentRef, "work")],
+  });
+}
+
+function uploadForStep(source, environmentRef, stepName) {
+  return {
+    site: { kind: "Step", stepName }, environmentRef,
+    entryPointPath: source.entryPointPath, entryPointSymbol: source.entryPointSymbol,
+    sources: [{ path: source.entryPointPath, contentBase64: source.bytes.toString("base64") }], dependencies: [],
+  };
+}
+
+async function submitControlExecution(client, args, publicationRef, suffix) {
+  return client.submitExecution({
+    publicationRef,
+    idempotencyKey: `${args.scenarioId}-${suffix}-${crypto.randomUUID().replaceAll("-", "")}`,
+    input: { scenario: args.scenarioId, phase: suffix },
+    metadata: { "matrix.scenario": args.scenarioId, "matrix.client": "typescript", "matrix.worker": args.worker, "matrix.feature": "control", "matrix.phase": suffix },
+  });
+}
+
+async function waitForPauseGate(client, executionId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let lastExecutionStatus;
+  let lastFirstStatus;
+  let lastSecondStatus;
+
+  while (Date.now() < deadline) {
+    const observation = await client.observeExecution(executionId);
+    const first = observation.steps.find((step) => step.name === "first");
+    const second = observation.steps.find((step) => step.name === "second");
+
+    lastExecutionStatus = observation.status;
+    lastFirstStatus = first?.status;
+    lastSecondStatus = second?.status;
+
+    if (["Running", "Completed", "Failed"].includes(second?.status)) {
+      console.log(
+        `[matrix-typescript-client] PAUSE GATE FAILED second advanced. ExecutionStatus='${observation.status}' FirstStatus='${first?.status ?? "missing"}' SecondStatus='${second.status}'.`,
+      );
+      return false;
+    }
+
+    if (["Completed", "Failed", "Cancelled"].includes(observation.status)) {
+      console.log(
+        `[matrix-typescript-client] PAUSE GATE FAILED execution became terminal. ExecutionStatus='${observation.status}' FirstStatus='${first?.status ?? "missing"}' SecondStatus='${second?.status ?? "missing"}'.`,
+      );
+      return false;
+    }
+
+    // Published custom functions use the durable invocation adapter. The DAG step starts,
+    // parks as WaitingForExternal, and the completed invocation continuation later makes
+    // the same step Ready again. While paused, that Ready continuation must NOT be claimed.
+    if (first?.status === "Ready") {
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      const confirm = await client.observeExecution(executionId);
+      const confirmFirst = confirm.steps.find((step) => step.name === "first");
+      const confirmSecond = confirm.steps.find((step) => step.name === "second");
+      const gated = !["Completed", "Failed", "Cancelled"].includes(confirm.status)
+        && confirmFirst?.status === "Ready"
+        && !["Running", "Completed", "Failed"].includes(confirmSecond?.status);
+
+      console.log(
+        `[matrix-typescript-client] PAUSE GATE PROOF executionStatus='${confirm.status}' firstStatus='${confirmFirst?.status ?? "missing"}' secondStatus='${confirmSecond?.status ?? "missing"}' gated='${gated}'.`,
+      );
+      return gated;
+    }
+
+    if (["Completed", "Failed"].includes(first?.status)) {
+      console.log(
+        `[matrix-typescript-client] PAUSE GATE FAILED first continuation advanced while paused. ExecutionStatus='${observation.status}' FirstStatus='${first.status}' SecondStatus='${second?.status ?? "missing"}'.`,
+      );
+      return false;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  console.log(
+    `[matrix-typescript-client] PAUSE GATE TIMEOUT executionId='${executionId}' ExecutionStatus='${lastExecutionStatus ?? "unknown"}' FirstStatus='${lastFirstStatus ?? "missing"}' SecondStatus='${lastSecondStatus ?? "missing"}'.`,
+  );
+  return false;
+}
+
+async function waitForCompletedResult(client, executionId, timeoutMs) {
+  const terminal = await waitForTerminal(client, executionId, timeoutMs);
+  if (terminal.status !== "Completed") throw new Error(`Execution '${executionId}' ended as '${terminal.status}'.`);
+  const result = await client.getExecutionResult(executionId);
+  if (result.status !== "Completed") throw new Error(`Execution '${executionId}' result ended as '${result.status}'.`);
+  return result;
+}
+
+function startControlWatch(client, executionId, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let activeSettled = false;
+  let resolveActive;
+  let rejectActive;
+  const firstStepActive = new Promise((resolve, reject) => {
+    resolveActive = resolve;
+    rejectActive = reject;
+  });
+
+  const completion = (async () => {
+    let snapshotObserved = false;
+    let eventObserved = false;
+    let resyncObserved = false;
+    try {
+      for await (const item of client.watchExecution({ executionId, includeInitialSnapshot: true }, controller.signal)) {
+        snapshotObserved ||= item.kind === "Snapshot";
+        eventObserved ||= item.kind === "Event";
+        resyncObserved ||= item.kind === "ResyncRequired";
+        if (!activeSettled && watchItemShowsActiveStep(item, "first")) {
+          activeSettled = true;
+          resolveActive(true);
+        }
+      }
+      return { snapshotObserved, eventObserved, resyncObserved };
+    } catch (error) {
+      if (!activeSettled) {
+        activeSettled = true;
+        rejectActive(error);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      if (!activeSettled) {
+        activeSettled = true;
+        rejectActive(new Error(`Execution '${executionId}' Watch ended before step 'first' became active.`));
+      }
+    }
+  })();
+
+  return { completion, firstStepActive };
+}
+
+function watchItemShowsActiveStep(item, stepName) {
+  if (item.snapshot?.steps?.some((step) =>
+    step.name === stepName && ["Running", "WaitingForExternal"].includes(step.status))) {
+    return true;
+  }
+
+  if (item.kind !== "Event" || item.channel !== "Steps" ||
+      item.payload === null || typeof item.payload !== "object" || Array.isArray(item.payload)) {
+    return false;
+  }
+
+  return item.payload.name === stepName &&
+    ["Running", "WaitingForExternal"].includes(item.payload.status);
+}
+
+async function waitForWatchActiveStep(activeStep, executionId, stepName, timeoutMs) {
+  let timer;
+  try {
+    await Promise.race([
+      activeStep,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(
+          `Execution '${executionId}' Watch did not expose active step '${stepName}' within ${timeoutMs} ms.`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function seedWaitingForInput(publicEndpoint, executionId, waitingKey, waitingStepName) {
+  const endpoint = new URL(`/matrix/execution-control/${encodeURIComponent(executionId)}/wait-for-input`, publicEndpoint);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ waitingKey, waitingStepName, reason: "matrix-control-e2e-await-approval" }),
+  });
+  if (!response.ok) throw new Error(`Matrix wait-for-input setup failed: HTTP ${response.status} ${await response.text()}`);
+}
+
+async function controlWorkerSources(root, worker) {
+  if (worker === "dotnet") {
+    const bytes = await fs.readFile(path.join(root, "dotnet", "Multiplexed.AI.Samples.PublishedFunctions.dll"));
+    return {
+      slow: { entryPointPath: "control-slow.dll", entryPointSymbol: "Multiplexed.AI.Samples.PublishedFunctions.Functions::PinStable", bytes },
+      fast: { entryPointPath: "control-fast.dll", entryPointSymbol: "Multiplexed.AI.Samples.PublishedFunctions.Functions::Run", bytes },
+    };
+  }
+  if (worker === "typescript") {
+    return {
+      slow: { entryPointPath: "control-slow.ts", entryPointSymbol: "run", bytes: Buffer.from("export async function run(inputs, context) { await new Promise(resolve => setTimeout(resolve, 8000)); return { success: true, payload: { marker: inputs?.marker ?? null, phase: 'slow' } }; }\n", "utf8") },
+      fast: { entryPointPath: "control-fast.ts", entryPointSymbol: "run", bytes: Buffer.from("export function run(inputs, context) { return { success: true, payload: { marker: inputs?.marker ?? null, phase: 'fast' } }; }\n", "utf8") },
+    };
+  }
+  if (worker === "python") {
+    return {
+      slow: { entryPointPath: "control_slow.py", entryPointSymbol: "run", bytes: Buffer.from("import time\ndef run(inputs, context):\n    time.sleep(8)\n    return {'success': True, 'payload': {'marker': inputs.get('marker'), 'phase': 'slow'}}\n", "utf8") },
+      fast: { entryPointPath: "control_fast.py", entryPointSymbol: "run", bytes: Buffer.from("def run(inputs, context):\n    return {'success': True, 'payload': {'marker': inputs.get('marker'), 'phase': 'fast'}}\n", "utf8") },
+    };
+  }
+  throw new Error(`Unsupported worker language '${worker}'.`);
 }
 
 

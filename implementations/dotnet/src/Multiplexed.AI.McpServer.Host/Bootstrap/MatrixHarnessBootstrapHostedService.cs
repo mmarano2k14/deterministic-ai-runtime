@@ -53,6 +53,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     Trn(options, "shared-run", "execution", "submit"),
                     Trn(options, "execution", "control", "read"),
                     Trn(options, "execution", "control", "cancel"),
+                    Trn(options, "execution", "control", "pause"),
+                    Trn(options, "execution", "control", "resume"),
+                    Trn(options, "execution", "control", "input"),
+                    Trn(options, "replay", "execution", "run"),
                     Trn(options, "mcp-effect", "probe", "invoke")
                 }, StringComparer.Ordinal)
             };

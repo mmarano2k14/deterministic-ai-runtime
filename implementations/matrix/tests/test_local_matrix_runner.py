@@ -182,6 +182,18 @@ class LocalRunnerSourceGuards(unittest.TestCase):
             self.assertIn(f'$env:AiHostedInvocation__{setting} = "true"', self.runner)
         self.assertIn('--Multiplexed.Rbac.Core:Project=matrix', self.runner)
 
+    def test_watch_and_control_only_use_one_shared_mongo_decision_ledger_across_processes(self) -> None:
+        self.assertIn('if ($WatchOnly -or $ControlOnly)', self.runner)
+        self.assertIn('$env:AiDecisionLedger__Provider = "mongo"', self.runner)
+        self.assertIn('$env:AiDecisionLedger__Provider = "inmemory"', self.runner)
+        self.assertIn('$ledgerReason = if ($WatchOnly) { "Watch" } else { "Control/Replay" }', self.runner)
+        self.assertIn('Decision Ledger provider=mongo', self.runner)
+        self.assertIn(r'.\implementations\matrix\control_matrix.py', self.runner)
+        self.assertLess(
+            self.runner.index('$env:AiDecisionLedger__Provider = "mongo"'),
+            self.runner.index('$hostCapture = Start-LocalLoggedProcess'),
+        )
+
     def test_failure_archive_is_built_after_process_capture_completes(self) -> None:
         self.assertLess(self.runner.index('foreach ($capture in $captures) { Complete-LocalCapture'),
                         self.runner.index('Compress-Archive'))

@@ -4,8 +4,13 @@
     "publishPipeline": "sdk.publish_pipeline",
     "submitExecution": "sdk.execution.submit",
     "observeExecution": "sdk.execution.observe",
+    "watchExecution": "sdk.execution.watch",
     "getExecutionResult": "sdk.execution.result",
-    "cancelExecution": "sdk.execution.cancel"
+    "cancelExecution": "sdk.execution.cancel",
+    "pauseExecution": "sdk.execution.pause",
+    "resumeExecution": "sdk.execution.resume",
+    "submitExecutionInput": "sdk.execution.input.submit",
+    "replayExecution": "sdk.execution.replay"
   },
   "schemaVersions": {
     "pipelineDefinition": 1,
@@ -16,7 +21,15 @@
     "executionObservation": 1,
     "executionResult": 1,
     "executionCancellationRequest": 1,
-    "executionCancellationResponse": 1
+    "executionCancellationResponse": 1,
+    "executionWatchRequest": 1,
+    "executionWatchEvent": 1,
+    "executionWatchResyncRequired": 1,
+    "executionControlRequest": 1,
+    "executionControlResponse": 1,
+    "executionInputSubmissionRequest": 1,
+    "executionReplayRequest": 1,
+    "executionReplayResponse": 1
   },
   "enumValues": {
     "executionMode": [
@@ -55,6 +68,47 @@
       "WaitingForExternal",
       "Completed",
       "Failed"
+    ],
+    "executionWatchChannel": [
+      "Lifecycle",
+      "Steps",
+      "Policies",
+      "Children",
+      "Effects",
+      "Recovery"
+    ],
+    "executionWatchEventKind": [
+      "Snapshot",
+      "Event",
+      "ResyncRequired"
+    ],
+    "executionWatchResyncReason": [
+      "HistoryUnavailable",
+      "GapDetected",
+      "InvalidCursor"
+    ],
+    "executionControlOperation": [
+      "Pause",
+      "Resume",
+      "SubmitInput"
+    ],
+    "executionControlStatus": [
+      "None",
+      "Running",
+      "Pausing",
+      "Paused",
+      "Resuming",
+      "Cancelling",
+      "Cancelled",
+      "WaitingForInput"
+    ],
+    "executionControlAction": [
+      "None",
+      "Pause",
+      "Resume",
+      "Cancel",
+      "WaitForInput",
+      "SubmitInput"
     ]
   },
   "errorKinds": [
@@ -205,6 +259,58 @@
           "correlationId": "corr-cancel"
         }
       }
+    },
+    "pause": {
+      "operation": "sdk.execution.pause",
+      "arguments": {
+        "executionId": "exec-parity",
+        "request": {
+          "schemaVersion": 1,
+          "reason": "operator pause",
+          "correlationId": "corr-pause"
+        }
+      }
+    },
+    "resume": {
+      "operation": "sdk.execution.resume",
+      "arguments": {
+        "executionId": "exec-parity",
+        "request": {
+          "schemaVersion": 1,
+          "reason": "operator resume",
+          "correlationId": "corr-resume"
+        }
+      }
+    },
+    "submitInput": {
+      "operation": "sdk.execution.input.submit",
+      "arguments": {
+        "executionId": "exec-parity",
+        "request": {
+          "schemaVersion": 1,
+          "waitingKey": "approval:pricing",
+          "waitingStepName": "human-approval",
+          "input": {
+            "approved": true,
+            "comment": "approved by parity"
+          },
+          "reason": "human approval",
+          "correlationId": "corr-input"
+        }
+      }
+    },
+    "replay": {
+      "operation": "sdk.execution.replay",
+      "arguments": {
+        "executionId": "exec-parity",
+        "request": {
+          "schemaVersion": 1,
+          "strictDeterminism": true,
+          "includeDiagnostics": true,
+          "reason": "verify determinism",
+          "correlationId": "corr-replay"
+        }
+      }
     }
   },
   "minimalRequests": {
@@ -240,6 +346,35 @@
         "executionId": "exec-minimal",
         "request": {
           "schemaVersion": 1
+        }
+      }
+    },
+    "pause": {
+      "operation": "sdk.execution.pause",
+      "arguments": {
+        "executionId": "exec-minimal",
+        "request": {
+          "schemaVersion": 1
+        }
+      }
+    },
+    "resume": {
+      "operation": "sdk.execution.resume",
+      "arguments": {
+        "executionId": "exec-minimal",
+        "request": {
+          "schemaVersion": 1
+        }
+      }
+    },
+    "replay": {
+      "operation": "sdk.execution.replay",
+      "arguments": {
+        "executionId": "exec-minimal",
+        "request": {
+          "schemaVersion": 1,
+          "strictDeterminism": true,
+          "includeDiagnostics": true
         }
       }
     }
@@ -317,6 +452,65 @@
       "status": "Running",
       "requestedAtUtc": "2026-09-17T00:00:04+00:00",
       "correlationId": "corr-cancel"
+    },
+    "pause": {
+      "schemaVersion": 1,
+      "executionId": "exec-parity",
+      "operation": "Pause",
+      "accepted": true,
+      "state": {
+        "status": "Pausing",
+        "pendingAction": "Pause",
+        "reason": "operator pause",
+        "updatedAtUtc": "2026-09-22T00:00:01+00:00",
+        "pauseRequestedAtUtc": "2026-09-22T00:00:01+00:00"
+      },
+      "acceptedAtUtc": "2026-09-22T00:00:01+00:00",
+      "correlationId": "corr-pause"
+    },
+    "resume": {
+      "schemaVersion": 1,
+      "executionId": "exec-parity",
+      "operation": "Resume",
+      "accepted": true,
+      "state": {
+        "status": "Resuming",
+        "pendingAction": "Resume",
+        "updatedAtUtc": "2026-09-22T00:00:02+00:00",
+        "resumeRequestedAtUtc": "2026-09-22T00:00:02+00:00"
+      },
+      "acceptedAtUtc": "2026-09-22T00:00:02+00:00",
+      "correlationId": "corr-resume"
+    },
+    "submitInput": {
+      "schemaVersion": 1,
+      "executionId": "exec-parity",
+      "operation": "SubmitInput",
+      "accepted": true,
+      "state": {
+        "status": "Resuming",
+        "pendingAction": "SubmitInput",
+        "waitingKey": "approval:pricing",
+        "waitingStepName": "human-approval",
+        "updatedAtUtc": "2026-09-22T00:00:03+00:00",
+        "inputReceivedAtUtc": "2026-09-22T00:00:03+00:00"
+      },
+      "acceptedAtUtc": "2026-09-22T00:00:03+00:00",
+      "correlationId": "corr-input"
+    },
+    "replay": {
+      "schemaVersion": 1,
+      "executionId": "exec-parity",
+      "succeeded": true,
+      "deterministic": true,
+      "message": "Replay control-plane operation completed successfully.",
+      "diagnostics": [
+        "ReplayValid=True"
+      ],
+      "correlationId": "corr-replay",
+      "startedAtUtc": "2026-09-22T00:00:04+00:00",
+      "completedAtUtc": "2026-09-22T00:00:05+00:00",
+      "durationMs": 1000
     }
   },
   "normalizedError": {
@@ -326,6 +520,78 @@
     "retryable": false,
     "details": {
       "scope": "sdk"
+    }
+  },
+  "watchContracts": {
+    "request": {
+      "schemaVersion": 1,
+      "executionId": "exec-parity",
+      "channels": [
+        "Lifecycle",
+        "Steps",
+        "Recovery"
+      ],
+      "afterSequence": 878,
+      "includeInitialSnapshot": false
+    },
+    "snapshot": {
+      "schemaVersion": 1,
+      "executionId": "exec-parity",
+      "sequence": 874,
+      "kind": "Snapshot",
+      "occurredAtUtc": "2026-09-17T00:00:01+00:00",
+      "snapshot": {
+        "schemaVersion": 1,
+        "executionId": "exec-parity",
+        "publicationRef": "pub-parity",
+        "pipelineName": "parity-demo",
+        "pipelineVersion": "2026.09",
+        "status": "Running",
+        "createdAtUtc": "2026-09-17T00:00:00+00:00",
+        "updatedAtUtc": "2026-09-17T00:00:01+00:00",
+        "steps": [
+          {
+            "name": "prepare",
+            "stepKey": "prepare",
+            "status": "Completed",
+            "startedAtUtc": "2026-09-17T00:00:00+00:00",
+            "updatedAtUtc": "2026-09-17T00:00:01+00:00",
+            "completedAtUtc": "2026-09-17T00:00:01+00:00"
+          },
+          {
+            "name": "notify",
+            "stepKey": "notify",
+            "status": "Ready"
+          }
+        ]
+      }
+    },
+    "event": {
+      "schemaVersion": 1,
+      "executionId": "exec-parity",
+      "sequence": 875,
+      "kind": "Event",
+      "occurredAtUtc": "2026-09-17T00:00:02+00:00",
+      "channel": "Lifecycle",
+      "eventType": "execution.running",
+      "payloadSchemaVersion": 1,
+      "payload": {
+        "status": "Running"
+      }
+    },
+    "resyncRequired": {
+      "schemaVersion": 1,
+      "executionId": "exec-parity",
+      "kind": "ResyncRequired",
+      "occurredAtUtc": "2026-09-17T00:00:05+00:00",
+      "resyncRequired": {
+        "schemaVersion": 1,
+        "reason": "HistoryUnavailable",
+        "requestedAfterSequence": 100,
+        "earliestAvailableSequence": 200,
+        "latestSequence": 250,
+        "message": "The requested public event range is no longer retained."
+      }
     }
   }
 }

@@ -8,11 +8,11 @@ This directory contains the canonical fixtures used to validate the independentl
 
 The parity suite locks the following behavior:
 
-- protocol version and the five public operation names;
+- protocol version and the ten public operation names;
 - request and response schema versions;
 - string enum literals;
-- request JSON shape for publication, submission, observation, result retrieval and cancellation;
-- contract defaults for minimal publication, submission and cancellation requests;
+- request JSON shape for publication, submission, observation, Watch, result retrieval, cancellation, pause, resume, input submission and replay;
+- contract defaults for minimal publication, submission, cancellation, pause, resume and replay requests;
 - omission of absent optional fields;
 - JSON `null` preservation inside explicit JSON payload objects;
 - optional top-level execution input `null` is treated as absent consistently across all three SDKs;

@@ -315,15 +315,45 @@ namespace Multiplexed.AI.Tests.Fixtures
                     targetFramework,
                     "Multiplexed.AI.McpServer.Host.dll");
 
-            if (File.Exists(hostAssemblyPath))
+            var hostDirectory =
+                Path.GetDirectoryName(hostAssemblyPath)
+                ?? throw new InvalidOperationException(
+                    "The RuntimeInstanceOnly host output directory could not be resolved.");
+
+            var runtimeConfigPath =
+                Path.Combine(
+                    hostDirectory,
+                    "Multiplexed.AI.McpServer.Host.runtimeconfig.json");
+
+            var depsPath =
+                Path.Combine(
+                    hostDirectory,
+                    "Multiplexed.AI.McpServer.Host.deps.json");
+
+            if (File.Exists(hostAssemblyPath) &&
+                File.Exists(runtimeConfigPath) &&
+                File.Exists(depsPath))
             {
                 return hostAssemblyPath;
             }
 
+            var missingArtifacts =
+                new[]
+                {
+                    hostAssemblyPath,
+                    runtimeConfigPath,
+                    depsPath
+                }
+                .Where(path => !File.Exists(path))
+                .Select(Path.GetFileName)
+                .ToArray();
+
             throw new FileNotFoundException(
-                "The RuntimeInstanceOnly host assembly was not found for the current test build. " +
-                "Build implementations/dotnet/src/Multiplexed.AI.McpServer.Host/Multiplexed.AI.McpServer.Host.csproj " +
-                $"with configuration '{buildConfiguration}' before running the Step 2G proof.",
+                "The RuntimeInstanceOnly host output is incomplete for the current test build. " +
+                "The test project carries an explicit build-only dependency on " +
+                "Multiplexed.AI.McpServer.Host so the Host must be rebuilt in the same " +
+                $"configuration '{buildConfiguration}'. Missing artifacts: " +
+                string.Join(", ", missingArtifacts),
                 hostAssemblyPath);
         }
 

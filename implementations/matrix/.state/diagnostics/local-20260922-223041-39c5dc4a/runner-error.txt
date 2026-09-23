@@ -1,0 +1,11 @@
+Native command failed. Executable=C:\Program Files\dotnet\dotnet.exe; ExitCode=1; Arguments=build 
+.\implementations\matrix\clients\dotnet\Multiplexed.AI.Matrix.DotNetClient\Multiplexed.AI.Matrix.DotNetClient.csproj -c Release; 
+LogPath=D:\Dev\Personal\multiplexed-rbac\implementations\matrix\.state\diagnostics\local-20260922-223041-39c5dc4a\build-client-dotnet.log
+At D:\Dev\Personal\multiplexed-rbac\implementations\matrix\runtime\local\process-support.ps1:40 char:9
++         throw "Native command failed. Executable=$Executable; ExitCod ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (Native command ...ient-dotnet.log:String) [], RuntimeException
+    + FullyQualifiedErrorId : Native command failed. Executable=C:\Program Files\dotnet\dotnet.exe; ExitCode=1; Arguments=build .\implementations\matrix\clients\dotnet\Multiplexe 
+   d.AI.Matrix.DotNetClient\Multiplexed.AI.Matrix.DotNetClient.csproj -c Release; LogPath=D:\Dev\Personal\multiplexed-rbac\implementations\matrix\.state\diagnostics\local-202609  
+  22-223041-39c5dc4a\build-client-dotnet.log
+ 

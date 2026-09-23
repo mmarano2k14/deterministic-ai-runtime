@@ -105,6 +105,29 @@ namespace Multiplexed.AI.McpServer.Tools
         }
 
         /// <summary>
+        /// Submits durable human or external input for an execution waiting on a stable key.
+        /// </summary>
+        [McpServerTool(Name = "control.input.submit")]
+        [Description("Submits human or external input for an execution waiting on a stable input key.")]
+        [RequireCapability("execution", "control", "input")]
+        public async Task<AiExecutionControlPlaneResult> SubmitHumanInputAsync(
+            AiExecutionControlPlaneRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            logger.LogInformation(
+                "MCP control.input.submit called. ExecutionId={ExecutionId}, WaitingKey={WaitingKey}, RequestedBy={RequestedBy}",
+                request.ExecutionId,
+                request.WaitingKey,
+                request.RequestedBy);
+
+            return await executionControlPlane
+                .SubmitHumanInputAsync(request, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
         /// Gets the current durable execution control status.
         /// </summary>
         [McpServerTool(Name = "control.status")]

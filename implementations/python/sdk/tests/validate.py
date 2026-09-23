@@ -26,8 +26,17 @@ expected_operations = [item["name"] for item in manifest["operations"]]
 assert AI_SDK_PROTOCOL_VERSION == manifest["protocolVersion"]
 assert list(AI_SDK_OPERATIONS.values()) == expected_operations
 assert AI_SDK_OPERATION_RETRY["sdk.execution.observe"] == "safe-read"
+assert AI_SDK_OPERATION_RETRY["sdk.execution.watch"] == "safe-read"
 assert AI_SDK_OPERATION_RETRY["sdk.execution.result"] == "safe-read"
-for name in ("sdk.publish_pipeline", "sdk.execution.submit", "sdk.execution.cancel"):
+for name in (
+    "sdk.publish_pipeline",
+    "sdk.execution.submit",
+    "sdk.execution.cancel",
+    "sdk.execution.pause",
+    "sdk.execution.resume",
+    "sdk.execution.input.submit",
+    "sdk.execution.replay",
+):
     assert AI_SDK_OPERATION_RETRY[name] == "never"
 
 assert [item.value for item in AiSdkExecutionMode] == ["Sequential", "Dag"]

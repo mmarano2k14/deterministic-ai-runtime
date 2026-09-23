@@ -78,7 +78,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
 
             Assert.Equal("No immutable publication binding was pinned before execution.", error.Message);
             Assert.Equal(2, host.Payloads.ReadCount); // Root pin and child binding, both deliberately absent.
-            Assert.Equal(7, Assert.Single(host.Accessor.Current!.Namespaces).Trns.Count);
+            Assert.Equal(11, Assert.Single(host.Accessor.Current!.Namespaces).Trns.Count);
             Assert.Equal(snapshot.UserId, host.Accessor.Current.UserId);
             Assert.Equal(snapshot.ContextKey, host.Accessor.Current.ContextKey);
         }
@@ -133,7 +133,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
             var error = await Assert.ThrowsAsync<UnauthorizedAccessException>(() => host.Targets.ResolveAsync(Request()));
             Assert.Equal(Denied, error.Message);
             Assert.Equal(0, host.Payloads.ReadCount);
-            Assert.Equal(6, Assert.Single(restored.Namespaces).Trns.Count);
+            Assert.Equal(10, Assert.Single(restored.Namespaces).Trns.Count);
         }
 
         [Theory]
@@ -219,7 +219,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 accessor.Set(context);
                 var snapshot = JsonSerializer.Deserialize<ExecutionContextSnapshot>(
                     JsonSerializer.Serialize(accessor.MapToSnapshot()))!;
-                Assert.Equal(7, Assert.Single(snapshot.Namespaces).Trns.Count);
+                Assert.Equal(11, Assert.Single(snapshot.Namespaces).Trns.Count);
                 Assert.Contains(ExecuteTrn, Assert.Single(snapshot.Namespaces).Trns);
                 return snapshot;
             }

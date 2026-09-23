@@ -42,13 +42,15 @@ class KubernetesSdkRbacProjectTests(unittest.TestCase):
         self.assertLess(self.runner.index("RBAC project mismatch"), self.runner.index("$startInfo = New-Object"))
         self.assertNotIn('$processArguments += "--Multiplexed.Rbac.Core:Project=matrix"', self.runner)
 
-    def test_existing_exact_grants_are_not_expanded_to_fix_the_profile(self) -> None:
+    def test_matrix_harness_exact_grants_include_public_execution_control_surface(self) -> None:
         bootstrap = (HOST / "Bootstrap" / "MatrixHarnessBootstrapHostedService.cs").read_text(encoding="utf-8-sig")
         grants = set(re.findall(r'Trn\(options, "([^"]+)", "([^"]+)", "([^"]+)"\)', bootstrap))
         self.assertEqual({
             ("code", "publication", "publish"), ("code", "publication", "read"),
             ("code", "publication", "execute"), ("shared-run", "execution", "submit"),
             ("execution", "control", "read"), ("execution", "control", "cancel"),
+            ("execution", "control", "pause"), ("execution", "control", "resume"),
+            ("execution", "control", "input"), ("replay", "execution", "run"),
             ("mcp-effect", "probe", "invoke"),
         }, grants)
         self.assertNotIn('Child(settings, "AiMatrixHarness__Enabled", "true")', self.profile)

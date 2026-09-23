@@ -5,6 +5,7 @@ using Multiplexed.AI.Sdk.Contracts.Executions;
 using Multiplexed.AI.Sdk.Contracts.Observation;
 using Multiplexed.AI.Sdk.Contracts.Pipelines;
 using Multiplexed.AI.Sdk.Contracts.Publication;
+using Multiplexed.AI.Sdk.Contracts.Replay;
 using Multiplexed.AI.Sdk.Errors;
 using Multiplexed.AI.Sdk.Transport;
 
@@ -54,6 +55,35 @@ namespace Multiplexed.AI.Sdk.Tests.Client
                     CancellationRequested = true,
                     Status = AiSdkExecutionStatus.Running
                 }),
+                AiSdkOperationNames.PauseExecution => Success(new AiSdkExecutionControlResponse
+                {
+                    ExecutionId = "exec-1",
+                    Operation = AiSdkExecutionControlOperation.Pause,
+                    Accepted = true,
+                    AcceptedAtUtc = DateTimeOffset.UnixEpoch
+                }),
+                AiSdkOperationNames.ResumeExecution => Success(new AiSdkExecutionControlResponse
+                {
+                    ExecutionId = "exec-1",
+                    Operation = AiSdkExecutionControlOperation.Resume,
+                    Accepted = true,
+                    AcceptedAtUtc = DateTimeOffset.UnixEpoch
+                }),
+                AiSdkOperationNames.SubmitExecutionInput => Success(new AiSdkExecutionControlResponse
+                {
+                    ExecutionId = "exec-1",
+                    Operation = AiSdkExecutionControlOperation.SubmitInput,
+                    Accepted = true,
+                    AcceptedAtUtc = DateTimeOffset.UnixEpoch
+                }),
+                AiSdkOperationNames.ReplayExecution => Success(new AiSdkExecutionReplayResponse
+                {
+                    ExecutionId = "exec-1",
+                    Succeeded = true,
+                    Deterministic = true,
+                    StartedAtUtc = DateTimeOffset.UnixEpoch,
+                    CompletedAtUtc = DateTimeOffset.UnixEpoch
+                }),
                 _ => throw new InvalidOperationException("Unexpected operation.")
             });
             IAiSdkClient client = new AiSdkClient(transport);
@@ -76,13 +106,33 @@ namespace Multiplexed.AI.Sdk.Tests.Client
             var cancellation = await client.CancelExecutionAsync(
                 submission.ExecutionId,
                 new AiSdkExecutionCancellationRequest { Reason = "operator" });
+            var pause = await client.PauseExecutionAsync(
+                submission.ExecutionId,
+                new AiSdkExecutionControlRequest { Reason = "pause" });
+            var resume = await client.ResumeExecutionAsync(
+                submission.ExecutionId,
+                new AiSdkExecutionControlRequest { Reason = "resume" });
+            var input = await client.SubmitExecutionInputAsync(
+                submission.ExecutionId,
+                new AiSdkExecutionInputSubmissionRequest
+                {
+                    WaitingKey = "approval:1",
+                    Input = JsonSerializer.SerializeToElement(new { approved = true })
+                });
+            var replay = await client.ReplayExecutionAsync(
+                submission.ExecutionId,
+                new AiSdkExecutionReplayRequest());
 
             Assert.Equal("pub-1", publication.PublicationRef);
             Assert.Equal("exec-1", submission.ExecutionId);
             Assert.Equal(AiSdkExecutionStatus.Running, observation.Status);
             Assert.Equal(AiSdkExecutionStatus.Completed, result.Status);
             Assert.True(cancellation.CancellationRequested);
-            Assert.Equal(5, transport.Requests.Count);
+            Assert.Equal(AiSdkExecutionControlOperation.Pause, pause.Operation);
+            Assert.Equal(AiSdkExecutionControlOperation.Resume, resume.Operation);
+            Assert.Equal(AiSdkExecutionControlOperation.SubmitInput, input.Operation);
+            Assert.True(replay.Succeeded);
+            Assert.Equal(9, transport.Requests.Count);
 
             Assert.Equal(AiSdkOperationNames.PublishPipeline, transport.Requests[0].Operation);
             Assert.Equal("demo", transport.Requests[0].Arguments.GetProperty("request").GetProperty("definition").GetProperty("name").GetString());
@@ -92,6 +142,14 @@ namespace Multiplexed.AI.Sdk.Tests.Client
             Assert.Equal("exec-1", transport.Requests[3].Arguments.GetProperty("executionId").GetString());
             Assert.Equal("exec-1", transport.Requests[4].Arguments.GetProperty("executionId").GetString());
             Assert.Equal("operator", transport.Requests[4].Arguments.GetProperty("request").GetProperty("reason").GetString());
+            Assert.Equal(AiSdkOperationNames.PauseExecution, transport.Requests[5].Operation);
+            Assert.Equal("pause", transport.Requests[5].Arguments.GetProperty("request").GetProperty("reason").GetString());
+            Assert.Equal(AiSdkOperationNames.ResumeExecution, transport.Requests[6].Operation);
+            Assert.Equal("resume", transport.Requests[6].Arguments.GetProperty("request").GetProperty("reason").GetString());
+            Assert.Equal(AiSdkOperationNames.SubmitExecutionInput, transport.Requests[7].Operation);
+            Assert.Equal("approval:1", transport.Requests[7].Arguments.GetProperty("request").GetProperty("waitingKey").GetString());
+            Assert.Equal(AiSdkOperationNames.ReplayExecution, transport.Requests[8].Operation);
+            Assert.True(transport.Requests[8].Arguments.GetProperty("request").GetProperty("strictDeterminism").GetBoolean());
         }
 
         [Fact]
@@ -143,6 +201,32 @@ namespace Multiplexed.AI.Sdk.Tests.Client
                 }));
 
             Assert.Equal(AiSdkErrorKind.UnsupportedSchema, exception.Error.Kind);
+            Assert.Empty(transport.Requests);
+        }
+
+        [Fact]
+        public async Task Input_Control_Validates_Waiting_Key_And_Object_Payload_Before_Transport()
+        {
+            var transport = new RecordingTransport(_ => throw new InvalidOperationException("Must not be invoked."));
+            var client = new AiSdkClient(transport);
+
+            var blankKey = await Assert.ThrowsAsync<AiSdkException>(() => client.SubmitExecutionInputAsync(
+                "exec-1",
+                new AiSdkExecutionInputSubmissionRequest
+                {
+                    WaitingKey = " ",
+                    Input = JsonSerializer.SerializeToElement(new { approved = true })
+                }));
+            Assert.Equal("waiting_key_required", blankKey.Error.Code);
+
+            var scalarPayload = await Assert.ThrowsAsync<AiSdkException>(() => client.SubmitExecutionInputAsync(
+                "exec-1",
+                new AiSdkExecutionInputSubmissionRequest
+                {
+                    WaitingKey = "approval:1",
+                    Input = JsonSerializer.SerializeToElement(true)
+                }));
+            Assert.Equal("input_object_required", scalarPayload.Error.Code);
             Assert.Empty(transport.Requests);
         }
 

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$MongoExecutable = "mongod",
     [string]$RedisExecutable = "redis-server",
     [string]$DotNetExecutable = "dotnet",
@@ -7,13 +7,21 @@ param(
     [switch]$InfrastructureAlreadyRunning,
     [ValidatePattern('^(all|core-(dotnet|typescript|python)-client-(dotnet|typescript|python)-worker)$')]
     [string]$CoreScenario = "all",
-    [switch]$CoreOnly
+    [switch]$CoreOnly,
+    [switch]$WatchOnly,
+    [switch]$ControlOnly
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "process-support.ps1")
+if ((@($CoreOnly, $WatchOnly, $ControlOnly) | Where-Object { $_ }).Count -gt 1) {
+    throw "-CoreOnly, -WatchOnly and -ControlOnly are mutually exclusive."
+}
 if ($CoreScenario -ne "all" -and -not $CoreOnly) {
     throw "A selected core scenario requires -CoreOnly; it is not a complete local matrix run."
+}
+if (($WatchOnly -or $ControlOnly) -and $CoreScenario -ne "all") {
+    throw "-WatchOnly/-ControlOnly cannot be combined with a selected -CoreScenario."
 }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..\..")).Path
 $matrix = Join-Path $repo "implementations\matrix"
@@ -47,9 +55,48 @@ function Resolve-Tool([string]$name) {
     throw "Required command was not found on PATH: $name"
 }
 
+function Resolve-PythonExecutable([string]$name) {
+    $launcher = Resolve-Tool $name
+    if ($env:OS -ne "Windows_NT") { return $launcher }
+
+    $reported = $null
+    try {
+        $reported = (& $launcher -c "import os, sys; print(os.path.realpath(sys.executable))" 2>$null | Select-Object -Last 1)
+    } catch {
+        $reported = $null
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($reported)) {
+        $reported = $reported.Trim()
+        if ((Test-Path -LiteralPath $reported -PathType Leaf) -and $reported -notmatch "\\WindowsApps\\python(?:3(?:\.exe)?|\.exe)?$") {
+            return (Resolve-Path -LiteralPath $reported).Path
+        }
+    }
+
+    $py = Get-Command "py.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($py) {
+        try {
+            $reported = (& $py.Source -c "import os, sys; print(os.path.realpath(sys.executable))" 2>$null | Select-Object -Last 1)
+            if (-not [string]::IsNullOrWhiteSpace($reported)) {
+                $reported = $reported.Trim()
+                if (Test-Path -LiteralPath $reported -PathType Leaf) {
+                    return (Resolve-Path -LiteralPath $reported).Path
+                }
+            }
+        } catch {
+        }
+    }
+
+    if ($launcher -match "\\WindowsApps\\python(?:3(?:\.exe)?|\.exe)?$") {
+        throw "Python resolved to the Windows Apps execution alias rather than a readable interpreter. Pass -PythonExecutable with the path returned by: py -c `"import sys; print(sys.executable)`""
+    }
+
+    return $launcher
+}
+
 $dotnet = Resolve-Tool $DotNetExecutable
 $node = Resolve-Tool $NodeExecutable
-$python = Resolve-Tool $PythonExecutable
+$python = Resolve-PythonExecutable $PythonExecutable
 $npm = Resolve-Tool "npm"
 $mongo = $null
 $redis = $null
@@ -139,6 +186,19 @@ try {
     $env:ConnectionStrings__Redis = "localhost:6379"
     $env:ConnectionStrings__Mongo = "mongodb://localhost:27017"
     $env:Mongo__DatabaseName = "multiplexed-ai-matrix"
+
+    # execution.watch() projects durable Decision Ledger events produced by ProcessHost runtime instances.
+    # The control plane and runtime instances are separate processes, so an in-memory ledger would split the
+    # event history per process and make Watch wait forever after its initial snapshot. Keep the historical
+    # local/core matrix behavior unchanged, but require one shared Mongo-backed ledger for Watch-only E2E.
+    if ($WatchOnly -or $ControlOnly) {
+        $env:AiDecisionLedger__Provider = "mongo"
+        $ledgerReason = if ($WatchOnly) { "Watch" } else { "Control/Replay" }
+        Write-Host "[local-sdk-matrix] $ledgerReason Decision Ledger provider=mongo (shared across control plane and ProcessHost runtimes)."
+    }
+    else {
+        $env:AiDecisionLedger__Provider = "inmemory"
+    }
     $env:AiEngine__Snapshots__Enabled = "true"
     $env:AiEngine__Snapshots__Mongo__Enabled = "true"
     $env:AiEngine__Snapshots__Mongo__ConnectionString = "mongodb://localhost:27017"
@@ -238,19 +298,35 @@ try {
     Write-Host "[local-sdk-matrix] Execution context snapshot TTL=$($ttl)s"
     Write-Host "[local-sdk-matrix] Local hosted profiles, worker polling and DAG reconciliation enabled."
 
-    Invoke-LocalChecked -Executable $python -Arguments @(
-        ".\implementations\matrix\core_matrix.py", "run", "--topology", "local",
-        "--scenario", $CoreScenario, "--manifest", $manifest, "--no-build"
-    )
-    if ($CoreOnly) {
-        Write-Host "[local-sdk-matrix] Selected core execution passed: $CoreScenario. Feature matrix was not run."
+    if ($WatchOnly) {
+        Invoke-LocalChecked -Executable $python -Arguments @(
+            ".\implementations\matrix\watch_matrix.py", "run", "--scenario", "all",
+            "--manifest", $manifest, "--no-build"
+        )
+        Write-Host "[local-sdk-matrix] Real MCP/HTTP execution.watch() E2E passed for .NET, TypeScript and Python external SDKs."
+    }
+    elseif ($ControlOnly) {
+        Invoke-LocalChecked -Executable $python -Arguments @(
+            ".\implementations\matrix\control_matrix.py", "run", "--scenario", "all",
+            "--manifest", $manifest, "--no-build"
+        )
+        Write-Host "[local-sdk-matrix] Real MCP/HTTP pause/resume/input/replay E2E passed for .NET, TypeScript and Python external SDKs."
     }
     else {
         Invoke-LocalChecked -Executable $python -Arguments @(
-            ".\implementations\matrix\feature_matrix.py", "run", "--scenario", "all",
-            "--manifest", $manifest, "--no-build"
+            ".\implementations\matrix\core_matrix.py", "run", "--topology", "local",
+            "--scenario", $CoreScenario, "--manifest", $manifest, "--no-build"
         )
-        Write-Host "[local-sdk-matrix] Local core and supported feature scenarios passed."
+        if ($CoreOnly) {
+            Write-Host "[local-sdk-matrix] Selected core execution passed: $CoreScenario. Feature matrix was not run."
+        }
+        else {
+            Invoke-LocalChecked -Executable $python -Arguments @(
+                ".\implementations\matrix\feature_matrix.py", "run", "--scenario", "all",
+                "--manifest", $manifest, "--no-build"
+            )
+            Write-Host "[local-sdk-matrix] Local core and supported feature scenarios passed."
+        }
     }
     $scenarioSucceeded = $true
 }

@@ -6,6 +6,334 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+## 0.0.9.5 - 2026-09-22 - Invocation Durability, Correctness and Performance
+
+## Scope
+
+This changelog consolidates the Invocation durability, correctness, hosted-policy infrastructure, worker transport, MongoDB observability, query-shape optimization, and validation work completed on the branch.
+
+The changes preserve the existing durable execution model and do not redefine DAG scheduling, execution ownership, recovery authority, lease/epoch fencing, immutable publication pinning, or result-acceptance semantics.
+
+## Hosted policy ownership normalization
+
+- Added a shared hosted-policy ownership revalidation path used by Concurrency, Retry, and Delegation policy preparation.
+- Revalidation now consistently verifies `ExecutionId`, `TenantId`, `TenantGroupId`, `UserId`, project, current namespace, execution lifecycle state, and terminal state.
+- Ownership is revalidated after publication/package I/O so stale execution ownership cannot be accepted after external work.
+- Policy-specific business semantics remain isolated and are not merged into the shared infrastructure.
+- Existing execution ownership and RBAC authority remain unchanged.
+
+## Execution-language normalization
+
+- Centralized supported hosted execution-language identifiers.
+- Added common support checks for `.NET`, Python, and TypeScript.
+- Preserved exact public/runtime language tokens: `dotnet`, `python`, and `typescript`.
+- No case-insensitive aliases or compatibility widening were introduced.
+- Existing language-selection precedence remains unchanged.
+
+## Time authority normalization
+
+- Replaced direct wall-clock usage in Invocation policy and MCP-related deadline paths with the configured `TimeProvider`.
+- Lease/deadline logic now uses the same time authority across production and deterministic tests.
+- Updated worker lease-guard timer behavior so timer wakeups re-evaluate remaining duration through the configured `TimeProvider`.
+- The timer is now only a wakeup mechanism; `TimeProvider` remains authoritative for whether a lease deadline has elapsed.
+- This prevents real-time timer progression from invalidating fake-time durability tests.
+
+## Dispatch read-amplification reduction
+
+- Reused the full dispatch candidate snapshot for the first worker-lease compare-and-swap attempt.
+- Removed the unconditional record reload that previously occurred between candidate discovery and the initial lease CAS.
+- Candidate records remain advisory snapshots only.
+- Durable lease acquisition authority remains the MongoDB CAS predicate.
+- A record reload is performed only when required after a failed CAS path.
+- Shared argument validation is performed before store access so invalid worker-epoch capacity values cannot be hidden by an early missing-record return.
+
+## Classified CAS outcomes
+
+- Added internal CAS outcome classification: `Applied`, `RevisionConflict`, and `AuthorityPredicateRejected`.
+- Preserved the legacy store compatibility surface while allowing internal callers to distinguish concurrency conflicts from authority-predicate rejection.
+- After a failed MongoDB replace, a changed revision is classified as `RevisionConflict`; an unchanged revision with a rejected authoritative predicate is classified as `AuthorityPredicateRejected`.
+- Revision conflicts can carry the current durable record and therefore avoid an additional `Get`.
+- Authority-predicate rejection stops optimistic retry loops.
+- Historical lease-acquisition behavior remains preserved where authority rejection is required to surface as an exception.
+- Result-completion paths continue mapping lease-authority rejection to the appropriate lease-rejected outcome.
+
+## Continuation fairness without fairness-only durability writes
+
+- Removed durable revision/updated-time writes whose only purpose was to rotate continuation scan fairness.
+- Added process-local keyset paging based on `UpdatedAtUtc` and `OperationId`.
+- The continuation cursor is non-authoritative and restart-safe.
+- Durable Invocation state remains authoritative.
+- Compatibility behavior remains available for stores that do not expose the optimized page capability.
+- Continuation scheduling, finalization, recovery, and result-acceptance semantics are unchanged.
+
+## Hosted policy preparation infrastructure cleanup
+
+- Added a shared hosted-policy publication preparation core.
+- Centralized common infrastructure for parent execution loading, execution-context restoration, scope restoration, RBAC publication authorization, immutable code materialization, post-I/O ownership/lifecycle revalidation, and final execution-context restoration.
+- Concurrency, Retry, and Delegation preparation now reuse the shared infrastructure.
+- Policy-specific declaration and business rules remain separate.
+- Added a common policy declaration reader for case-insensitive configuration lookup, duplicate-case rejection, deserialization, and declaration extraction.
+- Existing Concurrency-specific resolver and merge semantics remain unchanged.
+
+## Shared worker stdio protocol
+
+- Added a shared worker stdio session implementation used by process and container transports.
+- Centralized request framing, ready handshake, heartbeat processing, result-frame validation, EOF handling, frame-count bounds, timeout/deadline handling, and `TimeProvider`-based waits.
+- Process lifecycle remains transport-specific: executable validation, process launch, kill, reaping, cleanup/quarantine, and exit validation.
+- Container lifecycle remains provider-specific: OCI launch, engine attestation, ownership labels, reconciliation, force removal, quarantine, and exit validation.
+- Protocol reuse does not merge process and container lifecycle authority.
+
+## MongoDB attribution and CAS plumbing
+
+- Added explicit MongoDB operation attribution for durable Invocation operations:
+  - `Invocation.Get`
+  - `Invocation.PrepareInsert`
+  - `Invocation.DispatchScan`
+  - `Invocation.ContinuationScan`
+  - `Invocation.CAS`
+  - `Invocation.ResultAcceptance`
+- Added equivalent attribution for durable MCP-effect operations:
+  - `McpEffect.Get`
+  - `McpEffect.PrepareInsert`
+  - `McpEffect.ReconcileScan`
+  - `McpEffect.CAS`
+- Reads used to classify a rejected CAS are attributed to the originating CAS operation instead of appearing as normal record loads.
+- Added common low-level MongoDB CAS replacement plumbing for `IsUpsert = false`, collation propagation, acknowledged-write verification, and `ModifiedCount == 1` success handling.
+- Invocation and MCP-effect state machines remain separate.
+
+## MongoDB performance measurement baseline
+
+- Added deterministic local measurement coverage for durable Invocation codec and MongoDB query behavior.
+- Added codec measurement output for encode/decode latency, bytes per operation, operations per second, JSON/BSON size, and relative size ratios.
+- Added MongoDB `explain("executionStats")` measurement against captured production query shapes.
+- Added configurable document counts for local performance experiments.
+- Added opt-in MongoDB connection configuration for integration measurements.
+- Measurement code is isolated from production execution behavior.
+
+## Dispatch index experiments and production strategy
+
+The original dispatch query combined Prepared invocations and expired Leased invocations through one query shape ordered by `UpdatedAt` and `_id`.
+
+The historical dispatch index was optimized for lease expiry:
+
+```text
+controlPlaneId
+tenantId
+tenantGroupId
+language
+status
+leaseExpiresAt
+updatedAt
+```
+
+Controlled query-plan measurements showed that this shape could examine thousands of keys/documents before returning a page.
+
+A sort-first candidate index was evaluated:
+
+```text
+controlPlaneId
+tenantId
+tenantGroupId
+language
+status
+updatedAt
+_id
+leaseExpiresAt
+```
+
+It performed extremely well for Prepared-heavy and mixed distributions, but degraded significantly when most Leased records were still live. A global replacement of the historical dispatch index was therefore rejected.
+
+The selected production strategy splits dispatch discovery into two independently indexed branches.
+
+Prepared branch:
+
+```text
+status = Prepared
+ORDER BY updatedAt, _id
+LIMIT pageSize
+```
+
+with:
+
+```text
+ix_durable_invocation_dispatch_prepared_v2
+
+controlPlaneId
+tenantId
+tenantGroupId
+language
+status
+updatedAt
+_id
+```
+
+Expired-Leased branch:
+
+```text
+status = Leased
+leaseExpiresAt <= now
+ORDER BY updatedAt, _id
+LIMIT pageSize
+```
+
+using:
+
+```text
+ix_durable_invocation_dispatch
+
+controlPlaneId
+tenantId
+tenantGroupId
+language
+status
+leaseExpiresAt
+updatedAt
+```
+
+The two sorted result sets are merged by `UpdatedAtUtc` and `OperationId`, deduplicated by `OperationId`, and truncated to the requested page size.
+
+Discovery remains advisory. Lease, epoch, revision, and MongoDB CAS remain authoritative.
+
+The optimized strategy is also used by dispatch-candidate listing so the legacy OR-query path is not retained in parallel.
+
+## Continuation index promotion
+
+A continuation index candidate was promoted after query-plan validation:
+
+```text
+ix_durable_invocation_continuation_v2
+
+controlPlaneId
+tenantId
+tenantGroupId
+continuationStatus
+status
+updatedAt
+_id
+```
+
+The production continuation query uses this index explicitly.
+
+The previous continuation index is retained temporarily to avoid destructive migration behavior against existing databases.
+
+## Query-plan validation
+
+Controlled MongoDB experiments validated the production index choices.
+
+Prepared dispatch:
+
+```text
+returned       = 100
+keys examined  = 100
+docs examined  = 100
+plan           = LIMIT -> FETCH -> IXSCAN
+index          = ix_durable_invocation_dispatch_prepared_v2
+```
+
+Expired-Leased dispatch:
+
+```text
+expired probe  = 2500
+live probe     = 2500
+returned       = 100
+keys examined  = 2500
+docs examined  = 2500
+index          = ix_durable_invocation_dispatch
+```
+
+Continuation:
+
+```text
+returned       = 100
+keys examined  = 100
+docs examined  = 100
+index          = ix_durable_invocation_continuation_v2
+```
+
+The continuation winning plan uses ordered index scans with `SORT_MERGE`, avoiding the previous broad blocking-sort behavior.
+
+Controlled hybrid-dispatch tests verified equivalent first-page results across Prepared-dense, live-lease-heavy, and realistic mixed distributions.
+
+## Production explain instrumentation correction
+
+- Preserved captured MongoDB `hint` values when replaying production find commands through `explain`.
+- Added explicit validation that production measurements use:
+  - `ix_durable_invocation_dispatch_prepared_v2`
+  - `ix_durable_invocation_dispatch`
+  - `ix_durable_invocation_continuation_v2`
+- Added expired/live lease probe data so the final expired-Leased plan is measured against a non-empty representative population.
+- The correction affects measurement fidelity only and does not alter production query behavior.
+
+## Temporary MongoDB database-name test correction
+
+- Corrected the temporary integration-database-name guard test.
+- Database-name generation intentionally truncates long prefixes to preserve a unique GUID suffix while staying within the MongoDB server limit.
+- Validation now checks maximum length, preserved safe prefix portion, separator, valid 32-character GUID suffix, and uniqueness.
+- No production runtime behavior changed.
+
+## Documentation
+
+Updated Invocation-related documentation to reflect:
+
+- durable authority boundaries;
+- hosted-policy ownership revalidation;
+- language/time normalization;
+- classified CAS outcomes;
+- dispatch snapshot reuse;
+- continuation keyset fairness;
+- shared stdio protocol;
+- MongoDB operation attribution;
+- hybrid dispatch indexing;
+- continuation v2 indexing;
+- measured query-plan evidence;
+- current public SDK boundary;
+- planned `execution.watch()` work as a future capability rather than an implemented API.
+
+Historical validation evidence remains identified as historical where it was not rerun during this branch.
+
+## Compatibility and preserved invariants
+
+The following architectural invariants remain unchanged:
+
+- immutable publication/run pinning;
+- tenant, tenant-group, user, project, and namespace execution ownership;
+- RBAC authority;
+- worker lease authority;
+- worker epoch fencing;
+- stale-result rejection;
+- durable result acceptance;
+- DAG scheduling and transitions;
+- DAG finalization;
+- child execution durability;
+- recovery identity;
+- MCP-effect durability;
+- process/container lifecycle ownership;
+- public SDK independence from engine assemblies and internal CLR contracts.
+
+## Validation status
+
+The branch was validated through targeted correctness, integration, performance, and matrix testing.
+
+Validated areas include hosted policy ownership revalidation, execution-language validation, deterministic time/lease behavior, dispatch candidate reuse, worker-epoch admission validation, classified CAS outcomes, continuation paging/fairness, shared stdio session behavior, MongoDB attribution, MongoDB CAS plumbing, dispatch index experiments, hybrid dispatch semantic equivalence, production MongoDB query plans and index hints, continuation index behavior, temporary MongoDB database-name guard, and selected legacy/new runtime matrix regression coverage.
+
+The final production query-plan validation confirmed:
+
+```text
+Prepared dispatch
+    -> ix_durable_invocation_dispatch_prepared_v2
+
+Expired-Leased dispatch
+    -> ix_durable_invocation_dispatch
+
+Continuation
+    -> ix_durable_invocation_continuation_v2
+```
+
+No change in durable authority was introduced by the performance optimizations.
+
+
+---
+
 ## 0.0.9.5 - 2026-09-21 - Invocation Correctness Normalization
 
 ### Hosted policy ownership revalidation

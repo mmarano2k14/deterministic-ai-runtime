@@ -2,6 +2,8 @@ using Multiplexed.AI.Sdk.Contracts.Control;
 using Multiplexed.AI.Sdk.Contracts.Executions;
 using Multiplexed.AI.Sdk.Contracts.Observation;
 using Multiplexed.AI.Sdk.Contracts.Publication;
+using Multiplexed.AI.Sdk.Contracts.Replay;
+using Multiplexed.AI.Sdk.Contracts.Watch;
 
 namespace Multiplexed.AI.Sdk
 {
@@ -20,6 +22,10 @@ namespace Multiplexed.AI.Sdk
             string executionId,
             CancellationToken cancellationToken = default);
 
+        IAsyncEnumerable<AiSdkExecutionWatchEvent> WatchExecutionAsync(
+            AiSdkExecutionWatchRequest request,
+            CancellationToken cancellationToken = default);
+
         Task<AiSdkExecutionResult> GetExecutionResultAsync(
             string executionId,
             CancellationToken cancellationToken = default);
@@ -27,6 +33,26 @@ namespace Multiplexed.AI.Sdk
         Task<AiSdkExecutionCancellationResponse> CancelExecutionAsync(
             string executionId,
             AiSdkExecutionCancellationRequest request,
+            CancellationToken cancellationToken = default);
+
+        Task<AiSdkExecutionControlResponse> PauseExecutionAsync(
+            string executionId,
+            AiSdkExecutionControlRequest? request = null,
+            CancellationToken cancellationToken = default);
+
+        Task<AiSdkExecutionControlResponse> ResumeExecutionAsync(
+            string executionId,
+            AiSdkExecutionControlRequest? request = null,
+            CancellationToken cancellationToken = default);
+
+        Task<AiSdkExecutionControlResponse> SubmitExecutionInputAsync(
+            string executionId,
+            AiSdkExecutionInputSubmissionRequest request,
+            CancellationToken cancellationToken = default);
+
+        Task<AiSdkExecutionReplayResponse> ReplayExecutionAsync(
+            string executionId,
+            AiSdkExecutionReplayRequest? request = null,
             CancellationToken cancellationToken = default);
     }
 }

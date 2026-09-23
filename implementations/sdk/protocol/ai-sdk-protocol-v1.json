@@ -28,7 +28,7 @@
   "retry": {
     "automaticTransportRetry": "safe-read operations only",
     "businessEffectRetry": "forbidden",
-    "rule": "publish, submit and cancel are never automatically retried by the SDK transport"
+    "rule": "publish, submit, cancel, pause, resume, input submission and replay are never automatically retried by the SDK transport"
   },
   "errorModel": {
     "scope": "client-normalized",
@@ -72,6 +72,14 @@
       "transportRetry": "safe-read"
     },
     {
+      "name": "sdk.execution.watch",
+      "requestSchema": "executionWatchRequest",
+      "requestSchemaVersion": 1,
+      "responseSchema": "executionWatchEvent",
+      "responseSchemaVersion": 1,
+      "transportRetry": "safe-read"
+    },
+    {
       "name": "sdk.execution.result",
       "arguments": "executionId",
       "responseSchema": "executionResult",
@@ -84,6 +92,42 @@
       "requestSchema": "executionCancellationRequest",
       "requestSchemaVersion": 1,
       "responseSchema": "executionCancellationResponse",
+      "responseSchemaVersion": 1,
+      "transportRetry": "never"
+    },
+    {
+      "name": "sdk.execution.pause",
+      "arguments": "executionId + executionControlRequest",
+      "requestSchema": "executionControlRequest",
+      "requestSchemaVersion": 1,
+      "responseSchema": "executionControlResponse",
+      "responseSchemaVersion": 1,
+      "transportRetry": "never"
+    },
+    {
+      "name": "sdk.execution.resume",
+      "arguments": "executionId + executionControlRequest",
+      "requestSchema": "executionControlRequest",
+      "requestSchemaVersion": 1,
+      "responseSchema": "executionControlResponse",
+      "responseSchemaVersion": 1,
+      "transportRetry": "never"
+    },
+    {
+      "name": "sdk.execution.input.submit",
+      "arguments": "executionId + executionInputSubmissionRequest",
+      "requestSchema": "executionInputSubmissionRequest",
+      "requestSchemaVersion": 1,
+      "responseSchema": "executionControlResponse",
+      "responseSchemaVersion": 1,
+      "transportRetry": "never"
+    },
+    {
+      "name": "sdk.execution.replay",
+      "arguments": "executionId + executionReplayRequest",
+      "requestSchema": "executionReplayRequest",
+      "requestSchemaVersion": 1,
+      "responseSchema": "executionReplayResponse",
       "responseSchemaVersion": 1,
       "transportRetry": "never"
     }

@@ -2,13 +2,18 @@
 
 External TypeScript client for the portable Multiplexed AI SDK boundary.
 
-The package exposes the same five public operations as the .NET SDK:
+The package exposes the same ten public operations as the .NET SDK:
 
 - `publishPipeline`
 - `submitExecution`
 - `observeExecution`
+- `watchExecution`
 - `getExecutionResult`
 - `cancelExecution`
+- `pauseExecution`
+- `resumeExecution`
+- `submitExecutionInput`
+- `replayExecution`
 
 The client serializes only portable SDK contracts. It has no dependency on runtime, control-plane, persistence, worker, lease, epoch, queue or journal implementation types.
 
@@ -48,11 +53,11 @@ console.log(observation.status);
 
 ## Retry behavior
 
-Automatic transport retry is limited to the read-only observation and result operations. Publication, submission and cancellation are never automatically retried by this SDK. Server-side idempotency and runtime execution authorities remain authoritative.
+Automatic transport retry is limited to safe read operations: observation, Watch and result retrieval. Publication, submission, cancellation, pause, resume, input submission and replay are never automatically retried by this SDK. Server-side idempotency and runtime execution authorities remain authoritative.
 
 ## Cancellation
 
-An `AbortSignal` cancels only the in-flight SDK request. It does not cancel the durable execution. Durable execution cancellation is explicit through `cancelExecution`.
+An `AbortSignal` cancels only the in-flight SDK request. It does not cancel the durable execution. Durable execution cancellation is explicit through `cancelExecution`. Pause/resume and input submission delegate to the existing durable execution-control authority. `replayExecution` performs deterministic replay validation for an existing execution and does not create a new execution.
 
 ## Authentication
 

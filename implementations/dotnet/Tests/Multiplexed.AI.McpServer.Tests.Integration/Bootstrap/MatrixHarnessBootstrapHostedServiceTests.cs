@@ -118,9 +118,13 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Bootstrap
             Assert.Equal("matrix-user", context.UserId);
             var namespaceEntry = Assert.Single(context.Namespaces);
             Assert.Equal("default", namespaceEntry.Name);
-            Assert.Equal(7, namespaceEntry.Trns.Count);
+            Assert.Equal(11, namespaceEntry.Trns.Count);
             Assert.Contains("trn:matrix:default:code:publication:execute", namespaceEntry.Trns);
             Assert.Contains("trn:matrix:default:shared-run:execution:submit", namespaceEntry.Trns);
+            Assert.Contains("trn:matrix:default:execution:control:pause", namespaceEntry.Trns);
+            Assert.Contains("trn:matrix:default:execution:control:resume", namespaceEntry.Trns);
+            Assert.Contains("trn:matrix:default:execution:control:input", namespaceEntry.Trns);
+            Assert.Contains("trn:matrix:default:replay:execution:run", namespaceEntry.Trns);
 
             var accessor = new McpRuntimeExecutionContextAccessor();
             accessor.Set(context);

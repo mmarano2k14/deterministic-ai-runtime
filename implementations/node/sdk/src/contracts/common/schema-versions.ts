@@ -8,4 +8,12 @@ export const AI_SDK_SCHEMA_VERSIONS = {
   executionResult: 1,
   executionCancellationRequest: 1,
   executionCancellationResponse: 1,
+  executionControlRequest: 1,
+  executionControlResponse: 1,
+  executionInputSubmissionRequest: 1,
+  executionReplayRequest: 1,
+  executionReplayResponse: 1,
+  executionWatchRequest: 1,
+  executionWatchEvent: 1,
+  executionWatchResyncRequired: 1,
 } as const;

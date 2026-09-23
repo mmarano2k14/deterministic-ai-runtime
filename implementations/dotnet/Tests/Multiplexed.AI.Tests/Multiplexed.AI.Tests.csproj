@@ -24,6 +24,7 @@
 		<ProjectReference Include="..\..\src\Multiplexed.Abstractions\Multiplexed.Abstractions.csproj" />
 		<ProjectReference Include="..\..\src\Multiplexed.AI\Multiplexed.AI.csproj" />
 		<ProjectReference Include="..\..\src\Multiplexed.AI.McpServer\Multiplexed.AI.McpServer.csproj" />
+		<ProjectReference Include="..\..\src\Multiplexed.AI.McpServer.Host\Multiplexed.AI.McpServer.Host.csproj" ReferenceOutputAssembly="false" Private="false" />
 		<ProjectReference Include="..\..\src\Multiplexed.Rbac.Core\Multiplexed.Rbac.Core.csproj" />
 		<ProjectReference Include="..\..\src\Multiplexed.Realtime\Multiplexed.Realtime.csproj" />
 	</ItemGroup>

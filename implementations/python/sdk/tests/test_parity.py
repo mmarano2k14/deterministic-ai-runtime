@@ -19,10 +19,23 @@ from multiplexed_ai_sdk import (  # noqa: E402
     AiSdkErrorKind,
     AiSdkException,
     AiSdkExecutionCancellationRequest,
+    AiSdkExecutionControlAction,
+    AiSdkExecutionControlOperation,
+    AiSdkExecutionControlRequest,
+    AiSdkExecutionControlResponse,
+    AiSdkExecutionControlStatus,
+    AiSdkExecutionInputSubmissionRequest,
     AiSdkExecutionMode,
+    AiSdkExecutionReplayRequest,
+    AiSdkExecutionReplayResponse,
     AiSdkExecutionStatus,
     AiSdkExecutionStepStatus,
     AiSdkExecutionSubmissionRequest,
+    AiSdkExecutionWatchChannel,
+    AiSdkExecutionWatchEvent,
+    AiSdkExecutionWatchEventKind,
+    AiSdkExecutionWatchRequest,
+    AiSdkExecutionWatchResyncReason,
     AiSdkInvocationKind,
     AiSdkPipelineDefinition,
     AiSdkPipelinePublicationRequest,
@@ -62,6 +75,14 @@ class AiSdkCrossLanguageParityTests(unittest.IsolatedAsyncioTestCase):
             "executionResult": AiSdkSchemaVersions.EXECUTION_RESULT,
             "executionCancellationRequest": AiSdkSchemaVersions.EXECUTION_CANCELLATION_REQUEST,
             "executionCancellationResponse": AiSdkSchemaVersions.EXECUTION_CANCELLATION_RESPONSE,
+            "executionWatchRequest": AiSdkSchemaVersions.EXECUTION_WATCH_REQUEST,
+            "executionWatchEvent": AiSdkSchemaVersions.EXECUTION_WATCH_EVENT,
+            "executionWatchResyncRequired": AiSdkSchemaVersions.EXECUTION_WATCH_RESYNC_REQUIRED,
+            "executionControlRequest": AiSdkSchemaVersions.EXECUTION_CONTROL_REQUEST,
+            "executionControlResponse": AiSdkSchemaVersions.EXECUTION_CONTROL_RESPONSE,
+            "executionInputSubmissionRequest": AiSdkSchemaVersions.EXECUTION_INPUT_SUBMISSION_REQUEST,
+            "executionReplayRequest": AiSdkSchemaVersions.EXECUTION_REPLAY_REQUEST,
+            "executionReplayResponse": AiSdkSchemaVersions.EXECUTION_REPLAY_RESPONSE,
         })
         self.assertEqual(FIXTURE["enumValues"]["executionMode"], [item.value for item in AiSdkExecutionMode])
         self.assertEqual(FIXTURE["enumValues"]["invocationKind"], [item.value for item in AiSdkInvocationKind])
@@ -78,29 +99,69 @@ class AiSdkCrossLanguageParityTests(unittest.IsolatedAsyncioTestCase):
             FIXTURE["enumValues"]["executionStepStatus"],
             [item.value for item in AiSdkExecutionStepStatus],
         )
+        self.assertEqual(
+            FIXTURE["enumValues"]["executionWatchChannel"],
+            [item.value for item in AiSdkExecutionWatchChannel],
+        )
+        self.assertEqual(
+            FIXTURE["enumValues"]["executionWatchEventKind"],
+            [item.value for item in AiSdkExecutionWatchEventKind],
+        )
+        self.assertEqual(
+            FIXTURE["enumValues"]["executionWatchResyncReason"],
+            [item.value for item in AiSdkExecutionWatchResyncReason],
+        )
+        self.assertEqual(
+            FIXTURE["enumValues"]["executionControlOperation"],
+            [item.value for item in AiSdkExecutionControlOperation],
+        )
+        self.assertEqual(
+            FIXTURE["enumValues"]["executionControlStatus"],
+            [item.value for item in AiSdkExecutionControlStatus],
+        )
+        self.assertEqual(
+            FIXTURE["enumValues"]["executionControlAction"],
+            [item.value for item in AiSdkExecutionControlAction],
+        )
         self.assertEqual(FIXTURE["errorKinds"], list(get_args(AiSdkErrorKind)))
 
-    async def test_all_five_request_wire_shapes_match_shared_fixture(self) -> None:
+    async def test_all_public_non_streaming_request_wire_shapes_match_shared_fixture(self) -> None:
         transport = FixtureTransport(FIXTURE["responses"])
         client = AiSdkClient(transport)
 
         publication = AiSdkPipelinePublicationRequest.from_wire(FIXTURE["requests"]["publish"]["arguments"]["request"])
         submission = AiSdkExecutionSubmissionRequest.from_wire(FIXTURE["requests"]["submit"]["arguments"]["request"])
         cancellation = AiSdkExecutionCancellationRequest.from_wire(FIXTURE["requests"]["cancel"]["arguments"]["request"])
+        pause = AiSdkExecutionControlRequest.from_wire(FIXTURE["requests"]["pause"]["arguments"]["request"])
+        resume = AiSdkExecutionControlRequest.from_wire(FIXTURE["requests"]["resume"]["arguments"]["request"])
+        submit_input = AiSdkExecutionInputSubmissionRequest.from_wire(FIXTURE["requests"]["submitInput"]["arguments"]["request"])
+        replay = AiSdkExecutionReplayRequest.from_wire(FIXTURE["requests"]["replay"]["arguments"]["request"])
 
         publish_response = await client.publish_pipeline(publication)
         submit_response = await client.submit_execution(submission)
         observe_response = await client.observe_execution("exec-parity")
         result_response = await client.get_execution_result("exec-parity")
         cancel_response = await client.cancel_execution("exec-parity", cancellation)
+        pause_response = await client.pause_execution("exec-parity", pause)
+        resume_response = await client.resume_execution("exec-parity", resume)
+        input_response = await client.submit_execution_input("exec-parity", submit_input)
+        replay_response = await client.replay_execution("exec-parity", replay)
 
         self.assertEqual("pub-parity", publish_response.publication_ref)
         self.assertEqual(AiSdkExecutionStatus.PENDING, submit_response.status)
         self.assertEqual(AiSdkExecutionStatus.RUNNING, observe_response.status)
         self.assertEqual(AiSdkExecutionStatus.COMPLETED, result_response.status)
         self.assertTrue(cancel_response.cancellation_requested)
+        self.assertEqual(AiSdkExecutionControlOperation.PAUSE, pause_response.operation)
+        self.assertEqual(AiSdkExecutionControlOperation.RESUME, resume_response.operation)
+        self.assertEqual(AiSdkExecutionControlOperation.SUBMIT_INPUT, input_response.operation)
+        self.assertTrue(replay_response.succeeded)
 
-        for request, name in zip(transport.requests, ("publish", "submit", "observe", "result", "cancel"), strict=True):
+        for request, name in zip(
+            transport.requests,
+            ("publish", "submit", "observe", "result", "cancel", "pause", "resume", "submitInput", "replay"),
+            strict=True,
+        ):
             self.assertEqual(FIXTURE["requests"][name]["operation"], request.operation)
             self.assertEqual(FIXTURE["requests"][name]["arguments"], request.arguments)
 
@@ -109,6 +170,9 @@ class AiSdkCrossLanguageParityTests(unittest.IsolatedAsyncioTestCase):
             "publish": FIXTURE["responses"]["publish"],
             "submit": FIXTURE["responses"]["submit"],
             "cancel": FIXTURE["responses"]["cancel"],
+            "pause": FIXTURE["responses"]["pause"],
+            "resume": FIXTURE["responses"]["resume"],
+            "replay": FIXTURE["responses"]["replay"],
         })
         client = AiSdkClient(transport)
 
@@ -119,10 +183,13 @@ class AiSdkCrossLanguageParityTests(unittest.IsolatedAsyncioTestCase):
             AiSdkExecutionSubmissionRequest(publication_ref="pub-minimal", input=None)
         )
         await client.cancel_execution("exec-minimal", AiSdkExecutionCancellationRequest())
+        await client.pause_execution("exec-minimal")
+        await client.resume_execution("exec-minimal")
+        await client.replay_execution("exec-minimal")
 
-        self.assertEqual(FIXTURE["minimalRequests"]["publish"]["arguments"], transport.requests[0].arguments)
-        self.assertEqual(FIXTURE["minimalRequests"]["submit"]["arguments"], transport.requests[1].arguments)
-        self.assertEqual(FIXTURE["minimalRequests"]["cancel"]["arguments"], transport.requests[2].arguments)
+        names = ("publish", "submit", "cancel", "pause", "resume", "replay")
+        for request, name in zip(transport.requests, names, strict=True):
+            self.assertEqual(FIXTURE["minimalRequests"][name]["arguments"], request.arguments)
 
     def test_response_models_roundtrip_shared_fixture(self) -> None:
         from multiplexed_ai_sdk import (
@@ -140,10 +207,27 @@ class AiSdkCrossLanguageParityTests(unittest.IsolatedAsyncioTestCase):
             (AiSdkExecutionResult, "result"),
             (AiSdkExecutionResult, "failedResult"),
             (AiSdkExecutionCancellationResponse, "cancel"),
+            (AiSdkExecutionControlResponse, "pause"),
+            (AiSdkExecutionControlResponse, "resume"),
+            (AiSdkExecutionControlResponse, "submitInput"),
+            (AiSdkExecutionReplayResponse, "replay"),
         )
         for model_type, name in cases:
             with self.subTest(name=name):
                 value = FIXTURE["responses"][name]
+                self.assertEqual(value, model_type.from_wire(value).to_wire())
+
+    def test_watch_contracts_roundtrip_shared_fixture(self) -> None:
+        watch = FIXTURE["watchContracts"]
+        cases = (
+            (AiSdkExecutionWatchRequest, "request"),
+            (AiSdkExecutionWatchEvent, "snapshot"),
+            (AiSdkExecutionWatchEvent, "event"),
+            (AiSdkExecutionWatchEvent, "resyncRequired"),
+        )
+        for model_type, name in cases:
+            with self.subTest(name=name):
+                value = watch[name]
                 self.assertEqual(value, model_type.from_wire(value).to_wire())
 
     async def test_normalized_authorization_error_preserves_shared_failure_semantics(self) -> None:

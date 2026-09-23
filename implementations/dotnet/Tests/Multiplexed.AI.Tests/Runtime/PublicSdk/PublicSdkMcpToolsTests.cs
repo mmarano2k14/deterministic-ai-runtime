@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Server;
 using Multiplexed.AI.McpServer.PublicSdk;
@@ -7,6 +8,8 @@ using Multiplexed.AI.Sdk.Contracts.Control;
 using Multiplexed.AI.Sdk.Contracts.Executions;
 using Multiplexed.AI.Sdk.Contracts.Observation;
 using Multiplexed.AI.Sdk.Contracts.Publication;
+using Multiplexed.AI.Sdk.Contracts.Replay;
+using Multiplexed.AI.Sdk.Contracts.Watch;
 
 namespace Multiplexed.AI.Tests.Runtime.PublicSdk
 {
@@ -21,13 +24,27 @@ namespace Multiplexed.AI.Tests.Runtime.PublicSdk
             await tools.PublishPipelineAsync(new AiSdkPipelinePublicationRequest());
             await tools.SubmitExecutionAsync(new AiSdkExecutionSubmissionRequest { PublicationRef = "publication:abc" });
             await tools.ObserveExecutionAsync("execution-a");
+            await tools.WatchExecutionAsync(new AiSdkExecutionWatchRequest
+            {
+                ExecutionId = "execution-a",
+                IncludeInitialSnapshot = false,
+                AfterSequence = 0
+            });
             await tools.GetExecutionResultAsync("execution-a");
             await tools.CancelExecutionAsync("execution-a", new AiSdkExecutionCancellationRequest());
-            Assert.Equal(5, boundary.Calls);
+            await tools.PauseExecutionAsync("execution-a", new AiSdkExecutionControlRequest());
+            await tools.ResumeExecutionAsync("execution-a", new AiSdkExecutionControlRequest());
+            await tools.SubmitExecutionInputAsync("execution-a", new AiSdkExecutionInputSubmissionRequest
+            {
+                WaitingKey = "approval:test",
+                Input = JsonSerializer.SerializeToElement(new { approved = true })
+            });
+            await tools.ReplayExecutionAsync("execution-a", new AiSdkExecutionReplayRequest());
+            Assert.Equal(10, boundary.Calls);
 
             var methods = typeof(PublicSdkMcpTools).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
                 .Where(method => method.GetCustomAttribute<McpServerToolAttribute>() is not null).ToArray();
-            Assert.Equal(5, methods.Length);
+            Assert.Equal(10, methods.Length);
             foreach (var method in methods)
             {
                 var attribute = method.GetCustomAttribute<McpServerToolAttribute>();
@@ -44,8 +61,13 @@ namespace Multiplexed.AI.Tests.Runtime.PublicSdk
             public Task<AiSdkPipelinePublicationResponse> PublishAsync(AiSdkPipelinePublicationRequest request, CancellationToken cancellationToken = default) { Calls++; return Task.FromResult(new AiSdkPipelinePublicationResponse()); }
             public Task<AiSdkExecutionSubmissionResponse> SubmitAsync(AiSdkExecutionSubmissionRequest request, CancellationToken cancellationToken = default) { Calls++; return Task.FromResult(new AiSdkExecutionSubmissionResponse()); }
             public Task<AiSdkExecutionObservation> ObserveAsync(string executionId, CancellationToken cancellationToken = default) { Calls++; return Task.FromResult(new AiSdkExecutionObservation()); }
+            public Task<AiSdkExecutionWatchEvent> WatchAsync(AiSdkExecutionWatchRequest request, CancellationToken cancellationToken = default) { Calls++; return Task.FromResult(new AiSdkExecutionWatchEvent()); }
             public Task<AiSdkExecutionResult> GetResultAsync(string executionId, CancellationToken cancellationToken = default) { Calls++; return Task.FromResult(new AiSdkExecutionResult()); }
             public Task<AiSdkExecutionCancellationResponse> CancelAsync(string executionId, AiSdkExecutionCancellationRequest request, CancellationToken cancellationToken = default) { Calls++; return Task.FromResult(new AiSdkExecutionCancellationResponse()); }
+            public Task<AiSdkExecutionControlResponse> PauseAsync(string executionId, AiSdkExecutionControlRequest request, CancellationToken cancellationToken = default) { Calls++; return Task.FromResult(new AiSdkExecutionControlResponse()); }
+            public Task<AiSdkExecutionControlResponse> ResumeAsync(string executionId, AiSdkExecutionControlRequest request, CancellationToken cancellationToken = default) { Calls++; return Task.FromResult(new AiSdkExecutionControlResponse()); }
+            public Task<AiSdkExecutionControlResponse> SubmitInputAsync(string executionId, AiSdkExecutionInputSubmissionRequest request, CancellationToken cancellationToken = default) { Calls++; return Task.FromResult(new AiSdkExecutionControlResponse()); }
+            public Task<AiSdkExecutionReplayResponse> ReplayAsync(string executionId, AiSdkExecutionReplayRequest request, CancellationToken cancellationToken = default) { Calls++; return Task.FromResult(new AiSdkExecutionReplayResponse()); }
         }
     }
 }

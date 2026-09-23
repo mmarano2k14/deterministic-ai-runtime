@@ -19,6 +19,7 @@ namespace Multiplexed.AI.McpServer.DependencyInjection
             this IServiceCollection services)
         {
             services.AddAiMcpServerConfiguration();
+            services.AddOptions<AiPublicSdkExecutionWatchOptions>();
 
             services.AddScoped<IAiPublicSdkBoundary, AiPublicSdkBoundary>();
             services.AddSingleton<PublicSdkMcpTools>();

@@ -10,8 +10,13 @@ namespace Multiplexed.AI.Sdk.Protocol
             new(AiSdkOperationNames.PublishPipeline, AiSdkTransportRetryMode.Never),
             new(AiSdkOperationNames.SubmitExecution, AiSdkTransportRetryMode.Never),
             new(AiSdkOperationNames.ObserveExecution, AiSdkTransportRetryMode.SafeRead),
+            new(AiSdkOperationNames.WatchExecution, AiSdkTransportRetryMode.SafeRead),
             new(AiSdkOperationNames.GetExecutionResult, AiSdkTransportRetryMode.SafeRead),
-            new(AiSdkOperationNames.CancelExecution, AiSdkTransportRetryMode.Never)
+            new(AiSdkOperationNames.CancelExecution, AiSdkTransportRetryMode.Never),
+            new(AiSdkOperationNames.PauseExecution, AiSdkTransportRetryMode.Never),
+            new(AiSdkOperationNames.ResumeExecution, AiSdkTransportRetryMode.Never),
+            new(AiSdkOperationNames.SubmitExecutionInput, AiSdkTransportRetryMode.Never),
+            new(AiSdkOperationNames.ReplayExecution, AiSdkTransportRetryMode.Never)
         ];
 
         public const int Version = AiSdkProtocolVersions.Current;

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Multiplexed.Abstractions.AI.ControlPlane.SharedController.Scaling;
 using Multiplexed.AI.Runtime.ControlPlane.SharedController.Scaling;
 using Multiplexed.Abstractions.AI.Invocation.Mcp;
+using Multiplexed.Abstractions.AI.Execution.Control;
 using Multiplexed.Abstractions.AI.Invocation.Mcp.Durable;
 using Multiplexed.Abstractions.AI.Publication;
 using Multiplexed.AI.McpServer.Host.Configuration;
@@ -43,6 +44,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
             ConfigureMatrixPublicationEnvironmentDiagnosticsEndpoint(app);
             ConfigureMatrixScaleOutDiagnosticsEndpoint(app);
             ConfigureMatrixRecoveryAndJournalEndpoints(app);
+            ConfigureMatrixExecutionControlEndpoints(app);
 
             switch (hostOptions.Mode)
             {
@@ -331,6 +333,59 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     return Results.Ok(result);
                 });
         }
+
+        /// <summary>
+        /// Exposes matrix-only setup for an execution that is expected to accept human/external input.
+        /// The endpoint delegates to the production execution-control service and exists only so the E2E
+        /// harness can create the precondition for the public SDK input-submission command.
+        /// </summary>
+        private static void ConfigureMatrixExecutionControlEndpoints(WebApplication app)
+        {
+            var matrix = app.Configuration.GetSection("AiMatrixHarness").Get<AiMatrixHarnessOptions>()
+                ?? new AiMatrixHarnessOptions();
+            if (!matrix.Enabled)
+            {
+                return;
+            }
+
+            app.MapPost(
+                "/matrix/execution-control/{executionId}/wait-for-input",
+                async (
+                    string executionId,
+                    MatrixExecutionControlWaitRequest request,
+                    IAiExecutionControlService controlService,
+                    CancellationToken cancellationToken) =>
+                {
+                    ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+                    ArgumentNullException.ThrowIfNull(request);
+                    ArgumentException.ThrowIfNullOrWhiteSpace(request.WaitingKey);
+
+                    var state = await controlService
+                        .MarkWaitingForInputAsync(
+                            executionId,
+                            request.WaitingKey,
+                            request.WaitingStepName,
+                            request.Reason,
+                            matrix.UserId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    return Results.Ok(new
+                    {
+                        executionId = state.ExecutionId,
+                        status = state.Status.ToString(),
+                        pendingAction = state.PendingAction.ToString(),
+                        waitingKey = state.WaitingKey,
+                        waitingStepName = state.WaitingStepName,
+                        updatedAtUtc = state.UpdatedAtUtc
+                    });
+                });
+        }
+
+        private sealed record MatrixExecutionControlWaitRequest(
+            string WaitingKey,
+            string? WaitingStepName,
+            string? Reason);
 
         /// <summary>
         /// Configures either a single runtime endpoint or the stable Runtime Pool endpoint.

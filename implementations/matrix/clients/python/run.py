@@ -9,6 +9,8 @@ import os
 import sys
 import tomllib
 import uuid
+import urllib.request
+import urllib.parse
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -20,11 +22,16 @@ from multiplexed_ai_sdk import (  # noqa: E402
     AiSdkClient,
     AiSdkCredential,
     AiSdkExecutionCancellationRequest,
+    AiSdkExecutionControlRequest,
+    AiSdkExecutionInputSubmissionRequest,
+    AiSdkExecutionReplayRequest,
     AiSdkExecutionMode,
     AiSdkException,
     AiSdkExecutionStatus,
     AiSdkExecutionStepStatus,
     AiSdkExecutionSubmissionRequest,
+    AiSdkExecutionWatchEventKind,
+    AiSdkExecutionWatchRequest,
     AiSdkInvocationDefinition,
     AiSdkInvocationKind,
     AiSdkMcpHttpTransport,
@@ -93,7 +100,10 @@ async def main() -> int:
             ),
         )
     )
-    source = _cancellation_worker_source(args.worker) if args.feature == "cancellation" else _worker_source(args.worker)
+    if args.feature == "control":
+        await _run_control(client, args)
+        return 0
+    source = _cancellation_worker_source(args.worker) if args.feature in {"cancellation", "watch"} else _worker_source(args.worker)
     marker = f"{args.scenario_id}-marker"
 
     _diagnostic(args, "PUBLISH start")
@@ -222,6 +232,88 @@ async def main() -> int:
                 "recordedAtUtc": observation.updated_at_utc or None,
             },
         )
+    elif args.feature == "watch":
+        public_sequences: list[int] = []
+        public_event_types: list[str] = []
+        saw_snapshot = False
+        saw_event = False
+        saw_resync = False
+
+        async with asyncio.timeout(45.0):
+            async for item in client.watch_execution(
+                AiSdkExecutionWatchRequest(
+                    execution_id=submitted.execution_id,
+                    include_initial_snapshot=True,
+                )
+            ):
+                if item.execution_id != submitted.execution_id:
+                    raise RuntimeError("Watch returned an event for a different execution.")
+                if item.sequence is not None:
+                    public_sequences.append(item.sequence)
+                if item.kind is AiSdkExecutionWatchEventKind.SNAPSHOT:
+                    saw_snapshot = True
+                elif item.kind is AiSdkExecutionWatchEventKind.EVENT:
+                    saw_event = True
+                    if item.event_type:
+                        public_event_types.append(item.event_type)
+                elif item.kind is AiSdkExecutionWatchEventKind.RESYNC_REQUIRED:
+                    saw_resync = True
+
+        if not saw_snapshot:
+            raise RuntimeError("Watch E2E did not receive the authoritative initial snapshot.")
+        if not saw_event:
+            raise RuntimeError("Watch E2E did not receive any incremental public event after the snapshot.")
+        if saw_resync:
+            raise RuntimeError("Nominal Watch E2E unexpectedly required resynchronization.")
+        if len(public_sequences) < 2 or any(
+            right <= left for left, right in zip(public_sequences, public_sequences[1:])
+        ):
+            raise RuntimeError("Watch E2E did not observe a strictly increasing public sequence.")
+
+        result = await client.get_execution_result(submitted.execution_id)
+        if result.status is not AiSdkExecutionStatus.COMPLETED:
+            raise RuntimeError(
+                f"Watch E2E execution '{submitted.execution_id}' ended as '{result.status.value}', expected 'Completed'."
+            )
+
+        _write_evidence(
+            Path(args.evidence),
+            {
+                "schemaVersion": 1,
+                "scenarioId": args.scenario_id,
+                "status": "passed",
+                "coverageTarget": "execution-watch-e2e",
+                "coverageValues": [],
+                "clientLanguage": "python",
+                "workerLanguage": args.worker,
+                "environmentRef": args.environment_ref,
+                "endpoint": args.endpoint,
+                "topology": args.topology,
+                "provider": args.provider,
+                "runtimeProvider": args.runtime_provider,
+                "workerExecutionProvider": args.worker_execution_provider,
+                "publicationRef": publication.publication_ref,
+                "executionId": submitted.execution_id,
+                "initialSnapshotObserved": saw_snapshot,
+                "incrementalEventObserved": saw_event,
+                "resyncObserved": saw_resync,
+                "publicSequences": public_sequences,
+                "publicEventTypes": public_event_types,
+                "terminalStatus": result.status.value,
+                "evidence": [
+                    "publish",
+                    "submit",
+                    "sdk-execution-watch",
+                    "mcp-http-public-boundary",
+                    "initial-snapshot",
+                    "ordered-incremental-event",
+                    "terminal-watch-convergence",
+                    "terminal-result",
+                    "public-execution-id",
+                ],
+                "recordedAtUtc": None,
+            },
+        )
     else:
         if args.feature:
             raise ValueError(f"Unsupported --feature '{args.feature}'.")
@@ -274,6 +366,439 @@ async def main() -> int:
         )
     return 0
 
+
+
+async def _run_control(client: AiSdkClient, args: argparse.Namespace) -> None:
+    _diagnostic(args, "CONTROL start")
+
+    pause_publication = await _publish_control_pipeline(client, args, "pause")
+    pause_execution = await _submit_control_execution(client, args, pause_publication.publication_ref, "pause")
+    pause_watch_task, pause_first_step_active = _start_control_watch(client, pause_execution.execution_id, 75.0)
+    await _wait_for_watch_active_step(pause_first_step_active, pause_execution.execution_id, "first", 30.0)
+
+    pause = await client.pause_execution(
+        pause_execution.execution_id,
+        AiSdkExecutionControlRequest(reason="matrix-control-e2e-pause"),
+    )
+    if not pause.accepted or pause.execution_id != pause_execution.execution_id:
+        raise RuntimeError("Public pause operation was not accepted for the submitted execution.")
+    pause_gate_verified = await _wait_for_pause_gate(client, pause_execution.execution_id, 20.0)
+    if not pause_gate_verified:
+        raise RuntimeError("Pause did not gate the dependent second step.")
+
+    resume = await client.resume_execution(
+        pause_execution.execution_id,
+        AiSdkExecutionControlRequest(reason="matrix-control-e2e-resume"),
+    )
+    if not resume.accepted or resume.execution_id != pause_execution.execution_id:
+        raise RuntimeError("Public resume operation was not accepted for the paused execution.")
+    pause_result = await _wait_for_completed_result(client, pause_execution.execution_id, 45.0)
+    pause_watch = await pause_watch_task
+    if pause_watch["resyncObserved"]:
+        raise RuntimeError("Pause/resume unexpectedly forced Watch resynchronization.")
+
+    input_publication = await _publish_control_pipeline(client, args, "input")
+    input_execution = await _submit_control_execution(client, args, input_publication.publication_ref, "input")
+    input_watch_task, input_first_step_active = _start_control_watch(client, input_execution.execution_id, 75.0)
+    await _wait_for_watch_active_step(input_first_step_active, input_execution.execution_id, "first", 30.0)
+    waiting_key = f"approval:{args.scenario_id}:{uuid.uuid4().hex}"
+    await _seed_waiting_for_input(args.endpoint, input_execution.execution_id, waiting_key, "second")
+    input_gate_verified = await _wait_for_pause_gate(client, input_execution.execution_id, 20.0)
+    if not input_gate_verified:
+        raise RuntimeError("Waiting-for-input did not gate the dependent second step.")
+
+    input_response = await client.submit_execution_input(
+        input_execution.execution_id,
+        AiSdkExecutionInputSubmissionRequest(
+            waiting_key=waiting_key,
+            waiting_step_name="second",
+            reason="matrix-control-e2e-approval",
+            input={"approved": True, "source": "matrix"},
+        ),
+    )
+    if (
+        not input_response.accepted
+        or input_response.execution_id != input_execution.execution_id
+        or input_response.state is None
+        or input_response.state.input_received_at_utc is None
+    ):
+        raise RuntimeError("Public human-input submission was not durably acknowledged.")
+    input_result = await _wait_for_completed_result(client, input_execution.execution_id, 45.0)
+    input_watch = await input_watch_task
+    if input_watch["resyncObserved"]:
+        raise RuntimeError("Human-input flow unexpectedly forced Watch resynchronization.")
+
+    replay_publication = await _publish_replay_pipeline(client, args)
+    replay_execution = await _submit_control_execution(client, args, replay_publication.publication_ref, "replay")
+    await _wait_for_completed_result(client, replay_execution.execution_id, 45.0)
+    replay = await client.replay_execution(
+        replay_execution.execution_id,
+        AiSdkExecutionReplayRequest(include_diagnostics=True, reason="matrix-control-e2e-replay"),
+    )
+    if not replay.succeeded or replay.deterministic is False:
+        raise RuntimeError(
+            f"Public replay validation failed. Message='{replay.message}', FailureReason='{replay.failure_reason}'."
+        )
+
+    _write_evidence(
+        Path(args.evidence),
+        {
+            "schemaVersion": 1,
+            "scenarioId": args.scenario_id,
+            "status": "passed",
+            "coverageTarget": "execution-control-replay-e2e",
+            "clientLanguage": "python",
+            "workerLanguage": args.worker,
+            "endpoint": args.endpoint,
+            "topology": args.topology,
+            "provider": args.provider,
+            "runtimeProvider": args.runtime_provider,
+            "workerExecutionProvider": args.worker_execution_provider,
+            "pauseExecutionId": pause_execution.execution_id,
+            "pauseAccepted": pause.accepted,
+            "pauseGateVerified": pause_gate_verified,
+            "resumeAccepted": resume.accepted,
+            "pauseResumeTerminalStatus": pause_result.status.value,
+            "inputExecutionId": input_execution.execution_id,
+            "inputWaitSeeded": True,
+            "inputAccepted": input_response.accepted,
+            "inputGateVerified": input_gate_verified,
+            "inputTerminalStatus": input_result.status.value,
+            "replayExecutionId": replay_execution.execution_id,
+            "replaySucceeded": replay.succeeded,
+            "replayDeterministic": replay.deterministic,
+            "watchResyncObserved": pause_watch["resyncObserved"] or input_watch["resyncObserved"],
+            "watchSnapshotsObserved": pause_watch["snapshotObserved"] and input_watch["snapshotObserved"],
+            "watchIncrementalEventsObserved": pause_watch["eventObserved"] and input_watch["eventObserved"],
+            "evidence": [
+                "publish", "submit", "sdk-execution-watch", "sdk-execution-pause",
+                "pause-gated-next-step", "sdk-execution-resume", "resume-terminal-convergence",
+                "matrix-wait-input-production-authority", "sdk-execution-input-submit",
+                "input-terminal-convergence", "sdk-execution-replay", "replay-validation-succeeded",
+                "mcp-http-public-boundary",
+            ],
+            "recordedAtUtc": None,
+        },
+    )
+
+
+async def _publish_control_pipeline(client: AiSdkClient, args: argparse.Namespace, suffix: str):
+    slow, fast = _control_worker_sources(args.worker)
+    return await client.publish_pipeline(
+        AiSdkPipelinePublicationRequest(
+            definition=AiSdkPipelineDefinition(
+                name=f"matrix-{args.scenario_id}-{suffix}",
+                version="1",
+                execution_language=args.worker,
+                execution_mode=AiSdkExecutionMode.DAG,
+                steps=(
+                    AiSdkPipelineStepDefinition(
+                        name="first", step_key="custom", order=0,
+                        execution_language=args.worker,
+                        invocation=AiSdkInvocationDefinition(kind=AiSdkInvocationKind.CUSTOM),
+                        input={"marker": f"{args.scenario_id}-first"},
+                    ),
+                    AiSdkPipelineStepDefinition(
+                        name="second", step_key="custom", order=1,
+                        execution_language=args.worker, depends_on=("first",),
+                        invocation=AiSdkInvocationDefinition(kind=AiSdkInvocationKind.CUSTOM),
+                        input={"marker": f"{args.scenario_id}-second"},
+                    ),
+                ),
+            ),
+            functions=(
+                _upload_for_step(slow, args.environment_ref, "first"),
+                _upload_for_step(fast, args.environment_ref, "second"),
+            ),
+        )
+    )
+
+
+async def _publish_replay_pipeline(client: AiSdkClient, args: argparse.Namespace):
+    source = _worker_source(args.worker)
+    return await client.publish_pipeline(
+        AiSdkPipelinePublicationRequest(
+            definition=AiSdkPipelineDefinition(
+                name=f"matrix-{args.scenario_id}-replay",
+                version="1",
+                execution_language=args.worker,
+                execution_mode=AiSdkExecutionMode.DAG,
+                steps=(
+                    AiSdkPipelineStepDefinition(
+                        name="work", step_key="custom", order=0,
+                        execution_language=args.worker,
+                        invocation=AiSdkInvocationDefinition(kind=AiSdkInvocationKind.CUSTOM),
+                        input={"marker": f"{args.scenario_id}-replay"},
+                    ),
+                ),
+            ),
+            functions=(_upload_for_step(source, args.environment_ref, "work"),),
+        )
+    )
+
+
+def _upload_for_step(source: dict[str, object], environment_ref: str, step_name: str) -> AiSdkPublicationFunctionUpload:
+    return AiSdkPublicationFunctionUpload(
+        site=AiSdkPublicationCallSite(kind=AiSdkPublicationFunctionKind.STEP, step_name=step_name),
+        environment_ref=environment_ref,
+        entry_point_path=str(source["entry_point_path"]),
+        entry_point_symbol=str(source["entry_point_symbol"]),
+        sources=(
+            AiSdkPublicationFileUpload(
+                path=str(source["entry_point_path"]),
+                content_base64=base64.b64encode(source["bytes"]).decode("ascii"),
+            ),
+        ),
+    )
+
+
+async def _submit_control_execution(client: AiSdkClient, args: argparse.Namespace, publication_ref: str, suffix: str):
+    return await client.submit_execution(
+        AiSdkExecutionSubmissionRequest(
+            publication_ref=publication_ref,
+            idempotency_key=f"{args.scenario_id}-{suffix}-{uuid.uuid4().hex}",
+            input={"scenario": args.scenario_id, "phase": suffix},
+            metadata={
+                "matrix.scenario": args.scenario_id,
+                "matrix.client": "python",
+                "matrix.worker": args.worker,
+                "matrix.feature": "control",
+                "matrix.phase": suffix,
+            },
+        )
+    )
+
+
+async def _wait_for_pause_gate(client: AiSdkClient, execution_id: str, timeout_seconds: float) -> bool:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+    last_execution_status: AiSdkExecutionStatus | None = None
+    last_first_status: AiSdkExecutionStepStatus | None = None
+    last_second_status: AiSdkExecutionStepStatus | None = None
+
+    while loop.time() < deadline:
+        observation = await client.observe_execution(execution_id)
+        first = next((step for step in observation.steps if step.name == "first"), None)
+        second = next((step for step in observation.steps if step.name == "second"), None)
+
+        last_execution_status = observation.status
+        last_first_status = first.status if first is not None else None
+        last_second_status = second.status if second is not None else None
+
+        if second is not None and second.status in {
+            AiSdkExecutionStepStatus.RUNNING,
+            AiSdkExecutionStepStatus.COMPLETED,
+            AiSdkExecutionStepStatus.FAILED,
+        }:
+            print(
+                "[matrix-python-client] PAUSE GATE FAILED second advanced. "
+                f"ExecutionStatus='{observation.status.value}' "
+                f"FirstStatus='{first.status.value if first is not None else 'missing'}' "
+                f"SecondStatus='{second.status.value}'.",
+                flush=True,
+            )
+            return False
+
+        if observation.status in {
+            AiSdkExecutionStatus.COMPLETED,
+            AiSdkExecutionStatus.FAILED,
+            AiSdkExecutionStatus.CANCELLED,
+        }:
+            print(
+                "[matrix-python-client] PAUSE GATE FAILED execution became terminal. "
+                f"ExecutionStatus='{observation.status.value}' "
+                f"FirstStatus='{first.status.value if first is not None else 'missing'}' "
+                f"SecondStatus='{second.status.value if second is not None else 'missing'}'.",
+                flush=True,
+            )
+            return False
+
+        # Published custom functions use the durable invocation adapter. The DAG step starts,
+        # parks as WaitingForExternal, and the completed invocation continuation later makes
+        # the same step Ready again. While paused, that Ready continuation must NOT be claimed.
+        if first is not None and first.status is AiSdkExecutionStepStatus.READY:
+            await asyncio.sleep(0.75)
+            confirm = await client.observe_execution(execution_id)
+            confirm_first = next((step for step in confirm.steps if step.name == "first"), None)
+            confirm_second = next((step for step in confirm.steps if step.name == "second"), None)
+            gated = (
+                confirm.status not in {
+                    AiSdkExecutionStatus.COMPLETED,
+                    AiSdkExecutionStatus.FAILED,
+                    AiSdkExecutionStatus.CANCELLED,
+                }
+                and confirm_first is not None
+                and confirm_first.status is AiSdkExecutionStepStatus.READY
+                and (
+                    confirm_second is None
+                    or confirm_second.status not in {
+                        AiSdkExecutionStepStatus.RUNNING,
+                        AiSdkExecutionStepStatus.COMPLETED,
+                        AiSdkExecutionStepStatus.FAILED,
+                    }
+                )
+            )
+            print(
+                "[matrix-python-client] PAUSE GATE PROOF "
+                f"executionStatus='{confirm.status.value}' "
+                f"firstStatus='{confirm_first.status.value if confirm_first is not None else 'missing'}' "
+                f"secondStatus='{confirm_second.status.value if confirm_second is not None else 'missing'}' "
+                f"gated='{gated}'.",
+                flush=True,
+            )
+            return gated
+
+        if first is not None and first.status in {
+            AiSdkExecutionStepStatus.COMPLETED,
+            AiSdkExecutionStepStatus.FAILED,
+        }:
+            print(
+                "[matrix-python-client] PAUSE GATE FAILED first continuation advanced while paused. "
+                f"ExecutionStatus='{observation.status.value}' "
+                f"FirstStatus='{first.status.value}' "
+                f"SecondStatus='{second.status.value if second is not None else 'missing'}'.",
+                flush=True,
+            )
+            return False
+
+        await asyncio.sleep(0.1)
+
+    print(
+        "[matrix-python-client] PAUSE GATE TIMEOUT "
+        f"executionId='{execution_id}' "
+        f"ExecutionStatus='{last_execution_status.value if last_execution_status is not None else 'unknown'}' "
+        f"FirstStatus='{last_first_status.value if last_first_status is not None else 'missing'}' "
+        f"SecondStatus='{last_second_status.value if last_second_status is not None else 'missing'}'.",
+        flush=True,
+    )
+    return False
+
+
+async def _wait_for_completed_result(client: AiSdkClient, execution_id: str, timeout_seconds: float):
+    observation = await _wait_for_terminal(client, execution_id, timeout_seconds)
+    if observation.status is not AiSdkExecutionStatus.COMPLETED:
+        raise RuntimeError(f"Execution '{execution_id}' ended as '{observation.status.value}'.")
+    result = await client.get_execution_result(execution_id)
+    if result.status is not AiSdkExecutionStatus.COMPLETED:
+        raise RuntimeError(f"Execution '{execution_id}' result ended as '{result.status.value}'.")
+    return result
+
+
+def _start_control_watch(
+    client: AiSdkClient,
+    execution_id: str,
+    timeout_seconds: float,
+) -> tuple[asyncio.Task[dict[str, bool]], asyncio.Future[bool]]:
+    loop = asyncio.get_running_loop()
+    first_step_active: asyncio.Future[bool] = loop.create_future()
+    task = asyncio.create_task(
+        _collect_control_watch(client, execution_id, timeout_seconds, first_step_active)
+    )
+    return task, first_step_active
+
+
+async def _collect_control_watch(
+    client: AiSdkClient,
+    execution_id: str,
+    timeout_seconds: float,
+    first_step_active: asyncio.Future[bool] | None = None,
+) -> dict[str, bool]:
+    snapshot = False
+    event = False
+    resync = False
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            async for item in client.watch_execution(AiSdkExecutionWatchRequest(execution_id=execution_id, include_initial_snapshot=True)):
+                snapshot = snapshot or item.kind is AiSdkExecutionWatchEventKind.SNAPSHOT
+                event = event or item.kind is AiSdkExecutionWatchEventKind.EVENT
+                resync = resync or item.kind is AiSdkExecutionWatchEventKind.RESYNC_REQUIRED
+                if first_step_active is not None and not first_step_active.done() and _watch_item_shows_active_step(item, "first"):
+                    first_step_active.set_result(True)
+    except BaseException as exc:
+        if first_step_active is not None and not first_step_active.done():
+            first_step_active.set_exception(exc)
+        raise
+    finally:
+        if first_step_active is not None and not first_step_active.done():
+            first_step_active.set_exception(
+                RuntimeError(f"Execution '{execution_id}' Watch ended before step 'first' became active.")
+            )
+    return {"snapshotObserved": snapshot, "eventObserved": event, "resyncObserved": resync}
+
+
+def _watch_item_shows_active_step(item, step_name: str) -> bool:
+    if item.snapshot is not None:
+        for step in item.snapshot.steps:
+            if step.name == step_name and step.status in {
+                AiSdkExecutionStepStatus.RUNNING,
+                AiSdkExecutionStepStatus.WAITING_FOR_EXTERNAL,
+            }:
+                return True
+
+    payload = item.payload
+    if (
+        item.kind is not AiSdkExecutionWatchEventKind.EVENT
+        or item.channel is None
+        or item.channel.value != "Steps"
+        or not isinstance(payload, dict)
+    ):
+        return False
+
+    return payload.get("name") == step_name and payload.get("status") in {"Running", "WaitingForExternal"}
+
+
+async def _wait_for_watch_active_step(
+    active_step: asyncio.Future[bool],
+    execution_id: str,
+    step_name: str,
+    timeout_seconds: float,
+) -> None:
+    try:
+        await asyncio.wait_for(asyncio.shield(active_step), timeout_seconds)
+    except TimeoutError as exc:
+        raise TimeoutError(
+            f"Execution '{execution_id}' Watch did not expose active step '{step_name}' within {timeout_seconds} seconds."
+        ) from exc
+
+
+async def _seed_waiting_for_input(endpoint: str, execution_id: str, waiting_key: str, waiting_step_name: str) -> None:
+    base = urllib.parse.urlsplit(endpoint)
+    url = urllib.parse.urlunsplit((base.scheme, base.netloc, f"/matrix/execution-control/{urllib.parse.quote(execution_id, safe='')}/wait-for-input", "", ""))
+    payload = json.dumps({
+        "waitingKey": waiting_key,
+        "waitingStepName": waiting_step_name,
+        "reason": "matrix-control-e2e-await-approval",
+    }).encode("utf-8")
+
+    def send() -> None:
+        request = urllib.request.Request(url, data=payload, method="POST", headers={"content-type": "application/json"})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            if response.status < 200 or response.status >= 300:
+                raise RuntimeError(f"Matrix wait-for-input setup failed with HTTP {response.status}.")
+            response.read()
+
+    await asyncio.to_thread(send)
+
+
+def _control_worker_sources(worker: str) -> tuple[dict[str, object], dict[str, object]]:
+    sample_root = _sample_root()
+    if worker == "dotnet":
+        data = (sample_root / "dotnet" / "Multiplexed.AI.Samples.PublishedFunctions.dll").read_bytes()
+        return (
+            {"entry_point_path": "control-slow.dll", "entry_point_symbol": "Multiplexed.AI.Samples.PublishedFunctions.Functions::PinStable", "bytes": data},
+            {"entry_point_path": "control-fast.dll", "entry_point_symbol": "Multiplexed.AI.Samples.PublishedFunctions.Functions::Run", "bytes": data},
+        )
+    if worker == "typescript":
+        return (
+            {"entry_point_path": "control-slow.ts", "entry_point_symbol": "run", "bytes": b"export async function run(inputs, context) { await new Promise(resolve => setTimeout(resolve, 8000)); return { success: true, payload: { marker: inputs?.marker ?? null, phase: 'slow' } }; }\n"},
+            {"entry_point_path": "control-fast.ts", "entry_point_symbol": "run", "bytes": b"export function run(inputs, context) { return { success: true, payload: { marker: inputs?.marker ?? null, phase: 'fast' } }; }\n"},
+        )
+    if worker == "python":
+        return (
+            {"entry_point_path": "control_slow.py", "entry_point_symbol": "run", "bytes": b"import time\ndef run(inputs, context):\n    time.sleep(8)\n    return {'success': True, 'payload': {'marker': inputs.get('marker'), 'phase': 'slow'}}\n"},
+            {"entry_point_path": "control_fast.py", "entry_point_symbol": "run", "bytes": b"def run(inputs, context):\n    return {'success': True, 'payload': {'marker': inputs.get('marker'), 'phase': 'fast'}}\n"},
+        )
+    raise ValueError(f"Unsupported worker language '{worker}'.")
 
 
 def _run_dependency_firewall(args: argparse.Namespace) -> None:
@@ -440,7 +965,7 @@ def _write_evidence(path: Path, document: dict[str, object]) -> None:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--endpoint")
-    parser.add_argument("--feature", choices=("cancellation", "dependency-firewall"))
+    parser.add_argument("--feature", choices=("cancellation", "dependency-firewall", "watch", "control"))
     parser.add_argument("--worker", required=True, choices=("dotnet", "typescript", "python"))
     parser.add_argument("--environment-ref")
     parser.add_argument("--scenario-id", required=True)

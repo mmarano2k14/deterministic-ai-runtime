@@ -19,8 +19,13 @@ namespace Multiplexed.AI.Sdk.Tests.Protocol
                     AiSdkOperationNames.PublishPipeline,
                     AiSdkOperationNames.SubmitExecution,
                     AiSdkOperationNames.ObserveExecution,
+                    AiSdkOperationNames.WatchExecution,
                     AiSdkOperationNames.GetExecutionResult,
-                    AiSdkOperationNames.CancelExecution
+                    AiSdkOperationNames.CancelExecution,
+                    AiSdkOperationNames.PauseExecution,
+                    AiSdkOperationNames.ResumeExecution,
+                    AiSdkOperationNames.SubmitExecutionInput,
+                    AiSdkOperationNames.ReplayExecution
                 },
                 AiSdkProtocol.Operations.Select(operation => operation.Name).ToArray());
             Assert.Equal(AiSdkProtocol.Operations.Count, AiSdkProtocol.Operations.Select(operation => operation.Name).Distinct(StringComparer.Ordinal).Count());
@@ -32,8 +37,13 @@ namespace Multiplexed.AI.Sdk.Tests.Protocol
             Assert.Equal(AiSdkTransportRetryMode.Never, AiSdkProtocol.GetOperation(AiSdkOperationNames.PublishPipeline).TransportRetryMode);
             Assert.Equal(AiSdkTransportRetryMode.Never, AiSdkProtocol.GetOperation(AiSdkOperationNames.SubmitExecution).TransportRetryMode);
             Assert.Equal(AiSdkTransportRetryMode.SafeRead, AiSdkProtocol.GetOperation(AiSdkOperationNames.ObserveExecution).TransportRetryMode);
+            Assert.Equal(AiSdkTransportRetryMode.SafeRead, AiSdkProtocol.GetOperation(AiSdkOperationNames.WatchExecution).TransportRetryMode);
             Assert.Equal(AiSdkTransportRetryMode.SafeRead, AiSdkProtocol.GetOperation(AiSdkOperationNames.GetExecutionResult).TransportRetryMode);
             Assert.Equal(AiSdkTransportRetryMode.Never, AiSdkProtocol.GetOperation(AiSdkOperationNames.CancelExecution).TransportRetryMode);
+            Assert.Equal(AiSdkTransportRetryMode.Never, AiSdkProtocol.GetOperation(AiSdkOperationNames.PauseExecution).TransportRetryMode);
+            Assert.Equal(AiSdkTransportRetryMode.Never, AiSdkProtocol.GetOperation(AiSdkOperationNames.ResumeExecution).TransportRetryMode);
+            Assert.Equal(AiSdkTransportRetryMode.Never, AiSdkProtocol.GetOperation(AiSdkOperationNames.SubmitExecutionInput).TransportRetryMode);
+            Assert.Equal(AiSdkTransportRetryMode.Never, AiSdkProtocol.GetOperation(AiSdkOperationNames.ReplayExecution).TransportRetryMode);
         }
 
         [Fact]

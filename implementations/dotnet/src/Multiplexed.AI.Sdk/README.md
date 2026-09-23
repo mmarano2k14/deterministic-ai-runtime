@@ -22,8 +22,8 @@ var transport = new AiSdkMcpHttpTransport(
 IAiSdkClient client = new AiSdkClient(transport);
 ```
 
-The client exposes typed operations for pipeline publication, execution submission, execution observation, terminal result retrieval and cooperative cancellation.
+The client exposes typed operations for pipeline publication, execution submission, execution observation and Watch, terminal result retrieval, cooperative cancellation, pause/resume control, human or external input submission, and deterministic replay validation.
 
-Automatic transport retry is restricted to observation and result retrieval. Publication, submission and cancellation are never automatically retried by the SDK transport.
+Automatic transport retry is restricted to safe read operations: observation, Watch and result retrieval. Publication, submission, cancellation, pause, resume, input submission and replay are never automatically retried by the SDK transport.
 
-Cancelling a .NET `CancellationToken` cancels only the in-flight SDK call. Durable execution cancellation requires `CancelExecutionAsync`.
+Cancelling a .NET `CancellationToken` cancels only the in-flight SDK call. Durable execution cancellation requires `CancelExecutionAsync`. Pause/resume and input submission delegate to the existing durable execution-control authority. `ReplayExecutionAsync` performs deterministic replay validation for an existing execution and does not create a new execution.

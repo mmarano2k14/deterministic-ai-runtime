@@ -27,7 +27,7 @@ namespace Multiplexed.AI.Tests.Runtime.PublicSdk
         public void Boundary_Interface_Uses_Only_Public_Contracts_String_And_CancellationToken()
         {
             var methods = typeof(IAiPublicSdkBoundary).GetMethods(BindingFlags.Instance | BindingFlags.Public);
-            Assert.Equal(5, methods.Length);
+            Assert.Equal(10, methods.Length);
 
             foreach (var method in methods)
             {
@@ -47,7 +47,7 @@ namespace Multiplexed.AI.Tests.Runtime.PublicSdk
         public void Mcp_Tools_Do_Not_Accept_Server_Owned_Identity_Parameters()
         {
             var methods = ToolMethods();
-            Assert.Equal(5, methods.Length);
+            Assert.Equal(10, methods.Length);
 
             foreach (var parameter in methods.SelectMany(method => method.GetParameters()))
             {
@@ -64,8 +64,13 @@ namespace Multiplexed.AI.Tests.Runtime.PublicSdk
         {
             AssertCapability(nameof(PublicSdkMcpTools.SubmitExecutionAsync), "shared-run", "execution", "submit");
             AssertCapability(nameof(PublicSdkMcpTools.ObserveExecutionAsync), "execution", "control", "read");
+            AssertCapability(nameof(PublicSdkMcpTools.WatchExecutionAsync), "execution", "control", "read");
             AssertCapability(nameof(PublicSdkMcpTools.GetExecutionResultAsync), "execution", "control", "read");
             AssertCapability(nameof(PublicSdkMcpTools.CancelExecutionAsync), "execution", "control", "cancel");
+            AssertCapability(nameof(PublicSdkMcpTools.PauseExecutionAsync), "execution", "control", "pause");
+            AssertCapability(nameof(PublicSdkMcpTools.ResumeExecutionAsync), "execution", "control", "resume");
+            AssertCapability(nameof(PublicSdkMcpTools.SubmitExecutionInputAsync), "execution", "control", "input");
+            AssertCapability(nameof(PublicSdkMcpTools.ReplayExecutionAsync), "replay", "execution", "run");
         }
 
         [Fact]
