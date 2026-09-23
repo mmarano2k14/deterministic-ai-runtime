@@ -52,7 +52,7 @@ It provides durable DAG execution, Redis-backed coordination, provider-based dis
 | Durable authority | Failure journal, append-only Lifecycle Journal, Ledger, trace, Recovery Forensics — independent stores correlated by first-class identities. |
 | Event-driven lifecycle | Canonical engine facts through one Event Manager and central projection catalog; no second bus. |
 | Multi-tenancy | RBAC context survives async dispatch; tenant-scoped admission, capacity, recovery, Ledger, replay, and Forensics. |
-| External SDKs | Independent .NET, TypeScript / JavaScript, and Python clients; immutable publication, durable submission, observation, results, and cancellation. See [SDK execution evidence](#sdk). |
+| External SDKs | Independent .NET, TypeScript / JavaScript, and Python clients; immutable publication, durable submission, observation and Watch, results, cancellation, pause/resume, human input, and deterministic replay validation. See [SDK execution evidence](#sdk). |
 
 Configuration and policy drive retry, retention, concurrency, admission, isolation, hosting, and recovery — without engine rewrites.
 
@@ -103,7 +103,7 @@ Dedicated recursive-child replay  NOT_EVALUATED
 
 ### SDK-to-runtime validation
 
-The SDK execution record is separate from the adversarial matrix above: **37/37 Docker scenarios** with `ProcessHostPool`, plus **3/3 KubernetesPool scenarios** covering live HTTP routing, hierarchical recovery, and external Python SDK execution with a public `Completed` result and the uploaded-function marker verified. This is **40 validated scenarios across two topologies**, not a homogeneous `40/40` matrix. See the [SDK section](#sdk) for the exact scope and evidence links.
+The SDK execution record is separate from the adversarial matrix above: **37/37 Docker scenarios** with `ProcessHostPool`, plus **3/3 KubernetesPool scenarios** covering live HTTP routing, hierarchical recovery, and external Python SDK execution with a public `Completed` result and the uploaded-function marker verified. This is **40 validated scenarios across two topologies**, not a homogeneous `40/40` matrix. Separate real MCP/HTTP public-SDK E2E validation is also green for `execution.watch()` and for pause/resume/human-input/replay control flows in **.NET, TypeScript, and Python**. These E2E checks are separate validation campaigns and are not added to the 37/37 or 3/3 scenario counts. See the [SDK section](#sdk) for the exact scope and evidence links.
 
 ---
 
@@ -147,14 +147,19 @@ Local package build/install/import behavior is validated. **Public NuGet, npm, a
 
 ### Public operations and execution flow
 
-All three clients expose the same five public operations:
+All three clients expose the same ten public operations:
 
 ```text
 sdk.publish_pipeline
 sdk.execution.submit
 sdk.execution.observe
+sdk.execution.watch
 sdk.execution.result
 sdk.execution.cancel
+sdk.execution.pause
+sdk.execution.resume
+sdk.execution.input.submit
+sdk.execution.replay
 ```
 
 ```text
@@ -163,14 +168,25 @@ External application / SDK client
     -> immutable publication reference
     -> submit durable execution
     -> existing shared queue, admission, and runtime placement
+    -> observe / watch public execution progress
+    -> pause / resume / human input / cancel through public control operations
     -> production hosted worker executes the pinned function
     -> durable result acceptance and DAG convergence
-    -> public observation / terminal result
+    -> terminal result
+    -> optional deterministic replay validation
 ```
 
 The SDK does not create Pods, select execution ownership, or become a scheduler, recovery coordinator, or business-effect retry authority. RBAC and tenant ownership remain server-enforced; transport credentials and access-context headers are not serialized into publication or execution business payloads. Compatible repeated submissions converge through the existing idempotency/run-pin authority; conflicting reuse is rejected.
 
-Cancelling an in-flight client request is not durable execution cancellation. The explicit cancellation operation requests cancellation from the runtime; acceptance does not mean the execution is already terminal. Automatic transport retry is limited to read-only observation and result retrieval.
+Cancelling an in-flight client request is not durable execution cancellation. The explicit cancellation operation requests cancellation from the runtime; acceptance does not mean the execution is already terminal. Automatic transport retry is limited to the safe-read operations `observe`, `watch`, and `result`; command-side operations are not automatically retried.
+
+### Watch, execution control, and replay
+
+`observe()` returns an authoritative point-in-time public snapshot. `watch()` exposes an ordered public observation stream with resume/resync behavior; it is an observation surface, not an execution authority.
+
+Pause is cooperative: already-running work may drain, while new claims are gated once the pause state becomes authoritative. Resume and accepted human input make the **existing execution** runnable again and wake/re-enqueue that same execution without changing its `ExecutionId`, immutable run pin, or durable DAG.
+
+`execution.replay` performs deterministic validation/replay of the existing execution. It does not create a new execution, re-run LLM calls, or re-emit external business effects.
 
 ### Published code and composition
 
@@ -222,6 +238,18 @@ The OCI image packages the Runtime Pool host and production workers. **It does n
 The final closure ran the SDK scenario and revalidated existing routing/recovery evidence. It did not rerun every prior workload or establish a shared image build for all three scenarios. The accepted record is **37 Docker + 3 KubernetesPool = 40 validated scenarios across two topologies**, not a homogeneous `40/40` matrix, full Kubernetes client/worker parity, or an addition to the separate 36-row adversarial matrix.
 
 Run commands, runtime-image selection, host-role configuration, RBAC project alignment, snapshot TTL, evidence files, and diagnostic collection are documented in [KubernetesPool Matrix Validation](docs/ai/kubernetes-pool-matrix-validation.md).
+
+### Public SDK Watch and execution-control E2E
+
+Separate real MCP/HTTP E2E validation is green across all three external SDK clients:
+
+| Public SDK E2E | .NET | TypeScript | Python |
+|---|---:|---:|---:|
+| `execution.watch()` | PASS | PASS | PASS |
+| pause / resume / human input / replay | PASS | PASS | PASS |
+
+These checks validate the public SDK boundary and control flow. They are separate from the 37/37 Docker matrix and the 3/3 KubernetesPool closure above.
+
 
 ### SDK documentation and samples
 
@@ -1200,6 +1228,11 @@ See [Hosted Multilanguage Execution](docs/ai/hosted-multilanguage-execution.md) 
 | Dedicated recursive-child replay | NOT_EVALUATED |
 | Portable public publication/execution boundary | Implemented / RBAC-protected |
 | External .NET, TypeScript / JavaScript, and Python SDKs | Implemented / validated |
+| Public SDK execution Watch | Implemented / validated in .NET, TypeScript, and Python |
+| Public SDK pause / resume | Implemented / validated in .NET, TypeScript, and Python |
+| Public SDK human input | Implemented / validated in .NET, TypeScript, and Python |
+| Public SDK deterministic replay validation | Implemented / validated in .NET, TypeScript, and Python |
+| Real MCP/HTTP SDK control E2E | 3 / 3 VERIFIED |
 | SDK-to-runtime Docker matrix | 37 / 37 VERIFIED; bounded provider/artifact scope |
 | KubernetesPool routing / recovery / Python SDK closure | 3 / 3 VERIFIED; separate evidence |
 | Public SDK registry releases and standalone runtime CLI | Separate deliverables |
