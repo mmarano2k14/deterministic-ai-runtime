@@ -130,6 +130,13 @@ def main() -> int:
         if path.exists():
             shutil.rmtree(path)
 
+    # The demo consumes a locally rebuilt tarball at a stable file path/version.
+    # A lockfile from a previous bootstrap can retain the old tarball integrity and
+    # cause npm to reuse stale SDK declarations even though the tarball was rebuilt.
+    typescript_demo_lock = demo_root / "typescript" / "package-lock.json"
+    if typescript_demo_lock.exists():
+        typescript_demo_lock.unlink()
+
     print("[demo-bootstrap] LOCAL PACKAGE MODE")
     print("[demo-bootstrap] No NuGet, npm, or Python package is published by this script.")
     print()
@@ -260,7 +267,7 @@ def main() -> int:
     print()
     print("[demo-bootstrap] Installing/building TypeScript consumer...")
     typescript_demo = demo_root / "typescript"
-    run([npm, "install"], cwd=typescript_demo)
+    run([npm, "install", "--package-lock=false"], cwd=typescript_demo)
     run([npm, "run", "build"], cwd=typescript_demo)
 
     print()

@@ -1,4 +1,9 @@
 export type { AiSdkCredential, AiSdkCredentialProvider } from "./authentication/credential.js";
+export { AiSdkAccessContextBootstrapper } from "./authentication/access-context-bootstrap.js";
+export type {
+  AiSdkAccessContextBootstrapOptions,
+  AiSdkAccessContextBootstrapResult,
+} from "./authentication/access-context-bootstrap.js";
 export { AiSdkStaticCredentialProvider } from "./authentication/static-credential-provider.js";
 export { AiSdkClient } from "./client/ai-sdk-client.js";
 export type { AiSdkClientInterface } from "./client/ai-sdk-client-interface.js";

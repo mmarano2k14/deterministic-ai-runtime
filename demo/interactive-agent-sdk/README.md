@@ -5,18 +5,18 @@ This directory demonstrates a real external application consuming the Determinis
 ## Current status
 
 ```text
-.NET interactive agent vertical slice     IMPLEMENTED / TARGET E2E VALIDATION REQUIRED
-TypeScript consumer scaffold              AVAILABLE
+.NET interactive agent vertical slice     TARGET E2E VALIDATED
+TypeScript interactive agent vertical slice IMPLEMENTED / TARGET E2E VALIDATION REQUIRED
 Python consumer scaffold                  AVAILABLE
 ```
 
-The .NET consumer references only the locally packed external `Multiplexed.AI.Sdk` package.
+The .NET and TypeScript consumers reference only their locally packed external SDK packages.
 
-It does not reference runtime, engine, control-plane, persistence, matrix, or test projects.
+They do not reference runtime, engine, control-plane, persistence, matrix, or test projects.
 
 ## Authentication flow
 
-The standalone .NET demo uses the real host authentication boundary:
+The standalone .NET and TypeScript demos use the real host authentication boundary:
 
 ```text
 real JWT Bearer
@@ -38,17 +38,17 @@ The external application never submits TRN capabilities in the access-context re
 
 Capabilities are derived by the host from the validated JWT claims.
 
-If `AI_RUNTIME_ACCESS_CONTEXT` is not provided, the .NET consumer automatically calls:
+If `AI_RUNTIME_ACCESS_CONTEXT` is not provided, the .NET or TypeScript consumer automatically calls:
 
 ```text
 AI_RUNTIME_ACCESS_CONTEXT_ENDPOINT
 ```
 
-using `AI_RUNTIME_TOKEN`, captures the returned access-context handle, and initializes the public SDK transport with it.
+using `AI_RUNTIME_TOKEN`, captures the returned access-context handle, and initializes the public SDK transport with it. The TypeScript SDK exposes `AiSdkAccessContextBootstrapper` for the same explicit, non-retried bootstrap semantics as the .NET SDK.
 
 The access-context bootstrap POST is not automatically retried.
 
-## .NET execution flow
+## .NET and TypeScript execution flow
 
 ```text
 user request
@@ -86,7 +86,7 @@ The child definition contains no further Child DAG call site, so delegation is s
 
 ## No matrix or demo-only control path
 
-The .NET agent does not use:
+The .NET and TypeScript agents do not use:
 
 ```text
 /matrix/*
@@ -104,7 +104,7 @@ Human input is produced by the runtime-native `execution.await-input` step and r
 
 The pipeline uses the runtime-native `ai.prompt` step with provider `openai`.
 
-The external .NET consumer reads:
+The external .NET and TypeScript consumers read:
 
 ```text
 OPENAI_MODEL
@@ -206,7 +206,7 @@ After terminal convergence:
 [q] exit
 ```
 
-## Required .NET configuration
+## Required .NET / TypeScript configuration
 
 ```text
 AI_RUNTIME_ENDPOINT
@@ -297,6 +297,7 @@ Choose:
 
 ```text
 1. .NET
+2. TypeScript
 ```
 
 Expected authentication prelude:
@@ -313,6 +314,6 @@ After that, the normal public SDK pipeline publication begins.
 
 ## Validation status
 
-The auth bootstrap code is prepared against the standalone JWT/access-context host boundary and the rotating SDK transport.
+The .NET vertical slice has completed the real authenticated public-SDK E2E path through Child DAG, durable human input, terminal result, and deterministic replay.
 
-A target-environment E2E run is still required before the complete .NET agent flow is marked GREEN.
+The TypeScript vertical slice is implemented against the same public contracts and runtime authority. A target-environment E2E run is still required before the TypeScript flow is marked GREEN.
