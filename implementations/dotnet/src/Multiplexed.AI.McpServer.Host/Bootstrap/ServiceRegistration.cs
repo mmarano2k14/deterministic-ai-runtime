@@ -191,6 +191,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 services,
                 configuration);
 
+            PublicSdkPublicationHostRegistration.Configure(
+                services,
+                hostOptions);
+
             MatrixHarnessRegistration.Configure(
                 services,
                 configuration);

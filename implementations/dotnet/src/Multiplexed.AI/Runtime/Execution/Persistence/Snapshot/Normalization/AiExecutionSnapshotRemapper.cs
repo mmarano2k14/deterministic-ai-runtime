@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Execution.Persistence.Snapshot;
 using Multiplexed.Abstractions.AI.Steps;
@@ -35,7 +35,23 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Normalization
                 return;
             }
 
+            RemapRecord(snapshot.Record);
+
+
             RemapState(snapshot.State);
+        }
+
+        /// <summary>
+        /// Remaps persistence-safe values stored on the immutable execution record.
+        /// </summary>
+        private static void RemapRecord(AiExecutionRecord? record)
+        {
+            if (record is null)
+            {
+                return;
+            }
+
+            RemapPayload(record.PipelineDefinitionSnapshot);
         }
 
         private static void RemapState(AiExecutionState? state)

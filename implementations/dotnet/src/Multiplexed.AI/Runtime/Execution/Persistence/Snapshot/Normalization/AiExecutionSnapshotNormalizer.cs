@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Execution.Persistence.Snapshot;
 using Multiplexed.Abstractions.AI.Steps;
@@ -30,9 +30,32 @@ namespace Multiplexed.AI.Runtime.Execution.Persistence.Snapshot.Normalization
         {
             var normalizedSnapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
 
+            NormalizeRecord(normalizedSnapshot.Record);
+
+
             NormalizeState(normalizedSnapshot.State);
 
             return normalizedSnapshot;
+        }
+
+        /// <summary>
+        /// Normalizes persistence-sensitive values stored on the immutable execution record.
+        /// </summary>
+        /// <remarks>
+        /// Published executions can carry their immutable pipeline definition through
+        /// <see cref="AiExecutionRecord.PipelineDefinitionSnapshot"/>. After JSON transport or
+        /// deserialization an inline payload may contain a <see cref="JsonElement"/>, which the
+        /// MongoDB driver's default object serializer does not accept. Normalize that payload by
+        /// the same rules already used for mutable execution state before persistence.
+        /// </remarks>
+        private static void NormalizeRecord(AiExecutionRecord? record)
+        {
+            if (record is null)
+            {
+                return;
+            }
+
+            NormalizePayload(record.PipelineDefinitionSnapshot);
         }
 
         private static void NormalizeState(AiExecutionState? state)
