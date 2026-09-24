@@ -1,3 +1,8 @@
+from .access_context_bootstrap import (
+    AiSdkAccessContextBootstrapOptions,
+    AiSdkAccessContextBootstrapResult,
+    AiSdkAccessContextBootstrapper,
+)
 from .authentication import AiSdkCredential, AiSdkCredentialProvider, AiSdkStaticCredentialProvider
 from .client import AiSdkClient
 from .contracts.common.schema_versions import AiSdkSchemaVersions
@@ -49,6 +54,9 @@ from .transport import AiSdkTransport, AiSdkTransportOptions, AiSdkTransportRequ
 from .wire_model import AiSdkWireModel
 
 __all__ = [
+    "AiSdkAccessContextBootstrapOptions",
+    "AiSdkAccessContextBootstrapResult",
+    "AiSdkAccessContextBootstrapper",
     "AI_SDK_OPERATION_RETRY",
     "AI_SDK_OPERATIONS",
     "AI_SDK_PROTOCOL_VERSION",

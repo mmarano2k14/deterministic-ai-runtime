@@ -1,6 +1,7 @@
 README.md
 pyproject.toml
 src/multiplexed_ai_sdk/__init__.py
+src/multiplexed_ai_sdk/access_context_bootstrap.py
 src/multiplexed_ai_sdk/authentication.py
 src/multiplexed_ai_sdk/client.py
 src/multiplexed_ai_sdk/errors.py
@@ -65,6 +66,7 @@ src/multiplexed_ai_sdk/contracts/watch/execution_watch_event_kind.py
 src/multiplexed_ai_sdk/contracts/watch/execution_watch_request.py
 src/multiplexed_ai_sdk/contracts/watch/execution_watch_resync_reason.py
 src/multiplexed_ai_sdk/contracts/watch/execution_watch_resync_required.py
+tests/test_access_context_bootstrap.py
 tests/test_client.py
 tests/test_parity.py
 tests/test_transport.py

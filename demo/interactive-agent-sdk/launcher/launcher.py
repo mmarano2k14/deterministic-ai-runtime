@@ -16,7 +16,7 @@ DISPLAY_NAMES = {
 SDK_REQUIRED_CONFIGURATION = {
     "dotnet": ("OPENAI_MODEL", "AI_RUNTIME_TOKEN"),
     "typescript": ("OPENAI_MODEL", "AI_RUNTIME_TOKEN"),
-    "python": ("AI_RUNTIME_PYTHON_ENVIRONMENT_REF",),
+    "python": ("OPENAI_MODEL", "AI_RUNTIME_TOKEN"),
 }
 
 

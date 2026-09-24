@@ -1,6 +1,9 @@
 pyproject.toml
 src/interactive_agent_sdk_demo/__init__.py
 src/interactive_agent_sdk_demo/__main__.py
+src/interactive_agent_sdk_demo/configuration.py
+src/interactive_agent_sdk_demo/interactive_console.py
+src/interactive_agent_sdk_demo/pipeline.py
 src/multiplexed_interactive_agent_sdk_demo_python.egg-info/PKG-INFO
 src/multiplexed_interactive_agent_sdk_demo_python.egg-info/SOURCES.txt
 src/multiplexed_interactive_agent_sdk_demo_python.egg-info/dependency_links.txt
