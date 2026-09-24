@@ -3,21 +3,20 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-
-SDK_ENVIRONMENT_REFS = {
-    "dotnet": "AI_RUNTIME_DOTNET_ENVIRONMENT_REF",
-    "typescript": "AI_RUNTIME_TYPESCRIPT_ENVIRONMENT_REF",
-    "python": "AI_RUNTIME_PYTHON_ENVIRONMENT_REF",
-}
 
 DISPLAY_NAMES = {
     "dotnet": ".NET",
     "typescript": "TypeScript",
     "python": "Python",
+}
+
+SDK_REQUIRED_CONFIGURATION = {
+    "dotnet": ("OPENAI_MODEL",),
+    "typescript": ("AI_RUNTIME_TYPESCRIPT_ENVIRONMENT_REF",),
+    "python": ("AI_RUNTIME_PYTHON_ENVIRONMENT_REF",),
 }
 
 
@@ -27,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--sdk",
-        choices=tuple(SDK_ENVIRONMENT_REFS),
+        choices=tuple(DISPLAY_NAMES),
         help="Skip the menu and launch one SDK consumer directly.",
     )
     parser.add_argument(
@@ -60,11 +59,15 @@ def choose_sdk() -> str:
 
 
 def require_configuration(sdk: str) -> None:
-    required = {
-        "AI_RUNTIME_ENDPOINT": os.getenv("AI_RUNTIME_ENDPOINT", "").strip(),
-        SDK_ENVIRONMENT_REFS[sdk]: os.getenv(SDK_ENVIRONMENT_REFS[sdk], "").strip(),
-    }
-    missing = [name for name, value in required.items() if not value]
+    required_names = (
+        "AI_RUNTIME_ENDPOINT",
+        *SDK_REQUIRED_CONFIGURATION[sdk],
+    )
+    missing = [
+        name
+        for name in required_names
+        if not os.getenv(name, "").strip()
+    ]
     if missing:
         names = ", ".join(missing)
         raise SystemExit(

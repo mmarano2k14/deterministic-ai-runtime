@@ -1,83 +1,170 @@
+using System.Text.Json;
 using Multiplexed.AI.Sdk;
 using Multiplexed.AI.Sdk.Authentication;
 using Multiplexed.AI.Sdk.Transport;
 
-var config = DemoConfiguration.Load(
-    "AI_RUNTIME_DOTNET_ENVIRONMENT_REF",
-    ".NET");
+namespace Multiplexed.AI.Demo.InteractiveAgent.DotNet;
 
-var transportOptions = new AiSdkTransportOptions
+internal static class Program
 {
-    CredentialProvider = string.IsNullOrWhiteSpace(config.Token)
-        ? null
-        : new AiSdkStaticCredentialProvider(
-            new AiSdkCredential("Bearer", config.Token)),
-    AdditionalHeaders = string.IsNullOrWhiteSpace(config.AccessContext)
-        ? null
-        : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            [config.AccessContextHeader] = config.AccessContext
-        }
-};
-
-IAiSdkClient client = new AiSdkClient(
-    new AiSdkMcpHttpTransport(new Uri(config.Endpoint), transportOptions));
-
-Console.WriteLine("Interactive Agent SDK Demo");
-Console.WriteLine("SDK: .NET");
-Console.WriteLine($"Runtime endpoint: {config.Endpoint}");
-Console.WriteLine($"Environment ref: {config.EnvironmentRef}");
-Console.WriteLine($"Bearer token configured: {!string.IsNullOrWhiteSpace(config.Token)}");
-Console.WriteLine($"Access context configured: {!string.IsNullOrWhiteSpace(config.AccessContext)}");
-Console.WriteLine($"OpenAI key configured: {config.OpenAiKeyConfigured}");
-Console.WriteLine($"OpenAI model configured: {config.OpenAiModelConfigured}");
-Console.WriteLine();
-Console.WriteLine("External SDK consumer initialized.");
-Console.WriteLine("No runtime request is sent by the scaffold increment.");
-
-return 0;
-
-internal sealed record DemoConfiguration(
-    string Endpoint,
-    string EnvironmentRef,
-    string? Token,
-    string? AccessContext,
-    string AccessContextHeader,
-    bool OpenAiKeyConfigured,
-    bool OpenAiModelConfigured)
-{
-    internal static DemoConfiguration Load(
-        string environmentRefVariable,
-        string sdkName)
+    public static async Task<int> Main()
     {
-        var endpoint = Required("AI_RUNTIME_ENDPOINT");
-        _ = Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
-            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
-            ? uri
-            : throw new InvalidOperationException(
-                "AI_RUNTIME_ENDPOINT must be an absolute HTTP or HTTPS URI.");
-
-        return new DemoConfiguration(
-            endpoint,
-            Required(environmentRefVariable),
-            Optional("AI_RUNTIME_TOKEN"),
-            Optional("AI_RUNTIME_ACCESS_CONTEXT"),
-            Optional("AI_RUNTIME_ACCESS_CONTEXT_HEADER") ?? "X-Access-Context",
-            !string.IsNullOrWhiteSpace(Optional("OPENAI_API_KEY")),
-            !string.IsNullOrWhiteSpace(Optional("OPENAI_MODEL")));
-
-        string Required(string name)
+        try
         {
-            var value = Optional(name);
-            return !string.IsNullOrWhiteSpace(value)
-                ? value
-                : throw new InvalidOperationException(
-                    $"Missing required {sdkName} demo configuration '{name}'.");
+            var config = DemoConfiguration.Load();
+            IAiSdkClient client = CreateClient(config);
+
+            if (IsSmokeMode())
+            {
+                Console.WriteLine("Interactive Agent SDK Demo");
+                Console.WriteLine("SDK: .NET");
+                Console.WriteLine($"Runtime endpoint: {config.Endpoint}");
+                Console.WriteLine($"OpenAI model configured: {!string.IsNullOrWhiteSpace(config.OpenAiModel)}");
+                Console.WriteLine("External SDK consumer initialized.");
+                Console.WriteLine("Smoke mode: no runtime request was sent.");
+                return 0;
+            }
+
+            PrintHeader(config);
+
+            Console.Write("User request: ");
+            var userPrompt = Console.ReadLine()?.Trim();
+
+            if (string.IsNullOrWhiteSpace(userPrompt))
+            {
+                Console.Error.WriteLine("A non-empty user request is required.");
+                return 2;
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("SDK command: sdk.publish_pipeline");
+
+            var publication = await client.PublishPipelineAsync(
+                InteractiveAgentPipeline.CreatePublication(config.OpenAiModel));
+
+            Console.WriteLine($"PublicationRef: {publication.PublicationRef}");
+            Console.WriteLine($"Pipeline: {publication.PipelineName}@{publication.PipelineVersion}");
+            Console.WriteLine();
+
+            Console.WriteLine("SDK command: sdk.execution.submit");
+
+            var submission = await client.SubmitExecutionAsync(
+                InteractiveAgentPipeline.CreateSubmission(
+                    publication.PublicationRef,
+                    userPrompt));
+
+            Console.WriteLine($"ExecutionId: {submission.ExecutionId}");
+            Console.WriteLine($"Initial status: {submission.Status}");
+            Console.WriteLine();
+
+            var console = new InteractiveExecutionConsole(
+                client,
+                submission.ExecutionId,
+                InteractiveAgentPipeline.WaitingKey,
+                InteractiveAgentPipeline.WaitingStepName);
+
+            var result = await console.RunAsync();
+
+            if (result is null)
+            {
+                Console.WriteLine();
+                Console.WriteLine(
+                    "Local console detached. The durable execution was not cancelled.");
+                return 0;
+            }
+
+            PrintTerminalResult(result);
+
+            await console.RunPostTerminalCommandsAsync(result.Status);
+
+            return result.Status == Multiplexed.AI.Sdk.Contracts.Executions.AiSdkExecutionStatus.Completed
+                ? 0
+                : 1;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine($"Demo failed: {ex.Message}");
+            return 1;
+        }
+    }
+
+    private static IAiSdkClient CreateClient(DemoConfiguration config)
+    {
+        var transportOptions = new AiSdkTransportOptions
+        {
+            CredentialProvider = string.IsNullOrWhiteSpace(config.Token)
+                ? null
+                : new AiSdkStaticCredentialProvider(
+                    new AiSdkCredential("Bearer", config.Token)),
+            AdditionalHeaders = string.IsNullOrWhiteSpace(config.AccessContext)
+                ? null
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [config.AccessContextHeader] = config.AccessContext
+                }
+        };
+
+        return new AiSdkClient(
+            new AiSdkMcpHttpTransport(
+                new Uri(config.Endpoint),
+                transportOptions));
+    }
+
+    private static void PrintHeader(DemoConfiguration config)
+    {
+        Console.WriteLine("==================================================");
+        Console.WriteLine(" Deterministic AI Runtime - Interactive SDK Agent");
+        Console.WriteLine("==================================================");
+        Console.WriteLine();
+        Console.WriteLine("SDK: .NET");
+        Console.WriteLine($"Runtime endpoint: {config.Endpoint}");
+        Console.WriteLine($"OpenAI model: {config.OpenAiModel}");
+        Console.WriteLine();
+        Console.WriteLine(
+            "OpenAI authentication stays on the runtime host. " +
+            "The external SDK does not send OPENAI_API_KEY.");
+        Console.WriteLine();
+    }
+
+    private static void PrintTerminalResult(
+        Multiplexed.AI.Sdk.Contracts.Executions.AiSdkExecutionResult result)
+    {
+        Console.WriteLine();
+        Console.WriteLine("==================================================");
+        Console.WriteLine(" Terminal execution result");
+        Console.WriteLine("==================================================");
+        Console.WriteLine($"ExecutionId: {result.ExecutionId}");
+        Console.WriteLine($"Status: {result.Status}");
+        Console.WriteLine($"CompletedAtUtc: {result.CompletedAtUtc:O}");
+
+        if (result.Output is JsonElement output)
+        {
+            Console.WriteLine();
+            Console.WriteLine("Agent response:");
+
+            if (output.ValueKind == JsonValueKind.Object &&
+                output.TryGetProperty("result", out var finalResult))
+            {
+                Console.WriteLine(InteractiveExecutionConsole.FormatJson(finalResult));
+            }
+            else
+            {
+                Console.WriteLine(InteractiveExecutionConsole.FormatJson(output));
+            }
         }
 
-        static string? Optional(string name) =>
-            Environment.GetEnvironmentVariable(name)?.Trim() is { Length: > 0 } value
-                ? value
-                : null;
+        if (result.Failure is not null)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"Failure code: {result.Failure.Code}");
+            Console.WriteLine($"Failure message: {result.Failure.Message}");
+        }
     }
+
+    private static bool IsSmokeMode() =>
+        string.Equals(
+            Environment.GetEnvironmentVariable("AI_DEMO_SMOKE"),
+            "1",
+            StringComparison.Ordinal);
 }

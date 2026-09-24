@@ -95,6 +95,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     .Get<AiMcpHostOptions>()
                 ?? new AiMcpHostOptions();
 
+            HostAuthenticationRegistration.Configure(
+                services,
+                configuration,
+                hostOptions);
+
             var aiEngineOptions =
                 new AiEngineOptions();
 

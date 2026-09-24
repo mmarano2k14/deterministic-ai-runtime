@@ -1,109 +1,191 @@
 # Interactive Agent SDK Demo
 
-This directory is the consumer-facing demonstration for the external .NET, TypeScript / JavaScript, and Python SDKs.
+This directory demonstrates a real external application consuming the Deterministic AI Runtime through the public SDK boundary.
 
-## Current increment
-
-The current increment establishes only the clean consumer foundation:
-
-- one interactive launcher;
-- one independent consumer project per SDK language;
-- local package consumption for the external SDKs;
-- shared public connection/environment configuration;
-- no direct runtime/engine project references.
-
-The interactive OpenAI agent, Child DAG, Watch timeline, Human Input, Pause/Resume, Cancel, and Replay behavior are **not implemented or validated by this scaffold yet**.
-
-## Local packages only
-
-The bootstrap builds local package artifacts and never publishes them.
+## Current status
 
 ```text
-.NET        -> local .nupkg
-TypeScript -> local .tgz
-Python     -> local .whl
+.NET interactive agent vertical slice     IMPLEMENTED / TARGET E2E VALIDATION REQUIRED
+TypeScript consumer scaffold              AVAILABLE
+Python consumer scaffold                  AVAILABLE
 ```
 
-Generated package artifacts are stored under:
+The .NET consumer references only the locally packed external `Multiplexed.AI.Sdk` package.
+
+It does not reference runtime, engine, control-plane, persistence, matrix, or test projects.
+
+## .NET execution flow
 
 ```text
-demo/interactive-agent-sdk/.packages/
+user request
+    ↓
+sdk.publish_pipeline
+    ↓
+sdk.execution.submit
+    ↓
+root ai.prompt
+    ↓
+execution.child-dag
+    ↓
+child ai.prompt
+    ↓
+child execution.publish-result
+    ↓
+durable child result payload
+    ↓
+parent continuation
+    ↓
+execution.await-input
+    ↓
+sdk.execution.input.submit
+    ↓
+final ai.prompt
+    ↓
+execution.publish-result
+    ↓
+sdk.execution.result
+    ↓
+optional sdk.execution.replay
 ```
 
-The bootstrap contains no `dotnet nuget push`, `npm publish`, or Python package upload operation.
+The child definition contains no further Child DAG call site, so delegation is structurally bounded to one level in this demo.
 
-Normal dependency restore/install may download third-party dependencies from their configured package registries.
+## No matrix or demo-only control path
 
-## Build and validate the consumers
+The .NET agent does not use:
 
-Windows:
-
-```cmd
-.\demo\interactive-agent-sdk\scripts\bootstrap.cmd
+```text
+/matrix/*
+matrix-only endpoints
+matrix state
+test harness APIs
+direct runtime stores
+IAiPublicSdkBoundary
+internal scheduler/controller services
 ```
 
-or directly:
+Human input is produced by the runtime-native `execution.await-input` step and resumed through the public SDK input operation.
 
-```powershell
-python .\demo\interactive-agent-sdk\scripts\bootstrap.py
+## OpenAI boundary
+
+The pipeline uses the runtime-native `ai.prompt` step with provider `openai`.
+
+The external .NET consumer reads:
+
+```text
+OPENAI_MODEL
 ```
 
-The bootstrap:
+to construct the portable pipeline definition.
 
-1. deletes stale local demo packages and consumer build outputs;
-2. packs `Multiplexed.AI.Sdk.Contracts` and `Multiplexed.AI.Sdk` with the local-only version `0.0.0-local`;
-3. verifies the expected NuGet packages exist;
-4. packs the local TypeScript SDK tarball;
-5. builds the local Python SDK wheel;
-6. restores the .NET consumer into a demo-local NuGet cache and verifies `project.assets.json` resolved the local SDK version;
-7. builds the .NET and TypeScript consumers;
-8. installs the local Python wheel in the demo virtual environment;
-9. starts all three consumers with smoke configuration.
+The OpenAI API key remains server-owned runtime configuration:
 
-The smoke checks construct the external SDK clients but intentionally do not send a runtime request.
-
-The bootstrap fails immediately if any native command returns a non-zero exit code. It prints `READY` only after all package, build, install, and smoke checks pass.
-
-## Run
-
-After bootstrap succeeds and the real environment variables are configured:
-
-```cmd
-.\demo\interactive-agent-sdk\run.cmd
+```text
+OPENAI_API_KEY
 ```
 
 or:
 
-```powershell
-python .\demo\interactive-agent-sdk\launcher\launcher.py
+```text
+OpenAI:ApiKey
 ```
 
-The launcher presents:
+The key is not serialized into publication content, execution input, Watch events, human input, or SDK transport payloads.
+
+## Public execution input
+
+The current public SDK submission boundary carries the initial JSON document into the runtime's existing execution input slot.
+
+For this demo the submitted document is:
+
+```json
+{
+  "userPrompt": "...",
+  "requestId": "..."
+}
+```
+
+The root prompt receives that document through `state.input` and explicitly reads the `userPrompt` field. No diagnostic metadata is used as business input.
+
+## Child result consumption
+
+The child agent publishes its analysis with:
 
 ```text
-==================================================
- Deterministic AI Runtime - Interactive SDK Agent
-==================================================
-
-Choose SDK:
-
-  1. .NET
-  2. TypeScript
-  3. Python
+execution.publish-result
 ```
+
+The parent consumes the frozen Child DAG payload through:
+
+```text
+steps.delegate-analysis.result.payload.data.result
+```
+
+This uses the same durable Child DAG result snapshot and payload resolver used by the runtime; there is no demo-specific side channel.
+
+## Human input
+
+When `await-review` reaches:
+
+```text
+WaitingForExternal
+```
+
+enter:
+
+```text
+i
+```
+
+The console submits:
+
+```json
+{
+  "approved": true,
+  "feedback": "..."
+}
+```
+
+through:
+
+```text
+sdk.execution.input.submit
+```
+
+The same durable execution and exact parked step are resumed.
+
+## Live console commands
+
+While active:
+
+```text
+[p] pause
+[r] resume
+[i] submit human input
+[c] cancel
+[s] status
+[q] detach local console without cancelling
+```
+
+The console also runs `sdk.execution.watch` and prints public snapshots/events.
+
+After terminal convergence:
+
+```text
+[x] deterministic replay validation
+[q] exit
+```
+
+Replay validates the existing durable execution and does not create a second execution.
 
 ## Configuration
 
-Required by the current scaffold:
+Required for the .NET vertical slice:
 
 ```text
 AI_RUNTIME_ENDPOINT
-AI_RUNTIME_DOTNET_ENVIRONMENT_REF
-AI_RUNTIME_TYPESCRIPT_ENVIRONMENT_REF
-AI_RUNTIME_PYTHON_ENVIRONMENT_REF
+OPENAI_MODEL
 ```
-
-Only the language-specific environment ref for the selected SDK is required by the launcher.
 
 Optional public transport configuration:
 
@@ -113,35 +195,51 @@ AI_RUNTIME_ACCESS_CONTEXT
 AI_RUNTIME_ACCESS_CONTEXT_HEADER
 ```
 
-Reserved for the next agent implementation increment:
+`AI_RUNTIME_DOTNET_ENVIRONMENT_REF` is not required by this native-step .NET slice.
 
-```text
-OPENAI_API_KEY
-OPENAI_MODEL
+The TypeScript and Python scaffold consumers still require their language-specific environment references.
+
+## Build
+
+The existing bootstrap remains local-package only:
+
+```cmd
+.\demo\interactive-agent-sdk\scripts\bootstrap.cmd
 ```
 
-The scaffold reports whether those OpenAI variables are configured but does not consume them.
+It packs the SDKs locally and publishes nothing.
 
-## Consumer boundary
-
-The demo consumes external SDK packages only.
-
-It must not reference runtime/engine, control-plane, persistence, queue, DAG-store, invocation-journal, or matrix/test projects.
+The .NET smoke run uses:
 
 ```text
-demo application
-    ↓
-external SDK package
-    ↓
-MCP Streamable HTTP
-    ↓
-public SDK boundary
-    ↓
-runtime
+AI_DEMO_SMOKE=1
 ```
 
-## Next increment
+and only constructs the external SDK client. It sends no runtime request.
 
-The next increment will implement the first real agent vertical slice in the .NET consumer before reproducing the same behavior independently in TypeScript and Python.
+## Run
 
-No agent behavior is claimed by this scaffold.
+After bootstrap and runtime configuration:
+
+```cmd
+.\demo\interactive-agent-sdk\run.cmd
+```
+
+Choose:
+
+```text
+1. .NET
+```
+
+## Validation status
+
+The code is prepared against the current public SDK contracts and the already validated runtime primitives:
+
+```text
+execution.child-dag
+execution.await-input
+execution.publish-result
+steps.<step>.result.payload...
+```
+
+A target-environment E2E run is still required before the complete .NET agent flow is marked GREEN.

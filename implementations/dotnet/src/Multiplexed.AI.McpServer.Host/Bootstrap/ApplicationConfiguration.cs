@@ -65,6 +65,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                                 NamespaceGuardMiddleware>();
                         });
                     app.UseAuthorization();
+                    StandaloneAccessContextEndpoint.Configure(app);
                     app.MapMcp("/mcp");
                     break;
 

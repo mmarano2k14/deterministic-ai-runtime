@@ -61,6 +61,8 @@ def smoke_environment() -> dict[str, str]:
             "AI_RUNTIME_DOTNET_ENVIRONMENT_REF": "demo-smoke-dotnet",
             "AI_RUNTIME_TYPESCRIPT_ENVIRONMENT_REF": "demo-smoke-typescript",
             "AI_RUNTIME_PYTHON_ENVIRONMENT_REF": "demo-smoke-python",
+            "OPENAI_MODEL": "gpt-smoke-not-used",
+            "AI_DEMO_SMOKE": "1",
         }
     )
     env.pop("AI_RUNTIME_TOKEN", None)
