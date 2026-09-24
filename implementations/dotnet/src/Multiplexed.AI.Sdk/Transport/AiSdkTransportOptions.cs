@@ -13,6 +13,12 @@ namespace Multiplexed.AI.Sdk.Transport
         /// </summary>
         public IReadOnlyDictionary<string, string>? AdditionalHeaders { get; init; }
 
+        /// <summary>
+        /// Response/request header carrying the rotating runtime access-context handle.
+        /// Set to <see langword="null"/> to disable access-context rotation tracking.
+        /// </summary>
+        public string? AccessContextHeaderName { get; init; } = "X-Access-Context";
+
         /// <summary>Total attempts allowed for operations explicitly marked as safe reads.</summary>
         public int SafeReadMaxAttempts { get; init; } = 2;
 

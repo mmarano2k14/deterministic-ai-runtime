@@ -5,24 +5,42 @@ internal sealed record DemoConfiguration(
     string? Token,
     string? AccessContext,
     string AccessContextHeader,
+    string AccessContextEndpoint,
     string OpenAiModel)
 {
     internal static DemoConfiguration Load()
     {
         var endpoint = Required("AI_RUNTIME_ENDPOINT");
 
-        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
-            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri) ||
+            (endpointUri.Scheme != Uri.UriSchemeHttp &&
+             endpointUri.Scheme != Uri.UriSchemeHttps))
         {
             throw new InvalidOperationException(
                 "AI_RUNTIME_ENDPOINT must be an absolute HTTP or HTTPS URI.");
         }
 
+        var accessContextEndpoint =
+            Optional("AI_RUNTIME_ACCESS_CONTEXT_ENDPOINT")
+            ?? new Uri(endpointUri, "/auth/access-context").AbsoluteUri;
+
+        if (!Uri.TryCreate(
+                accessContextEndpoint,
+                UriKind.Absolute,
+                out var accessContextUri) ||
+            (accessContextUri.Scheme != Uri.UriSchemeHttp &&
+             accessContextUri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new InvalidOperationException(
+                "AI_RUNTIME_ACCESS_CONTEXT_ENDPOINT must be an absolute HTTP or HTTPS URI.");
+        }
+
         return new DemoConfiguration(
-            endpoint,
+            endpointUri.AbsoluteUri,
             Optional("AI_RUNTIME_TOKEN"),
             Optional("AI_RUNTIME_ACCESS_CONTEXT"),
             Optional("AI_RUNTIME_ACCESS_CONTEXT_HEADER") ?? "X-Access-Context",
+            accessContextUri.AbsoluteUri,
             Required("OPENAI_MODEL"));
     }
 

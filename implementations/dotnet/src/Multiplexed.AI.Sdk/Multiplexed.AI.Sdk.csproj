@@ -19,6 +19,10 @@
     <None Update="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Multiplexed.AI.Sdk.Tests" />
+  </ItemGroup>
+
   <Target Name="EnforceExternalSdkProjectBoundary" BeforeTargets="ResolveReferences">
     <ItemGroup>
       <ForbiddenSdkProjectReference Include="@(ProjectReference)"

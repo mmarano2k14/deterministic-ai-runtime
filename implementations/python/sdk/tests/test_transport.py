@@ -15,6 +15,7 @@ from multiplexed_ai_sdk import (  # noqa: E402
     AiSdkTransportResponse,
 )
 from multiplexed_ai_sdk.mcp_http_transport import (  # noqa: E402
+    _AiSdkAccessContextState,
     _create_http_timeout,
     _is_retryable_transport_failure,
     _normalize_transport_failure,
@@ -109,6 +110,34 @@ class AiSdkMcpHttpTransportTests(unittest.IsolatedAsyncioTestCase):
             {"connect": 11.0, "read": 222.0, "write": 12.0, "pool": 13.0},
             timeout.kwargs,
         )
+
+    def test_access_context_state_reuses_latest_rotated_handle(self) -> None:
+        state = _AiSdkAccessContextState(
+            "X-Access-Context",
+            {"x-access-context": "ctx-initial"},
+        )
+
+        first_headers: dict[str, str] = {}
+        state.apply(first_headers)
+        self.assertEqual("ctx-initial", first_headers["X-Access-Context"])
+
+        state.observe({"X-Access-Context": "ctx-rotated"})
+
+        second_headers: dict[str, str] = {}
+        state.apply(second_headers)
+        self.assertEqual("ctx-rotated", second_headers["X-Access-Context"])
+        self.assertEqual("ctx-rotated", state.current)
+
+    def test_access_context_state_supports_custom_header_name(self) -> None:
+        state = _AiSdkAccessContextState(
+            "X-Custom-Context",
+            {"x-custom-context": "ctx-custom"},
+        )
+
+        headers: dict[str, str] = {}
+        state.apply(headers)
+
+        self.assertEqual("ctx-custom", headers["X-Custom-Context"])
 
     def test_task_group_timeout_is_classified_as_retryable_timeout(self) -> None:
         grouped = _FakeExceptionGroup(_ReadTimeout("watch read timed out"))

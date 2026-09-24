@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Mapping, MutableMapping
 from urllib.parse import urlparse
 
 from .errors import AiSdkError
@@ -18,6 +18,10 @@ class AiSdkMcpHttpTransport:
             raise ValueError("MCP endpoint must be an absolute HTTP or HTTPS URL")
         self._endpoint = endpoint
         self._options = options or AiSdkTransportOptions()
+        self._access_context = _AiSdkAccessContextState(
+            self._options.access_context_header_name,
+            self._options.additional_headers,
+        )
 
     async def invoke(self, request: AiSdkTransportRequest) -> AiSdkTransportResponse:
         if request.protocol_version != AI_SDK_PROTOCOL_VERSION:
@@ -67,7 +71,14 @@ class AiSdkMcpHttpTransport:
             return AiSdkTransportResponse(error=headers)
 
         timeout = _create_http_timeout(httpx2, self._options)
-        async with httpx2.AsyncClient(headers=headers or None, timeout=timeout) as http_client:
+        async with httpx2.AsyncClient(
+            headers=headers or None,
+            timeout=timeout,
+            event_hooks={
+                "request": [self._on_http_request],
+                "response": [self._on_http_response],
+            },
+        ) as http_client:
             transport = streamable_http_client(self._endpoint, http_client=http_client)
             async with Client(transport) as client:
                 result = await client.call_tool(request.operation, request.arguments)
@@ -89,6 +100,7 @@ class AiSdkMcpHttpTransport:
 
     async def _create_headers(self) -> dict[str, str] | AiSdkError | None:
         headers = dict(self._options.additional_headers or {})
+        self._access_context.apply(headers)
         provider = self._options.credential_provider
         if provider is None:
             return headers or None
@@ -114,6 +126,71 @@ class AiSdkMcpHttpTransport:
             )
         headers["Authorization"] = f"{credential.scheme} {credential.value}"
         return headers
+
+    async def _on_http_request(self, request: Any) -> None:
+        self._access_context.apply(request.headers)
+
+    async def _on_http_response(self, response: Any) -> None:
+        self._access_context.observe(response.headers)
+
+
+
+class _AiSdkAccessContextState:
+    def __init__(
+        self,
+        header_name: str | None,
+        initial_headers: Mapping[str, str] | None = None,
+    ) -> None:
+        self._header_name = None if header_name is None else header_name.strip()
+        self._current: str | None = None
+
+        if self._header_name is None or initial_headers is None:
+            return
+
+        expected = self._header_name.lower()
+        for name, value in initial_headers.items():
+            if name.lower() == expected and self._valid_value(value):
+                self._current = value.strip()
+                break
+
+    @property
+    def current(self) -> str | None:
+        return self._current
+
+    def apply(self, headers: MutableMapping[str, str]) -> None:
+        if self._header_name is None or self._current is None:
+            return
+
+        expected = self._header_name.lower()
+        for name in tuple(headers.keys()):
+            if name.lower() == expected and name != self._header_name:
+                del headers[name]
+
+        headers[self._header_name] = self._current
+
+    def observe(self, headers: Mapping[str, str]) -> None:
+        if self._header_name is None:
+            return
+
+        expected = self._header_name.lower()
+        values = [
+            value.strip()
+            for name, value in headers.items()
+            if name.lower() == expected and self._valid_value(value)
+        ]
+
+        if len(set(values)) == 1 and values:
+            self._current = values[0]
+
+    @staticmethod
+    def _valid_value(value: str | None) -> bool:
+        return (
+            isinstance(value, str)
+            and bool(value.strip())
+            and "\r" not in value
+            and "\n" not in value
+        )
+
 
 
 def _create_http_timeout(httpx2_module: Any, options: AiSdkTransportOptions) -> object:

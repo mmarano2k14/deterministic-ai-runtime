@@ -50,3 +50,58 @@ test("execution control and replay operations are never automatically retried", 
     assert.equal(AI_SDK_OPERATION_RETRY[operation], "never");
   }
 });
+
+
+test("rotating access-context fetch applies the latest response handle to the next request", async () => {
+  const { createRotatingAccessContextFetch } = await import(
+    "../dist/transport/mcp-http-transport.js"
+  );
+
+  let current = "ctx-initial";
+  const seen = [];
+  let responseIndex = 0;
+
+  const baseFetch = async (_input, init) => {
+    const headers = new Headers(init?.headers);
+    seen.push(headers.get("X-Access-Context"));
+    responseIndex += 1;
+
+    return new Response("{}", {
+      status: 200,
+      headers: {
+        "X-Access-Context": `ctx-rotated-${responseIndex}`,
+      },
+    });
+  };
+
+  const rotatingFetch = createRotatingAccessContextFetch(
+    baseFetch,
+    "X-Access-Context",
+    () => current,
+    (value) => {
+      current = value;
+    },
+  );
+
+  await rotatingFetch(new URL("https://runtime.example/mcp"), {
+    method: "POST",
+  });
+  await rotatingFetch(new URL("https://runtime.example/mcp"), {
+    method: "POST",
+  });
+
+  assert.deepEqual(seen, ["ctx-initial", "ctx-rotated-1"]);
+  assert.equal(current, "ctx-rotated-2");
+});
+
+test("MCP transport accepts a custom rotating access-context header name", () => {
+  assert.doesNotThrow(
+    () =>
+      new AiSdkMcpHttpTransport(new URL("https://example.test/mcp"), {
+        accessContextHeaderName: "X-Custom-Context",
+        additionalHeaders: {
+          "X-Custom-Context": "ctx-1",
+        },
+      }),
+  );
+});

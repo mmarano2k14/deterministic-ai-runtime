@@ -24,6 +24,11 @@ export interface AiSdkTransportOptions {
   readonly credentialProvider?: AiSdkCredentialProvider;
   /** Additional public-boundary headers. Authorization remains credential-provider owned. */
   readonly additionalHeaders?: Readonly<Record<string, string>>;
+  /**
+   * Response/request header carrying the rotating runtime access-context handle.
+   * Defaults to X-Access-Context. Set to null to disable rotation tracking.
+   */
+  readonly accessContextHeaderName?: string | null;
   readonly safeReadMaxAttempts?: number;
   readonly safeReadRetryDelayMs?: number;
   readonly clientName?: string;

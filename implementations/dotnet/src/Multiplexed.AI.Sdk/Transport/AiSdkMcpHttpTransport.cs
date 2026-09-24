@@ -17,6 +17,7 @@ namespace Multiplexed.AI.Sdk.Transport
     {
         private readonly Uri _endpoint;
         private readonly AiSdkTransportOptions _options;
+        private readonly AiSdkAccessContextState _accessContextState;
 
         public AiSdkMcpHttpTransport(Uri endpoint, AiSdkTransportOptions? options = null)
         {
@@ -42,7 +43,15 @@ namespace Multiplexed.AI.Sdk.Transport
             }
 
             _endpoint = endpoint;
+            _accessContextState = new AiSdkAccessContextState(
+                _options.AccessContextHeaderName,
+                _options.AdditionalHeaders);
         }
+
+        /// <summary>
+        /// Gets the latest access-context handle observed by this transport instance.
+        /// </summary>
+        public string? CurrentAccessContext => _accessContextState.Current;
 
         public async ValueTask<AiSdkTransportResponse> InvokeAsync(
             AiSdkTransportRequest request,
@@ -137,7 +146,22 @@ namespace Multiplexed.AI.Sdk.Transport
                 AdditionalHeaders = headers.Headers
             };
 
-            await using var clientTransport = new HttpClientTransport(transportOptions);
+            using var httpClient = new HttpClient(
+                new AiSdkAccessContextRotationHandler(_accessContextState)
+                {
+                    InnerHandler = new HttpClientHandler()
+                },
+                disposeHandler: true)
+            {
+                // MCP Streamable HTTP owns request-level/connection timeouts. Avoid the
+                // generic HttpClient timeout terminating long Watch/stream responses.
+                Timeout = Timeout.InfiniteTimeSpan
+            };
+
+            await using var clientTransport = new HttpClientTransport(
+                transportOptions,
+                httpClient);
+
             await using var client = await McpClient.CreateAsync(
                 clientTransport,
                 cancellationToken: cancellationToken).ConfigureAwait(false);

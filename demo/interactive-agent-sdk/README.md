@@ -14,6 +14,40 @@ The .NET consumer references only the locally packed external `Multiplexed.AI.Sd
 
 It does not reference runtime, engine, control-plane, persistence, matrix, or test projects.
 
+## Authentication flow
+
+The standalone .NET demo uses the real host authentication boundary:
+
+```text
+real JWT Bearer
+    ↓
+POST /auth/access-context
+    ↓
+validated JWT claims
+    ↓
+existing IContextStore
+    ↓
+X-Access-Context
+    ↓
+public MCP SDK transport
+    ↓
+automatic X-Access-Context rotation
+```
+
+The external application never submits TRN capabilities in the access-context request.
+
+Capabilities are derived by the host from the validated JWT claims.
+
+If `AI_RUNTIME_ACCESS_CONTEXT` is not provided, the .NET consumer automatically calls:
+
+```text
+AI_RUNTIME_ACCESS_CONTEXT_ENDPOINT
+```
+
+using `AI_RUNTIME_TOKEN`, captures the returned access-context handle, and initializes the public SDK transport with it.
+
+The access-context bootstrap POST is not automatically retried.
+
 ## .NET execution flow
 
 ```text
@@ -48,7 +82,7 @@ sdk.execution.result
 optional sdk.execution.replay
 ```
 
-The child definition contains no further Child DAG call site, so delegation is structurally bounded to one level in this demo.
+The child definition contains no further Child DAG call site, so delegation is structurally bounded to one level.
 
 ## No matrix or demo-only control path
 
@@ -94,9 +128,7 @@ The key is not serialized into publication content, execution input, Watch event
 
 ## Public execution input
 
-The current public SDK submission boundary carries the initial JSON document into the runtime's existing execution input slot.
-
-For this demo the submitted document is:
+The public SDK submission carries:
 
 ```json
 {
@@ -105,11 +137,11 @@ For this demo the submitted document is:
 }
 ```
 
-The root prompt receives that document through `state.input` and explicitly reads the `userPrompt` field. No diagnostic metadata is used as business input.
+The root prompt receives that document through `state.input`.
 
 ## Child result consumption
 
-The child agent publishes its analysis with:
+The child publishes its analysis with:
 
 ```text
 execution.publish-result
@@ -121,7 +153,7 @@ The parent consumes the frozen Child DAG payload through:
 steps.delegate-analysis.result.payload.data.result
 ```
 
-This uses the same durable Child DAG result snapshot and payload resolver used by the runtime; there is no demo-specific side channel.
+There is no demo-specific child-result side channel.
 
 ## Human input
 
@@ -167,8 +199,6 @@ While active:
 [q] detach local console without cancelling
 ```
 
-The console also runs `sdk.execution.watch` and prints public snapshots/events.
-
 After terminal convergence:
 
 ```text
@@ -176,50 +206,88 @@ After terminal convergence:
 [q] exit
 ```
 
-Replay validates the existing durable execution and does not create a second execution.
-
-## Configuration
-
-Required for the .NET vertical slice:
+## Required .NET configuration
 
 ```text
 AI_RUNTIME_ENDPOINT
+AI_RUNTIME_TOKEN
 OPENAI_MODEL
 ```
 
-Optional public transport configuration:
+Optional:
 
 ```text
-AI_RUNTIME_TOKEN
 AI_RUNTIME_ACCESS_CONTEXT
+AI_RUNTIME_ACCESS_CONTEXT_ENDPOINT
 AI_RUNTIME_ACCESS_CONTEXT_HEADER
 ```
 
-`AI_RUNTIME_DOTNET_ENVIRONMENT_REF` is not required by this native-step .NET slice.
+If no explicit access context is supplied, the demo obtains one automatically.
 
-The TypeScript and Python scaffold consumers still require their language-specific environment references.
+## Local standalone JWT
+
+Production deployments should obtain `AI_RUNTIME_TOKEN` from the real identity provider.
+
+For local development only, the repository contains a small JWT issuer utility that creates a **real HS256 JWT** accepted by the standalone `JwtBearer` host. It does not add a fake authentication handler.
+
+Configure the host:
+
+```powershell
+$env:AiMcpAuthentication__Enabled="true"
+$env:AiMcpAuthentication__Issuer="multiplexed-local"
+$env:AiMcpAuthentication__Audience="multiplexed-ai-sdk"
+$env:AiMcpAuthentication__SymmetricSigningKey="replace-with-at-least-32-bytes-of-local-secret"
+$env:OPENAI_API_KEY="<openai-key>"
+```
+
+The default RBAC project in the host is:
+
+```text
+rbac-demo
+```
+
+The local token helper uses that same project by default.
+
+In the consumer terminal, set the same local signing configuration only for this development workflow:
+
+```powershell
+$env:AiMcpAuthentication__Issuer="multiplexed-local"
+$env:AiMcpAuthentication__Audience="multiplexed-ai-sdk"
+$env:AiMcpAuthentication__SymmetricSigningKey="replace-with-at-least-32-bytes-of-local-secret"
+
+$env:AI_RUNTIME_TOKEN = python .\demo\interactive-agent-sdk\scripts\create-local-jwt.py
+$env:AI_RUNTIME_ENDPOINT="http://localhost:8081/mcp"
+$env:OPENAI_MODEL="gpt-5.4"
+```
+
+The helper grants only the capabilities used by this interactive demo:
+
+```text
+code:publication:publish
+code:publication:read
+code:publication:execute
+shared-run:execution:submit
+execution:control:read
+execution:control:cancel
+execution:control:pause
+execution:control:resume
+execution:control:input
+replay:execution:run
+```
+
+The symmetric signing key is issuer authority and must never be distributed to normal production consumers.
 
 ## Build
-
-The existing bootstrap remains local-package only:
 
 ```cmd
 .\demo\interactive-agent-sdk\scripts\bootstrap.cmd
 ```
 
-It packs the SDKs locally and publishes nothing.
+The bootstrap remains local-package only and publishes nothing.
 
-The .NET smoke run uses:
-
-```text
-AI_DEMO_SMOKE=1
-```
-
-and only constructs the external SDK client. It sends no runtime request.
+`AI_DEMO_SMOKE=1` sends no authentication, access-context, runtime, or OpenAI request.
 
 ## Run
-
-After bootstrap and runtime configuration:
 
 ```cmd
 .\demo\interactive-agent-sdk\run.cmd
@@ -231,15 +299,20 @@ Choose:
 1. .NET
 ```
 
-## Validation status
-
-The code is prepared against the current public SDK contracts and the already validated runtime primitives:
+Expected authentication prelude:
 
 ```text
-execution.child-dag
-execution.await-input
-execution.publish-result
-steps.<step>.result.payload...
+Authentication bootstrap:
+  POST http://localhost:8081/auth/access-context
+  Authorization: Bearer <redacted>
+  Access context created via 'X-Access-Context'. Handle not displayed.
+  Subsequent handle rotation is managed by the SDK transport.
 ```
+
+After that, the normal public SDK pipeline publication begins.
+
+## Validation status
+
+The auth bootstrap code is prepared against the standalone JWT/access-context host boundary and the rotating SDK transport.
 
 A target-environment E2E run is still required before the complete .NET agent flow is marked GREEN.

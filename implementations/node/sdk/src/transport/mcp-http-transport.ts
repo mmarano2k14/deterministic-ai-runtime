@@ -16,12 +16,15 @@ const DEFAULT_SAFE_READ_MAX_ATTEMPTS = 2;
 const DEFAULT_SAFE_READ_RETRY_DELAY_MS = 100;
 const DEFAULT_CLIENT_NAME = "Multiplexed.AI.Sdk.TypeScript";
 const DEFAULT_CLIENT_VERSION = "0.0.0";
+const DEFAULT_ACCESS_CONTEXT_HEADER = "X-Access-Context";
 
 export class AiSdkMcpHttpTransport implements AiSdkTransport {
   readonly #endpoint: URL;
   readonly #options: Required<
     Pick<AiSdkTransportOptions, "safeReadMaxAttempts" | "safeReadRetryDelayMs" | "clientName" | "clientVersion">
-  > & Pick<AiSdkTransportOptions, "credentialProvider" | "additionalHeaders">;
+  > & Pick<AiSdkTransportOptions, "credentialProvider" | "additionalHeaders" | "accessContextHeaderName">;
+  readonly #accessContextHeaderName: string | undefined;
+  #currentAccessContext: string | undefined;
 
   public constructor(endpoint: URL, options: AiSdkTransportOptions = {}) {
     if (!(endpoint instanceof URL) || !["http:", "https:"].includes(endpoint.protocol)) {
@@ -40,13 +43,33 @@ export class AiSdkMcpHttpTransport implements AiSdkTransport {
     }
 
     this.#endpoint = new URL(endpoint.toString());
+
+    this.#accessContextHeaderName = normalizeAccessContextHeaderName(
+      options.accessContextHeaderName === undefined
+        ? DEFAULT_ACCESS_CONTEXT_HEADER
+        : options.accessContextHeaderName,
+    );
+
+    const validatedAdditionalHeaders =
+      options.additionalHeaders === undefined
+        ? undefined
+        : validateAdditionalHeaders(options.additionalHeaders);
+
+    this.#currentAccessContext =
+      this.#accessContextHeaderName === undefined || validatedAdditionalHeaders === undefined
+        ? undefined
+        : headerValue(validatedAdditionalHeaders, this.#accessContextHeaderName);
+
     this.#options = {
       ...(options.credentialProvider === undefined
         ? {}
         : { credentialProvider: options.credentialProvider }),
-      ...(options.additionalHeaders === undefined
+      ...(validatedAdditionalHeaders === undefined
         ? {}
-        : { additionalHeaders: validateAdditionalHeaders(options.additionalHeaders) }),
+        : { additionalHeaders: validatedAdditionalHeaders }),
+      ...(options.accessContextHeaderName === undefined
+        ? {}
+        : { accessContextHeaderName: options.accessContextHeaderName }),
       safeReadMaxAttempts,
       safeReadRetryDelayMs,
       clientName: options.clientName ?? DEFAULT_CLIENT_NAME,
@@ -118,6 +141,14 @@ export class AiSdkMcpHttpTransport implements AiSdkTransport {
             requestInit: {
               headers: headers.value,
             },
+            fetch: createRotatingAccessContextFetch(
+              globalThis.fetch.bind(globalThis),
+              this.#accessContextHeaderName,
+              () => this.#currentAccessContext,
+              (value) => {
+                this.#currentAccessContext = value;
+              },
+            ),
           },
     );
 
@@ -168,6 +199,10 @@ export class AiSdkMcpHttpTransport implements AiSdkTransport {
     signal?: AbortSignal,
   ): Promise<{ readonly value?: Readonly<Record<string, string>> } | { readonly error: ReturnType<typeof createAiSdkError> }> {
     const headers: Record<string, string> = { ...(this.#options.additionalHeaders ?? {}) };
+
+    if (this.#accessContextHeaderName !== undefined && this.#currentAccessContext !== undefined) {
+      setHeaderCaseInsensitive(headers, this.#accessContextHeaderName, this.#currentAccessContext);
+    }
     if (this.#options.credentialProvider === undefined) {
       return Object.keys(headers).length === 0 ? {} : { value: headers };
     }
@@ -208,6 +243,101 @@ export class AiSdkMcpHttpTransport implements AiSdkTransport {
       };
     }
   }
+}
+
+
+export function createRotatingAccessContextFetch(
+  baseFetch: typeof fetch,
+  headerName: string | undefined,
+  current: () => string | undefined,
+  observe: (value: string) => void,
+): typeof fetch {
+  if (headerName === undefined) {
+    return baseFetch;
+  }
+
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const headers = new Headers(
+      input instanceof Request ? input.headers : undefined,
+    );
+
+    if (init?.headers !== undefined) {
+      new Headers(init.headers).forEach((value, name) => {
+        headers.set(name, value);
+      });
+    }
+
+    const accessContext = current();
+    if (accessContext !== undefined && accessContext.trim().length > 0) {
+      headers.set(headerName, accessContext);
+    }
+
+    const response = await baseFetch(input, {
+      ...init,
+      headers,
+    });
+
+    const rotated = response.headers.get(headerName);
+    if (rotated !== null &&
+        rotated.trim().length > 0 &&
+        !rotated.includes("\r") &&
+        !rotated.includes("\n")) {
+      observe(rotated.trim());
+    }
+
+    return response;
+  };
+}
+
+function normalizeAccessContextHeaderName(
+  headerName: string | null,
+): string | undefined {
+  if (headerName === null) {
+    return undefined;
+  }
+
+  const normalized = headerName.trim();
+  if (normalized.length === 0 ||
+      normalized.includes(":") ||
+      normalized.includes("\r") ||
+      normalized.includes("\n")) {
+    throw new TypeError(
+      "accessContextHeaderName must be a valid HTTP header name or null.",
+    );
+  }
+
+  return normalized;
+}
+
+function headerValue(
+  headers: Readonly<Record<string, string>>,
+  name: string,
+): string | undefined {
+  const expected = name.toLowerCase();
+
+  for (const [headerName, value] of Object.entries(headers)) {
+    if (headerName.toLowerCase() === expected) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function setHeaderCaseInsensitive(
+  headers: Record<string, string>,
+  name: string,
+  value: string,
+): void {
+  const expected = name.toLowerCase();
+
+  for (const headerName of Object.keys(headers)) {
+    if (headerName.toLowerCase() === expected && headerName !== name) {
+      delete headers[headerName];
+    }
+  }
+
+  headers[name] = value;
 }
 
 function validateAdditionalHeaders(headers: Readonly<Record<string, string>>): Readonly<Record<string, string>> {

@@ -12,7 +12,6 @@ internal static class Program
         try
         {
             var config = DemoConfiguration.Load();
-            IAiSdkClient client = CreateClient(config);
 
             if (IsSmokeMode())
             {
@@ -21,11 +20,13 @@ internal static class Program
                 Console.WriteLine($"Runtime endpoint: {config.Endpoint}");
                 Console.WriteLine($"OpenAI model configured: {!string.IsNullOrWhiteSpace(config.OpenAiModel)}");
                 Console.WriteLine("External SDK consumer initialized.");
-                Console.WriteLine("Smoke mode: no runtime request was sent.");
+                Console.WriteLine("Smoke mode: no authentication/bootstrap/runtime request was sent.");
                 return 0;
             }
 
             PrintHeader(config);
+
+            IAiSdkClient client = await CreateClientAsync(config);
 
             Console.Write("User request: ");
             var userPrompt = Console.ReadLine()?.Trim();
@@ -89,19 +90,58 @@ internal static class Program
         }
     }
 
-    private static IAiSdkClient CreateClient(DemoConfiguration config)
+    private static async Task<IAiSdkClient> CreateClientAsync(
+        DemoConfiguration config)
     {
+        if (string.IsNullOrWhiteSpace(config.Token))
+        {
+            throw new InvalidOperationException(
+                "AI_RUNTIME_TOKEN is required for the standalone authenticated .NET demo.");
+        }
+
+        var credentials = new AiSdkStaticCredentialProvider(
+            new AiSdkCredential("Bearer", config.Token));
+
+        var accessContext = config.AccessContext;
+
+        if (string.IsNullOrWhiteSpace(accessContext))
+        {
+            Console.WriteLine("Authentication bootstrap:");
+            Console.WriteLine($"  POST {config.AccessContextEndpoint}");
+            Console.WriteLine("  Authorization: Bearer <redacted>");
+
+            var bootstrap = await AiSdkAccessContextBootstrapper.CreateAsync(
+                new AiSdkAccessContextBootstrapOptions
+                {
+                    Endpoint = new Uri(config.AccessContextEndpoint),
+                    CredentialProvider = credentials,
+                    AccessContextHeaderName = config.AccessContextHeader
+                });
+
+            accessContext = bootstrap.AccessContext;
+
+            Console.WriteLine(
+                $"  Access context created via '{bootstrap.HeaderName}'. Handle not displayed.");
+            Console.WriteLine(
+                "  Subsequent handle rotation is managed by the SDK transport.");
+            Console.WriteLine();
+        }
+        else
+        {
+            Console.WriteLine(
+                "Using the pre-provisioned AI_RUNTIME_ACCESS_CONTEXT. " +
+                "Subsequent rotation is managed by the SDK transport.");
+            Console.WriteLine();
+        }
+
         var transportOptions = new AiSdkTransportOptions
         {
-            CredentialProvider = string.IsNullOrWhiteSpace(config.Token)
-                ? null
-                : new AiSdkStaticCredentialProvider(
-                    new AiSdkCredential("Bearer", config.Token)),
-            AdditionalHeaders = string.IsNullOrWhiteSpace(config.AccessContext)
-                ? null
-                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            CredentialProvider = credentials,
+            AccessContextHeaderName = config.AccessContextHeader,
+            AdditionalHeaders =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    [config.AccessContextHeader] = config.AccessContext
+                    [config.AccessContextHeader] = accessContext
                 }
         };
 
@@ -121,6 +161,8 @@ internal static class Program
         Console.WriteLine($"Runtime endpoint: {config.Endpoint}");
         Console.WriteLine($"OpenAI model: {config.OpenAiModel}");
         Console.WriteLine();
+        Console.WriteLine(
+            "Runtime authentication uses a Bearer JWT plus a server-created RBAC access context.");
         Console.WriteLine(
             "OpenAI authentication stays on the runtime host. " +
             "The external SDK does not send OPENAI_API_KEY.");

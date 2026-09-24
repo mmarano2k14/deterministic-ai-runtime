@@ -30,6 +30,7 @@ class AiSdkTransportResponse:
 class AiSdkTransportOptions:
     credential_provider: AiSdkCredentialProvider | None = None
     additional_headers: dict[str, str] | None = None
+    access_context_header_name: str | None = "X-Access-Context"
     safe_read_max_attempts: int = 2
     safe_read_retry_delay_seconds: float = 0.1
     connect_timeout_seconds: float = 30.0
@@ -50,6 +51,18 @@ class AiSdkTransportOptions:
         ):
             if value <= 0:
                 raise ValueError(f"{name} must be greater than zero")
+        if self.access_context_header_name is not None:
+            header_name = self.access_context_header_name.strip()
+            if (
+                not header_name
+                or ":" in header_name
+                or "\r" in header_name
+                or "\n" in header_name
+            ):
+                raise ValueError(
+                    "access_context_header_name must be a valid HTTP header name or None"
+                )
+
         for name, value in (self.additional_headers or {}).items():
             if (
                 not name.strip()

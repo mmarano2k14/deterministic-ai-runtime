@@ -4,6 +4,60 @@
 
 It depends on `Multiplexed.AI.Sdk.Contracts` for wire models and uses the MCP Streamable HTTP transport to invoke the public SDK operations. It does not reference runtime, control-plane, persistence, worker, queue, recovery, lease or epoch assemblies.
 
+## Authenticated access-context bootstrap
+
+A standalone authenticated deployment may require two independent values:
+
+```text
+Authorization: Bearer <JWT>
+X-Access-Context: <runtime context handle>
+```
+
+The JWT authenticates the external identity. The access-context handle selects the durable RBAC execution context created from the authenticated token claims.
+
+The SDK can create the first access-context handle explicitly:
+
+```csharp
+using Multiplexed.AI.Sdk.Authentication;
+
+var credentials = new AiSdkStaticCredentialProvider(
+    new AiSdkCredential("Bearer", token));
+
+var bootstrap = await AiSdkAccessContextBootstrapper.CreateAsync(
+    new AiSdkAccessContextBootstrapOptions
+    {
+        Endpoint = new Uri("https://runtime.example/auth/access-context"),
+        CredentialProvider = credentials
+    });
+```
+
+The bootstrap POST is never retried automatically because it creates server-side state.
+
+The returned handle can initialize the physical MCP transport:
+
+```csharp
+using Multiplexed.AI.Sdk;
+using Multiplexed.AI.Sdk.Transport;
+
+var transport = new AiSdkMcpHttpTransport(
+    new Uri("https://runtime.example/mcp"),
+    new AiSdkTransportOptions
+    {
+        CredentialProvider = credentials,
+        AccessContextHeaderName = bootstrap.HeaderName,
+        AdditionalHeaders = new Dictionary<string, string>
+        {
+            [bootstrap.HeaderName] = bootstrap.AccessContext
+        }
+    });
+
+IAiSdkClient client = new AiSdkClient(transport);
+```
+
+After initialization, the MCP transport tracks server-driven access-context rotation and applies the latest handle to subsequent physical HTTP requests.
+
+The SDK never creates authorization capabilities itself. Tenant/project/namespace/TRN authority remains server-side and is derived from the authenticated identity.
+
 ## Client
 
 ```csharp
