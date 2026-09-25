@@ -5,7 +5,12 @@ import os
 import subprocess
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = Path(__file__).resolve().parents[1]
+PACKAGED_ROOT = (
+    Path(os.environ["AI_DEMO_PACKAGED_ROOT"])
+    if os.getenv("AI_DEMO_PACKAGED_ROOT", "").strip()
+    else None
+)
 
 DISPLAY_NAMES = {
     "dotnet": ".NET",
@@ -76,25 +81,38 @@ def require_configuration(sdk: str) -> None:
 
 
 def command_for(sdk: str) -> list[str]:
+    if PACKAGED_ROOT is not None:
+        if sdk == "dotnet":
+            return [str(PACKAGED_ROOT / "dotnet" / "InteractiveAgentSdkDemo")]
+        if sdk == "typescript":
+            return ["node", str(PACKAGED_ROOT / "typescript" / "dist" / "index.js")]
+        if sdk == "python":
+            return [
+                str(PACKAGED_ROOT / "python" / "bin" / "python"),
+                "-m",
+                "interactive_agent_sdk_demo",
+            ]
+        raise ValueError(f"Unsupported SDK '{sdk}'.")
+
     if sdk == "dotnet":
         return [
             "dotnet",
             "run",
             "--project",
-            str(ROOT / "dotnet" / "InteractiveAgentSdkDemo.csproj"),
+            str(SOURCE_ROOT / "dotnet" / "InteractiveAgentSdkDemo.csproj"),
             "--configuration",
             "Release",
             "--no-build",
         ]
 
     if sdk == "typescript":
-        return ["node", str(ROOT / "typescript" / "dist" / "index.js")]
+        return ["node", str(SOURCE_ROOT / "typescript" / "dist" / "index.js")]
 
     if sdk == "python":
         if os.name == "nt":
-            python = ROOT / "python" / ".venv" / "Scripts" / "python.exe"
+            python = SOURCE_ROOT / "python" / ".venv" / "Scripts" / "python.exe"
         else:
-            python = ROOT / "python" / ".venv" / "bin" / "python"
+            python = SOURCE_ROOT / "python" / ".venv" / "bin" / "python"
         return [str(python), "-m", "interactive_agent_sdk_demo"]
 
     raise ValueError(f"Unsupported SDK '{sdk}'.")
@@ -108,14 +126,16 @@ def main() -> int:
     command = command_for(sdk)
     print()
     print(f"Selected SDK: {DISPLAY_NAMES[sdk]}")
-    print("Consumer command:")
-    print("  " + " ".join(command))
+    if os.getenv("AI_DEMO_VERBOSE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        print("Consumer command:")
+        print("  " + " ".join(command))
     print()
 
     if args.dry_run:
         return 0
 
-    completed = subprocess.run(command, cwd=ROOT, check=False)
+    cwd = PACKAGED_ROOT if PACKAGED_ROOT is not None else SOURCE_ROOT
+    completed = subprocess.run(command, cwd=cwd, check=False)
     return completed.returncode
 
 

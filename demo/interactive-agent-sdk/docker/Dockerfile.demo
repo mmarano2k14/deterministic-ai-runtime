@@ -1,0 +1,100 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS dotnet-build
+WORKDIR /src
+
+# Build the .NET demo from the same repository view as the native bootstrap.
+# The SDK projects may depend on repository-level build props/targets and other
+# project files, so a selective COPY of only the two SDK directories is unsafe.
+COPY . .
+
+ARG DEMO_PACKAGE_VERSION=0.0.0-local
+
+RUN mkdir -p /src/demo/interactive-agent-sdk/.packages/dotnet /src/.nuget/packages
+
+RUN dotnet pack \
+    implementations/dotnet/src/Multiplexed.AI.Sdk.Contracts/Multiplexed.AI.Sdk.Contracts.csproj \
+    -c Release \
+    /p:PackageOutputPath=/src/demo/interactive-agent-sdk/.packages/dotnet \
+    /p:PackageVersion=${DEMO_PACKAGE_VERSION} \
+    --nologo
+
+RUN dotnet pack \
+    implementations/dotnet/src/Multiplexed.AI.Sdk/Multiplexed.AI.Sdk.csproj \
+    -c Release \
+    /p:PackageOutputPath=/src/demo/interactive-agent-sdk/.packages/dotnet \
+    /p:PackageVersion=${DEMO_PACKAGE_VERSION} \
+    --nologo
+
+RUN dotnet restore \
+    demo/interactive-agent-sdk/dotnet/InteractiveAgentSdkDemo.csproj \
+    --source /src/demo/interactive-agent-sdk/.packages/dotnet \
+    --source https://api.nuget.org/v3/index.json \
+    --runtime linux-x64 \
+    --packages /src/.nuget/packages \
+    --nologo \
+    && grep -Fq "Multiplexed.AI.Sdk/${DEMO_PACKAGE_VERSION}" \
+       demo/interactive-agent-sdk/dotnet/obj/project.assets.json \
+    && grep -Fq "Multiplexed.AI.Sdk.Contracts/${DEMO_PACKAGE_VERSION}" \
+       demo/interactive-agent-sdk/dotnet/obj/project.assets.json
+
+RUN dotnet publish \
+    demo/interactive-agent-sdk/dotnet/InteractiveAgentSdkDemo.csproj \
+    -c Release \
+    -r linux-x64 \
+    --self-contained true \
+    --no-restore \
+    /p:PublishDir=/out/dotnet/ \
+    --nologo
+
+FROM node:24-bookworm-slim AS node-build
+WORKDIR /src
+
+COPY implementations/node/sdk implementations/node/sdk
+COPY demo/interactive-agent-sdk/typescript demo/interactive-agent-sdk/typescript
+
+RUN cd implementations/node/sdk \
+    && npm ci \
+    && npm run build \
+    && mkdir -p /src/demo/interactive-agent-sdk/.packages/typescript \
+    && npm pack --pack-destination /src/demo/interactive-agent-sdk/.packages/typescript
+
+RUN cd demo/interactive-agent-sdk/typescript \
+    && rm -rf node_modules package-lock.json \
+    && npm install --no-package-lock \
+    && npm run build \
+    && npm prune --omit=dev
+
+FROM python:3.12-slim-bookworm AS python-build
+WORKDIR /src
+
+COPY implementations/python/sdk implementations/python/sdk
+COPY demo/interactive-agent-sdk/python demo/interactive-agent-sdk/python
+
+RUN python -m venv /opt/interactive-agent/python \
+    && /opt/interactive-agent/python/bin/python -m pip install --upgrade pip \
+    && /opt/interactive-agent/python/bin/python -m pip install /src/implementations/python/sdk \
+    && /opt/interactive-agent/python/bin/python -m pip install --no-deps /src/demo/interactive-agent-sdk/python
+
+FROM node:24-bookworm-slim AS node-runtime
+
+FROM python:3.12-slim-bookworm AS final
+WORKDIR /opt/interactive-agent
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libatomic1 libgcc-s1 libicu72 libssl3 libstdc++6 tzdata zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=dotnet-build /out/dotnet /opt/interactive-agent/dotnet
+COPY --from=node-build /src/demo/interactive-agent-sdk/typescript/dist /opt/interactive-agent/typescript/dist
+COPY --from=node-build /src/demo/interactive-agent-sdk/typescript/node_modules /opt/interactive-agent/typescript/node_modules
+COPY --from=node-build /src/demo/interactive-agent-sdk/typescript/package.json /opt/interactive-agent/typescript/package.json
+COPY --from=python-build /opt/interactive-agent/python /opt/interactive-agent/python
+
+COPY demo/interactive-agent-sdk/launcher /opt/interactive-agent/launcher
+COPY demo/interactive-agent-sdk/scripts/create-local-jwt.py /opt/interactive-agent/scripts/create-local-jwt.py
+COPY demo/interactive-agent-sdk/docker/entrypoint.py /opt/interactive-agent/docker/entrypoint.py
+
+ENV AI_DEMO_PACKAGED_ROOT=/opt/interactive-agent \
+    PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["python", "/opt/interactive-agent/docker/entrypoint.py"]

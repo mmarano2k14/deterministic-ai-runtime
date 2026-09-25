@@ -24,6 +24,7 @@ Focused AI runtime documentation is organized under:
 | [`ai/external-sdk-libraries.md`](ai/external-sdk-libraries.md) | Independent .NET, TypeScript/JavaScript and Python SDK clients, shared MCP protocol, retry/cancellation boundaries, package roots, and command-line build/test/package/install instructions for every language. |
 | [`ai/external-sdk-quickstart.md`](ai/external-sdk-quickstart.md) | End-to-end client examples for publishing reusable sample user code, submitting an immutable publication, observing execution, and reading terminal results from .NET, TypeScript/JavaScript, and Python. |
 | [`ai/external-sdk-libraries-validation.md`](ai/external-sdk-libraries-validation.md) | Cross-language parity fixtures, dependency firewalls, local NuGet/npm/wheel package-consumption smoke, validation commands, and explicit non-claims. |
+| [`ai/interactive-agent-sdk-demo.md`](ai/interactive-agent-sdk-demo.md) | Presentation-oriented public-SDK demo with packaged .NET, TypeScript, and Python consumers, JWT/RBAC access-context authentication, Child DAG delegation, human review/resume, terminal results, and deterministic replay validation. |
 | [`ai/multilanguage-runtime-matrix-validation.md`](ai/multilanguage-runtime-matrix-validation.md) | Fixture-free 37/37 Docker closure with `runtimeProvider=ProcessHostPool`: the 33-scenario baseline plus four explicitly scoped hosted-worker provider/artifact-selection scenarios, including pinning, dependency packaging, policies, nested Child DAGs, MCP effects, cancellation, recovery, journal acceptance, isolation selection, and SDK dependency firewalls. |
 | [`ai/kubernetes-pool-matrix-validation.md`](ai/kubernetes-pool-matrix-validation.md) | Validated 3/3 KubernetesPool closure: HTTP routing, hierarchical recovery, Python SDK execution with a verified uploaded-function marker; host-role/RBAC/TTL configuration, two image workflows, diagnostics, and the separate 37 Docker + 3 Kubernetes coverage record. |
 | [`ai/deterministic-dependency-packaging.md`](ai/deterministic-dependency-packaging.md) | Immutable pure-Python wheel, locked Node source-bundle, and managed .NET assembly-closure contracts, execution boundaries, pinning, and validation limits. |
@@ -273,6 +274,10 @@ Portable public publication/pipeline and execution/observation/control contracts
 ### [`ai/public-sdk-boundary-validation.md`](ai/public-sdk-boundary-validation.md)
 
 Validation reference for the dependency firewall, private-identity exclusion, public server interface, existing run-pinning/authorization compatibility, and branch-closure limits.
+
+### [`ai/interactive-agent-sdk-demo.md`](ai/interactive-agent-sdk-demo.md)
+
+Presentation-oriented end-to-end external SDK reference. Documents the packaged .NET, TypeScript, and Python consumers, real JWT plus server-created RBAC access context, runtime-owned OpenAI credential, immutable publication, Child DAG delegation, human review/resume on the same execution, terminal result publication, and deterministic replay. The Docker presentation path is GREEN for all three SDK clients.
 
 ---
 

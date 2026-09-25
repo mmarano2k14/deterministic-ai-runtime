@@ -392,6 +392,26 @@ Use `-SkipImageBuild` only when the SDK Runtime Pool image already includes the 
 
 See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md) for prerequisites, the distinct routing/recovery evidence inputs, bootstrap configuration, and diagnostic collection. This one Python-to-Python scenario does not validate the full cross-language Kubernetes matrix.
 
+## Interactive agent presentation demo
+
+For a complete presentation-oriented scenario using the same public SDK boundary, use:
+
+```text
+demo/interactive-agent-sdk/
+```
+
+The demo is GREEN in the packaged Docker path for .NET, TypeScript, and Python external consumers. Each path exercises immutable publication, durable submission, runtime-native OpenAI execution, Child DAG delegation, human review and resume on the same `ExecutionId`, business-result publication, terminal `Completed`, and deterministic replay.
+
+From the demo directory on Windows:
+
+```powershell
+.\docker-demo.ps1
+```
+
+Choose the SDK client, enter `i` at the human-review boundary, then enter `x` after completion to validate deterministic replay. `OPENAI_API_KEY` remains on the runtime service and is not passed to the external consumer.
+
+See [Interactive Agent SDK Demo](interactive-agent-sdk-demo.md) for the exact topology, boundaries, and validated matrix.
+
 ## Validation reference
 
 The external SDK path represented here is exercised by the fixture-free Docker runtime matrix. See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the exact 37/37 executed coverage, including the bounded `ProcessHostPool` / `ContainerIsolationProvider` provider-selection closure and its non-claims.

@@ -116,7 +116,7 @@ the independent child analysis, and the human feedback. Keep the response focuse
           order: 4,
           dependsOn: ["final-answer"],
           config: {
-            source: "steps.final-answer.result.data.value",
+            source: "steps.final-answer.result.data",
           },
         },
       ],

@@ -373,6 +373,14 @@ python .\implementations\sdk\parity\package_smoke.py --language python
 
 The package smoke builds local artifacts, consumes them from temporary applications, verifies import/use of the public SDK surface, and removes the temporary consumers. It does not publish packages to external registries.
 
+## Interactive agent demo
+
+`demo/interactive-agent-sdk/` provides a presentation-oriented consumer of the public SDK surface. It packages independent .NET, TypeScript, and Python external applications and drives the same durable runtime-native workflow through the MCP boundary.
+
+The Docker presentation path is GREEN for all three SDK consumers with human review/resume, terminal `Completed`, and deterministic replay. The demo is intentionally separate from the 37-scenario runtime matrix: it is a focused end-to-end presentation flow, not an additional matrix count.
+
+See [Interactive Agent SDK Demo](interactive-agent-sdk-demo.md) for run instructions and validation boundaries.
+
 ## Authentication boundary
 
 Authentication is transport-owned. Static credential providers exist for straightforward client scenarios, but credentials remain outside the portable publication/execution documents.
@@ -408,6 +416,7 @@ Live client-to-server evidence is recorded separately in [Multilanguage Runtime 
 ## Related documentation
 
 - [External SDK Quickstart](external-sdk-quickstart.md)
+- [Interactive Agent SDK Demo](interactive-agent-sdk-demo.md)
 - [External SDK Libraries Validation](external-sdk-libraries-validation.md)
 - [Public SDK Boundary](public-sdk-boundary.md)
 - [Public SDK Boundary Validation](public-sdk-boundary-validation.md)

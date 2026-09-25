@@ -1,6 +1,6 @@
 # External SDK Libraries Validation
 
-**Status:** Branch-closure validation completed for the independent .NET, TypeScript/JavaScript, and Python SDK libraries and their shared wire-contract parity. The separate live fixture-free Docker runtime matrix is GREEN at 37/37 scenarios with `runtimeProvider=ProcessHostPool` and bounded `ContainerIsolationProvider` worker/artifact-selection coverage. Public package-registry publication and the standalone CLI remain separate productization scopes.
+**Status:** Branch-closure validation completed for the independent .NET, TypeScript/JavaScript, and Python SDK libraries and their shared wire-contract parity. The separate live fixture-free Docker runtime matrix is GREEN at 37/37 scenarios with `runtimeProvider=ProcessHostPool` and bounded `ContainerIsolationProvider` worker/artifact-selection coverage. The packaged interactive-agent Docker presentation is additionally GREEN for all three external SDK consumers with terminal `Completed` and deterministic replay. Public package-registry publication and the standalone CLI remain separate productization scopes.
 
 A separate **3/3 KubernetesPool** closure adds live HTTP routing, hierarchical recovery, and Python SDK-to-Python `TrustedProcess` execution with `Completed` and an uploaded-function marker verified. This is not full Kubernetes client/worker parity or Kubernetes sandbox-Pod validation. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
 
@@ -135,6 +135,26 @@ The executed provider boundary is intentionally mixed rather than a full provide
 
 See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the scenario-level evidence boundary.
 
+## Interactive agent Docker presentation closure
+
+A separate presentation-oriented Docker scenario validates the same durable agent workflow through each external SDK consumer:
+
+```text
+.NET        -> Completed + deterministic replay GREEN
+TypeScript -> Completed + deterministic replay GREEN
+Python     -> Completed + deterministic replay GREEN
+```
+
+Each run exercises the authenticated public MCP boundary, immutable publication, durable execution submission, runtime-native OpenAI execution, Child DAG delegation, durable parent continuation, human review/input on the same execution, business-result publication, terminal result retrieval, and deterministic replay.
+
+This is a focused 3-client presentation closure, not an extension of the 37-scenario runtime matrix count. It must not be added to the 37/37 or KubernetesPool 3/3 totals because it validates a different scenario shape and reuses capabilities already covered by those broader matrices.
+
+The demo container consumes independently packaged external SDK artifacts. The .NET consumer is restored from the exact local `0.0.0-local` SDK/contracts packages before publish. OpenAI credentials remain on the runtime service.
+
+One Python run observed a transient business-result publication failure followed by successful publication, terminal `Completed`, and successful deterministic replay. The evidence supports durable convergence for that run; it does not establish first-attempt publication success as an invariant.
+
+See [Interactive Agent SDK Demo](interactive-agent-sdk-demo.md).
+
 ## KubernetesPool external SDK closure
 
 The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
@@ -197,6 +217,7 @@ The executed live combinations and their exact non-claims are recorded in [Multi
 ## Related documentation
 
 - [External SDK Quickstart](external-sdk-quickstart.md)
+- [Interactive Agent SDK Demo](interactive-agent-sdk-demo.md)
 - [External SDK Libraries](external-sdk-libraries.md)
 - [Public SDK Boundary](public-sdk-boundary.md)
 - [Public SDK Boundary Validation](public-sdk-boundary-validation.md)

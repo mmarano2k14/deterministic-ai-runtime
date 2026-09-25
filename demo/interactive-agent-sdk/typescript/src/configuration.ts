@@ -5,6 +5,7 @@ export type DemoConfiguration = Readonly<{
   accessContextHeader: string;
   accessContextEndpoint: URL;
   openAiModel: string;
+  verbose: boolean;
 }>;
 
 export function optional(name: string): string | undefined {
@@ -18,6 +19,11 @@ function required(name: string): string {
     throw new Error(`Missing required TypeScript demo configuration '${name}'.`);
   }
   return value;
+}
+
+function flag(name: string): boolean {
+  const value = optional(name)?.toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
 export function loadConfiguration(): DemoConfiguration {
@@ -48,6 +54,7 @@ export function loadConfiguration(): DemoConfiguration {
       optional("AI_RUNTIME_ACCESS_CONTEXT_HEADER") ?? "X-Access-Context",
     accessContextEndpoint,
     openAiModel: required("OPENAI_MODEL"),
+    verbose: flag("AI_DEMO_VERBOSE"),
   };
 }
 

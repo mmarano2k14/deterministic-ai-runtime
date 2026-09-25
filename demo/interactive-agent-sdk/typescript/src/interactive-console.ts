@@ -67,8 +67,12 @@ export class InteractiveExecutionConsole {
   readonly #waitingKey: string;
   readonly #waitingStepName: string;
   readonly #input: ConsoleInputPump;
+  readonly #verbose: boolean;
   #waitingAnnounced = false;
   #pendingInput: Promise<string | null> | undefined;
+  #lastObservation: AiSdkExecutionObservation | undefined;
+  #reviewApproved: boolean | undefined;
+  #reviewFeedback: string | undefined;
 
   public constructor(
     client: AiSdkClient,
@@ -76,12 +80,26 @@ export class InteractiveExecutionConsole {
     waitingKey: string,
     waitingStepName: string,
     input: ConsoleInputPump,
+    verbose: boolean,
   ) {
     this.#client = client;
     this.#executionId = executionId;
     this.#waitingKey = waitingKey;
     this.#waitingStepName = waitingStepName;
     this.#input = input;
+    this.#verbose = verbose;
+  }
+
+  public get lastObservation(): AiSdkExecutionObservation | undefined {
+    return this.#lastObservation;
+  }
+
+  public get reviewApproved(): boolean | undefined {
+    return this.#reviewApproved;
+  }
+
+  public get reviewFeedback(): string | undefined {
+    return this.#reviewFeedback;
   }
 
   public async run(): Promise<AiSdkExecutionResult | null> {
@@ -97,6 +115,7 @@ export class InteractiveExecutionConsole {
     try {
       while (true) {
         const observation = await this.#client.observeExecution(this.#executionId);
+        this.#lastObservation = observation;
         this.#announceInputBoundary(observation);
 
         if (isTerminal(observation.status)) {
@@ -132,9 +151,7 @@ export class InteractiveExecutionConsole {
 
   public async runPostTerminalCommands(terminalStatus: AiSdkExecutionStatus): Promise<void> {
     console.log();
-    console.log("Post-terminal commands:");
-    console.log("  [x] deterministic replay validation");
-    console.log("  [q] exit");
+    console.log("Post-terminal commands: [x] deterministic replay  [q] exit");
 
     while (true) {
       process.stdout.write("> ");
@@ -161,13 +178,22 @@ export class InteractiveExecutionConsole {
         { executionId: this.#executionId, includeInitialSnapshot: true },
         signal,
       )) {
-        printWatchItem(item);
+        if (this.#verbose) {
+          printVerboseWatchItem(item);
+        } else {
+          printPresentationWatchItem(item);
+        }
       }
     } catch (error) {
       if (signal.aborted) {
         return;
       }
-      console.log(`[watch] stopped: ${errorMessage(error)}`);
+
+      if (this.#verbose) {
+        console.log(`[watch] stopped: ${errorMessage(error)}`);
+      } else {
+        console.log("[WARN] Live watch stopped; observation polling remains active.");
+      }
     }
   }
 
@@ -183,11 +209,10 @@ export class InteractiveExecutionConsole {
 
     this.#waitingAnnounced = true;
     console.log();
-    console.log("Human input required.");
-    console.log(
-      `Step '${this.#waitingStepName}' is durably parked. ` +
-        "Enter 'i' to approve/reject and add feedback.",
-    );
+    console.log("---------------- Human review ----------------");
+    console.log("The durable execution is parked and waiting for approval.");
+    console.log("Enter 'i' to approve/reject and optionally add feedback.");
+    console.log("------------------------------------------------");
     console.log();
   }
 
@@ -225,7 +250,9 @@ export class InteractiveExecutionConsole {
 
   async #pause(): Promise<void> {
     console.log();
-    console.log(`SDK command: sdk.execution.pause(${this.#executionId})`);
+    if (this.#verbose) {
+      console.log(`SDK command: sdk.execution.pause(${this.#executionId})`);
+    }
     const response = await this.#client.pauseExecution(this.#executionId, {
       reason: "interactive-agent-console-pause",
     });
@@ -238,7 +265,9 @@ export class InteractiveExecutionConsole {
 
   async #resume(): Promise<void> {
     console.log();
-    console.log(`SDK command: sdk.execution.resume(${this.#executionId})`);
+    if (this.#verbose) {
+      console.log(`SDK command: sdk.execution.resume(${this.#executionId})`);
+    }
     const response = await this.#client.resumeExecution(this.#executionId, {
       reason: "interactive-agent-console-resume",
     });
@@ -260,7 +289,9 @@ export class InteractiveExecutionConsole {
     const feedback = (await this.#input.prompt("Feedback (optional): "))?.trim() ?? "";
 
     console.log();
-    console.log(`SDK command: sdk.execution.input.submit(${this.#executionId})`);
+    if (this.#verbose) {
+      console.log(`SDK command: sdk.execution.input.submit(${this.#executionId})`);
+    }
 
     const response = await this.#client.submitExecutionInput(this.#executionId, {
       waitingKey: this.#waitingKey,
@@ -270,8 +301,13 @@ export class InteractiveExecutionConsole {
       input: { approved, feedback },
     });
 
+    if (response.accepted) {
+      this.#reviewApproved = approved;
+      this.#reviewFeedback = feedback;
+    }
+
     console.log(
-      `Input accepted=${response.accepted}; controlState=${response.state?.status ?? "unknown"}`,
+      `Human input accepted=${response.accepted}; controlState=${response.state?.status ?? "unknown"}`,
     );
     console.log(`ExecutionId unchanged: ${response.executionId}`);
     console.log();
@@ -292,7 +328,9 @@ export class InteractiveExecutionConsole {
 
   async #cancel(): Promise<void> {
     console.log();
-    console.log(`SDK command: sdk.execution.cancel(${this.#executionId})`);
+    if (this.#verbose) {
+      console.log(`SDK command: sdk.execution.cancel(${this.#executionId})`);
+    }
     const response = await this.#client.cancelExecution(this.#executionId, {
       reason: "interactive-agent-console-cancel",
       correlationId: `interactive-agent-cancel-${randomUUID().replaceAll("-", "")}`,
@@ -305,7 +343,12 @@ export class InteractiveExecutionConsole {
 
   async #replay(): Promise<void> {
     console.log();
-    console.log(`SDK command: sdk.execution.replay(${this.#executionId})`);
+    if (this.#verbose) {
+      console.log(`SDK command: sdk.execution.replay(${this.#executionId})`);
+    } else {
+      console.log("Deterministic replay validation");
+    }
+
     const replay = await this.#client.replayExecution(this.#executionId, {
       strictDeterminism: true,
       includeDiagnostics: true,
@@ -313,20 +356,22 @@ export class InteractiveExecutionConsole {
       correlationId: `interactive-agent-replay-${randomUUID().replaceAll("-", "")}`,
     });
 
-    console.log(`Replay succeeded: ${replay.succeeded}`);
-    console.log(`Deterministic: ${replay.deterministic ?? "unknown"}`);
-    if (replay.message) {
-      console.log(`Message: ${replay.message}`);
+    console.log(`  Succeeded:     ${replay.succeeded}`);
+    console.log(`  Deterministic: ${replay.deterministic ?? "unknown"}`);
+    if (this.#verbose && replay.message) {
+      console.log(`  Message: ${replay.message}`);
     }
     if (replay.failureReason) {
-      console.log(`Failure: ${replay.failureReason}`);
+      console.log(`  Failure: ${replay.failureReason}`);
     }
-    for (const diagnostic of replay.diagnostics) {
-      console.log(`  ${diagnostic}`);
+    if (this.#verbose) {
+      for (const diagnostic of replay.diagnostics) {
+        console.log(`  ${diagnostic}`);
+      }
+      console.log(
+        "Replay validates the existing durable execution; it does not create a second execution.",
+      );
     }
-    console.log(
-      "Replay validates the existing durable execution; it does not create a second execution.",
-    );
     console.log();
   }
 
@@ -343,17 +388,11 @@ export class InteractiveExecutionConsole {
 }
 
 function printCommands(): void {
-  console.log("Commands while the execution is active:");
-  console.log("  [p] pause");
-  console.log("  [r] resume");
-  console.log("  [i] submit human input");
-  console.log("  [c] cancel");
-  console.log("  [s] status");
-  console.log("  [q] detach local console without cancelling");
+  console.log("Commands: [p] pause  [r] resume  [i] human input  [s] status  [c] cancel  [q] detach");
   console.log();
 }
 
-function printWatchItem(item: AiSdkExecutionWatchEvent): void {
+function printVerboseWatchItem(item: AiSdkExecutionWatchEvent): void {
   if (item.kind === "Snapshot" && item.snapshot !== undefined) {
     printSnapshot(item.sequence, item.snapshot);
     return;
@@ -367,6 +406,94 @@ function printWatchItem(item: AiSdkExecutionWatchEvent): void {
   if (item.kind === "ResyncRequired") {
     console.log(`[watch] resync required: ${item.resyncRequired?.reason ?? "unknown"}`);
   }
+}
+
+function printPresentationWatchItem(item: AiSdkExecutionWatchEvent): void {
+  if (item.kind === "ResyncRequired") {
+    console.log(`[WARN] Watch resynchronization required: ${item.resyncRequired?.reason ?? "unknown"}`);
+    return;
+  }
+
+  if (item.kind !== "Event" || !item.eventType) {
+    return;
+  }
+
+  const name = readPayloadString(item.payload, "name");
+  switch (item.eventType) {
+    case "step.started":
+      console.log(`[>] ${friendlyStepName(name)}`);
+      break;
+    case "step.completed":
+      console.log(`[OK] ${friendlyStepName(name)}`);
+      break;
+    case "step.parked":
+      if (name === "delegate-analysis") {
+        console.log("[WAIT] Delegated analysis is waiting for the child agent");
+      } else if (name === "await-review") {
+        console.log("[WAIT] Human review boundary reached");
+      } else {
+        console.log(`[WAIT] ${friendlyStepName(name)}`);
+      }
+      break;
+    case "step.failed":
+      console.log(`[FAIL] ${friendlyStepName(name)}`);
+      break;
+    case "child.created":
+      console.log("[>] Child agent created");
+      break;
+    case "child.started":
+      console.log("[>] Child agent running");
+      break;
+    case "child.completed":
+      console.log("[OK] Child agent completed");
+      break;
+    case "child.failed":
+      console.log("[FAIL] Child agent failed");
+      break;
+    case "execution.completed":
+      console.log("[OK] Execution completed");
+      break;
+    case "execution.failed":
+      console.log("[FAIL] Execution failed");
+      break;
+    case "execution.cancelled":
+      console.log("[CANCEL] Execution cancelled");
+      break;
+    case "recovery.started":
+    case "recovery.resumed":
+    case "recovery.completed":
+      console.log(`[RECOVERY] ${item.eventType}`);
+      break;
+  }
+}
+
+function friendlyStepName(name: string | undefined): string {
+  switch (name) {
+    case "plan":
+      return "Planning";
+    case "delegate-analysis":
+      return "Delegated analysis";
+    case "await-review":
+      return "Human review";
+    case "final-answer":
+      return "Final OpenAI answer";
+    case "publish-result":
+      return "Business result published";
+    case undefined:
+    case "":
+      return "Pipeline step";
+    default:
+      return name;
+  }
+}
+
+function readPayloadString(payload: unknown, propertyName: string): string | undefined {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return undefined;
+  }
+
+  const value = (payload as Readonly<Record<string, unknown>>)[propertyName];
+  return typeof value === "string" ? value : undefined;
 }
 
 function printSnapshot(

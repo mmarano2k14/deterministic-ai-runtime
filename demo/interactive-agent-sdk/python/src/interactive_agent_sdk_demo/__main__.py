@@ -49,20 +49,33 @@ async def _main() -> int:
             return 2
 
         print()
-        print("SDK command: sdk.publish_pipeline")
+        if config.verbose:
+            print("SDK command: sdk.publish_pipeline")
+        else:
+            print("[>] Publishing immutable pipeline")
         publication = await client.publish_pipeline(
             create_publication(config.openai_model)
         )
-        print(f"PublicationRef: {publication.publication_ref}")
-        print(f"Pipeline: {publication.pipeline_name}@{publication.pipeline_version}")
+        if config.verbose:
+            print(f"PublicationRef: {publication.publication_ref}")
+            print(f"Pipeline: {publication.pipeline_name}@{publication.pipeline_version}")
+        else:
+            print(
+                f"[OK] Published "
+                f"{publication.pipeline_name}@{publication.pipeline_version}"
+            )
         print()
 
-        print("SDK command: sdk.execution.submit")
+        if config.verbose:
+            print("SDK command: sdk.execution.submit")
+        else:
+            print("[>] Submitting durable execution")
         submission = await client.submit_execution(
             create_submission(publication.publication_ref, user_prompt)
         )
         print(f"ExecutionId: {submission.execution_id}")
-        print(f"Initial status: {submission.status.value}")
+        if config.verbose:
+            print(f"Initial status: {submission.status.value}")
         print()
 
         console = InteractiveExecutionConsole(
@@ -71,6 +84,7 @@ async def _main() -> int:
             WAITING_KEY,
             WAITING_STEP_NAME,
             input_pump,
+            config.verbose,
         )
         result = await console.run()
         if result is None:
@@ -78,7 +92,13 @@ async def _main() -> int:
             print("Local console detached. The durable execution was not cancelled.")
             return 0
 
-        print_terminal_result(result)
+        print_terminal_result(
+            result,
+            console.last_observation,
+            config.openai_model,
+            console.review_approved,
+            console.review_feedback,
+        )
         await console.run_post_terminal_commands(result.status)
         return 0 if result.status.value == "Completed" else 1
     finally:
@@ -97,9 +117,12 @@ async def _create_client(config: DemoConfiguration) -> AiSdkClient:
 
     access_context = config.access_context
     if access_context is None:
-        print("Authentication bootstrap:")
-        print(f"  POST {config.access_context_endpoint}")
-        print("  Authorization: Bearer <redacted>")
+        if config.verbose:
+            print("Authentication bootstrap:")
+            print(f"  POST {config.access_context_endpoint}")
+            print("  Authorization: Bearer <redacted>")
+        else:
+            print("[>] Creating RBAC access context from JWT claims")
 
         bootstrap = await AiSdkAccessContextBootstrapper.create(
             AiSdkAccessContextBootstrapOptions(
@@ -109,17 +132,27 @@ async def _create_client(config: DemoConfiguration) -> AiSdkClient:
             )
         )
         access_context = bootstrap.access_context
-        print(
-            f"  Access context created via '{bootstrap.header_name}'. "
-            "Handle not displayed."
-        )
-        print("  Subsequent handle rotation is managed by the SDK transport.")
-        print()
-    else:
+        if config.verbose:
+            print(
+                f"  Access context created via '{bootstrap.header_name}'. "
+                "Handle not displayed."
+            )
+            print("  Subsequent handle rotation is managed by the SDK transport.")
+            print()
+        else:
+            print(
+                f"[OK] RBAC access context created; "
+                f"{bootstrap.header_name} rotation enabled"
+            )
+            print()
+    elif config.verbose:
         print(
             "Using the pre-provisioned AI_RUNTIME_ACCESS_CONTEXT. "
             "Subsequent rotation is managed by the SDK transport."
         )
+        print()
+    else:
+        print("[OK] Using pre-provisioned RBAC access context; rotation enabled")
         print()
 
     return AiSdkClient(
@@ -144,6 +177,7 @@ def _print_header(config: DemoConfiguration) -> None:
     print("SDK: Python")
     print(f"Runtime endpoint: {config.endpoint}")
     print(f"OpenAI model: {config.openai_model}")
+    print(f"Console mode: {'verbose' if config.verbose else 'presentation'}")
     print()
     print(
         "Runtime authentication uses a Bearer JWT plus a server-created RBAC access context."

@@ -4,6 +4,7 @@ import asyncio
 import json
 import sys
 import threading
+from typing import Any
 from uuid import uuid4
 
 from multiplexed_ai_sdk import (
@@ -62,13 +63,18 @@ class InteractiveExecutionConsole:
         waiting_key: str,
         waiting_step_name: str,
         input_pump: ConsoleInputPump,
+        verbose: bool,
     ) -> None:
         self._client = client
         self._execution_id = execution_id
         self._waiting_key = waiting_key
         self._waiting_step_name = waiting_step_name
         self._input = input_pump
+        self._verbose = verbose
         self._waiting_announced = False
+        self.last_observation: AiSdkExecutionObservation | None = None
+        self.review_approved: bool | None = None
+        self.review_feedback: str | None = None
 
     async def run(self) -> AiSdkExecutionResult | None:
         watch_task = asyncio.create_task(self._watch())
@@ -77,6 +83,7 @@ class InteractiveExecutionConsole:
         try:
             while True:
                 observation = await self._client.observe_execution(self._execution_id)
+                self.last_observation = observation
                 self._announce_input_boundary(observation)
 
                 if _is_terminal(observation.status):
@@ -108,9 +115,7 @@ class InteractiveExecutionConsole:
         terminal_status: AiSdkExecutionStatus,
     ) -> None:
         print()
-        print("Post-terminal commands:")
-        print("  [x] deterministic replay validation")
-        print("  [q] exit")
+        print("Post-terminal commands: [x] deterministic replay  [q] exit")
 
         while True:
             command = await self._input.prompt("> ")
@@ -133,11 +138,17 @@ class InteractiveExecutionConsole:
                     include_initial_snapshot=True,
                 )
             ):
-                _print_watch_item(item)
+                if self._verbose:
+                    _print_verbose_watch_item(item)
+                else:
+                    _print_presentation_watch_item(item)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            print(f"[watch] stopped: {exc}")
+            if self._verbose:
+                print(f"[watch] stopped: {exc}")
+            else:
+                print("[WARN] Live watch stopped; observation polling remains active.")
 
     def _announce_input_boundary(
         self,
@@ -162,11 +173,10 @@ class InteractiveExecutionConsole:
 
         self._waiting_announced = True
         print()
-        print("Human input required.")
-        print(
-            f"Step '{self._waiting_step_name}' is durably parked. "
-            "Enter 'i' to approve/reject and add feedback."
-        )
+        print("---------------- Human review ----------------")
+        print("The durable execution is parked and waiting for approval.")
+        print("Enter 'i' to approve/reject and optionally add feedback.")
+        print("------------------------------------------------")
         print()
 
     async def _handle_command(
@@ -193,7 +203,8 @@ class InteractiveExecutionConsole:
 
     async def _pause(self) -> None:
         print()
-        print(f"SDK command: sdk.execution.pause({self._execution_id})")
+        if self._verbose:
+            print(f"SDK command: sdk.execution.pause({self._execution_id})")
         response = await self._client.pause_execution(
             self._execution_id,
             AiSdkExecutionControlRequest(
@@ -207,7 +218,8 @@ class InteractiveExecutionConsole:
 
     async def _resume(self) -> None:
         print()
-        print(f"SDK command: sdk.execution.resume({self._execution_id})")
+        if self._verbose:
+            print(f"SDK command: sdk.execution.resume({self._execution_id})")
         response = await self._client.resume_execution(
             self._execution_id,
             AiSdkExecutionControlRequest(
@@ -242,7 +254,8 @@ class InteractiveExecutionConsole:
         feedback = (await self._input.prompt("Feedback (optional): ") or "").strip()
 
         print()
-        print(f"SDK command: sdk.execution.input.submit({self._execution_id})")
+        if self._verbose:
+            print(f"SDK command: sdk.execution.input.submit({self._execution_id})")
         response = await self._client.submit_execution_input(
             self._execution_id,
             AiSdkExecutionInputSubmissionRequest(
@@ -254,7 +267,10 @@ class InteractiveExecutionConsole:
             ),
         )
         state = response.state.status.value if response.state is not None else "unknown"
-        print(f"Input accepted={response.accepted}; controlState={state}")
+        if response.accepted:
+            self.review_approved = approved
+            self.review_feedback = feedback
+        print(f"Human input accepted={response.accepted}; controlState={state}")
         print(f"ExecutionId unchanged: {response.execution_id}")
         print()
 
@@ -273,7 +289,8 @@ class InteractiveExecutionConsole:
 
     async def _cancel(self) -> None:
         print()
-        print(f"SDK command: sdk.execution.cancel({self._execution_id})")
+        if self._verbose:
+            print(f"SDK command: sdk.execution.cancel({self._execution_id})")
         response = await self._client.cancel_execution(
             self._execution_id,
             AiSdkExecutionCancellationRequest(
@@ -289,7 +306,10 @@ class InteractiveExecutionConsole:
 
     async def _replay(self) -> None:
         print()
-        print(f"SDK command: sdk.execution.replay({self._execution_id})")
+        if self._verbose:
+            print(f"SDK command: sdk.execution.replay({self._execution_id})")
+        else:
+            print("Deterministic replay validation")
         replay = await self._client.replay_execution(
             self._execution_id,
             AiSdkExecutionReplayRequest(
@@ -300,40 +320,91 @@ class InteractiveExecutionConsole:
             ),
         )
 
-        print(f"Replay succeeded: {replay.succeeded}")
+        print(f"  Succeeded:     {replay.succeeded}")
         print(
-            "Deterministic: "
+            "  Deterministic: "
             + ("unknown" if replay.deterministic is None else str(replay.deterministic))
         )
-        if replay.message:
-            print(f"Message: {replay.message}")
+        if self._verbose and replay.message:
+            print(f"  Message: {replay.message}")
         if replay.failure_reason:
-            print(f"Failure: {replay.failure_reason}")
-        for diagnostic in replay.diagnostics:
-            print(f"  {diagnostic}")
-        print(
-            "Replay validates the existing durable execution; "
-            "it does not create a second execution."
-        )
+            print(f"  Failure: {replay.failure_reason}")
+        if self._verbose:
+            for diagnostic in replay.diagnostics:
+                print(f"  {diagnostic}")
+            print(
+                "Replay validates the existing durable execution; "
+                "it does not create a second execution."
+            )
         print()
 
 
-def print_terminal_result(result: AiSdkExecutionResult) -> None:
+def print_terminal_result(
+    result: AiSdkExecutionResult,
+    observation: AiSdkExecutionObservation | None,
+    configured_model: str,
+    review_approved: bool | None,
+    review_feedback: str | None,
+) -> None:
     print()
     print("==================================================")
-    print(" Terminal execution result")
+    print(" Agent result")
     print("==================================================")
-    print(f"ExecutionId: {result.execution_id}")
-    print(f"Status: {result.status.value}")
-    print(f"CompletedAtUtc: {result.completed_at_utc}")
+
+    published = _published_result(result.output)
+    answer = _read_string(published, "value") or _read_string(published, "rawText")
+    if answer is None and isinstance(published, str):
+        answer = published
+
     print()
-    print("Agent response:")
-    if isinstance(result.output, (dict, list)):
-        print(json.dumps(result.output, indent=2, ensure_ascii=False))
-    elif result.output is None:
+    print("OpenAI response:")
+    print()
+    if answer and answer.strip():
+        print(answer)
+    elif published is None:
         print("(none)")
+    elif isinstance(published, (dict, list)):
+        print(json.dumps(published, indent=2, ensure_ascii=False))
     else:
-        print(result.output)
+        print(published)
+
+    if isinstance(published, dict):
+        provider = _read_string(published, "providerKey") or "openai"
+        model = _read_string(published, "model") or configured_model
+        input_tokens = _read_number(published, "inputTokens")
+        output_tokens = _read_number(published, "outputTokens")
+        total_tokens = _read_number(published, "totalTokens")
+
+        print()
+        print("Model response metadata:")
+        print(f"  Provider: {provider}")
+        print(f"  Model:    {model}")
+        if any(value is not None for value in (input_tokens, output_tokens, total_tokens)):
+            print(
+                "  Tokens:   "
+                f"input={input_tokens if input_tokens is not None else '-'}, "
+                f"output={output_tokens if output_tokens is not None else '-'}, "
+                f"total={total_tokens if total_tokens is not None else '-'}"
+            )
+
+    print()
+    print("Execution:")
+    print(f"  ID:        {result.execution_id}")
+    print(f"  Status:    {result.status.value}")
+    print(f"  Completed: {result.completed_at_utc}")
+
+    if observation is not None:
+        print()
+        print("Pipeline:")
+        for step in observation.steps:
+            print(f"  {step.name:<18} {step.status.value}")
+
+    if review_approved is not None:
+        print()
+        print("Human review:")
+        print(f"  Approved: {review_approved}")
+        if review_feedback:
+            print(f"  Feedback: {review_feedback}")
 
     if result.failure is not None:
         print()
@@ -341,17 +412,14 @@ def print_terminal_result(result: AiSdkExecutionResult) -> None:
 
 
 def _print_commands() -> None:
-    print("Commands while the execution is active:")
-    print("  [p] pause")
-    print("  [r] resume")
-    print("  [i] submit human input")
-    print("  [c] cancel")
-    print("  [s] status")
-    print("  [q] detach local console without cancelling")
+    print(
+        "Commands: [p] pause  [r] resume  [i] human input  "
+        "[s] status  [c] cancel  [q] detach"
+    )
     print()
 
 
-def _print_watch_item(item: AiSdkExecutionWatchEvent) -> None:
+def _print_verbose_watch_item(item: AiSdkExecutionWatchEvent) -> None:
     if (
         item.kind is AiSdkExecutionWatchEventKind.SNAPSHOT
         and item.snapshot is not None
@@ -369,6 +437,69 @@ def _print_watch_item(item: AiSdkExecutionWatchEvent) -> None:
         print(f"[watch] resync required: {reason}")
 
 
+def _print_presentation_watch_item(item: AiSdkExecutionWatchEvent) -> None:
+    if item.kind is AiSdkExecutionWatchEventKind.RESYNC_REQUIRED:
+        reason = (
+            item.resync_required.reason.value
+            if item.resync_required is not None
+            else "unknown"
+        )
+        print(f"[WARN] Watch resynchronization required: {reason}")
+        return
+
+    if item.kind is not AiSdkExecutionWatchEventKind.EVENT or not item.event_type:
+        return
+
+    name = _payload_string(item.payload, "name")
+    event_type = item.event_type
+    if event_type == "step.started":
+        print(f"[>] {_friendly_step_name(name)}")
+    elif event_type == "step.completed":
+        print(f"[OK] {_friendly_step_name(name)}")
+    elif event_type == "step.parked":
+        if name == "delegate-analysis":
+            print("[WAIT] Delegated analysis is waiting for the child agent")
+        elif name == "await-review":
+            print("[WAIT] Human review boundary reached")
+        else:
+            print(f"[WAIT] {_friendly_step_name(name)}")
+    elif event_type == "step.failed":
+        print(f"[FAIL] {_friendly_step_name(name)}")
+    elif event_type == "child.created":
+        print("[>] Child agent created")
+    elif event_type == "child.started":
+        print("[>] Child agent running")
+    elif event_type == "child.completed":
+        print("[OK] Child agent completed")
+    elif event_type == "child.failed":
+        print("[FAIL] Child agent failed")
+    elif event_type == "execution.completed":
+        print("[OK] Execution completed")
+    elif event_type == "execution.failed":
+        print("[FAIL] Execution failed")
+    elif event_type == "execution.cancelled":
+        print("[CANCEL] Execution cancelled")
+    elif event_type in {"recovery.started", "recovery.resumed", "recovery.completed"}:
+        print(f"[RECOVERY] {event_type}")
+
+
+def _friendly_step_name(name: str | None) -> str:
+    return {
+        "plan": "Planning",
+        "delegate-analysis": "Delegated analysis",
+        "await-review": "Human review",
+        "final-answer": "Final OpenAI answer",
+        "publish-result": "Business result published",
+    }.get(name or "", name or "Pipeline step")
+
+
+def _payload_string(payload: Any, name: str) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get(name)
+    return value if isinstance(value, str) else None
+
+
 def _print_snapshot(
     sequence: int | None,
     snapshot: AiSdkExecutionObservation,
@@ -380,6 +511,28 @@ def _print_snapshot(
         f"[snapshot #{sequence if sequence is not None else '-'}] "
         f"execution={snapshot.status.value}; {steps}"
     )
+
+
+def _published_result(output: Any) -> Any:
+    if isinstance(output, dict) and "result" in output:
+        return output["result"]
+    return output
+
+
+def _read_string(value: Any, name: str) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    found = value.get(name)
+    return found if isinstance(found, str) else None
+
+
+def _read_number(value: Any, name: str) -> int | float | None:
+    if not isinstance(value, dict):
+        return None
+    found = value.get(name)
+    if isinstance(found, bool):
+        return None
+    return found if isinstance(found, (int, float)) else None
 
 
 def _is_terminal(status: AiSdkExecutionStatus) -> bool:

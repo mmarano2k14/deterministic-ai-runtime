@@ -146,7 +146,7 @@ internal static class InteractiveAgentPipeline
                         Config = new Dictionary<string, JsonElement>(StringComparer.Ordinal)
                         {
                             ["source"] = JsonSerializer.SerializeToElement(
-                                "steps.final-answer.result.data.value")
+                                "steps.final-answer.result.data")
                         }
                     }
                 }

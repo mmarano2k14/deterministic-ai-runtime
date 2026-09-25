@@ -121,7 +121,7 @@ the independent child analysis, and the human feedback. Keep the response focuse
                     step_key="execution.publish-result",
                     order=4,
                     depends_on=("final-answer",),
-                    config={"source": "steps.final-answer.result.data.value"},
+                    config={"source": "steps.final-answer.result.data"},
                 ),
             ),
         ),

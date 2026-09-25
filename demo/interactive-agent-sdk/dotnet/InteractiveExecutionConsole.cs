@@ -18,6 +18,7 @@ internal sealed class InteractiveExecutionConsole
     private readonly string _executionId;
     private readonly string _waitingKey;
     private readonly string _waitingStepName;
+    private readonly bool _verbose;
     private readonly ConsoleInputPump _input = new();
     private bool _waitingAnnounced;
     private Task<string?>? _pendingInput;
@@ -26,13 +27,21 @@ internal sealed class InteractiveExecutionConsole
         IAiSdkClient client,
         string executionId,
         string waitingKey,
-        string waitingStepName)
+        string waitingStepName,
+        bool verbose)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _executionId = executionId;
         _waitingKey = waitingKey;
         _waitingStepName = waitingStepName;
+        _verbose = verbose;
     }
+
+    internal AiSdkExecutionObservation? LastObservation { get; private set; }
+
+    internal bool? ReviewApproved { get; private set; }
+
+    internal string? ReviewFeedback { get; private set; }
 
     internal async Task<AiSdkExecutionResult?> RunAsync()
     {
@@ -48,6 +57,7 @@ internal sealed class InteractiveExecutionConsole
         while (true)
         {
             var observation = await _client.ObserveExecutionAsync(_executionId);
+            LastObservation = observation;
 
             AnnounceInputBoundary(observation);
 
@@ -84,9 +94,7 @@ internal sealed class InteractiveExecutionConsole
         AiSdkExecutionStatus terminalStatus)
     {
         Console.WriteLine();
-        Console.WriteLine("Post-terminal commands:");
-        Console.WriteLine("  [x] deterministic replay validation");
-        Console.WriteLine("  [q] exit");
+        Console.WriteLine("Post-terminal commands: [x] deterministic replay  [q] exit");
 
         while (true)
         {
@@ -129,13 +137,7 @@ internal sealed class InteractiveExecutionConsole
 
     private static void PrintCommands()
     {
-        Console.WriteLine("Commands while the execution is active:");
-        Console.WriteLine("  [p] pause");
-        Console.WriteLine("  [r] resume");
-        Console.WriteLine("  [i] submit human input");
-        Console.WriteLine("  [c] cancel");
-        Console.WriteLine("  [s] status");
-        Console.WriteLine("  [q] detach local console without cancelling");
+        Console.WriteLine("Commands: [p] pause  [r] resume  [i] human input  [s] status  [c] cancel  [q] detach");
         Console.WriteLine();
     }
 
@@ -151,25 +153,13 @@ internal sealed class InteractiveExecutionConsole
                 },
                 cancellationToken))
             {
-                switch (item.Kind)
+                if (_verbose)
                 {
-                    case AiSdkExecutionWatchEventKind.Snapshot
-                        when item.Snapshot is not null:
-                        PrintSnapshot(item.Sequence, item.Snapshot);
-                        break;
-
-                    case AiSdkExecutionWatchEventKind.Event:
-                        Console.WriteLine(
-                            $"[watch #{item.Sequence?.ToString() ?? "-"}] " +
-                            $"{item.Channel?.ToString() ?? "event"} " +
-                            $"{item.EventType ?? "event"}");
-                        break;
-
-                    case AiSdkExecutionWatchEventKind.ResyncRequired:
-                        Console.WriteLine(
-                            $"[watch] resync required: " +
-                            $"{item.ResyncRequired?.Reason.ToString() ?? "unknown"}");
-                        break;
+                    PrintVerboseWatchItem(item);
+                }
+                else
+                {
+                    PrintPresentationWatchItem(item);
                 }
             }
         }
@@ -179,8 +169,137 @@ internal sealed class InteractiveExecutionConsole
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[watch] stopped: {ex.Message}");
+            Console.WriteLine(
+                _verbose
+                    ? $"[watch] stopped: {ex.Message}"
+                    : "[WARN] Live watch stopped; observation polling remains active.");
         }
+    }
+
+    private static void PrintVerboseWatchItem(AiSdkExecutionWatchEvent item)
+    {
+        switch (item.Kind)
+        {
+            case AiSdkExecutionWatchEventKind.Snapshot
+                when item.Snapshot is not null:
+                PrintSnapshot(item.Sequence, item.Snapshot);
+                break;
+
+            case AiSdkExecutionWatchEventKind.Event:
+                Console.WriteLine(
+                    $"[watch #{item.Sequence?.ToString() ?? "-"}] " +
+                    $"{item.Channel?.ToString() ?? "event"} " +
+                    $"{item.EventType ?? "event"}");
+                break;
+
+            case AiSdkExecutionWatchEventKind.ResyncRequired:
+                Console.WriteLine(
+                    $"[watch] resync required: " +
+                    $"{item.ResyncRequired?.Reason.ToString() ?? "unknown"}");
+                break;
+        }
+    }
+
+    private static void PrintPresentationWatchItem(AiSdkExecutionWatchEvent item)
+    {
+        if (item.Kind == AiSdkExecutionWatchEventKind.ResyncRequired)
+        {
+            Console.WriteLine(
+                $"[WARN] Watch resynchronization required: " +
+                $"{item.ResyncRequired?.Reason.ToString() ?? "unknown"}");
+            return;
+        }
+
+        if (item.Kind != AiSdkExecutionWatchEventKind.Event ||
+            string.IsNullOrWhiteSpace(item.EventType))
+        {
+            return;
+        }
+
+        var eventType = item.EventType;
+        var name = ReadPayloadString(item.Payload, "name");
+
+        switch (eventType)
+        {
+            case "step.started":
+                Console.WriteLine($"[>] {FriendlyStepName(name)}");
+                break;
+
+            case "step.completed":
+                Console.WriteLine($"[OK] {FriendlyStepName(name)}");
+                break;
+
+            case "step.parked" when string.Equals(name, "delegate-analysis", StringComparison.Ordinal):
+                Console.WriteLine("[WAIT] Delegated analysis is waiting for the child agent");
+                break;
+
+            case "step.parked" when string.Equals(name, "await-review", StringComparison.Ordinal):
+                Console.WriteLine("[WAIT] Human review boundary reached");
+                break;
+
+            case "step.failed":
+                Console.WriteLine($"[FAIL] {FriendlyStepName(name)}");
+                break;
+
+            case "child.created":
+                Console.WriteLine("[>] Child agent created");
+                break;
+
+            case "child.started":
+                Console.WriteLine("[>] Child agent running");
+                break;
+
+            case "child.completed":
+                Console.WriteLine("[OK] Child agent completed");
+                break;
+
+            case "child.failed":
+                Console.WriteLine("[FAIL] Child agent failed");
+                break;
+
+            case "execution.completed":
+                Console.WriteLine("[OK] Execution completed");
+                break;
+
+            case "execution.failed":
+                Console.WriteLine("[FAIL] Execution failed");
+                break;
+
+            case "execution.cancelled":
+                Console.WriteLine("[CANCEL] Execution cancelled");
+                break;
+
+            case "recovery.started":
+            case "recovery.resumed":
+            case "recovery.completed":
+                Console.WriteLine($"[RECOVERY] {eventType}");
+                break;
+        }
+    }
+
+    private static string FriendlyStepName(string? name) =>
+        name switch
+        {
+            "plan" => "Planning",
+            "delegate-analysis" => "Delegated analysis",
+            "await-review" => "Human review",
+            "final-answer" => "Final OpenAI answer",
+            "publish-result" => "Business result published",
+            null or "" => "Pipeline step",
+            _ => name
+        };
+
+    private static string? ReadPayloadString(JsonElement? payload, string propertyName)
+    {
+        if (payload is not JsonElement element ||
+            element.ValueKind != JsonValueKind.Object ||
+            !element.TryGetProperty(propertyName, out var property) ||
+            property.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        return property.GetString();
     }
 
     private static void PrintSnapshot(
@@ -219,10 +338,10 @@ internal sealed class InteractiveExecutionConsole
         _waitingAnnounced = true;
 
         Console.WriteLine();
-        Console.WriteLine("Human input required.");
-        Console.WriteLine(
-            $"Step '{_waitingStepName}' is durably parked. " +
-            "Enter 'i' to approve/reject and add feedback.");
+        Console.WriteLine("---------------- Human review ----------------");
+        Console.WriteLine("The durable execution is parked and waiting for approval.");
+        Console.WriteLine("Enter 'i' to approve/reject and optionally add feedback.");
+        Console.WriteLine("------------------------------------------------");
         Console.WriteLine();
     }
 
@@ -271,8 +390,11 @@ internal sealed class InteractiveExecutionConsole
     private async Task PauseAsync()
     {
         Console.WriteLine();
-        Console.WriteLine(
-            $"SDK command: sdk.execution.pause({_executionId})");
+        if (_verbose)
+        {
+            Console.WriteLine(
+                $"SDK command: sdk.execution.pause({_executionId})");
+        }
 
         var response = await _client.PauseExecutionAsync(
             _executionId,
@@ -292,8 +414,11 @@ internal sealed class InteractiveExecutionConsole
     private async Task ResumeAsync()
     {
         Console.WriteLine();
-        Console.WriteLine(
-            $"SDK command: sdk.execution.resume({_executionId})");
+        if (_verbose)
+        {
+            Console.WriteLine(
+                $"SDK command: sdk.execution.resume({_executionId})");
+        }
 
         var response = await _client.ResumeExecutionAsync(
             _executionId,
@@ -332,8 +457,11 @@ internal sealed class InteractiveExecutionConsole
         var feedback = (await ConsumePendingInputAsync())?.Trim() ?? string.Empty;
 
         Console.WriteLine();
-        Console.WriteLine(
-            $"SDK command: sdk.execution.input.submit({_executionId})");
+        if (_verbose)
+        {
+            Console.WriteLine(
+                $"SDK command: sdk.execution.input.submit({_executionId})");
+        }
 
         var response = await _client.SubmitExecutionInputAsync(
             _executionId,
@@ -351,8 +479,14 @@ internal sealed class InteractiveExecutionConsole
                     })
             });
 
+        if (response.Accepted)
+        {
+            ReviewApproved = approved;
+            ReviewFeedback = feedback;
+        }
+
         Console.WriteLine(
-            $"Input accepted={response.Accepted}; " +
+            $"Human input accepted={response.Accepted}; " +
             $"controlState={response.State?.Status.ToString() ?? "unknown"}");
         Console.WriteLine(
             $"ExecutionId unchanged: {response.ExecutionId}");
@@ -385,8 +519,11 @@ internal sealed class InteractiveExecutionConsole
     private async Task CancelAsync()
     {
         Console.WriteLine();
-        Console.WriteLine(
-            $"SDK command: sdk.execution.cancel({_executionId})");
+        if (_verbose)
+        {
+            Console.WriteLine(
+                $"SDK command: sdk.execution.cancel({_executionId})");
+        }
 
         var response = await _client.CancelExecutionAsync(
             _executionId,
@@ -405,8 +542,15 @@ internal sealed class InteractiveExecutionConsole
     private async Task ReplayAsync()
     {
         Console.WriteLine();
-        Console.WriteLine(
-            $"SDK command: sdk.execution.replay({_executionId})");
+        if (_verbose)
+        {
+            Console.WriteLine(
+                $"SDK command: sdk.execution.replay({_executionId})");
+        }
+        else
+        {
+            Console.WriteLine("Deterministic replay validation");
+        }
 
         var replay = await _client.ReplayExecutionAsync(
             _executionId,
@@ -418,30 +562,33 @@ internal sealed class InteractiveExecutionConsole
                 CorrelationId = $"interactive-agent-replay-{Guid.NewGuid():N}"
             });
 
-        Console.WriteLine($"Replay succeeded: {replay.Succeeded}");
+        Console.WriteLine($"  Succeeded:     {replay.Succeeded}");
         Console.WriteLine(
-            $"Deterministic: {replay.Deterministic?.ToString() ?? "unknown"}");
+            $"  Deterministic: {replay.Deterministic?.ToString() ?? "unknown"}");
 
-        if (!string.IsNullOrWhiteSpace(replay.Message))
+        if (_verbose && !string.IsNullOrWhiteSpace(replay.Message))
         {
-            Console.WriteLine($"Message: {replay.Message}");
+            Console.WriteLine($"  Message: {replay.Message}");
         }
 
         if (!string.IsNullOrWhiteSpace(replay.FailureReason))
         {
-            Console.WriteLine($"Failure: {replay.FailureReason}");
+            Console.WriteLine($"  Failure: {replay.FailureReason}");
         }
 
-        foreach (var diagnostic in replay.Diagnostics)
+        if (_verbose)
         {
-            Console.WriteLine($"  {diagnostic}");
+            foreach (var diagnostic in replay.Diagnostics)
+            {
+                Console.WriteLine($"  {diagnostic}");
+            }
+
+            Console.WriteLine(
+                "Replay validates the existing durable execution; it does not create a second execution.");
         }
 
-        Console.WriteLine(
-            "Replay validates the existing durable execution; it does not create a second execution.");
         Console.WriteLine();
     }
-
 
     private Task<string?> GetPendingInputAsync()
     {

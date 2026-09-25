@@ -1,57 +1,33 @@
 # Interactive Agent SDK Demo
 
-This directory demonstrates a real external application consuming the Deterministic AI Runtime through the public SDK boundary.
+This directory contains a real external-application demo for the Deterministic AI Runtime. The same runtime-native agent pipeline is consumed through the public .NET, TypeScript, and Python SDKs.
 
-## Current status
+## Validation status
+
+The three source-mode vertical slices have completed the real authenticated public-SDK E2E path:
 
 ```text
-.NET interactive agent vertical slice     TARGET E2E VALIDATED
-TypeScript interactive agent vertical slice TARGET E2E VALIDATED
-Python interactive agent vertical slice   IMPLEMENTED / TARGET E2E VALIDATION REQUIRED
+.NET        GREEN
+TypeScript GREEN
+Python     GREEN
 ```
 
-The .NET, TypeScript, and Python consumers reference only their locally packed external SDK packages.
+Each validated path includes immutable publication, execution submission, a runtime-native OpenAI prompt, Child DAG delegation, durable parent continuation, human input on the same execution, terminal business-result publication, result retrieval, and deterministic replay.
 
-They do not reference runtime, engine, control-plane, persistence, matrix, or test projects.
+Docker packaging is provided as a reproducible distribution path. It should be validated on the target Docker engine before the containerized path is marked GREEN.
 
-## Authentication flow
-
-The standalone .NET, TypeScript, and Python demos use the real host authentication boundary:
+## What the demo shows
 
 ```text
+external SDK consumer
+    ↓
 real JWT Bearer
     ↓
 POST /auth/access-context
     ↓
-validated JWT claims
-    ↓
-existing IContextStore
-    ↓
-X-Access-Context
+server-created RBAC access context
     ↓
 public MCP SDK transport
-    ↓
-automatic X-Access-Context rotation
-```
-
-The external application never submits TRN capabilities in the access-context request.
-
-Capabilities are derived by the host from the validated JWT claims.
-
-If `AI_RUNTIME_ACCESS_CONTEXT` is not provided, the .NET, TypeScript, or Python consumer automatically calls:
-
-```text
-AI_RUNTIME_ACCESS_CONTEXT_ENDPOINT
-```
-
-using `AI_RUNTIME_TOKEN`, captures the returned access-context handle, and initializes the public SDK transport with it. The TypeScript and Python SDKs expose `AiSdkAccessContextBootstrapper` for the same explicit, non-retried bootstrap semantics as the .NET SDK.
-
-The access-context bootstrap POST is not automatically retried.
-
-## .NET, TypeScript, and Python execution flow
-
-```text
-user request
     ↓
 sdk.publish_pipeline
     ↓
@@ -65,7 +41,7 @@ child ai.prompt
     ↓
 child execution.publish-result
     ↓
-durable child result payload
+durable child result
     ↓
 parent continuation
     ↓
@@ -82,131 +58,159 @@ sdk.execution.result
 optional sdk.execution.replay
 ```
 
-The child definition contains no further Child DAG call site, so delegation is structurally bounded to one level.
+The external SDK consumer does not reference runtime, engine, control-plane, persistence, matrix, or test projects. Runtime authority remains on the server.
 
-## No matrix or demo-only control path
+## Console modes
 
-The .NET, TypeScript, and Python agents do not use:
+Presentation mode is the default. It suppresses noisy raw Watch events and shows the meaningful execution transitions:
 
 ```text
-/matrix/*
-matrix-only endpoints
-matrix state
-test harness APIs
-direct runtime stores
-IAiPublicSdkBoundary
-internal scheduler/controller services
+[>] Publishing immutable pipeline
+[OK] Published interactive-agent-sdk-dotnet@1
+[>] Submitting durable execution
+[>] Planning
+[OK] Planning
+[>] Delegated analysis
+[WAIT] Delegated analysis is waiting for the child agent
+[OK] Child agent completed
+[WAIT] Human review boundary reached
+...
+[OK] Final OpenAI answer
+[OK] Business result published
+[OK] Execution completed
 ```
 
-Human input is produced by the runtime-native `execution.await-input` step and resumed through the public SDK input operation.
+The terminal view displays the actual final OpenAI response together with provider/model/token metadata, execution state, pipeline step states, and the human-review decision.
+
+Set this to restore raw SDK command/watch diagnostics:
+
+```text
+AI_DEMO_VERBOSE=true
+```
 
 ## OpenAI boundary
 
 The pipeline uses the runtime-native `ai.prompt` step with provider `openai`.
 
-The external .NET, TypeScript, and Python consumers read:
+The external consumer supplies only the model name through:
 
 ```text
 OPENAI_MODEL
 ```
 
-to construct the portable pipeline definition.
+`OPENAI_API_KEY` remains server-owned. It is not serialized into publication content, execution input, Watch events, human input, or SDK transport payloads.
 
-The OpenAI API key remains server-owned runtime configuration:
+The root `execution.publish-result` publishes the complete final `ai.prompt` data object, not only its text value. This lets the public SDK result expose the real answer plus runtime-produced model/token metadata without adding a demo-only side channel.
+
+## Docker: two-minute path
+
+Requirements:
+
+- Docker with Compose support
+- an OpenAI API key
+
+From this directory:
+
+```powershell
+Copy-Item .env.docker.example .env
+```
+
+Edit `.env` and set:
 
 ```text
-OPENAI_API_KEY
+OPENAI_API_KEY=...
 ```
 
-or:
+Build and start MongoDB, Redis, and the runtime:
+
+```powershell
+docker compose up -d --build mongo redis runtime
+```
+
+Start the packaged multi-SDK launcher:
+
+```powershell
+docker compose --profile demo run --build --rm demo
+```
+
+On Windows the same sequence is wrapped by:
+
+```powershell
+.\docker-demo.ps1
+```
+
+Choose:
 
 ```text
-OpenAI:ApiKey
+1. .NET
+2. TypeScript
+3. Python
 ```
 
-The key is not serialized into publication content, execution input, Watch events, human input, or SDK transport payloads.
+At the human-review boundary enter `i`, approve or reject, and optionally provide feedback. After terminal completion enter `x` to run deterministic replay validation.
 
-## Public execution input
+Stop the environment with:
 
-The public SDK submission carries:
-
-```json
-{
-  "userPrompt": "...",
-  "requestId": "..."
-}
+```powershell
+docker compose down
 ```
 
-The root prompt receives that document through `state.input`.
+To follow runtime logs:
 
-## Child result consumption
+```powershell
+docker compose logs -f runtime
+```
 
-The child publishes its analysis with:
+### Docker topology
 
 ```text
-execution.publish-result
+docker compose
+│
+├── mongo
+├── redis
+├── runtime
+│   ├── public MCP :8081
+│   ├── JWT/access-context boundary
+│   ├── local runtime-instance pool
+│   ├── shared queue pump
+│   ├── Mongo snapshots/payload persistence
+│   ├── Mongo decision ledger/replay metadata
+│   ├── Redis bounded payload cache
+│   ├── Child DAG composition
+│   ├── OpenAI provider
+│   └── deterministic replay
+│
+└── demo (interactive profile)
+    ├── packaged .NET external SDK consumer
+    ├── packaged TypeScript external SDK consumer
+    └── packaged Python external SDK consumer
 ```
 
-The parent consumes the frozen Child DAG payload through:
+The demo container does **not** receive `OPENAI_API_KEY`; only the runtime service receives it.
 
-```text
-steps.delegate-analysis.result.payload.data.result
+For local Docker convenience, the demo container can create its own short-lived HS256 bearer token using the local signing configuration shared with the runtime container. The default symmetric key in `.env.docker.example` is intentionally a local-demo credential and must never be reused in production.
+
+## Native/source-mode build
+
+The bootstrap builds local SDK packages and consumes those packages from the three external demo applications. Nothing is published.
+
+Windows:
+
+```cmd
+.\demo\interactive-agent-sdk\scripts\bootstrap.cmd
 ```
 
-There is no demo-specific child-result side channel.
+PowerShell:
 
-## Human input
-
-When `await-review` reaches:
-
-```text
-WaitingForExternal
+```powershell
+python .\demo\interactive-agent-sdk\scripts\bootstrap.py
 ```
 
-enter:
+The smoke validation performed by the bootstrap sends no authentication, access-context, runtime, or OpenAI request.
 
-```text
-i
-```
+## Native/source-mode run
 
-The console submits:
-
-```json
-{
-  "approved": true,
-  "feedback": "..."
-}
-```
-
-through:
-
-```text
-sdk.execution.input.submit
-```
-
-The same durable execution and exact parked step are resumed.
-
-## Live console commands
-
-While active:
-
-```text
-[p] pause
-[r] resume
-[i] submit human input
-[c] cancel
-[s] status
-[q] detach local console without cancelling
-```
-
-After terminal convergence:
-
-```text
-[x] deterministic replay validation
-[q] exit
-```
-
-## Required .NET / TypeScript / Python configuration
+Required consumer configuration:
 
 ```text
 AI_RUNTIME_ENDPOINT
@@ -220,17 +224,30 @@ Optional:
 AI_RUNTIME_ACCESS_CONTEXT
 AI_RUNTIME_ACCESS_CONTEXT_ENDPOINT
 AI_RUNTIME_ACCESS_CONTEXT_HEADER
+AI_DEMO_VERBOSE
 ```
 
-If no explicit access context is supplied, the demo obtains one automatically.
+If `AI_RUNTIME_ACCESS_CONTEXT` is absent, the demo calls the real `/auth/access-context` boundary using `AI_RUNTIME_TOKEN`, captures the returned handle, and lets the SDK transport manage subsequent handle rotation.
+
+Windows:
+
+```cmd
+.\demo\interactive-agent-sdk\run.cmd
+```
+
+PowerShell:
+
+```powershell
+.\demo\interactive-agent-sdk\run.ps1
+```
 
 ## Local standalone JWT
 
-Production deployments should obtain `AI_RUNTIME_TOKEN` from the real identity provider.
+Production consumers should obtain `AI_RUNTIME_TOKEN` from the trusted identity provider.
 
-For local development only, the repository contains a small JWT issuer utility that creates a **real HS256 JWT** accepted by the standalone `JwtBearer` host. It does not add a fake authentication handler.
+For local development only, the repository contains `scripts/create-local-jwt.py`. It creates a real HS256 JWT for the standalone `JwtBearer` host; it does not install a fake authentication handler.
 
-Configure the host:
+Example host configuration:
 
 ```powershell
 $env:AiMcpAuthentication__Enabled="true"
@@ -240,27 +257,16 @@ $env:AiMcpAuthentication__SymmetricSigningKey="replace-with-at-least-32-bytes-of
 $env:OPENAI_API_KEY="<openai-key>"
 ```
 
-The default RBAC project in the host is:
-
-```text
-rbac-demo
-```
-
-The local token helper uses that same project by default.
-
-In the consumer terminal, set the same local signing configuration only for this development workflow:
+Example consumer token creation:
 
 ```powershell
 $env:AiMcpAuthentication__Issuer="multiplexed-local"
 $env:AiMcpAuthentication__Audience="multiplexed-ai-sdk"
 $env:AiMcpAuthentication__SymmetricSigningKey="replace-with-at-least-32-bytes-of-local-secret"
-
 $env:AI_RUNTIME_TOKEN = python .\demo\interactive-agent-sdk\scripts\create-local-jwt.py
-$env:AI_RUNTIME_ENDPOINT="http://localhost:8081/mcp"
-$env:OPENAI_MODEL="gpt-5.4"
 ```
 
-The helper grants only the capabilities used by this interactive demo:
+The helper grants only the capabilities required by this demo:
 
 ```text
 code:publication:publish
@@ -275,46 +281,32 @@ execution:control:input
 replay:execution:run
 ```
 
-The symmetric signing key is issuer authority and must never be distributed to normal production consumers.
+The signing key is issuer authority and must never be distributed to normal production consumers.
 
-## Build
+## Human input and replay
 
-```cmd
-.\demo\interactive-agent-sdk\scripts\bootstrap.cmd
-```
-
-The bootstrap remains local-package only and publishes nothing.
-
-`AI_DEMO_SMOKE=1` sends no authentication, access-context, runtime, or OpenAI request.
-
-## Run
-
-```cmd
-.\demo\interactive-agent-sdk\run.cmd
-```
-
-Choose:
+While the execution is active:
 
 ```text
-1. .NET
-2. TypeScript
-3. Python
+[p] pause
+[r] resume
+[i] submit human input
+[c] cancel
+[s] status
+[q] detach the local console without cancelling
 ```
 
-Expected authentication prelude:
+When `await-review` is durably parked, use `i`. The public input operation resumes the same execution and exact waiting step; it does not create a second execution.
+
+After terminal convergence:
 
 ```text
-Authentication bootstrap:
-  POST http://localhost:8081/auth/access-context
-  Authorization: Bearer <redacted>
-  Access context created via 'X-Access-Context'. Handle not displayed.
-  Subsequent handle rotation is managed by the SDK transport.
+[x] deterministic replay validation
+[q] exit
 ```
 
-After that, the normal public SDK pipeline publication begins.
+Replay validates the existing durable execution. It does not re-run OpenAI or create a second execution.
 
-## Validation status
+## No matrix or demo-only runtime path
 
-The .NET and TypeScript vertical slices have completed the real authenticated public-SDK E2E path through Child DAG, durable human input, terminal result, and deterministic replay.
-
-The Python vertical slice is implemented against the same public contracts and runtime authority. A target-environment E2E run is required before the Python flow is marked GREEN.
+The demo does not use `/matrix/*`, matrix state, test harness APIs, direct runtime stores, internal scheduler/controller services, or a direct `IAiPublicSdkBoundary` reference. All runtime interaction crosses the external public SDK boundary.

@@ -4,5 +4,9 @@ typescript/dist/
 dotnet/bin/
 dotnet/obj/
 python/.venv/
-**/__pycache__/
-*.pyc
+python/**/*.egg-info/
+python/**/__pycache__/
+.env
+.state/
+diagnostics/
+*.log

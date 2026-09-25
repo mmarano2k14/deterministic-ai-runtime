@@ -29,6 +29,7 @@ It provides durable DAG execution, Redis-backed coordination, provider-based dis
 
 - **Understand the runtime:** [Architecture Quick Start](docs/ai/architecture-quick-start.md) — core components, durable truth, failure boundaries, and trade-offs.
 - **External SDKs:** [.NET, TypeScript / JavaScript, and Python](#sdk) — publish user code and manage durable executions through the public MCP boundary.
+- **Interactive external SDK agent demo:** [Docker presentation demo](docs/ai/interactive-agent-sdk-demo.md) — run the same durable agent flow through the .NET, TypeScript, or Python SDK against the real runtime boundary.
 - **Complete documentation:** [docs/index.md](docs/index.md)
 - **Interactive AI Runtime Analysis Demo:** [demo/rbac-aiAnalysis/nextjs/README.md](demo/rbac-aiAnalysis/nextjs/README.md)
 - **Installation / local Kubernetes:** [Kubernetes / Minikube installation and recovery guide](docs/ai/kubernetes-local-environment.md)
@@ -52,7 +53,7 @@ It provides durable DAG execution, Redis-backed coordination, provider-based dis
 | Durable authority | Failure journal, append-only Lifecycle Journal, Ledger, trace, Recovery Forensics — independent stores correlated by first-class identities. |
 | Event-driven lifecycle | Canonical engine facts through one Event Manager and central projection catalog; no second bus. |
 | Multi-tenancy | RBAC context survives async dispatch; tenant-scoped admission, capacity, recovery, Ledger, replay, and Forensics. |
-| External SDKs | Independent .NET, TypeScript / JavaScript, and Python clients; immutable publication, durable submission, observation and Watch, results, cancellation, pause/resume, human input, and deterministic replay validation. See [SDK execution evidence](#sdk). |
+| External SDKs | Independent .NET, TypeScript / JavaScript, and Python clients; immutable publication, durable submission, observation and Watch, results, cancellation, pause/resume, human input, and deterministic replay validation. A separate Docker presentation demo validates the same interactive agent flow end-to-end in all three clients. See [SDK execution evidence](#sdk). |
 
 Configuration and policy drive retry, retention, concurrency, admission, isolation, hosting, and recovery — without engine rewrites.
 
@@ -103,7 +104,7 @@ Dedicated recursive-child replay  NOT_EVALUATED
 
 ### SDK-to-runtime validation
 
-The SDK execution record is separate from the adversarial matrix above: **37/37 Docker scenarios** with `ProcessHostPool`, plus **3/3 KubernetesPool scenarios** covering live HTTP routing, hierarchical recovery, and external Python SDK execution with a public `Completed` result and the uploaded-function marker verified. This is **40 validated scenarios across two topologies**, not a homogeneous `40/40` matrix. Separate real MCP/HTTP public-SDK E2E validation is also green for `execution.watch()` and for pause/resume/human-input/replay control flows in **.NET, TypeScript, and Python**. These E2E checks are separate validation campaigns and are not added to the 37/37 or 3/3 scenario counts. See the [SDK section](#sdk) for the exact scope and evidence links.
+The SDK execution record is separate from the adversarial matrix above: **37/37 Docker scenarios** with `ProcessHostPool`, plus **3/3 KubernetesPool scenarios** covering live HTTP routing, hierarchical recovery, and external Python SDK execution with a public `Completed` result and the uploaded-function marker verified. This is **40 validated scenarios across two topologies**, not a homogeneous `40/40` matrix. Separate real MCP/HTTP public-SDK E2E validation is also green for `execution.watch()` and for pause/resume/human-input/replay control flows in **.NET, TypeScript, and Python**. The interactive Docker presentation demo is additionally validated in all three SDK clients through immutable publication, durable execution, Child DAG delegation, human review/resume on the same `ExecutionId`, terminal `Completed`, and deterministic replay success. These E2E checks are separate validation campaigns and are not added to the 37/37 or 3/3 scenario counts. See the [SDK section](#sdk) for the exact scope and evidence links.
 
 ---
 
@@ -250,10 +251,25 @@ Separate real MCP/HTTP E2E validation is green across all three external SDK cli
 
 These checks validate the public SDK boundary and control flow. They are separate from the 37/37 Docker matrix and the 3/3 KubernetesPool closure above.
 
+### Interactive Docker SDK agent demo
+
+A presentation-oriented Docker demo exercises the same durable agent pipeline through each external SDK client while keeping OpenAI authentication and execution authority on the runtime host.
+
+| Docker interactive demo | .NET | TypeScript | Python |
+|---|---:|---:|---:|
+| Immutable publication + durable submission | PASS | PASS | PASS |
+| Child DAG delegation | PASS | PASS | PASS |
+| Human review + input resume on the same `ExecutionId` | PASS | PASS | PASS |
+| Terminal execution state | `Completed` | `Completed` | `Completed` |
+| Deterministic replay validation | PASS | PASS | PASS |
+
+The demo also validates local package consumption inside the container build: the .NET consumer resolves the freshly packed local SDK artifacts, while the TypeScript and Python consumers build/install from the repository-local SDK sources. The demo is a presentation and integration proof, not an addition to the 37/37 Docker matrix or the 3/3 KubernetesPool closure.
+
+See [Interactive Agent SDK Demo](docs/ai/interactive-agent-sdk-demo.md) and [`demo/interactive-agent-sdk/`](demo/interactive-agent-sdk/).
 
 ### SDK documentation and samples
 
-Start with the [External SDK Quickstart](docs/ai/external-sdk-quickstart.md) for publication-to-result examples in all three client languages. [External SDK Libraries](docs/ai/external-sdk-libraries.md) covers local packaging, transport configuration, and client semantics; [Public SDK Boundary](docs/ai/public-sdk-boundary.md) defines the portable contracts and authorization boundary.
+Start with the [External SDK Quickstart](docs/ai/external-sdk-quickstart.md) for publication-to-result examples in all three client languages. [External SDK Libraries](docs/ai/external-sdk-libraries.md) covers local packaging, transport configuration, and client semantics; [Public SDK Boundary](docs/ai/public-sdk-boundary.md) defines the portable contracts and authorization boundary. For the Docker-based three-client presentation flow, see [Interactive Agent SDK Demo](docs/ai/interactive-agent-sdk-demo.md).
 
 Reusable user-code samples are under [`implementations/sdk/samples/published-functions/`](implementations/sdk/samples/published-functions/). They are published function inputs, not substitutes for the production hosted workers.
 
@@ -1233,6 +1249,7 @@ See [Hosted Multilanguage Execution](docs/ai/hosted-multilanguage-execution.md) 
 | Public SDK human input | Implemented / validated in .NET, TypeScript, and Python |
 | Public SDK deterministic replay validation | Implemented / validated in .NET, TypeScript, and Python |
 | Real MCP/HTTP SDK control E2E | 3 / 3 VERIFIED |
+| Interactive Docker SDK agent demo | 3 / 3 VERIFIED; `Completed` + deterministic replay |
 | SDK-to-runtime Docker matrix | 37 / 37 VERIFIED; bounded provider/artifact scope |
 | KubernetesPool routing / recovery / Python SDK closure | 3 / 3 VERIFIED; separate evidence |
 | Public SDK registry releases and standalone runtime CLI | Separate deliverables |

@@ -6,7 +6,8 @@ internal sealed record DemoConfiguration(
     string? AccessContext,
     string AccessContextHeader,
     string AccessContextEndpoint,
-    string OpenAiModel)
+    string OpenAiModel,
+    bool Verbose)
 {
     internal static DemoConfiguration Load()
     {
@@ -41,7 +42,8 @@ internal sealed record DemoConfiguration(
             Optional("AI_RUNTIME_ACCESS_CONTEXT"),
             Optional("AI_RUNTIME_ACCESS_CONTEXT_HEADER") ?? "X-Access-Context",
             accessContextUri.AbsoluteUri,
-            Required("OPENAI_MODEL"));
+            Required("OPENAI_MODEL"),
+            Flag("AI_DEMO_VERBOSE"));
     }
 
     private static string Required(string name)
@@ -51,6 +53,17 @@ internal sealed record DemoConfiguration(
         return value
             ?? throw new InvalidOperationException(
                 $"Missing required demo configuration '{name}'.");
+    }
+
+    private static bool Flag(string name)
+    {
+        var value = Optional(name);
+
+        return value is not null &&
+            (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string? Optional(string name) =>

@@ -20,6 +20,11 @@ def required(name: str) -> str:
     return value
 
 
+def flag(name: str) -> bool:
+    value = (optional(name) or "").lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def _absolute_http_url(name: str, value: str) -> str:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -35,6 +40,7 @@ class DemoConfiguration:
     access_context_header: str
     access_context_endpoint: str
     openai_model: str
+    verbose: bool
 
     @staticmethod
     def load() -> "DemoConfiguration":
@@ -62,6 +68,7 @@ class DemoConfiguration:
             ),
             access_context_endpoint=access_context_endpoint,
             openai_model=required("OPENAI_MODEL"),
+            verbose=flag("AI_DEMO_VERBOSE"),
         )
 
 
