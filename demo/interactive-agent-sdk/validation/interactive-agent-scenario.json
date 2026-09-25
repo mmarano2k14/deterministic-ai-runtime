@@ -1,0 +1,120 @@
+{
+  "contractVersion": 1,
+  "scenarioId": "interactive-agent-sdk-canonical-v1",
+  "description": "Canonical public-SDK interactive agent scenario used by topology validation.",
+  "publicBoundaryOnly": true,
+  "provider": {
+    "kind": "openai",
+    "modelEnvironmentVariable": "OPENAI_MODEL",
+    "credentialEnvironmentVariable": "OPENAI_API_KEY",
+    "credentialOwner": "runtime",
+    "assertResponseText": false
+  },
+  "authentication": {
+    "bearerTokenEnvironmentVariable": "AI_RUNTIME_TOKEN",
+    "accessContextEndpoint": "/auth/access-context",
+    "accessContextIsServerCreated": true
+  },
+  "rootPipeline": {
+    "version": "1",
+    "executionMode": "Dag",
+    "steps": [
+      {
+        "name": "plan",
+        "stepKey": "ai.prompt",
+        "order": 0,
+        "dependsOn": []
+      },
+      {
+        "name": "delegate-analysis",
+        "stepKey": "execution.child-dag",
+        "order": 1,
+        "dependsOn": ["plan"],
+        "logicalInvocationKey": "interactive-agent-analysis"
+      },
+      {
+        "name": "await-review",
+        "stepKey": "execution.await-input",
+        "order": 2,
+        "dependsOn": ["delegate-analysis"],
+        "waitingKey": "interactive-agent-review"
+      },
+      {
+        "name": "final-answer",
+        "stepKey": "ai.prompt",
+        "order": 3,
+        "dependsOn": ["await-review"]
+      },
+      {
+        "name": "publish-result",
+        "stepKey": "execution.publish-result",
+        "order": 4,
+        "dependsOn": ["final-answer"]
+      }
+    ]
+  },
+  "childPipeline": {
+    "version": "1",
+    "executionMode": "Dag",
+    "steps": [
+      {
+        "name": "child-analysis",
+        "stepKey": "ai.prompt",
+        "order": 0,
+        "dependsOn": []
+      },
+      {
+        "name": "publish-child-result",
+        "stepKey": "execution.publish-result",
+        "order": 1,
+        "dependsOn": ["child-analysis"]
+      }
+    ]
+  },
+  "submission": {
+    "inputFields": ["userPrompt", "requestId"],
+    "requiredMetadata": {
+      "demo": "interactive-agent-sdk"
+    },
+    "sdkLanguageMetadataKey": "sdk.language"
+  },
+  "humanReview": {
+    "waitingStepName": "await-review",
+    "waitingKey": "interactive-agent-review",
+    "input": {
+      "approved": true,
+      "feedback": "topology-validation"
+    },
+    "mustResumeSameExecutionId": true
+  },
+  "terminal": {
+    "requiredExecutionStatus": "Completed",
+    "requiredRootStepStatuses": {
+      "plan": "Completed",
+      "delegate-analysis": "Completed",
+      "await-review": "Completed",
+      "final-answer": "Completed",
+      "publish-result": "Completed"
+    },
+    "requirePublicResult": true,
+    "requireProvider": "openai",
+    "requireModel": true,
+    "requireResponsePayload": true
+  },
+  "replay": {
+    "required": true,
+    "succeeded": true,
+    "deterministic": true,
+    "mustNotCreateNewExecution": true,
+    "mustNotReexecuteProvider": true
+  },
+  "forbiddenValidationDependencies": [
+    "/matrix/*",
+    "direct MongoDB mutation",
+    "direct Redis mutation",
+    "internal DAG stores",
+    "internal scheduler/controller APIs",
+    "direct IAiPublicSdkBoundary invocation",
+    "OpenAI response text equality"
+  ]
+}

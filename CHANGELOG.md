@@ -6,6 +6,673 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+# 0.0.9.6 - 2026-09-24 - Interactive Agent SDK Demo and Docker Presentation
+
+## Scope
+
+Added a presentation-oriented external SDK demo that exercises the real public runtime boundary through the .NET, TypeScript / JavaScript, and Python SDKs.
+
+The demo validates one runtime-native durable agent flow across all three client languages while preserving the existing public SDK, RBAC, execution-ownership, DAG, Child DAG, human-input, replay, durable-invocation, and result-acceptance authorities.
+
+No demo-specific execution engine, scheduler, queue, persistence path, replay authority, or direct runtime-store integration was introduced.
+
+---
+
+## Interactive External SDK Demo
+
+Added a dedicated external-application demo under:
+
+```text
+demo/interactive-agent-sdk
+```
+
+The same logical application flow is implemented independently with:
+
+```text
+.NET
+TypeScript / JavaScript
+Python
+```
+
+Each client uses the public SDK boundary rather than direct engine or control-plane references.
+
+The validated flow is:
+
+```text
+external SDK consumer
+    -> real JWT Bearer
+    -> server-created RBAC access context
+    -> public MCP SDK transport
+    -> immutable pipeline publication
+    -> durable execution submission
+    -> root ai.prompt
+    -> Child DAG delegation
+    -> child ai.prompt
+    -> child result publication
+    -> durable parent continuation
+    -> execution.await-input
+    -> public human-input submission
+    -> same ExecutionId resumes
+    -> final ai.prompt
+    -> business-result publication
+    -> public result retrieval
+    -> deterministic replay validation
+```
+
+The external applications do not reference runtime engine assemblies, control-plane implementation classes, persistence stores, test harness APIs, matrix infrastructure, or `IAiPublicSdkBoundary` directly.
+
+---
+
+## Runtime-Native OpenAI Execution
+
+The demo uses the existing runtime-native:
+
+```text
+ai.prompt
+```
+
+step with provider:
+
+```text
+openai
+```
+
+The external SDK consumer supplies the model selection through:
+
+```text
+OPENAI_MODEL
+```
+
+The OpenAI credential remains server-owned through:
+
+```text
+OPENAI_API_KEY
+```
+
+`OPENAI_API_KEY` is not serialized into:
+
+```text
+publication content
+execution input
+public Watch events
+human-input payloads
+SDK transport payloads
+business-result payloads
+```
+
+The root `execution.publish-result` publishes the complete final `ai.prompt` result object so the public SDK result can expose the runtime-produced answer and provider/model metadata without a demo-only side channel.
+
+---
+
+## Human Review and Same-Execution Resume
+
+The demo includes a durable human-review boundary through:
+
+```text
+execution.await-input
+```
+
+The public SDK uses:
+
+```text
+sdk.execution.input.submit
+```
+
+to resume the existing execution.
+
+Accepted input preserves:
+
+```text
+same ExecutionId
+same immutable publication/run pin
+same durable DAG
+same execution ownership
+same waiting logical step
+```
+
+No second execution is created for human review continuation.
+
+The interactive console exposes:
+
+```text
+[p] pause
+[r] resume
+[i] submit human input
+[s] status
+[c] cancel
+[q] detach
+```
+
+After terminal convergence it exposes:
+
+```text
+[x] deterministic replay validation
+[q] exit
+```
+
+---
+
+## Presentation Console
+
+Added a presentation-oriented console mode that suppresses low-level raw Watch noise and displays the meaningful durable lifecycle transitions.
+
+Representative output includes:
+
+```text
+Publishing immutable pipeline
+Submitting durable execution
+Planning
+Delegated analysis
+Human review
+Final OpenAI answer
+Business result published
+Execution completed
+```
+
+The terminal view includes:
+
+```text
+final OpenAI response
+provider/model metadata
+available token metadata
+ExecutionId
+terminal execution status
+pipeline step states
+human-review decision
+```
+
+Raw SDK command and Watch diagnostics remain available through:
+
+```text
+AI_DEMO_VERBOSE=true
+```
+
+---
+
+## Local Authentication and RBAC Access Context
+
+The demo uses the real JWT and public access-context path.
+
+The consumer starts with:
+
+```text
+AI_RUNTIME_TOKEN
+```
+
+When no pre-created access context is provided, the demo calls:
+
+```text
+POST /auth/access-context
+```
+
+and uses the returned server-created access-context handle for subsequent SDK transport calls.
+
+The SDK transport continues to manage access-context rotation through the public header contract.
+
+For local development, a helper creates a short-lived HS256 bearer token for the standalone `JwtBearer` host.
+
+The helper is limited to local development and does not install a fake authentication handler.
+
+The local token contains only the capabilities required by the demo:
+
+```text
+code:publication:publish
+code:publication:read
+code:publication:execute
+shared-run:execution:submit
+execution:control:read
+execution:control:cancel
+execution:control:pause
+execution:control:resume
+execution:control:input
+replay:execution:run
+```
+
+The local symmetric signing key remains issuer authority and is not a production consumer credential.
+
+---
+
+## Native / Source-Mode Packaging
+
+Added bootstrap support for building and consuming local SDK artifacts without publishing them to public registries.
+
+The local demo consumes:
+
+```text
+Multiplexed.AI.Sdk
+Multiplexed.AI.Sdk.Contracts
+@multiplexed/ai-sdk
+multiplexed-ai-sdk
+```
+
+from repository-local build/package outputs.
+
+The .NET demo packages are pinned to:
+
+```text
+0.0.0-local
+```
+
+for local demo consumption.
+
+This prevents the demo from accidentally resolving a future published package version instead of the freshly built local SDK artifact.
+
+The bootstrap smoke validation does not require authentication, access-context creation, runtime execution, or OpenAI access.
+
+---
+
+## Docker Presentation Packaging
+
+Added a reproducible Docker distribution path for the interactive SDK demo.
+
+The Docker topology is:
+
+```text
+docker compose
+|
++-- mongo
++-- redis
++-- runtime
+|   +-- public MCP endpoint
+|   +-- JWT/access-context boundary
+|   +-- local runtime-instance pool
+|   +-- shared queue pump
+|   +-- Mongo durable state/evidence
+|   +-- Redis coordination/cache
+|   +-- Child DAG composition
+|   +-- OpenAI provider
+|   +-- deterministic replay
+|
++-- demo
+    +-- packaged .NET SDK consumer
+    +-- packaged TypeScript SDK consumer
+    +-- packaged Python SDK consumer
+```
+
+The demo image contains all three external clients and provides one launcher for selecting the client language at runtime.
+
+The runtime, MongoDB, and Redis remain separate services.
+
+The demo container does not receive:
+
+```text
+OPENAI_API_KEY
+```
+
+Only the runtime service receives the OpenAI credential.
+
+---
+
+## Docker .NET Local Package Build
+
+The Docker build packs the .NET SDK and contracts into repository-local demo packages before restoring the external .NET consumer.
+
+The restore path explicitly verifies that the consumer resolved:
+
+```text
+Multiplexed.AI.Sdk/0.0.0-local
+Multiplexed.AI.Sdk.Contracts/0.0.0-local
+```
+
+The container build therefore validates local package consumption rather than relying on an installed or remotely published SDK.
+
+---
+
+## .NET 10 Output-Path Compatibility
+
+Hardened the Docker .NET build for .NET 10/MSBuild command-line parsing when an output path ends in:
+
+```text
+dotnet
+```
+
+`dotnet pack -o .../dotnet` and `dotnet publish -o .../dotnet` can be misparsed by the .NET 10 CLI/MSBuild path handling and surface:
+
+```text
+MSB1008: Only one project can be specified.
+```
+
+The demo build now passes explicit MSBuild properties instead of the affected short output option:
+
+```text
+/p:PackageOutputPath=...
+/p:PublishDir=...
+```
+
+The workaround is applied to the relevant local package and Docker publish paths.
+
+This change affects build/distribution behavior only and does not alter SDK or runtime contracts.
+
+---
+
+## Docker Build Diagnostics
+
+The .NET Docker build was split into explicit stages for:
+
+```text
+Contracts package
+SDK package
+consumer restore
+local-package resolution verification
+consumer publish
+```
+
+This provides direct failure attribution instead of one chained shell command covering the entire .NET build.
+
+TypeScript and Python continue to build independently in their own Docker stages.
+
+---
+
+## TypeScript Consumer Packaging
+
+The TypeScript Docker path:
+
+```text
+builds the repository-local SDK
+creates the local package artifact
+installs the SDK into the external demo application
+compiles the demo application
+prunes development-only dependencies
+```
+
+The final image contains the built TypeScript application and its production runtime dependencies.
+
+No public npm registry publication is required.
+
+---
+
+## Python Consumer Packaging
+
+The Python Docker path:
+
+```text
+creates an isolated virtual environment
+builds/installs the repository-local Python SDK
+builds/installs the external Python demo application
+copies the resulting environment into the final demo image
+```
+
+No public Python package-index publication is required.
+
+---
+
+## Docker Launcher
+
+Added an interactive Docker launcher with runtime selection:
+
+```text
+1. .NET
+2. TypeScript
+3. Python
+```
+
+The launcher:
+
+```text
+waits for runtime health
+creates the local demo JWT when required
+starts the selected external SDK client
+preserves interactive human-review input
+supports post-terminal deterministic replay validation
+```
+
+Windows execution is wrapped by:
+
+```text
+docker-demo.ps1
+```
+
+The underlying Docker Compose profile can also be invoked directly.
+
+---
+
+## Environment Configuration
+
+The Docker presentation path uses a local environment file derived from:
+
+```text
+.env.docker.example
+```
+
+Required runtime provider configuration includes:
+
+```text
+OPENAI_API_KEY
+```
+
+Optional model configuration includes:
+
+```text
+OPENAI_MODEL
+```
+
+Consumer-side configuration remains separate from provider credentials.
+
+Native/source-mode consumer configuration includes:
+
+```text
+AI_RUNTIME_ENDPOINT
+AI_RUNTIME_TOKEN
+OPENAI_MODEL
+```
+
+Optional consumer settings include:
+
+```text
+AI_RUNTIME_ACCESS_CONTEXT
+AI_RUNTIME_ACCESS_CONTEXT_ENDPOINT
+AI_RUNTIME_ACCESS_CONTEXT_HEADER
+AI_DEMO_VERBOSE
+```
+
+The runtime-side OpenAI credential remains:
+
+```text
+OPENAI_API_KEY
+```
+
+and is not a consumer SDK setting.
+
+---
+
+## Deterministic Replay
+
+Each interactive client can invoke:
+
+```text
+sdk.execution.replay
+```
+
+after terminal completion.
+
+Replay validates the existing durable execution.
+
+It does not:
+
+```text
+create a new ExecutionId
+create a second logical execution
+re-run OpenAI calls
+re-emit business effects
+```
+
+The demo therefore exercises the same replay authority already exposed by the public SDK.
+
+---
+
+## Validation
+
+### Native / Source Mode
+
+The interactive vertical slice is green for all three external SDK clients:
+
+```text
+.NET        GREEN
+TypeScript GREEN
+Python     GREEN
+```
+
+### Docker Presentation Mode
+
+The containerized presentation path is also green for all three clients:
+
+```text
+.NET        PASS
+TypeScript PASS
+Python     PASS
+```
+
+For each client, the validated Docker flow covers:
+
+```text
+runtime health
+local JWT creation
+RBAC access-context creation
+immutable publication
+durable submission
+root OpenAI step
+Child DAG delegation
+durable child completion
+parent continuation
+human-review parking
+accepted human input
+same-ExecutionId resume
+final OpenAI step
+business-result publication
+terminal Completed state
+deterministic replay
+```
+
+Final Docker replay evidence:
+
+```text
+.NET
+Succeeded:     True
+Deterministic: True
+
+TypeScript
+Succeeded:     true
+Deterministic: true
+
+Python
+Succeeded:     True
+Deterministic: True
+```
+
+All three terminal executions completed with every demo pipeline step in:
+
+```text
+Completed
+```
+
+state.
+
+One Python validation run observed a transient business-result publication failure followed by successful retry/convergence to `Completed`; deterministic replay of the final durable execution remained successful.
+
+---
+
+## Validation Scope
+
+The interactive demo validation is separate from the existing SDK runtime matrix and KubernetesPool closure.
+
+Existing independently scoped records remain:
+
+```text
+Docker SDK matrix         37 / 37
+KubernetesPool closure     3 / 3
+Interactive Docker demo    3 / 3 client paths
+```
+
+The interactive demo results are not added to the 37/37 or 3/3 scenario counts.
+
+The demo validates the exercised presentation path through the real public SDK/MCP boundary.
+
+It does not claim:
+
+```text
+a new runtime topology
+full Kubernetes interactive-demo parity
+public package-registry publication
+a second scheduler or recovery model
+a new replay authority
+```
+
+---
+
+## Documentation
+
+Added and updated documentation for the interactive SDK demonstration, including:
+
+```text
+interactive-agent-sdk-demo.md
+external SDK quickstart references
+external SDK libraries references
+external SDK validation references
+documentation index
+repository README
+demo README
+```
+
+The repository README now records the interactive Docker demo as a separate three-client validation proof without modifying the existing adversarial, Docker-matrix, or KubernetesPool counts.
+
+The demo README documents:
+
+```text
+validation status
+runtime flow
+console modes
+OpenAI credential boundary
+Docker startup
+native/source-mode startup
+local JWT behavior
+human input
+deterministic replay
+public-boundary restrictions
+```
+
+---
+
+## Compatibility
+
+No runtime execution identity model was replaced.
+
+No persistence schema migration is required.
+
+No new DAG engine, queue, scheduler, recovery authority, replay authority, or result-acceptance authority was introduced.
+
+The existing authorities remain unchanged for:
+
+```text
+RBAC and tenant ownership
+immutable publication/run pinning
+ExecutionId identity
+DAG scheduling and transitions
+Child DAG composition
+human-input durability
+runtime placement
+shared queue/admission
+durable invocation result acceptance
+execution control
+recovery
+deterministic replay
+```
+
+The external SDK clients remain independent from runtime engine assemblies and private control-plane implementation contracts.
+
+---
+
+## Limitations
+
+The demo uses local-development JWT signing configuration for its self-contained Docker presentation flow. That signing configuration must not be reused in production.
+
+The demo is an integration and presentation proof, not an additional runtime-matrix topology.
+
+Public NuGet, npm, and Python package-index publication is not implied by local package consumption.
+
+The Docker presentation validates the current .NET, TypeScript, and Python client implementations against the exercised runtime configuration; it does not establish broader topology coverage beyond the paths explicitly executed.
+
+---
+
 ## 0.0.9.5 - 2026-09-23 - SDK Watch, Execution Control and Replay
 
 ## Scope
