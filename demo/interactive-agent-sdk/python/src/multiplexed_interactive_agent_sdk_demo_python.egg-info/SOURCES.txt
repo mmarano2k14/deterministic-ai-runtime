@@ -1,6 +1,7 @@
 pyproject.toml
 src/interactive_agent_sdk_demo/__init__.py
 src/interactive_agent_sdk_demo/__main__.py
+src/interactive_agent_sdk_demo/automated_validation.py
 src/interactive_agent_sdk_demo/configuration.py
 src/interactive_agent_sdk_demo/interactive_console.py
 src/interactive_agent_sdk_demo/pipeline.py

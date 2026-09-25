@@ -91,6 +91,7 @@ COPY --from=node-build /src/demo/interactive-agent-sdk/typescript/package.json /
 COPY --from=python-build /opt/interactive-agent/python /opt/interactive-agent/python
 
 COPY demo/interactive-agent-sdk/launcher /opt/interactive-agent/launcher
+COPY demo/interactive-agent-sdk/validation /opt/interactive-agent/validation
 COPY demo/interactive-agent-sdk/scripts/create-local-jwt.py /opt/interactive-agent/scripts/create-local-jwt.py
 COPY demo/interactive-agent-sdk/docker/entrypoint.py /opt/interactive-agent/docker/entrypoint.py
 

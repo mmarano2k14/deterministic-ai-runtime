@@ -7,6 +7,7 @@ import {
   type AiSdkExecutionResult,
 } from "@multiplexed/ai-sdk";
 import { loadConfiguration, isSmokeMode, type DemoConfiguration } from "./configuration.js";
+import { isAutomatedValidationMode, runAutomatedValidation } from "./automated-validation.js";
 import {
   ConsoleInputPump,
   InteractiveExecutionConsole,
@@ -33,6 +34,11 @@ async function main(): Promise<number> {
 
   printHeader(config);
   const client = await createClient(config);
+
+  if (isAutomatedValidationMode()) {
+    return runAutomatedValidation(client, config);
+  }
+
   const input = new ConsoleInputPump();
 
   try {

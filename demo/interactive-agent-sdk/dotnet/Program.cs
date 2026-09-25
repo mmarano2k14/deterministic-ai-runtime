@@ -29,6 +29,11 @@ internal static class Program
 
             IAiSdkClient client = await CreateClientAsync(config);
 
+            if (AutomatedValidationRunner.IsEnabled())
+            {
+                return await AutomatedValidationRunner.RunAsync(client, config);
+            }
+
             Console.Write("User request: ");
             var userPrompt = Console.ReadLine()?.Trim();
 

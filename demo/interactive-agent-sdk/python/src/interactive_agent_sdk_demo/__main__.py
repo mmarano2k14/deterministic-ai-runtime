@@ -13,6 +13,7 @@ from multiplexed_ai_sdk import (
 )
 
 from .configuration import DemoConfiguration, is_smoke_mode
+from .automated_validation import is_automated_validation_mode, run_automated_validation
 from .interactive_console import (
     ConsoleInputPump,
     InteractiveExecutionConsole,
@@ -40,6 +41,10 @@ async def _main() -> int:
 
     _print_header(config)
     client = await _create_client(config)
+
+    if is_automated_validation_mode():
+        return await run_automated_validation(client, config)
+
     input_pump = ConsoleInputPump()
 
     try:

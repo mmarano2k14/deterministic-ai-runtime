@@ -126,6 +126,8 @@ def main() -> int:
     command = command_for(sdk)
     print()
     print(f"Selected SDK: {DISPLAY_NAMES[sdk]}")
+    if os.getenv("AI_DEMO_AUTOMATED_VALIDATION", "").strip().lower() in {"1", "true", "yes", "on"}:
+        print("Automated validation mode: enabled")
     if os.getenv("AI_DEMO_VERBOSE", "").strip().lower() in {"1", "true", "yes", "on"}:
         print("Consumer command:")
         print("  " + " ".join(command))

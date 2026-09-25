@@ -54,3 +54,65 @@ The validation runner must use public SDK operations only. It must not use matri
 ## Language-specific names
 
 Pipeline publication names may remain language-specific. Semantic step names, waiting keys, durable assertions, and evidence fields are shared.
+
+## Automated E2E runner
+
+Step 2 adds a machine-readable validation mode to each external SDK consumer.
+
+Enable it through:
+
+```text
+AI_DEMO_AUTOMATED_VALIDATION=1
+AI_DEMO_EVIDENCE_PATH=<path-to-json>
+AI_VALIDATION_RUNTIME_PROVIDER=ProcessHostPool|KubernetesPool
+AI_VALIDATION_RUNTIME_TRANSPORT=HTTP|gRPC
+```
+
+The consumer drives the canonical public-SDK flow directly, submits the canonical
+human review input when `await-review` becomes durable, waits for terminal state,
+retrieves the public result, runs deterministic replay, and writes evidence JSON.
+
+The orchestration wrapper is:
+
+```powershell
+python .\demo\interactive-agent-sdk\validation\run_e2e.py `
+  --runtime-provider ProcessHostPool `
+  --runtime-transport HTTP `
+  --sdk all
+```
+
+`run_e2e.py` never parses console output. A run passes only when the emitted JSON
+passes `validate_evidence.py` against the Step 1 contract.
+
+Before the validation campaign starts, the orchestrator rebuilds the local SDK packages
+and all three native consumers through the existing bootstrap. This prevents stale
+`.NET --no-build` outputs or stale TypeScript `dist/` files from silently bypassing the
+automated validation path. Use `--skip-prepare` only when the artifacts were already
+prepared from the current sources in the same validation session.
+
+## Validation authentication
+
+`run_e2e.py` supports three authentication modes:
+
+```text
+auto       local endpoint: always create a fresh local demo JWT
+           remote endpoint: require AI_RUNTIME_TOKEN
+token      require and use AI_RUNTIME_TOKEN
+local-jwt  always create a local demo JWT
+```
+
+For local Docker-backed validation, `auto` deliberately ignores any inherited `AI_RUNTIME_TOKEN` and creates a fresh bearer token on every run. This prevents stale or differently signed tokens left in the parent PowerShell session from contaminating local validation. It reads only the local JWT issuer, audience, signing key, and demo claim settings from `demo/interactive-agent-sdk/.env`. It deliberately does **not** load `OPENAI_API_KEY` into the external SDK consumer environment.
+
+For a non-local runtime, `auto` requires an explicit `AI_RUNTIME_TOKEN`. `local-jwt` can still be selected explicitly when a non-local runtime intentionally shares the local-demo signing authority.
+
+The generated bearer token is injected as `AI_RUNTIME_TOKEN`. The local signing key and `OPENAI_API_KEY` are stripped before launching the .NET, TypeScript, or Python consumer.
+
+Example:
+
+```powershell
+python .\demo\interactive-agent-sdk\validation\run_e2e.py `
+  --runtime-provider ProcessHostPool `
+  --runtime-transport HTTP `
+  --sdk all `
+  --auth-mode auto
+```
