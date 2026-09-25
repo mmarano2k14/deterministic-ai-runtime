@@ -226,3 +226,83 @@ Automated validation mode: enabled
 when `AI_DEMO_AUTOMATED_VALIDATION` is active, providing an immediate operator-visible proof that the machine-readable path is running rather than the interactive console path.
 
 ---
+
+## Explicit Runtime Topology Verification
+
+Added fail-closed runtime-topology verification to the interactive-agent SDK E2E harness.
+
+The `runtimeProvider` and `runtimeTransport` values are no longer accepted as evidence solely because they were supplied on the validation command line.
+
+The common E2E runner now requires a machine-generated topology attestation before any external SDK consumer can execute.
+
+Supported validation targets remain:
+
+```text
+ProcessHostPool / HTTP
+ProcessHostPool / gRPC
+KubernetesPool / HTTP
+KubernetesPool / gRPC
+```
+
+The topology contract separates requested and observed state:
+
+```text
+requested.runtimeProvider
+requested.runtimeTransport
+observed.runtimeProvider
+observed.runtimeTransport
+verified
+checks
+verifiedAtUtc
+```
+
+Accepted topology authorities are provider-specific:
+
+```text
+ProcessHostPool -> process-host-inspection
+KubernetesPool -> kubernetes-cluster-inspection
+```
+
+The final SDK evidence is enriched with the verified topology attestation before canonical evidence validation.
+
+The validator now requires:
+
+```text
+topology.verified == true
+requested provider == evidence provider
+requested transport == evidence transport
+observed provider == evidence provider
+observed transport == evidence transport
+all topology checks == passed
+```
+
+Provider/transport configuration is deliberately not treated as sufficient Runtime Pool proof.
+
+In particular, the harness does not infer `ProcessHostPool` merely from:
+
+```text
+ControlPlaneWithHttpRuntimeInstances
+ControlPlaneWithGrpcRuntimeInstances
+HostCreationMode = Process
+```
+
+because those configuration families also cover historical external runtime-instance hosting that is distinct from the additive ProcessHostPool boundary.
+
+Likewise, Kubernetes-capable control-plane configuration is not accepted as proof that the exercised execution used KubernetesPool.
+
+Added a non-secret local Docker diagnostic inspector that can report current host mode, provider name, transport family, and creation mode without exposing JWT signing material or OpenAI credentials.
+
+The current interactive-demo Compose runtime remains configured as:
+
+```text
+AiMcpHost__Mode = ControlPlaneWithLocalRuntimeInstances
+AiLocalRuntimeInstancePool__Enabled = true
+```
+
+Accordingly, the automated Step 2 runs validate the machine-readable three-client E2E path but are not counted as ProcessHostPool topology evidence.
+
+This correction narrows the evidence claim; it does not invalidate the public SDK execution, human-input, completion, or deterministic replay results from those runs.
+
+No public SDK contract, runtime scheduling authority, recovery authority, or execution semantics were changed by this step.
+
+---

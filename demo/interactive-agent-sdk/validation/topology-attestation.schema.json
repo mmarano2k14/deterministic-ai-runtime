@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multiplexed.local/schemas/interactive-agent-topology-attestation-v1.json",
+  "title": "Interactive Agent SDK Runtime Topology Attestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "requested", "observed", "verified", "checks", "verifiedAtUtc"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "requested": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtimeProvider", "runtimeTransport"],
+      "properties": {
+        "runtimeProvider": { "enum": ["ProcessHostPool", "KubernetesPool"] },
+        "runtimeTransport": { "enum": ["HTTP", "gRPC"] }
+      }
+    },
+    "observed": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["source", "runtimeProvider", "runtimeTransport"],
+      "properties": {
+        "source": { "type": "string", "minLength": 1 },
+        "runtimeProvider": { "type": "string", "minLength": 1 },
+        "runtimeTransport": { "type": "string", "minLength": 1 },
+        "hostMode": { "type": ["string", "null"] },
+        "providerName": { "type": ["string", "null"] },
+        "scaleOutMode": { "type": ["string", "null"] },
+        "hostCreationMode": { "type": ["string", "null"] },
+        "service": { "type": ["string", "null"] },
+        "containerId": { "type": ["string", "null"] }
+      }
+    },
+    "verified": { "type": "boolean" },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "expected", "actual", "passed"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "expected": {},
+          "actual": {},
+          "passed": { "type": "boolean" }
+        }
+      }
+    },
+    "verifiedAtUtc": { "type": "string", "minLength": 1 }
+  }
+}

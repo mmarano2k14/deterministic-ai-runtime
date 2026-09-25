@@ -19,6 +19,21 @@ def validate(data: dict[str, Any]) -> list[str]:
     expect(errors, data.get("runtimeProvider") in PROVIDERS, "unexpected runtimeProvider")
     expect(errors, data.get("runtimeTransport") in TRANSPORTS, "unexpected runtimeTransport")
 
+    topology = object_value(data, "topology", errors)
+    expect(errors, topology.get("schemaVersion") == 1, "topology.schemaVersion must be 1")
+    requested_topology = object_value(topology, "requested", errors)
+    observed_topology = object_value(topology, "observed", errors)
+    expect(errors, topology.get("verified") is True, "topology.verified must be true")
+    expect(errors, requested_topology.get("runtimeProvider") == data.get("runtimeProvider"), "topology requested provider mismatch")
+    expect(errors, requested_topology.get("runtimeTransport") == data.get("runtimeTransport"), "topology requested transport mismatch")
+    expect(errors, observed_topology.get("runtimeProvider") == data.get("runtimeProvider"), "topology observed provider mismatch")
+    expect(errors, observed_topology.get("runtimeTransport") == data.get("runtimeTransport"), "topology observed transport mismatch")
+    checks = topology.get("checks")
+    expect(errors, isinstance(checks, list) and bool(checks), "topology.checks must be a non-empty array")
+    if isinstance(checks, list):
+        expect(errors, all(isinstance(item, dict) and item.get("passed") is True for item in checks), "all topology checks must pass")
+    expect_nonempty(errors, topology.get("verifiedAtUtc"), "topology.verifiedAtUtc")
+
     publication = object_value(data, "publication", errors)
     expect(errors, publication.get("accepted") is True, "publication.accepted must be true")
     expect_nonempty(errors, publication.get("publicationRef"), "publication.publicationRef")

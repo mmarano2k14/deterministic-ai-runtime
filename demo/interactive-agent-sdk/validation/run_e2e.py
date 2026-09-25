@@ -6,8 +6,10 @@ import subprocess
 import sys
 import json
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Any
 from urllib.parse import urlparse
+
+from topology import TopologyRequest, TopologyVerificationError, verify_topology
 
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "launcher" / "launcher.py"
@@ -290,12 +292,27 @@ def _consumer_environment(base: Mapping[str, str], token: str) -> dict[str, str]
     return env
 
 
+def _attach_topology(evidence_path: Path, attestation: dict[str, Any]) -> None:
+    data = json.loads(evidence_path.read_text(encoding="utf-8"))
+    data["topology"] = attestation
+    evidence_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run automated interactive-agent public-SDK E2E validation.")
     parser.add_argument("--sdk", choices=(*SDKS, "all"), default="all")
     parser.add_argument("--runtime-provider", choices=("ProcessHostPool", "KubernetesPool"), required=True)
     parser.add_argument("--runtime-transport", choices=("HTTP", "gRPC"), required=True)
     parser.add_argument("--evidence-dir", type=Path, default=ROOT / "validation" / "evidence")
+    parser.add_argument(
+        "--topology-attestation",
+        type=Path,
+        default=None,
+        help=(
+            "Machine-generated topology attestation for remote ProcessHostPool or KubernetesPool targets. "
+            "Local Docker ProcessHostPool targets are inspected directly."
+        ),
+    )
     parser.add_argument("--prompt", default="Validate the interactive agent topology through the public SDK boundary.")
     parser.add_argument(
         "--auth-mode",
@@ -322,6 +339,22 @@ def main() -> int:
 
     selected = SDKS if args.sdk == "all" else (args.sdk,)
     args.evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    request = TopologyRequest(args.runtime_provider, args.runtime_transport)
+    try:
+        topology = verify_topology(
+            request,
+            local_endpoint=_is_local_runtime_endpoint(_runtime_endpoint()),
+            attestation_path=args.topology_attestation,
+        )
+        print(
+            "[validation] topology verified: "
+            f"{args.runtime_provider}/{args.runtime_transport} "
+            f"via {topology.get('observed', {}).get('source')}"
+        )
+    except TopologyVerificationError as exc:
+        print(f"[validation] topology mismatch: {exc}", file=sys.stderr)
+        return 1
 
     try:
         if not args.skip_prepare:
@@ -361,6 +394,7 @@ def main() -> int:
             failures += 1
             continue
 
+        _attach_topology(evidence, topology)
         check = subprocess.run([sys.executable, str(VALIDATOR), str(evidence)])
         if check.returncode != 0:
             failures += 1
