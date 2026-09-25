@@ -4,17 +4,20 @@ This directory contains a real external-application demo for the Deterministic A
 
 ## Validation status
 
-The three source-mode vertical slices have completed the real authenticated public-SDK E2E path:
+The interactive agent flow is validated end-to-end through all three external SDK clients:
 
-```text
-.NET        GREEN
-TypeScript GREEN
-Python     GREEN
-```
+| Execution path | .NET | TypeScript | Python |
+|---|---:|---:|---:|
+| Native / source mode | GREEN | GREEN | GREEN |
+| Docker presentation mode | GREEN | GREEN | GREEN |
+| Terminal `Completed` | PASS | PASS | PASS |
+| Deterministic replay | PASS | PASS | PASS |
 
-Each validated path includes immutable publication, execution submission, a runtime-native OpenAI prompt, Child DAG delegation, durable parent continuation, human input on the same execution, terminal business-result publication, result retrieval, and deterministic replay.
+The validated flow includes immutable publication, durable execution submission, runtime-native OpenAI execution, Child DAG delegation, durable parent continuation, human review and input, resume of the same `ExecutionId`, terminal business-result publication, public result retrieval, and deterministic replay validation.
 
-Docker packaging is provided as a reproducible distribution path. It should be validated on the target Docker engine before the containerized path is marked GREEN.
+The Docker presentation path additionally validates packaging and execution of the three external SDK consumers inside the same reproducible demo image while the runtime, MongoDB, and Redis remain separate services.
+
+This validation is a dedicated interactive SDK demonstration. It is separate from the SDK Docker matrix and KubernetesPool validation campaigns and is not added to those scenario counts.
 
 ## What the demo shows
 
@@ -49,6 +52,8 @@ execution.await-input
     ↓
 sdk.execution.input.submit
     ↓
+same ExecutionId resumes
+    ↓
 final ai.prompt
     ↓
 execution.publish-result
@@ -67,20 +72,33 @@ Presentation mode is the default. It suppresses noisy raw Watch events and shows
 ```text
 [>] Publishing immutable pipeline
 [OK] Published interactive-agent-sdk-dotnet@1
+
 [>] Submitting durable execution
+
 [>] Planning
 [OK] Planning
+
 [>] Delegated analysis
 [WAIT] Delegated analysis is waiting for the child agent
-[OK] Child agent completed
+[>] Delegated analysis
+[OK] Delegated analysis
+
+[>] Human review
 [WAIT] Human review boundary reached
 ...
+[>] Human review
+[OK] Human review
+
+[>] Final OpenAI answer
 [OK] Final OpenAI answer
+
+[>] Business result published
 [OK] Business result published
+
 [OK] Execution completed
 ```
 
-The terminal view displays the actual final OpenAI response together with provider/model/token metadata, execution state, pipeline step states, and the human-review decision.
+The terminal view displays the actual final OpenAI response together with provider/model metadata, available token metadata, execution state, pipeline step states, and the human-review decision.
 
 Set this to restore raw SDK command/watch diagnostics:
 
@@ -119,6 +137,12 @@ Edit `.env` and set:
 
 ```text
 OPENAI_API_KEY=...
+```
+
+Optional model override:
+
+```text
+OPENAI_MODEL=gpt-5.4
 ```
 
 Build and start MongoDB, Redis, and the runtime:
@@ -218,7 +242,13 @@ AI_RUNTIME_TOKEN
 OPENAI_MODEL
 ```
 
-Optional:
+Required runtime-side provider configuration:
+
+```text
+OPENAI_API_KEY
+```
+
+Optional consumer configuration:
 
 ```text
 AI_RUNTIME_ACCESS_CONTEXT
@@ -255,6 +285,7 @@ $env:AiMcpAuthentication__Issuer="multiplexed-local"
 $env:AiMcpAuthentication__Audience="multiplexed-ai-sdk"
 $env:AiMcpAuthentication__SymmetricSigningKey="replace-with-at-least-32-bytes-of-local-secret"
 $env:OPENAI_API_KEY="<openai-key>"
+$env:OPENAI_MODEL="gpt-5.4"
 ```
 
 Example consumer token creation:
