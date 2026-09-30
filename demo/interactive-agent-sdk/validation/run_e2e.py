@@ -7,7 +7,7 @@ import sys
 import json
 from pathlib import Path
 from typing import Mapping, Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from topology import TopologyRequest, TopologyVerificationError, verify_topology
 
@@ -223,9 +223,15 @@ def _resolve_token(auth_mode: str, env_file: Path) -> tuple[str, str]:
         return configured, "AI_RUNTIME_TOKEN (explicit token mode)"
 
     if auth_mode == "local-jwt":
+        # Explicit local-jwt means: use the authentication authority already
+        # supplied by the parent validation harness. A localhost endpoint is
+        # not sufficient evidence that the target is the Docker demo: the
+        # ProcessHostPool validator exposes its public boundary through a
+        # loopback proxy as well. Docker auth discovery therefore remains an
+        # auto-mode convenience only.
         token, source = _create_local_token(
             env_file,
-            prefer_running_docker_runtime=_is_local_runtime_endpoint(_runtime_endpoint()),
+            prefer_running_docker_runtime=False,
         )
         return token, f"local JWT helper ({source}; explicit local-jwt mode)"
 
@@ -289,6 +295,20 @@ def _consumer_environment(base: Mapping[str, str], token: str) -> dict[str, str]
         env.pop(secret_name, None)
 
     env["AI_RUNTIME_TOKEN"] = token
+
+    runtime_endpoint = env.get("AI_RUNTIME_ENDPOINT", "").strip()
+    if not runtime_endpoint:
+        raise RuntimeError("AI_RUNTIME_ENDPOINT is required for SDK consumer execution.")
+
+    # Topology validation must create the RBAC access context through the same
+    # public boundary as the MCP endpoint. This intentionally overrides any
+    # AI_RUNTIME_ACCESS_CONTEXT_ENDPOINT inherited from a developer shell or
+    # Docker demo session.
+    env["AI_RUNTIME_ACCESS_CONTEXT_ENDPOINT"] = urljoin(
+        runtime_endpoint,
+        "/auth/access-context",
+    )
+    env.pop("AI_RUNTIME_ACCESS_CONTEXT", None)
     return env
 
 
@@ -364,6 +384,25 @@ def main() -> int:
         print(f"[validation] authentication setup FAILED: {exc}", file=sys.stderr)
         return 1
 
+    auth_settings = _local_auth_settings(args.env_file)
+    print(
+        "[validation] auth scope: "
+        f"issuer={auth_settings['AI_DEMO_JWT_ISSUER']!r}, "
+        f"audience={auth_settings['AI_DEMO_JWT_AUDIENCE']!r}, "
+        f"project={auth_settings['AI_DEMO_PROJECT']!r}, "
+        f"namespace={auth_settings['AI_DEMO_NAMESPACE']!r}, "
+        f"tenant={auth_settings['AI_DEMO_TENANT_ID']!r}, "
+        f"tenantGroup={auth_settings['AI_DEMO_TENANT_GROUP_ID']!r}; "
+        "signing key not displayed"
+    )
+    access_context_endpoint = urljoin(
+        _runtime_endpoint(),
+        "/auth/access-context",
+    )
+    print(
+        "[validation] access-context endpoint pinned to runtime boundary: "
+        f"{access_context_endpoint}"
+    )
     print(f"[validation] authentication: {token_source}; token not displayed")
 
     failures = 0
@@ -377,6 +416,7 @@ def main() -> int:
             "AI_VALIDATION_RUNTIME_PROVIDER": args.runtime_provider,
             "AI_VALIDATION_RUNTIME_TRANSPORT": args.runtime_transport,
             "AI_DEMO_VALIDATION_PROMPT": args.prompt,
+            "AI_DEMO_VALIDATION_TIMEOUT_SECONDS": os.environ.get("AI_DEMO_VALIDATION_TIMEOUT_SECONDS", "90"),
         })
 
         print(f"[validation] {sdk}: {args.runtime_provider}/{args.runtime_transport}")
@@ -385,10 +425,9 @@ def main() -> int:
             cwd=ROOT,
             env=env,
         )
-        if run.returncode != 0:
-            print(f"[validation] {sdk}: execution FAILED ({run.returncode})")
-            failures += 1
-            continue
+        consumer_failed = run.returncode != 0
+        if consumer_failed:
+            print(f"[validation] {sdk}: consumer gate FAILED ({run.returncode}); validating emitted evidence")
         if not evidence.exists():
             print(f"[validation] {sdk}: evidence file missing: {evidence}")
             failures += 1
@@ -397,6 +436,9 @@ def main() -> int:
         _attach_topology(evidence, topology)
         check = subprocess.run([sys.executable, str(VALIDATOR), str(evidence)])
         if check.returncode != 0:
+            failures += 1
+        elif consumer_failed:
+            print(f"[validation] {sdk}: evidence PASS but consumer gate returned {run.returncode}")
             failures += 1
         else:
             print(f"[validation] {sdk}: PASS -> {evidence}")

@@ -331,6 +331,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         runtimeHostAssemblyPath,
                         totalRuntimeCount);
 
+            Multiplexed.AI.McpServer.Tests.Integration.Validation.InteractiveSdk.ProcessHostPoolInteractiveSdkValidationHook.ApplyRuntimeValidationSettings(controlPlaneSettings, tenant.TenantId, tenant.TenantGroupId);
+
             if (recoveryObservationMode ==
                 ProductionRecoveryObservationMode.EventDriven)
             {
@@ -398,6 +400,8 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                         this.output,
                         timeoutPerHost: TimeSpan.FromMinutes(5))
                     .ConfigureAwait(false);
+
+            Multiplexed.AI.McpServer.Tests.Integration.Validation.InteractiveSdk.ProcessHostPoolInteractiveSdkValidationHook.ApplyAuthenticationSettings(controlPlaneSettings);
 
             await using var controlPlaneHost =
                 new GenericMcpServerTestHost(controlPlaneSettings);
@@ -495,6 +499,23 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                     StringComparer.Ordinal);
             var cycleTimings =
                 new List<ProcessHostPoolProductionCycleTiming>();
+
+            if (await Multiplexed.AI.McpServer.Tests.Integration.Validation.InteractiveSdk.ProcessHostPoolInteractiveSdkValidationHook
+                    .TryRunAsync(
+                        this.profile,
+                        cluster,
+                        controlPlaneHost,
+                        controlPlaneSettings,
+                        poolId,
+                        controlPlaneId,
+                        tenant,
+                        maximumProcessHostCount,
+                        runtimeCountPerHost,
+                        this.output)
+                    .ConfigureAwait(false))
+            {
+                return;
+            }
 
             for (var cycleNumber = 1;
                  cycleNumber <= executionCycleCount;

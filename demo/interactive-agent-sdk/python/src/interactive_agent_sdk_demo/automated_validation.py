@@ -16,6 +16,7 @@ from multiplexed_ai_sdk import (
 )
 
 from .configuration import DemoConfiguration
+from .replay_readiness import replay_after_snapshot_visibility
 from .pipeline import WAITING_KEY, WAITING_STEP_NAME, create_publication, create_submission
 
 _POLL_SECONDS = 0.4
@@ -48,6 +49,8 @@ async def run_automated_validation(
         create_submission(publication.publication_ref, prompt)
     )
     execution_id = submission.execution_id
+    print(f"[VALIDATION TRACE] submitted ExecutionId={execution_id}", flush=True)
+    last_trace = None
 
     deadline = asyncio.get_running_loop().time() + max(timeout_seconds, 1)
     waiting_boundary_reached = False
@@ -62,6 +65,10 @@ async def run_automated_validation(
 
         observation = await client.observe_execution(execution_id)
         final_observation = observation
+        trace = "status=" + observation.status.value + "; steps=" + ",".join(f"{step.name}:{step.status.value}" for step in observation.steps)
+        if trace != last_trace:
+            print(f"[VALIDATION TRACE] ExecutionId={execution_id} {trace}", flush=True)
+            last_trace = trace
         waiting_step = next(
             (step for step in observation.steps if step.name == WAITING_STEP_NAME),
             None,
@@ -99,15 +106,19 @@ async def run_automated_validation(
         raise RuntimeError("Human-review waiting boundary was not reached.")
 
     result = await client.get_execution_result(execution_id)
-    replay = await client.replay_execution(
-        execution_id,
-        AiSdkExecutionReplayRequest(
-            strict_determinism=True,
-            include_diagnostics=True,
-            reason="interactive-agent-topology-validation",
-            correlation_id=f"interactive-agent-validation-replay-{uuid4().hex}",
-        ),
+    replay_request = AiSdkExecutionReplayRequest(
+        strict_determinism=True,
+        include_diagnostics=True,
+        reason="interactive-agent-topology-validation",
+        correlation_id=f"interactive-agent-validation-replay-{uuid4().hex}",
     )
+    replay_readiness = await replay_after_snapshot_visibility(
+        execution_id,
+        final_observation.status.value == "Completed" and result.status.value == "Completed",
+        lambda: client.replay_execution(execution_id, replay_request),
+        trace=lambda line: print(line, flush=True),
+    )
+    replay = replay_readiness.response
 
     published = _published_result(result.output)
     provider = _read_string(published, "providerKey") or "openai"
@@ -166,6 +177,9 @@ async def run_automated_validation(
             "completedAtUtc": _utc_now(),
         },
         "diagnostics": {
+            "replayAttempts": replay_readiness.attempts,
+            "snapshotMissingResponses": replay_readiness.snapshot_missing_count,
+            "replayReadinessElapsedMs": replay_readiness.elapsed_ms,
             "replayMessage": replay.message,
             "replayFailureReason": replay.failure_reason,
             "terminalCompletedAtUtc": str(result.completed_at_utc),
@@ -175,7 +189,34 @@ async def run_automated_validation(
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
     evidence_path.write_text(json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    return 0 if _evidence_passes(evidence) else 1
+    gate_checks = {
+        "execution.completed": evidence["execution"]["status"] == "Completed",
+        "execution.sameExecutionIdAfterHumanInput": evidence["execution"]["sameExecutionIdAfterHumanInput"] is True,
+        "humanReview.accepted": evidence["humanReview"]["accepted"] is True,
+        "rootSteps.completed": all(
+            evidence["rootSteps"].get(name) == "Completed"
+            for name in ("plan", "delegate-analysis", "await-review", "final-answer", "publish-result")
+        ),
+        "provider.openai": evidence["provider"]["name"] == "openai",
+        "provider.model": bool(evidence["provider"]["model"]),
+        "provider.responsePayloadPresent": evidence["provider"]["responsePayloadPresent"] is True,
+        "result.available": evidence["result"]["available"] is True,
+        "replay.succeeded": evidence["replay"]["succeeded"] is True,
+        "replay.deterministic": evidence["replay"]["deterministic"] is True,
+        "replay.executionIdUnchanged": evidence["replay"]["executionIdUnchanged"] is True,
+    }
+    print("[VALIDATION GATE] " + "; ".join(
+        f"{name}={'PASS' if passed else 'FAIL'}" for name, passed in gate_checks.items()
+    ), flush=True)
+    if not all(gate_checks.values()):
+        print(
+            "[VALIDATION GATE] replayMessage="
+            + repr(evidence["diagnostics"]["replayMessage"])
+            + "; replayFailureReason="
+            + repr(evidence["diagnostics"]["replayFailureReason"]),
+            flush=True,
+        )
+    return 0 if all(gate_checks.values()) else 1
 
 
 def _evidence_passes(evidence: dict[str, Any]) -> bool:

@@ -1,0 +1,6 @@
+{
+  "v20_to_v21_source_unchanged": true,
+  "v20_to_v21_mongo_filter_installed": false,
+  "fresh_v21_mongo_filter_installed": true,
+  "fresh_v21_unqualified_environment_reference": true
+}

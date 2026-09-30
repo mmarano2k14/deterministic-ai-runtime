@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AiSdkClient, AiSdkExecutionObservation } from "@multiplexed/ai-sdk";
 import type { DemoConfiguration } from "./configuration.js";
+import { replayAfterSnapshotVisibility } from "./replay-readiness.js";
 import { createPublication, createSubmission, WAITING_KEY, WAITING_STEP_NAME } from "./pipeline.js";
 
 const POLL_MS = 400;
@@ -38,6 +39,8 @@ export async function runAutomatedValidation(
     createSubmission(publication.publicationRef, prompt),
   );
   const executionId = submission.executionId;
+  console.log(`[VALIDATION TRACE] submitted ExecutionId=${executionId}`);
+  let lastTrace: string | undefined;
   const deadline = Date.now() + Math.max(timeoutSeconds, 1) * 1000;
 
   let waitingBoundaryReached = false;
@@ -51,6 +54,11 @@ export async function runAutomatedValidation(
 
     const observation = await client.observeExecution(executionId);
     finalObservation = observation;
+    const trace = `status=${observation.status}; steps=${observation.steps.map((step) => `${step.name}:${step.status}`).join(",")}`;
+    if (trace !== lastTrace) {
+      console.log(`[VALIDATION TRACE] ExecutionId=${executionId} ${trace}`);
+      lastTrace = trace;
+    }
     const waitingStep = observation.steps.find((step) => step.name === WAITING_STEP_NAME);
 
     if (!inputResponse && waitingStep?.status === "WaitingForExternal") {
@@ -81,12 +89,19 @@ export async function runAutomatedValidation(
   }
 
   const result = await client.getExecutionResult(executionId);
-  const replay = await client.replayExecution(executionId, {
+  const replayRequest = {
     strictDeterminism: true,
     includeDiagnostics: true,
     reason: "interactive-agent-topology-validation",
     correlationId: `interactive-agent-validation-replay-${randomUUID().replaceAll("-", "")}`,
-  });
+  };
+  const replayReadiness = await replayAfterSnapshotVisibility(
+    executionId,
+    finalObservation.status === "Completed" && result.status === "Completed",
+    (signal) => client.replayExecution(executionId, replayRequest, signal),
+    { trace: (line) => console.log(line) },
+  );
+  const replay = replayReadiness.response;
 
   const published = publishedResult(result.output);
   const provider = readString(published, "providerKey") ?? "openai";
@@ -143,6 +158,9 @@ export async function runAutomatedValidation(
       completedAtUtc: new Date().toISOString(),
     },
     diagnostics: {
+      replayAttempts: replayReadiness.attempts,
+      snapshotMissingResponses: replayReadiness.snapshotMissingCount,
+      replayReadinessElapsedMs: replayReadiness.elapsedMs,
       replayMessage: replay.message ?? null,
       replayFailureReason: replay.failureReason ?? null,
       terminalCompletedAtUtc: result.completedAtUtc ?? null,
@@ -151,7 +169,24 @@ export async function runAutomatedValidation(
 
   await mkdir(dirname(evidencePath), { recursive: true });
   await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
-  return evidencePasses(evidence) ? 0 : 1;
+  const gateChecks: Record<string, boolean> = {
+    "execution.completed": evidence.execution.status === "Completed",
+    "execution.sameExecutionIdAfterHumanInput": evidence.execution.sameExecutionIdAfterHumanInput === true,
+    "humanReview.accepted": evidence.humanReview.accepted === true,
+    "rootSteps.completed": ROOT_STEPS.every((name) => evidence.rootSteps[name] === "Completed"),
+    "provider.openai": evidence.provider.name === "openai",
+    "provider.model": Boolean(evidence.provider.model),
+    "provider.responsePayloadPresent": evidence.provider.responsePayloadPresent === true,
+    "result.available": evidence.result.available === true,
+    "replay.succeeded": evidence.replay.succeeded === true,
+    "replay.deterministic": evidence.replay.deterministic === true,
+    "replay.executionIdUnchanged": evidence.replay.executionIdUnchanged === true,
+  };
+  console.log(`[VALIDATION GATE] ${Object.entries(gateChecks).map(([name, passed]) => `${name}=${passed ? "PASS" : "FAIL"}`).join("; ")}`);
+  if (!Object.values(gateChecks).every(Boolean)) {
+    console.log(`[VALIDATION GATE] replayMessage=${JSON.stringify(evidence.diagnostics.replayMessage)}; replayFailureReason=${JSON.stringify(evidence.diagnostics.replayFailureReason)}`);
+  }
+  return Object.values(gateChecks).every(Boolean) ? 0 : 1;
 }
 
 function evidencePasses(evidence: any): boolean {

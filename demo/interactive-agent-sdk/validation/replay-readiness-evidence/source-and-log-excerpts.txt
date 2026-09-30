@@ -1,0 +1,122 @@
+SOURCE ARCHIVE: implementations(1).zip
+Only the uploaded archive was inspected; not the user's live checkout.
+
+AiDagBatchExecutionRunner.cs SHA256=11d608aeac674003e391b1a8e6778a65eab90a45c2b20a3003f13544df8799e1 (UTF-8 normalized)
+Source lines 535-570:
+535:                 cancellationToken);
+536: 
+537:             Console.WriteLine(
+538:                 $"[AI DAG BATCH PHASE] Phase='convergence-completed', ExecutionId='{executionId}', Status='{convergence.Status}'.");
+539: 
+540:             AiDagExecutionRecordFinalizer.ApplyConvergenceToRecord(
+541:                 record,
+542:                 convergence,
+543:                 finalState,
+544:                 AiDagExecutionHelpers.GetDeclaredStepNames(resolvedPipeline));
+545: 
+546:             var expectedStepKey = AiDagExecutionHelpers.GetRequiredExecutionStepKey(record);
+547: 
+548:             await _finalizationService.PersistDistributedConvergedRecordAsync(
+549:                 record,
+550:                 convergence,
+551:                 expectedStepKey,
+552:                 finalState,
+553:                 resolvedPipeline,
+554:                 buildExecutionContext,
+555:                 persistAsync,
+556:                 cancellationToken);
+557: 
+558:             if (record.IsTerminal)
+559:             {
+560:                 await _lifecycleHelper.EnsureTerminalLifecycleAsync(
+561:                     record,
+562:                     finalState,
+563:                     cancellationToken).ConfigureAwait(false);
+564:             }
+565: 
+566:             var returnedRecord =
+567:                 await _engineServices.DagStore.GetRecordAsync(
+568:                     executionId,
+569:                     cancellationToken)
+570:                 ?? record;
+
+AiReplayControlPlane.cs SHA256=7ae829a73a311a2f61da6526f59e30fbfe579f04d064aa62d8632cbd820c7ade (UTF-8 normalized)
+Source lines 238-252:
+238:         private static AiExecutionReplayMode MapReplayMode(AiReplayOperation operation)
+239:         {
+240:             return operation switch
+241:             {
+242:                 AiReplayOperation.Replay => AiExecutionReplayMode.AuditOnly,
+243:                 AiReplayOperation.Audit => AiExecutionReplayMode.AuditOnly,
+244:                 AiReplayOperation.GetReport => AiExecutionReplayMode.AuditOnly,
+245:                 AiReplayOperation.GetLedger => AiExecutionReplayMode.AuditOnly,
+246:                 AiReplayOperation.GetTimeline => AiExecutionReplayMode.AuditOnly,
+247: 
+248:                 AiReplayOperation.Restore => AiExecutionReplayMode.ResumeIncomplete,
+249: 
+250:                 _ => throw new NotSupportedException(
+251:                     $"Replay control-plane operation '{operation}' is not supported.")
+252:             };
+
+MongoAiExecutionSnapshotStore.cs SHA256=884e893bb099b5e3960cb4983144764c3d2574711748ffae55e2c06f99ac036f (UTF-8 normalized)
+Source lines 88-119:
+88:             Console.WriteLine(
+89:                 $"[MONGO SNAPSHOT STORE UPSERT] " +
+90:                 $"Database='{_collection.Database.DatabaseNamespace.DatabaseName}', " +
+91:                 $"Collection='{_collection.CollectionNamespace.CollectionName}', " +
+92:                 $"ExecutionId='{snapshot.ExecutionId}', " +
+93:                 $"Status='{snapshot.Status}'.");
+94: 
+95:             var upsertMeasurement = AiMongoAttributionDiagnostics.StartOperation(
+96:                 AiMongoAttributionOperations.SnapshotUpsert,
+97:                 AiMongoAttributionCommands.Update,
+98:                 requestedDocuments: 1);
+99: 
+100:             try
+101:             {
+102:                 var result = await _collection.UpdateOneAsync(
+103:                         filter,
+104:                         update,
+105:                         new UpdateOptions { IsUpsert = true },
+106:                         cancellationToken)
+107:                     .ConfigureAwait(false);
+108:                 upsertMeasurement.Succeed();
+109: 
+110:                 Console.WriteLine(
+111:                     $"[MONGO SNAPSHOT STORE UPSERT RESULT] " +
+112:                     $"ExecutionId='{snapshot.ExecutionId}', " +
+113:                     $"MatchedCount='{result.MatchedCount}', " +
+114:                     $"ModifiedCount='{result.ModifiedCount}', " +
+115:                     $"UpsertedId='{result.UpsertedId?.ToString() ?? string.Empty}'.");
+116: 
+117:                 _logger.LogDebug(
+118:                     "AI execution snapshot upserted for execution {ExecutionId}.",
+119:                     snapshot.ExecutionId);
+
+interactive-agent-sdk-dotnet
+LOG L7784: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:58:16.6409088+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT [AI DAG BATCH PHASE] Phase='convergence-completed', ExecutionId='published-3ff2012df79a43fc248980f344bd64121242128556a607705e7a4e1ed30bca6a', Status='Completed'.
+LOG L7801: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:58:16.6880440+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT [MONGO SNAPSHOT STORE UPSERT] Database='multiplexed-ai-mcp-http-tests', Collection='ai_execution_snapshots', ExecutionId='published-3ff2012df79a43fc248980f344bd64121242128556a607705e7a4e1ed30bca6a', Status='Completed'.
+LOG L8005: [MONGO SNAPSHOT STORE GET] Database='multiplexed-ai-mcp-http-tests', Collection='ai_execution_snapshots', ExecutionId='published-3ff2012df79a43fc248980f344bd64121242128556a607705e7a4e1ed30bca6a', ContextType='Multiplexed.Abstractions.Core.ExecutionContext.ExecutionContextSnapshot'.
+LOG L9198: [MONGO SNAPSHOT STORE GET RESULT] Database='multiplexed-ai-mcp-http-tests', Collection='ai_execution_snapshots', ExecutionId='published-3ff2012df79a43fc248980f344bd64121242128556a607705e7a4e1ed30bca6a', Found='False', SnapshotExecutionId='', SnapshotStatus=''.
+LOG L9199: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:58:28.6882795+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT [MONGO SNAPSHOT STORE UPSERT RESULT] ExecutionId='published-3ff2012df79a43fc248980f344bd64121242128556a607705e7a4e1ed30bca6a', MatchedCount='0', ModifiedCount='0', UpsertedId='6abcdd44719a0339f43ff708'.
+LOG L9203: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:58:28.6938039+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT       [RUNTIME EVENT] Level='Information', Category='ai.execution.info', UserId='(null)', OccurredAtUtc='2026-09-30T16:58:28.6932878+07:00', Message='[AI SNAPSHOT] Persisted terminal snapshot for execution 'published-3ff2012df79a43fc248980f344bd64121242128556a607705e7a4e1ed30bca6a' with status 'Completed'.', Data=(null)
+LOG L9205: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:58:28.6950158+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT [AI DAG BATCH PHASE] Phase='batch-returned', ExecutionId='published-3ff2012df79a43fc248980f344bd64121242128556a607705e7a4e1ed30bca6a', Status='Completed', IsTerminal='True'.
+
+interactive-agent-sdk-typescript
+LOG L13368: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:58:42.9912254+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT [AI DAG BATCH PHASE] Phase='convergence-completed', ExecutionId='published-114d20fd71c559f8fab8fef88220b3eaa7517372a5ae54e5366bb2640a9af606', Status='Completed'.
+LOG L13369: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:58:43.0001034+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT [MONGO SNAPSHOT STORE UPSERT] Database='multiplexed-ai-mcp-http-tests', Collection='ai_execution_snapshots', ExecutionId='published-114d20fd71c559f8fab8fef88220b3eaa7517372a5ae54e5366bb2640a9af606', Status='Completed'.
+LOG L13552: [MONGO SNAPSHOT STORE GET] Database='multiplexed-ai-mcp-http-tests', Collection='ai_execution_snapshots', ExecutionId='published-114d20fd71c559f8fab8fef88220b3eaa7517372a5ae54e5366bb2640a9af606', ContextType='Multiplexed.Abstractions.Core.ExecutionContext.ExecutionContextSnapshot'.
+LOG L14459: [MONGO SNAPSHOT STORE GET RESULT] Database='multiplexed-ai-mcp-http-tests', Collection='ai_execution_snapshots', ExecutionId='published-114d20fd71c559f8fab8fef88220b3eaa7517372a5ae54e5366bb2640a9af606', Found='False', SnapshotExecutionId='', SnapshotStatus=''.
+LOG L14461: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:58:51.9874886+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT [MONGO SNAPSHOT STORE UPSERT RESULT] ExecutionId='published-114d20fd71c559f8fab8fef88220b3eaa7517372a5ae54e5366bb2640a9af606', MatchedCount='0', ModifiedCount='0', UpsertedId='6abcdd5b719a0339f43ff70b'.
+LOG L14464: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:58:51.9899738+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT       [RUNTIME EVENT] Level='Information', Category='ai.execution.info', UserId='(null)', OccurredAtUtc='2026-09-30T16:58:51.9894953+07:00', Message='[AI SNAPSHOT] Persisted terminal snapshot for execution 'published-114d20fd71c559f8fab8fef88220b3eaa7517372a5ae54e5366bb2640a9af606' with status 'Completed'.', Data=(null)
+LOG L14465: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:58:51.9900321+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT [AI DAG BATCH PHASE] Phase='batch-returned', ExecutionId='published-114d20fd71c559f8fab8fef88220b3eaa7517372a5ae54e5366bb2640a9af606', Status='Completed', IsTerminal='True'.
+
+interactive-agent-sdk-python
+LOG L19963: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:59:08.9177294+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT [AI DAG BATCH PHASE] Phase='convergence-completed', ExecutionId='published-3e8483616f414eb559bf2d990e593d14bf81acf08c1b36bb7289a292d5e44df4', Status='Completed'.
+LOG L19964: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:59:08.9251448+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT [MONGO SNAPSHOT STORE UPSERT] Database='multiplexed-ai-mcp-http-tests', Collection='ai_execution_snapshots', ExecutionId='published-3e8483616f414eb559bf2d990e593d14bf81acf08c1b36bb7289a292d5e44df4', Status='Completed'.
+LOG L20250: [MONGO SNAPSHOT STORE GET] Database='multiplexed-ai-mcp-http-tests', Collection='ai_execution_snapshots', ExecutionId='published-3e8483616f414eb559bf2d990e593d14bf81acf08c1b36bb7289a292d5e44df4', ContextType='Multiplexed.Abstractions.Core.ExecutionContext.ExecutionContextSnapshot'.
+LOG L21237: [MONGO SNAPSHOT STORE GET RESULT] Database='multiplexed-ai-mcp-http-tests', Collection='ai_execution_snapshots', ExecutionId='published-3e8483616f414eb559bf2d990e593d14bf81acf08c1b36bb7289a292d5e44df4', Found='False', SnapshotExecutionId='', SnapshotStatus=''.
+LOG L21238: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:59:18.8792322+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT [MONGO SNAPSHOT STORE UPSERT RESULT] ExecutionId='published-3e8483616f414eb559bf2d990e593d14bf81acf08c1b36bb7289a292d5e44df4', MatchedCount='0', ModifiedCount='0', UpsertedId='6abcdd76719a0339f43ff70d'.
+LOG L21241: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:59:18.8815776+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT [AI DAG BATCH PHASE] Phase='batch-returned', ExecutionId='published-3e8483616f414eb559bf2d990e593d14bf81acf08c1b36bb7289a292d5e44df4', Status='Completed', IsTerminal='True'.
+LOG L21242: [PROCESSHOST 03 ERR] [INTERACTIVE CHILD TRACE] ObservedAtUtc=2026-09-30T09:59:18.8816135+00:00 RuntimeInstanceId=mcp-http-process-host-pool-76063c44f7cd-host-003-runtime-3-0c1e099d2e4744a99701024da0d80f96 Stream=OUT       [RUNTIME EVENT] Level='Information', Category='ai.execution.info', UserId='(null)', OccurredAtUtc='2026-09-30T16:59:18.8810907+07:00', Message='[AI SNAPSHOT] Persisted terminal snapshot for execution 'published-3e8483616f414eb559bf2d990e593d14bf81acf08c1b36bb7289a292d5e44df4' with status 'Completed'.', Data=(null)
+

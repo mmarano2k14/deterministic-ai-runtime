@@ -1,0 +1,690 @@
+{
+  "schemaVersion": 1,
+  "requested": {
+    "runtimeProvider": "ProcessHostPool",
+    "runtimeTransport": "HTTP"
+  },
+  "observed": {
+    "source": "process-host-inspection",
+    "runtimeProvider": "ProcessHostPool",
+    "runtimeTransport": "HTTP",
+    "poolId": "mcp-http-process-host-pool-7e4460b81452",
+    "hostCount": 3,
+    "hostIds": [
+      "mcp-http-process-host-pool-7e4460b81452-process-host-001-49c9de805980454d8bc75b22eebdbada",
+      "mcp-http-process-host-pool-7e4460b81452-process-host-002-91f0c8df0dfa4ed38be89f775591f905",
+      "mcp-http-process-host-pool-7e4460b81452-process-host-003-e53aa79c18f546a9a8248994a2d910d3"
+    ],
+    "runtimeInstanceCount": 9,
+    "runtimeInstanceIds": [
+      "mcp-http-process-host-pool-7e4460b81452-host-001-runtime-1-1a6dedcef22249d1892a7935e038a66d",
+      "mcp-http-process-host-pool-7e4460b81452-host-001-runtime-2-65c97598886247d583c51ac9b96b2358",
+      "mcp-http-process-host-pool-7e4460b81452-host-001-runtime-3-a0475aad921c4903b10af64c45ccd05a",
+      "mcp-http-process-host-pool-7e4460b81452-host-002-runtime-1-6f08b36712454804919406eb217d3b79",
+      "mcp-http-process-host-pool-7e4460b81452-host-002-runtime-2-43f8e50ab26c4ba4a24f5b2bd64425fe",
+      "mcp-http-process-host-pool-7e4460b81452-host-002-runtime-3-9001fe3a61244255a2f0a43d95f7a83f",
+      "mcp-http-process-host-pool-7e4460b81452-host-003-runtime-1-6c5a0d20bafb42279e9c22beff8d5a33",
+      "mcp-http-process-host-pool-7e4460b81452-host-003-runtime-2-98f24393e1074d049e6f9be78dcc9d78",
+      "mcp-http-process-host-pool-7e4460b81452-host-003-runtime-3-30f02e58895c45b1b32c505d0f508539"
+    ],
+    "routeIds": [],
+    "routeIdEvidenceCount": 0,
+    "childProcessEvidenceCount": 9,
+    "stableEndpoints": [
+      "http://127.0.0.1:20000",
+      "http://127.0.0.1:20022",
+      "http://127.0.0.1:20044"
+    ],
+    "liveProcessCheck": true,
+    "inventorySource": "runtime-pool-diagnostics",
+    "captureId": "4d73d2be7a084ae0b8f3efb689d8980f",
+    "inventoryCapturedAtUtc": "2026-09-30T13:30:06.7131132+00:00",
+    "inventoryAgeSeconds": 0.424397
+  },
+  "verified": true,
+  "checks": [
+    {
+      "name": "runtimeProvider",
+      "expected": "ProcessHostPool",
+      "actual": "ProcessHostPool",
+      "passed": true
+    },
+    {
+      "name": "runtimeTransport",
+      "expected": "HTTP",
+      "actual": "HTTP",
+      "passed": true
+    },
+    {
+      "name": "schemaVersion",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "inventory-source",
+      "expected": "runtime-pool-diagnostics",
+      "actual": "runtime-pool-diagnostics",
+      "passed": true
+    },
+    {
+      "name": "captureId-present",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "live-process-check-enabled",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "inventory-freshness-seconds",
+      "expected": "<=300",
+      "actual": 0.424397,
+      "passed": true
+    },
+    {
+      "name": "poolId-present",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host-count",
+      "expected": ">=2",
+      "actual": 3,
+      "passed": true
+    },
+    {
+      "name": "host[0]-hostId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0]-runtime-count",
+      "expected": ">=2",
+      "actual": 3,
+      "passed": true
+    },
+    {
+      "name": "host[0]-stable-endpoint",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0]-process-alive",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[0]-runtimeInstanceId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[0]-processId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[0]-status",
+      "expected": "Ready",
+      "actual": "Ready",
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[0]-canAcceptRun",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[0]-provider",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[0]-transport",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[0]-stable-endpoint-parity",
+      "expected": "http://127.0.0.1:20000",
+      "actual": "http://127.0.0.1:20000",
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[0]-process-alive",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[0]-child-of-host",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[1]-runtimeInstanceId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[1]-processId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[1]-status",
+      "expected": "Ready",
+      "actual": "Ready",
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[1]-canAcceptRun",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[1]-provider",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[1]-transport",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[1]-stable-endpoint-parity",
+      "expected": "http://127.0.0.1:20000",
+      "actual": "http://127.0.0.1:20000",
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[1]-process-alive",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[1]-child-of-host",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[2]-runtimeInstanceId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[2]-processId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[2]-status",
+      "expected": "Ready",
+      "actual": "Ready",
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[2]-canAcceptRun",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[2]-provider",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[2]-transport",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[2]-stable-endpoint-parity",
+      "expected": "http://127.0.0.1:20000",
+      "actual": "http://127.0.0.1:20000",
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[2]-process-alive",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[0].runtime[2]-child-of-host",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1]-hostId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1]-runtime-count",
+      "expected": ">=2",
+      "actual": 3,
+      "passed": true
+    },
+    {
+      "name": "host[1]-stable-endpoint",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1]-process-alive",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[0]-runtimeInstanceId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[0]-processId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[0]-status",
+      "expected": "Ready",
+      "actual": "Ready",
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[0]-canAcceptRun",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[0]-provider",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[0]-transport",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[0]-stable-endpoint-parity",
+      "expected": "http://127.0.0.1:20022",
+      "actual": "http://127.0.0.1:20022",
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[0]-process-alive",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[0]-child-of-host",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[1]-runtimeInstanceId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[1]-processId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[1]-status",
+      "expected": "Ready",
+      "actual": "Ready",
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[1]-canAcceptRun",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[1]-provider",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[1]-transport",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[1]-stable-endpoint-parity",
+      "expected": "http://127.0.0.1:20022",
+      "actual": "http://127.0.0.1:20022",
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[1]-process-alive",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[1]-child-of-host",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[2]-runtimeInstanceId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[2]-processId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[2]-status",
+      "expected": "Ready",
+      "actual": "Ready",
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[2]-canAcceptRun",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[2]-provider",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[2]-transport",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[2]-stable-endpoint-parity",
+      "expected": "http://127.0.0.1:20022",
+      "actual": "http://127.0.0.1:20022",
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[2]-process-alive",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[1].runtime[2]-child-of-host",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2]-hostId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2]-runtime-count",
+      "expected": ">=2",
+      "actual": 3,
+      "passed": true
+    },
+    {
+      "name": "host[2]-stable-endpoint",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2]-process-alive",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[0]-runtimeInstanceId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[0]-processId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[0]-status",
+      "expected": "Ready",
+      "actual": "Ready",
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[0]-canAcceptRun",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[0]-provider",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[0]-transport",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[0]-stable-endpoint-parity",
+      "expected": "http://127.0.0.1:20044",
+      "actual": "http://127.0.0.1:20044",
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[0]-process-alive",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[0]-child-of-host",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[1]-runtimeInstanceId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[1]-processId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[1]-status",
+      "expected": "Ready",
+      "actual": "Ready",
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[1]-canAcceptRun",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[1]-provider",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[1]-transport",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[1]-stable-endpoint-parity",
+      "expected": "http://127.0.0.1:20044",
+      "actual": "http://127.0.0.1:20044",
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[1]-process-alive",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[1]-child-of-host",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[2]-runtimeInstanceId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[2]-processId",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[2]-status",
+      "expected": "Ready",
+      "actual": "Ready",
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[2]-canAcceptRun",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[2]-provider",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[2]-transport",
+      "expected": "http",
+      "actual": "http",
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[2]-stable-endpoint-parity",
+      "expected": "http://127.0.0.1:20044",
+      "actual": "http://127.0.0.1:20044",
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[2]-process-alive",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "host[2].runtime[2]-child-of-host",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "hostId-uniqueness",
+      "expected": 3,
+      "actual": 3,
+      "passed": true
+    },
+    {
+      "name": "runtimeInstanceId-uniqueness",
+      "expected": 9,
+      "actual": 9,
+      "passed": true
+    },
+    {
+      "name": "runtime-processId-uniqueness",
+      "expected": 9,
+      "actual": 9,
+      "passed": true
+    },
+    {
+      "name": "host-processId-uniqueness",
+      "expected": 3,
+      "actual": 3,
+      "passed": true
+    },
+    {
+      "name": "stable-endpoint-uniqueness",
+      "expected": 3,
+      "actual": 3,
+      "passed": true
+    }
+  ],
+  "verifiedAtUtc": "2026-09-30T13:30:08.012635Z"
+}

@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multiplexed.local/schemas/processhostpool-inventory-v1.json",
+  "title": "ProcessHostPool Runtime Inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "source",
+    "captureId",
+    "runtimeProvider",
+    "runtimeTransport",
+    "poolId",
+    "hosts",
+    "capturedAtUtc"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "source": {
+      "const": "runtime-pool-diagnostics"
+    },
+    "captureId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtimeProvider": {
+      "const": "ProcessHostPool"
+    },
+    "runtimeTransport": {
+      "enum": [
+        "HTTP",
+        "gRPC"
+      ]
+    },
+    "poolId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "controlPlaneEndpoint": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "hosts": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "hostId",
+          "processId",
+          "stableEndpoint",
+          "runtimeInstances"
+        ],
+        "properties": {
+          "hostId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "processId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "stableEndpoint": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runtimeInstances": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "runtimeInstanceId",
+                "status",
+                "canAcceptRun",
+                "providerName",
+                "transportName",
+                "processId",
+                "endpoint"
+              ],
+              "properties": {
+                "runtimeInstanceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "routeId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "processId": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "status": {
+                  "const": "Ready"
+                },
+                "canAcceptRun": {
+                  "const": true
+                },
+                "providerName": {
+                  "enum": [
+                    "http",
+                    "grpc"
+                  ]
+                },
+                "transportName": {
+                  "enum": [
+                    "http",
+                    "grpc"
+                  ]
+                },
+                "endpoint": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "capturedAtUtc": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

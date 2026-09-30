@@ -1,0 +1,30 @@
+ProcessHostPool bridge install: PASS
+- base harness: implementations/dotnet/Tests/Multiplexed.AI.McpServer.Tests.Integration/Scenarios/Production/Providers/Base/ProcessHostPool/ProcessHostPoolProductionScenarioTestsBase.cs
+- ProcessHost settings composer: implementations/dotnet/Tests/Multiplexed.AI.McpServer.Tests.Integration/Scenarios/Production/Providers/Base/ProcessHostPool/ProcessHostPoolProductionScenarioSettingsComposer.cs
+- generic MCP test host: implementations/dotnet/Tests/Multiplexed.AI.McpServer.Tests.Integration/Fixtures/Generic/GenericMcpServerTestHost.cs
+- ProcessHost trace forwarding: implementations/dotnet/Tests/Multiplexed.AI.McpServer.Tests.Integration/Scenarios/Production/Providers/Base/ProcessHostPool/ProcessHostPoolProductionHostProcess.cs
+- child runtime diagnostic drain: implementations/dotnet/src/Multiplexed.AI/Runtime/ControlPlane/RuntimeInstances/HostManager/Pool/Process/SystemAiRuntimeProcessPoolChild.cs
+- bridge source: implementations/dotnet/Tests/Multiplexed.AI.McpServer.Tests.Integration/Validation/InteractiveSdk/ProcessHostPoolInteractiveSdkValidationHook.cs
+- FakeAuthHandler remains the default for existing tests
+- real JWT authentication is registered only when Tests:UseRealJwtAuthentication=true
+- dedicated InteractiveSdkJwtBearer performs real JWT validation on that gated path
+- MatrixBearer remains registered and unchanged for historical matrix tests
+- child stdout/stderr diagnostic tee is active only when MULTIPLEXED_INTERACTIVE_SDK_CHILD_TRACE=1
+- installed child snapshot diagnostic predicate and System.Environment qualification: VERIFIED
+- normal production tests remain unchanged unless AI_INTERACTIVE_SDK_PROCESSHOSTPOOL_VALIDATION=1
+
+Repeated full install: byte-identical PASS
+
+ProcessHostPool production-harness bridge contract: PASS
+- production ProcessHostPool setup remains authoritative
+- replay-safe mongo-redis payload settings are applied before pool startup
+- FakeAuthHandler remains the default for historical integration tests
+- dedicated real JwtBearer authentication is registered only for the environment-gated SDK matrix
+- the JWT scheme handler type is runtime-verified before SDK execution
+- RBAC bootstrap and MCP endpoints are pinned to the same loopback proxy authority
+- MatrixBearer remains registered for historical matrix tests
+- external JWT tenant identity is aligned with the real ProcessHostPool tenant
+- OPENAI_API_KEY is server-owned and stripped from external SDK consumer processes
+- Debug is the default harness build configuration to avoid unrelated Release DLL locks
+- base-harness and JWT-host patches are idempotent and fail closed
+- V19 child-runtime stdout/stderr diagnostics are environment-gated and filtered

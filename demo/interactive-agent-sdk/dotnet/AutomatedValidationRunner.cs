@@ -38,6 +38,8 @@ internal static class AutomatedValidationRunner
         var submission = await client.SubmitExecutionAsync(
             InteractiveAgentPipeline.CreateSubmission(publication.PublicationRef, prompt));
         var executionId = submission.ExecutionId;
+        Console.WriteLine($"[VALIDATION TRACE] submitted ExecutionId={executionId}");
+        string? lastTrace = null;
         var deadline = DateTimeOffset.UtcNow.AddSeconds(Math.Max(timeoutSeconds, 1));
 
         var waitingBoundaryReached = false;
@@ -55,6 +57,12 @@ internal static class AutomatedValidationRunner
 
             var observation = await client.ObserveExecutionAsync(executionId);
             finalObservation = observation;
+            var trace = $"status={observation.Status}; steps=" + string.Join(",", observation.Steps.Select(step => $"{step.Name}:{step.Status}"));
+            if (!string.Equals(trace, lastTrace, StringComparison.Ordinal))
+            {
+                Console.WriteLine($"[VALIDATION TRACE] ExecutionId={executionId} {trace}");
+                lastTrace = trace;
+            }
             var waitingStep = observation.Steps.FirstOrDefault(
                 step => string.Equals(
                     step.Name,
@@ -116,15 +124,19 @@ internal static class AutomatedValidationRunner
         }
 
         var result = await client.GetExecutionResultAsync(executionId);
-        var replay = await client.ReplayExecutionAsync(
+        var replayRequest = new AiSdkExecutionReplayRequest
+        {
+            StrictDeterminism = true,
+            IncludeDiagnostics = true,
+            Reason = "interactive-agent-topology-validation",
+            CorrelationId = $"interactive-agent-validation-replay-{Guid.NewGuid():N}"
+        };
+        var replayReadiness = await ReplaySnapshotReadiness.ExecuteAsync(
             executionId,
-            new AiSdkExecutionReplayRequest
-            {
-                StrictDeterminism = true,
-                IncludeDiagnostics = true,
-                Reason = "interactive-agent-topology-validation",
-                CorrelationId = $"interactive-agent-validation-replay-{Guid.NewGuid():N}"
-            });
+            finalObservation.Status.ToString() == "Completed" && result.Status.ToString() == "Completed",
+            token => client.ReplayExecutionAsync(executionId, replayRequest, token),
+            trace: Console.WriteLine);
+        var replay = replayReadiness.Response;
 
         JsonElement? published = null;
         if (result.Output is JsonElement output)
@@ -207,6 +219,9 @@ internal static class AutomatedValidationRunner
             },
             diagnostics = new
             {
+                replayAttempts = replayReadiness.Attempts,
+                snapshotMissingResponses = replayReadiness.SnapshotMissingCount,
+                replayReadinessElapsedMs = replayReadiness.ElapsedMs,
                 replayMessage = replay.Message,
                 replayFailureReason = replay.FailureReason,
                 terminalCompletedAtUtc = result.CompletedAtUtc.ToString("O")
@@ -237,7 +252,30 @@ internal static class AutomatedValidationRunner
             replay.Deterministic == true &&
             string.Equals(result.ExecutionId, executionId, StringComparison.Ordinal);
 
-        return passed ? 0 : 1;
+        var gateChecks = new Dictionary<string, bool>(StringComparer.Ordinal)
+        {
+            ["execution.completed"] = result.Status.ToString() == "Completed",
+            ["execution.sameExecutionIdAfterHumanInput"] = string.Equals(executionIdAfterHumanInput, executionId, StringComparison.Ordinal),
+            ["humanReview.accepted"] = inputAccepted,
+            ["rootSteps.completed"] = RootStepNames.All(name => rootSteps.TryGetValue(name, out var status) && status == "Completed"),
+            ["provider.openai"] = provider == "openai",
+            ["provider.model"] = !string.IsNullOrWhiteSpace(model),
+            ["provider.responsePayloadPresent"] = published is not null,
+            ["result.available"] = result.Output is not null,
+            ["replay.succeeded"] = replay.Succeeded,
+            ["replay.deterministic"] = replay.Deterministic == true,
+            ["replay.executionIdUnchanged"] = string.Equals(result.ExecutionId, executionId, StringComparison.Ordinal)
+        };
+        Console.WriteLine(
+            "[VALIDATION GATE] " +
+            string.Join("; ", gateChecks.Select(pair => $"{pair.Key}={(pair.Value ? "PASS" : "FAIL")}")));
+        if (gateChecks.Values.Any(value => !value))
+        {
+            Console.WriteLine(
+                $"[VALIDATION GATE] replayMessage={replay.Message ?? "(null)"}; replayFailureReason={replay.FailureReason ?? "(null)"}");
+        }
+
+        return gateChecks.Values.All(value => value) ? 0 : 1;
     }
 
     private static bool IsTerminal(string status) =>

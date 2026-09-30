@@ -1,0 +1,13 @@
+ProcessHostPool production-harness bridge contract: PASS
+- production ProcessHostPool setup remains authoritative
+- replay-safe mongo-redis payload settings are applied before pool startup
+- FakeAuthHandler remains the default for historical integration tests
+- dedicated real JwtBearer authentication is registered only for the environment-gated SDK matrix
+- the JWT scheme handler type is runtime-verified before SDK execution
+- RBAC bootstrap and MCP endpoints are pinned to the same loopback proxy authority
+- MatrixBearer remains registered for historical matrix tests
+- external JWT tenant identity is aligned with the real ProcessHostPool tenant
+- OPENAI_API_KEY is server-owned and stripped from external SDK consumer processes
+- Debug is the default harness build configuration to avoid unrelated Release DLL locks
+- base-harness and JWT-host patches are idempotent and fail closed
+- V19 child-runtime stdout/stderr diagnostics are environment-gated and filtered

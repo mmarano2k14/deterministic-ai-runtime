@@ -203,3 +203,180 @@ python .\demo\interactive-agent-sdk\validation\run_e2e.py `
 Without a valid attestation, the runner exits before consumer preparation or SDK execution.
 
 The earlier automated Step 2 runs remain proof that the machine-readable .NET, TypeScript, and Python validation paths work. Because the then-running Docker service was configured as `ControlPlaneWithLocalRuntimeInstances`, those runs are not counted as ProcessHostPool topology evidence.
+
+## ProcessHostPool parity harness
+
+Step 4 adds a ProcessHostPool-specific attestation and matrix wrapper. The generic
+`Process` host-creation setting is still not accepted as ProcessHostPool proof.
+
+The topology-specific runtime launcher or diagnostics path must emit a fresh
+machine-generated inventory with:
+
+```text
+source = runtime-pool-diagnostics
+captureId
+PoolId
+HostId
+host process id
+stable pool endpoint
+>= 2 child RuntimeInstanceId values per ProcessHost
+optional RouteId diagnostics when exported by the ProcessHost boundary
+child process id
+Ready / CanAcceptRun capacity state
+provider.name / transport.name
+```
+
+The attestor verifies that:
+
+```text
+inventory age <= 300 seconds
+ProcessHost process is alive
+child runtime processes are alive
+child runtime processes descend from the attested ProcessHost
+stable pool endpoint is reachable
+RuntimeInstanceId values are unique
+exported RouteId values are unique when present
+host and child process ids are unique
+provider/transport matches the requested HTTP or gRPC path
+```
+
+Only then is a `process-host-inspection` topology attestation emitted with
+`verified=true`.
+
+Example attestation command:
+
+```powershell
+python .\demo\interactive-agent-sdk\validation\attest_processhostpool.py `
+  --inventory <machine-generated-processhostpool-inventory.json> `
+  --runtime-transport HTTP `
+  --output .\demo\interactive-agent-sdk\validation\attestations\processhostpool-http.json
+```
+
+The common three-client matrix wrapper is:
+
+```powershell
+python .\demo\interactive-agent-sdk\validation\run_processhostpool_matrix.py `
+  --runtime-transport HTTP `
+  --runtime-endpoint http://localhost:8081/mcp `
+  --inventory <machine-generated-processhostpool-inventory.json>
+```
+
+and equivalently for gRPC:
+
+```powershell
+python .\demo\interactive-agent-sdk\validation\run_processhostpool_matrix.py `
+  --runtime-transport gRPC `
+  --runtime-endpoint http://localhost:8081/mcp `
+  --inventory <machine-generated-processhostpool-inventory.json>
+```
+
+The `runtime-endpoint` remains the public MCP control-plane endpoint. `HTTP` and
+`gRPC` describe the runtime provider transport behind the control plane, not the
+external SDK MCP transport.
+
+A successful Step 4 closure requires:
+
+```text
+ProcessHostPool / HTTP
+.NET        PASS
+TypeScript PASS
+Python     PASS
+            3 / 3
+
+ProcessHostPool / gRPC
+.NET        PASS
+TypeScript PASS
+Python     PASS
+            3 / 3
+
+ProcessHostPool total = 6 / 6
+```
+
+The inventory is not a manually authored PASS file. The production launcher or
+runtime-pool diagnostics path must generate it from actual membership and route
+state. The live process and endpoint checks intentionally make stale or fabricated
+inventory fail closed.
+
+## Step 4 - production ProcessHostPool bridge
+
+The ProcessHostPool topology matrix reuses the existing production integration-test
+harness. It does not create a second Runtime Pool implementation.
+
+The installer is fail-closed and environment-gated:
+
+```powershell
+python .\demo\interactive-agent-sdk\validation\apply_processhostpool_bridge.py
+```
+
+Normal integration tests are unchanged unless:
+
+```text
+AI_INTERACTIVE_SDK_PROCESSHOSTPOOL_VALIDATION=1
+```
+
+The all-in-one launcher installs the bridge, prepares consumers, builds the runtime
+host and integration tests, selects one existing ProcessHostPool production test,
+and executes the three SDK clients while the real pool is alive. The validation path
+preserves production JWT authentication instead of the integration host's default
+`FakeAuthHandler`, while historical tests keep their existing fake-auth behavior.
+Replay-safe payload storage is applied before pool startup using the MongoDB/Redis
+configuration already owned by the production harness. The SDK JWT tenant identity
+is aligned with the active ProcessHostPool scenario tenant.
+
+```powershell
+python .\demo\interactive-agent-sdk\validation\launch_processhostpool_matrix.py `
+  --runtime-transport HTTP
+```
+
+The launcher uses `Debug` by default for the runtime host/integration harness to
+avoid unrelated locks on shared `Release` binaries. Use
+`--build-configuration Release` only when an explicit Release validation is needed.
+The launcher reads only allowlisted server settings from `demo/interactive-agent-sdk/.env`.
+`OPENAI_API_KEY` stays on the server/test process and is stripped before the .NET,
+TypeScript, or Python SDK consumer is launched.
+
+For the environment-gated external SDK validation, the integration host keeps the
+historical `MatrixBearer` scheme registered but post-configures ASP.NET Core so
+`Bearer` is the default authenticate/challenge/forbid scheme. The bridge verifies
+that resolved scheme before opening the loopback proxy; a remaining `MatrixBearer`
+default fails before any SDK client is launched.
+
+Then run the gRPC half:
+
+```powershell
+python .\demo\interactive-agent-sdk\validation\launch_processhostpool_matrix.py `
+  --runtime-transport gRPC `
+  --skip-prepare `
+  --skip-patch
+```
+
+A successful transport run must end with:
+
+```text
+[processhost-launcher] PASS: ProcessHostPool/HTTP 3/3
+```
+
+or:
+
+```text
+[processhost-launcher] PASS: ProcessHostPool/gRPC 3/3
+```
+
+The generated inventory requires at least two independent parent ProcessHosts and
+at least two child runtime processes per parent. A single-parent process pool is
+not accepted as ProcessHostPool topology evidence.
+
+
+### ProcessHostPool authentication diagnostics
+
+The production-harness bridge logs only non-secret authentication metadata at the loopback proxy boundary.
+For each forwarded request it records whether an Authorization header and X-Access-Context are present, the Authorization scheme name, the upstream HTTP status, and any WWW-Authenticate scheme names. Token values and access-context values are never logged.
+
+This diagnostic distinguishes SDK credential propagation from test-host authentication failures without weakening authentication or RBAC.
+
+
+### Dedicated JWT handler and bootstrap boundary
+
+The ProcessHostPool validation path registers a dedicated `InteractiveSdkJwtBearer` handler only when `Tests:UseRealJwtAuthentication=true`. The bridge verifies that the resolved scheme is backed by ASP.NET Core `JwtBearerHandler` before any external SDK client is started. Historical `FakeAuthHandler` and `MatrixBearer` behavior is unchanged outside this gated validation path.
+
+The matrix also pins `AI_RUNTIME_ACCESS_CONTEXT_ENDPOINT` to `/auth/access-context` on the same loopback proxy authority as `AI_RUNTIME_ENDPOINT`. This prevents a shell or prior Docker demo from bootstrapping RBAC against another host while MCP calls target the production ProcessHostPool test host.

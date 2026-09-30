@@ -457,6 +457,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 return;
             }
 
+            if (line.Contains("[INTERACTIVE CHILD TRACE]", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine(
+                    $"[PROCESSHOST {this.Ordinal:D2} {stream}] {line}");
+            }
+
             this.capturedLines.Enqueue(
                 string.Concat(
                     "[",

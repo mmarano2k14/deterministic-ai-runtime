@@ -1,0 +1,4 @@
+TypeScript 5.8.3
+Command: tsc -p tsconfig.json
+Exit code: 0
+Uploaded public SDK declarations and Node typings used.

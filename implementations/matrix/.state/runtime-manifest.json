@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "endpoint": "http://localhost:8081/mcp",
   "bearerToken": "matrix-e2e-token",
-  "accessContext": "ctx_3e07f5aa68b44bebaa3f1b3b8b56b85e",
+  "accessContext": "ctx_5b0673a610ec47cda2991dd5cf8babc3",
   "accessContextHeader": "X-Access-Context",
   "executionContextTtlSeconds": 3600,
   "topology": "local",

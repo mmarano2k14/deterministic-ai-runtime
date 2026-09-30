@@ -258,6 +258,12 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Scenarios.Production.Provid
                 }
             }
 
+            Multiplexed.AI.McpServer.Tests.Integration.Validation.InteractiveSdk.ProcessHostPoolInteractiveSdkValidationHook.ApplyProcessHostRuntimeValidationSettings(
+                settings,
+                tenant.TenantId,
+                tenant.TenantGroupId,
+                controlPlaneId);
+
             return settings;
         }
 
