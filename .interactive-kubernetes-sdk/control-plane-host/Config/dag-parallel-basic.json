@@ -1,0 +1,30 @@
+{
+  "pipelines": [
+    {
+      "name": "dag-parallel-basic",
+      "version": "1",
+      "executionMode": "Dag",
+      "steps": [
+        {
+          "name": "start",
+          "stepKey": "hello-world"
+        },
+        {
+          "name": "a1",
+          "stepKey": "hello-world",
+          "dependsOn": [ "start" ]
+        },
+        {
+          "name": "a2",
+          "stepKey": "hello-world",
+          "dependsOn": [ "start" ]
+        },
+        {
+          "name": "merge",
+          "stepKey": "summary",
+          "dependsOn": [ "a1", "a2" ]
+        }
+      ]
+    }
+  ]
+}

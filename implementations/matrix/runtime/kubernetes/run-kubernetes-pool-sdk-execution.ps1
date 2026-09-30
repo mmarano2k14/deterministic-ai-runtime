@@ -6,7 +6,8 @@ param(
     [string]$KubernetesEvidencePath,
     [switch]$SkipImageBuild,
     [switch]$RequireImmutableImage,
-    [switch]$SkipInfrastructurePreflight
+    [switch]$SkipInfrastructurePreflight,
+    [switch]$InteractiveAgent
 )
 
 $ErrorActionPreference = "Stop"
@@ -256,6 +257,12 @@ function Write-KubectlDiagnostic {
             throw "kubectl diagnostic streams did not close after process exit."
         }
         $text = ([string]$stdout.Result) + ([string]$stderr.Result)
+        # Local interactive validation currently projects the provider key into the Runtime
+        # Pool command line. Never retain that value in console/file diagnostics.
+        $text = [System.Text.RegularExpressions.Regex]::Replace(
+            $text,
+            '(?i)(--(?:OpenAI:ApiKey|AiKubernetesRuntimePoolInPod:OpenAiApiKey)=)[^\s]+',
+            '$1[REDACTED]')
         [System.IO.File]::WriteAllText($Path, $text, [System.Text.UTF8Encoding]::new($false))
         $text | Out-Host
         if ($process.ExitCode -ne 0) {
@@ -398,18 +405,32 @@ if ($isExactImage -and -not $SkipImageBuild) {
     $SkipImageBuild = $true
 }
 
-$stateRoot = Join-Path $repoRoot ".matrix-kubernetes-sdk"
-$evidenceRoot = Join-Path $repoRoot "implementations\matrix\evidence\kubernetes"
+$stateRoot = if ($InteractiveAgent) {
+    Join-Path $repoRoot ".interactive-kubernetes-sdk"
+}
+else {
+    Join-Path $repoRoot ".matrix-kubernetes-sdk"
+}
+$evidenceRoot = if ($InteractiveAgent) {
+    Join-Path $repoRoot "demo\interactive-agent-sdk\validation\evidence\kubernetespool\http"
+}
+else {
+    Join-Path $repoRoot "implementations\matrix\evidence\kubernetes"
+}
 New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $evidenceRoot -Force | Out-Null
 
-$priorExecutionEvidencePath = Join-Path $evidenceRoot "feature-runtime-provider-kubernetes-pool-http-command-routing.json"
-$priorRecoveryEvidencePath = Join-Path $evidenceRoot "feature-runtime-provider-kubernetes-pool-hierarchical-recovery.json"
+$priorExecutionEvidencePath = Join-Path (Join-Path $repoRoot "implementations\matrix\evidence\kubernetes") "feature-runtime-provider-kubernetes-pool-http-command-routing.json"
+$priorRecoveryEvidencePath = Join-Path (Join-Path $repoRoot "implementations\matrix\evidence\kubernetes") "feature-runtime-provider-kubernetes-pool-hierarchical-recovery.json"
 
 if ([string]::IsNullOrWhiteSpace($ProfilePath)) { $ProfilePath = Join-Path $stateRoot "profile.json" }
 if ([string]::IsNullOrWhiteSpace($ManifestPath)) { $ManifestPath = Join-Path $stateRoot "runtime-manifest.json" }
-if ([string]::IsNullOrWhiteSpace($SdkEvidencePath)) { $SdkEvidencePath = Join-Path $evidenceRoot "feature-runtime-provider-kubernetes-pool-external-sdk-python-worker.json" }
-if ([string]::IsNullOrWhiteSpace($KubernetesEvidencePath)) { $KubernetesEvidencePath = Join-Path $evidenceRoot "feature-runtime-provider-kubernetes-pool-external-sdk-python-worker.kubernetes.json" }
+if ([string]::IsNullOrWhiteSpace($SdkEvidencePath)) {
+    $SdkEvidencePath = if ($InteractiveAgent) { Join-Path $stateRoot "interactive-sdk-summary.json" } else { Join-Path $evidenceRoot "feature-runtime-provider-kubernetes-pool-external-sdk-python-worker.json" }
+}
+if ([string]::IsNullOrWhiteSpace($KubernetesEvidencePath)) {
+    $KubernetesEvidencePath = if ($InteractiveAgent) { Join-Path $stateRoot "kubernetespool-http-attestation.json" } else { Join-Path $evidenceRoot "feature-runtime-provider-kubernetes-pool-external-sdk-python-worker.kubernetes.json" }
+}
 $ClientDiagnosticLogPath = Join-Path $stateRoot "external-sdk-client.log"
 $hostStdoutPath = Join-Path $stateRoot "control-plane.stdout.log"
 $hostStderrPath = Join-Path $stateRoot "control-plane.stderr.log"
@@ -434,7 +455,7 @@ if (-not $SkipInfrastructurePreflight) {
     if (-not (Test-TcpPort -HostName "127.0.0.1" -Port 27017)) { throw "MongoDB is not reachable on 127.0.0.1:27017." }
 }
 
-if (-not (Test-Path -LiteralPath $priorExecutionEvidencePath -PathType Leaf)) {
+if (-not $InteractiveAgent -and -not (Test-Path -LiteralPath $priorExecutionEvidencePath -PathType Leaf)) {
     $executionRunner = Join-Path $PSScriptRoot "run-kubernetes-pool-execution.ps1"
     if (-not (Test-Path -LiteralPath $executionRunner -PathType Leaf)) {
         throw "KubernetesPool execution evidence is missing and the execution sidecar runner was not found: $executionRunner"
@@ -451,7 +472,7 @@ if (-not (Test-Path -LiteralPath $priorExecutionEvidencePath -PathType Leaf)) {
 }
 
 $priorRecoveryEvidenceAvailable = Test-Path -LiteralPath $priorRecoveryEvidencePath -PathType Leaf
-if (-not $priorRecoveryEvidenceAvailable) {
+if (-not $InteractiveAgent -and -not $priorRecoveryEvidenceAvailable) {
     Write-Warning "Prior KubernetesPool recovery evidence is not present. The external-SDK scenario will still run; only the final cross-topology closure will be skipped. Re-run run-kubernetes-pool-recovery.ps1 only if final closure evidence must be regenerated."
 }
 
@@ -539,6 +560,48 @@ try {
     $profile = Get-Content -LiteralPath $ProfilePath -Raw | ConvertFrom-Json
     $settings = $profile.settings
 
+    if ($InteractiveAgent) {
+        # Keep the existing matrix diagnostics/bootstrap but switch only the public boundary
+        # to the normal standalone JWT + access-context flow. Secrets are injected into
+        # the host process environment below and are never persisted into profile.json.
+        $settings | Add-Member -NotePropertyName 'AiMatrixHarness:UseStandaloneAuthentication' -NotePropertyValue 'true' -Force
+        $settings | Add-Member -NotePropertyName 'AiMcpAuthentication:Enabled' -NotePropertyValue 'true' -Force
+        $settings | Add-Member -NotePropertyName 'AiMcpAuthentication:RequireHttpsMetadata' -NotePropertyValue 'false' -Force
+        $settings | Add-Member -NotePropertyName 'AiMcpAuthentication:ExecutionContextTtlSeconds' -NotePropertyValue '3600' -Force
+
+        # The historical external-SDK Kubernetes profile does not enable Child DAG
+        # composition because its accepted Python worker scenario publishes a flat
+        # function pipeline. The interactive-agent pipeline contains ExecuteChildDagStep,
+        # so both the surviving control plane and RuntimeInstanceOnly children must opt
+        # into the existing durable Child DAG composition registration. This only flips
+        # the existing feature gate; it does not introduce another relation store,
+        # continuation authority, scheduler, or persistence path.
+        $settings | Add-Member -NotePropertyName 'AiChildDagComposition:Enabled' -NotePropertyValue 'true' -Force
+        $settings | Add-Member -NotePropertyName 'AiKubernetesRuntimePoolHost:ChildEnvironmentVariables:AiChildDagComposition__Enabled' -NotePropertyValue 'true' -Force
+
+        # The production profile deliberately contains a non-secret placeholder for
+        # historical workloads that never call OpenAI. Remove it from the command-line
+        # settings in interactive mode so the real provider key is supplied only by the
+        # control-plane environment and then projected by the existing KubernetesPool
+        # host options into the Runtime Pool Pod/children. Command-line configuration
+        # has higher precedence than environment configuration, so leaving the placeholder
+        # here would silently win over OPENAI_API_KEY.
+        $settings.PSObject.Properties.Remove('AiKubernetesRuntimePoolHost:OpenAiApiKey')
+        if ([string]::IsNullOrWhiteSpace($env:OPENAI_API_KEY)) {
+            throw "OPENAI_API_KEY is required for KubernetesPool interactive validation."
+        }
+        if ([string]::IsNullOrWhiteSpace($env:AiMcpAuthentication__Issuer)) {
+            throw "AiMcpAuthentication__Issuer is required for KubernetesPool interactive validation."
+        }
+        if ([string]::IsNullOrWhiteSpace($env:AiMcpAuthentication__Audience)) {
+            throw "AiMcpAuthentication__Audience is required for KubernetesPool interactive validation."
+        }
+        if ([string]::IsNullOrWhiteSpace($env:AiMcpAuthentication__SymmetricSigningKey) -or
+            [System.Text.Encoding]::UTF8.GetByteCount($env:AiMcpAuthentication__SymmetricSigningKey) -lt 32) {
+            throw "AiMcpAuthentication__SymmetricSigningKey must contain at least 32 UTF-8 bytes."
+        }
+    }
+
     # Snapshot.Project is ownership data, not the host-owned TRN builder configuration.
     # Reject an incomplete profile before starting the control plane or creating any SDK run.
     $contextProject = [string]$settings.'AiMatrixHarness:Project'
@@ -565,6 +628,15 @@ try {
     $startInfo.RedirectStandardError = $true
     $startInfo.Arguments = (($processArguments | ForEach-Object { ConvertTo-NativeProcessArgument -Value ([string]$_) }) -join " ")
     $startInfo.EnvironmentVariables["ASPNETCORE_URLS"] = "http://127.0.0.1:8081"
+    if ($InteractiveAgent) {
+        # Provider/auth secrets remain server-owned and are not serialized into the profile
+        # or forwarded to external SDK consumer processes.
+        $startInfo.EnvironmentVariables["AiMcpAuthentication__Issuer"] = $env:AiMcpAuthentication__Issuer
+        $startInfo.EnvironmentVariables["AiMcpAuthentication__Audience"] = $env:AiMcpAuthentication__Audience
+        $startInfo.EnvironmentVariables["AiMcpAuthentication__SymmetricSigningKey"] = $env:AiMcpAuthentication__SymmetricSigningKey
+        $startInfo.EnvironmentVariables["OpenAI__ApiKey"] = $env:OPENAI_API_KEY
+        $startInfo.EnvironmentVariables["AiKubernetesRuntimePoolHost__OpenAiApiKey"] = $env:OPENAI_API_KEY
+    }
 
     Write-Host "[kubernetes-sdk-matrix] Starting real control-plane host with runtimeProvider=KubernetesPool..."
     $hostStdoutStream = [System.IO.File]::Open($hostStdoutPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
@@ -629,23 +701,38 @@ try {
         -Process $hostProcess
     Write-Host "[kubernetes-sdk-matrix] Scale-out watcher ready. watcherId=$($scaleOutReady.watcherId); controlPlaneId=$($scaleOutReady.resolvedControlPlaneId)"
 
-    $client = Join-Path $repoRoot "implementations\matrix\clients\python\run.py"
-    $scenarioId = "feature-runtime-provider-kubernetes-pool-external-sdk-python-worker"
-    $clientArguments = @(
-        $client,
-        "--manifest", $ManifestPath,
-        "--worker", "python",
-        "--scenario-id", $scenarioId,
-        "--evidence", $SdkEvidencePath,
-        "--diagnostic-log", $ClientDiagnosticLogPath,
-        "--terminal-timeout-seconds", "300",
-        "--require-output-marker"
-    )
-    Write-Host "[kubernetes-sdk-matrix] Publishing and executing external Python SDK code through KubernetesPool..."
+    if ($InteractiveAgent) {
+        $client = Join-Path $repoRoot "demo\interactive-agent-sdk\validation\run_kubernetespool_interactive_matrix.py"
+        $scenarioId = "interactive-agent-sdk-kubernetespool-http"
+        $clientArguments = @(
+            $client,
+            "--profile", $ProfilePath,
+            "--attestation", $KubernetesEvidencePath,
+            "--evidence-dir", $evidenceRoot,
+            "--runtime-transport", "HTTP"
+        )
+        Write-Host "[kubernetes-sdk-matrix] Running .NET / TypeScript / Python interactive SDK consumers through KubernetesPool..."
+    }
+    else {
+        $client = Join-Path $repoRoot "implementations\matrix\clients\python\run.py"
+        $scenarioId = "feature-runtime-provider-kubernetes-pool-external-sdk-python-worker"
+        $clientArguments = @(
+            $client,
+            "--manifest", $ManifestPath,
+            "--worker", "python",
+            "--scenario-id", $scenarioId,
+            "--evidence", $SdkEvidencePath,
+            "--diagnostic-log", $ClientDiagnosticLogPath,
+            "--terminal-timeout-seconds", "300",
+            "--require-output-marker"
+        )
+        Write-Host "[kubernetes-sdk-matrix] Publishing and executing external Python SDK code through KubernetesPool..."
+    }
     $clientProcess = Start-NativeProcess -Executable $python -Arguments $clientArguments
 
-    $podDeadline = [DateTime]::UtcNow.AddSeconds(180)
-    $clientDeadline = [DateTime]::UtcNow.AddSeconds(360)
+    $podCreationTimeoutSeconds = $(if ($InteractiveAgent) { 300 } else { 180 })
+    $podDeadline = [DateTime]::UtcNow.AddSeconds($podCreationTimeoutSeconds)
+    $clientDeadline = [DateTime]::UtcNow.AddSeconds($(if ($InteractiveAgent) { 1200 } else { 360 }))
     $poolObserved = $false
     $lastScaleOutSignature = $null
     while (-not $clientProcess.HasExited) {
@@ -701,12 +788,12 @@ try {
         }
         elseif (-not $poolObserved -and [DateTime]::UtcNow -ge $podDeadline) {
             Write-KubernetesPoolDiagnostics -Namespace $namespaceName -PoolId $poolId -Kubectl $kubectl -ScaleOutUrl $scaleOutUrl
-            throw "No KubernetesPool Pod was created for current pool '$poolId' within 180 seconds after SDK submission."
+            throw "No KubernetesPool Pod was created for current pool '$poolId' within $podCreationTimeoutSeconds seconds after SDK orchestration started."
         }
 
         if ([DateTime]::UtcNow -ge $clientDeadline) {
             Write-KubernetesPoolDiagnostics -Namespace $namespaceName -PoolId $poolId -Kubectl $kubectl -ScaleOutUrl $scaleOutUrl
-            throw "External SDK client did not finish within 360 seconds."
+            throw "External SDK client did not finish within the configured Kubernetes validation window."
         }
         Start-Sleep -Seconds 2
     }
@@ -715,6 +802,17 @@ try {
         Write-Host "================ EXTERNAL SDK CLIENT ================"
         if (Test-Path -LiteralPath $ClientDiagnosticLogPath -PathType Leaf) {
             Get-Content -LiteralPath $ClientDiagnosticLogPath | Out-Host
+        }
+        elseif ($InteractiveAgent) {
+            Write-Host "No dedicated interactive client log is produced; the SDK process inherits this runner's stdout/stderr."
+            Write-Host "--- CONTROL-PLANE STDOUT TAIL ---"
+            if (Test-Path -LiteralPath $hostStdoutPath -PathType Leaf) {
+                Get-Content -LiteralPath $hostStdoutPath -Tail 180 | Out-Host
+            }
+            Write-Host "--- CONTROL-PLANE STDERR TAIL ---"
+            if (Test-Path -LiteralPath $hostStderrPath -PathType Leaf) {
+                Get-Content -LiteralPath $hostStderrPath -Tail 80 | Out-Host
+            }
         }
         else {
             Write-Host "No client diagnostic log was produced."
@@ -733,6 +831,9 @@ try {
         }
         else {
             Write-KubernetesPoolDiagnostics -Namespace $namespaceName -PoolId $poolId -Kubectl $kubectl -ScaleOutUrl $scaleOutUrl
+        }
+        if ($InteractiveAgent) {
+            throw "Interactive external SDK orchestration failed before KubernetesPool closure. ExitCode=$($clientProcess.ExitCode). See the inherited SDK output and control-plane log tails above."
         }
         throw "External SDK client failed before KubernetesPool closure. ExitCode=$($clientProcess.ExitCode); DiagnosticLog=$ClientDiagnosticLogPath"
     }
@@ -755,6 +856,21 @@ try {
     )
     if ($readyPodNames.Count -lt 1) { throw "No KubernetesPool Pod is Ready after external SDK execution." }
     $runtimeContainerImages = @($pods | ForEach-Object { $_.spec.containers } | ForEach-Object { $_.image } | Sort-Object -Unique)
+
+    if ($InteractiveAgent) {
+        foreach ($sdk in @("dotnet", "typescript", "python")) {
+            $sdkEvidence = Join-Path $evidenceRoot ("kubernetespool-http-{0}.json" -f $sdk)
+            if (-not (Test-Path -LiteralPath $sdkEvidence -PathType Leaf)) {
+                throw "Interactive KubernetesPool evidence is missing for SDK '$sdk': $sdkEvidence"
+            }
+        }
+        if (-not (Test-Path -LiteralPath $KubernetesEvidencePath -PathType Leaf)) {
+            throw "Interactive KubernetesPool topology attestation was not produced: $KubernetesEvidencePath"
+        }
+        $scenarioSucceeded = $true
+        Write-Host "[kubernetes-sdk-matrix] PASS: interactive KubernetesPool/HTTP 3/3"
+        return
+    }
 
     $kubernetesEvidence = [ordered]@{
         schemaVersion = 1
