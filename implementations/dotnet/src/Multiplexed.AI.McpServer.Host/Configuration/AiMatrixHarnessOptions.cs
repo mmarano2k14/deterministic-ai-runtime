@@ -1,9 +1,15 @@
-namespace Multiplexed.AI.McpServer.Host.Configuration
+﻿namespace Multiplexed.AI.McpServer.Host.Configuration
 {
     /// <summary>Explicit E2E harness settings. Disabled by default and never required by normal hosts.</summary>
     public sealed class AiMatrixHarnessOptions
     {
         public bool Enabled { get; set; }
+        /// <summary>
+        /// Keeps matrix diagnostics and bootstrap enabled while using the normal standalone
+        /// JWT/access-context authentication boundary instead of the matrix static bearer scheme.
+        /// Disabled by default so historical matrix hosts keep their existing authentication contract.
+        /// </summary>
+        public bool UseStandaloneAuthentication { get; set; }
         public string BearerToken { get; set; } = string.Empty;
         public string UserId { get; set; } = "matrix-user";
         public string TenantId { get; set; } = "matrix-tenant";

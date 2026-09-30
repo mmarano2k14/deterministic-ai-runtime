@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authentication;
+﻿using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Configuration;
@@ -93,6 +93,76 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Bootstrap
                 "at least 32 UTF-8 bytes",
                 exception.Message,
                 StringComparison.Ordinal);
+        }
+
+
+        [Fact]
+        public async Task Configure_Matrix_Default_Preserves_Static_Bearer_Scheme()
+        {
+            var configuration = Configuration(
+                new Dictionary<string, string?>
+                {
+                    ["AiMatrixHarness:Enabled"] = "true"
+                });
+            var services = new ServiceCollection();
+
+            HostAuthenticationRegistration.Configure(
+                services,
+                configuration,
+                new AiMcpHostOptions
+                {
+                    Mode = AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances
+                });
+            MatrixHarnessRegistration.Configure(services, configuration);
+            services.AddLogging();
+
+            await using var provider = services.BuildServiceProvider();
+            var schemes = provider.GetRequiredService<IAuthenticationSchemeProvider>();
+
+            Assert.Equal(
+                MatrixStaticBearerAuthenticationHandler.SchemeName,
+                (await schemes.GetDefaultAuthenticateSchemeAsync())?.Name);
+            Assert.Equal(
+                MatrixStaticBearerAuthenticationHandler.SchemeName,
+                (await schemes.GetDefaultChallengeSchemeAsync())?.Name);
+        }
+
+        [Fact]
+        public async Task Configure_Matrix_StandaloneAuthentication_Preserves_Jwt_Bearer_Scheme()
+        {
+            var configuration = Configuration(
+                new Dictionary<string, string?>
+                {
+                    ["AiMatrixHarness:Enabled"] = "true",
+                    ["AiMatrixHarness:UseStandaloneAuthentication"] = "true",
+                    ["AiMcpAuthentication:Enabled"] = "true",
+                    ["AiMcpAuthentication:Issuer"] = "https://issuer.example",
+                    ["AiMcpAuthentication:Audience"] = "multiplexed-ai-sdk",
+                    ["AiMcpAuthentication:SymmetricSigningKey"] =
+                        "0123456789abcdef0123456789abcdef"
+                });
+            var services = new ServiceCollection();
+
+            HostAuthenticationRegistration.Configure(
+                services,
+                configuration,
+                new AiMcpHostOptions
+                {
+                    Mode = AiMcpHostMode.ControlPlaneWithHttpRuntimeInstances
+                });
+            MatrixHarnessRegistration.Configure(services, configuration);
+            services.AddLogging();
+
+            await using var provider = services.BuildServiceProvider();
+            var schemes = provider.GetRequiredService<IAuthenticationSchemeProvider>();
+
+            Assert.Equal(
+                JwtBearerDefaults.AuthenticationScheme,
+                (await schemes.GetDefaultAuthenticateSchemeAsync())?.Name);
+            Assert.Equal(
+                JwtBearerDefaults.AuthenticationScheme,
+                (await schemes.GetDefaultChallengeSchemeAsync())?.Name);
+            Assert.Null(await schemes.GetSchemeAsync(MatrixStaticBearerAuthenticationHandler.SchemeName));
         }
 
         [Fact]

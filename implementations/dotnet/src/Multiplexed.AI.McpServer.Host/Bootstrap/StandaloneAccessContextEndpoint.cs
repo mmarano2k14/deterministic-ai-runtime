@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.Core.ExecutionContext;
 using Multiplexed.AI.McpServer.Host.Configuration;
 using Multiplexed.Rbac.Core.ExecutionContext;
@@ -21,7 +21,7 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 .Get<AiMatrixHarnessOptions>()
                 ?? new AiMatrixHarnessOptions();
 
-            if (matrix.Enabled)
+            if (matrix.Enabled && !matrix.UseStandaloneAuthentication)
             {
                 return;
             }

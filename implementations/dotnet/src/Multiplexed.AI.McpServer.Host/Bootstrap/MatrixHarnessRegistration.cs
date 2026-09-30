@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authentication;
+﻿using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Multiplexed.AI.McpServer.DependencyInjection;
@@ -22,27 +22,31 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 return;
             }
 
-            services
-                .AddAuthentication(authentication =>
-                {
-                    authentication.DefaultAuthenticateScheme = MatrixStaticBearerAuthenticationHandler.SchemeName;
-                    authentication.DefaultChallengeScheme = MatrixStaticBearerAuthenticationHandler.SchemeName;
-                    authentication.DefaultScheme = MatrixStaticBearerAuthenticationHandler.SchemeName;
-                })
-                .AddScheme<AuthenticationSchemeOptions, MatrixStaticBearerAuthenticationHandler>(
-                    MatrixStaticBearerAuthenticationHandler.SchemeName,
-                    _ => { });
-            services.AddAuthorization();
-
-            // Rotation is intentionally disabled only for this harness. The current public SDK transports carry an
-            // explicit access-context handle but do not yet negotiate rotated handles across MCP HTTP exchanges.
-            services.PostConfigure<ContextRuntimeOptions>(runtime =>
+            if (!options.UseStandaloneAuthentication)
             {
-                runtime.EnableRotation = false;
-                runtime.AllowClientMaxInFlightOverride = false;
-                runtime.AllowClientRotationOverlapOverride = false;
-                runtime.MaxInFlightPerContextKey = 16;
-            });
+                services
+                    .AddAuthentication(authentication =>
+                    {
+                        authentication.DefaultAuthenticateScheme = MatrixStaticBearerAuthenticationHandler.SchemeName;
+                        authentication.DefaultChallengeScheme = MatrixStaticBearerAuthenticationHandler.SchemeName;
+                        authentication.DefaultScheme = MatrixStaticBearerAuthenticationHandler.SchemeName;
+                    })
+                    .AddScheme<AuthenticationSchemeOptions, MatrixStaticBearerAuthenticationHandler>(
+                        MatrixStaticBearerAuthenticationHandler.SchemeName,
+                        _ => { });
+                services.AddAuthorization();
+
+                // Historical matrix transports use a fixed access-context handle and therefore keep
+                // rotation disabled. Standalone-authentication matrix hosts retain the normal runtime
+                // rotation behavior used by the public SDK authentication bootstrap.
+                services.PostConfigure<ContextRuntimeOptions>(runtime =>
+                {
+                    runtime.EnableRotation = false;
+                    runtime.AllowClientMaxInFlightOverride = false;
+                    runtime.AllowClientRotationOverlapOverride = false;
+                    runtime.MaxInFlightPerContextKey = 16;
+                });
+            }
 
             if (!Uri.TryCreate(options.EffectProbeMcpEndpoint, UriKind.Absolute, out var effectProbeEndpoint))
             {

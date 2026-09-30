@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
@@ -33,8 +33,10 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                 .Get<AiMatrixHarnessOptions>()
                 ?? new AiMatrixHarnessOptions();
 
-            // The matrix owns its explicitly isolated authentication scheme.
-            if (matrix.Enabled)
+            // Historical matrix hosts own their explicitly isolated static authentication scheme.
+            // Interactive topology validation can keep matrix diagnostics enabled while opting into
+            // the normal standalone JWT/access-context boundary used by external SDK clients.
+            if (matrix.Enabled && !matrix.UseStandaloneAuthentication)
             {
                 services.AddAuthentication();
                 services.AddAuthorization();
