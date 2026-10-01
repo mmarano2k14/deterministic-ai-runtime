@@ -2,7 +2,7 @@
 
 **Status:** GREEN - all three KubernetesPool branch scenarios accepted by the closure verifier.
 
-**Documentation update:** 2026-09-21. Validation is based on the recorded successful target-environment runner output. This documentation update does not claim another live execution.
+**Documentation update:** 2026-10-01. The historical 3/3 closure below remains unchanged. A separate interactive-agent topology campaign is now also GREEN for .NET, TypeScript, and Python clients through live `KubernetesPool/HTTP`; that campaign is documented separately and is not added to the 3/3 closure count.
 
 ## Purpose and evidence boundary
 
@@ -86,6 +86,22 @@ authority=control-plane-reconciliation/runtime-worker-polling
 ```
 
 The observed Python version is an exact environment identity for this run, not a requirement to hard-code that version in future builds. The runner probes the image and projects the matching reference, version, platform, executable path, and executable SHA-256 into the publication/runtime profiles.
+
+## Separate interactive-agent KubernetesPool proof
+
+A later, independently scoped validation reuses the same Kubernetes Runtime Pool lifecycle while running the interactive agent scenario through each external SDK client:
+
+| Interactive `KubernetesPool/HTTP` client | Result |
+|---|---:|
+| .NET | PASS |
+| TypeScript | PASS |
+| Python | PASS |
+
+That campaign exercises real JWT plus `/auth/access-context`, QueueFirst scale-out, runtime-native OpenAI, Child DAG delegation, human input on the same `ExecutionId`, public terminal result retrieval, and deterministic replay. The final run attested the exact current PoolId to a ready Runtime Pool Pod and matching Service before accepting the client evidence.
+
+This does **not** alter the historical KubernetesPool closure above. The 3/3 closure still means routing + hierarchical recovery + external Python SDK/production Python worker. The interactive 3-client result is a separate public-SDK integration campaign and must not be added to the 40-scenario cross-topology record.
+
+See [Interactive Agent SDK Topology Validation](interactive-agent-sdk-topology-validation.md).
 
 ## Host-role and bootstrap contract
 
@@ -256,7 +272,7 @@ KubernetesPool retains the existing Kubernetes SDK Pod/Service lifecycle, in-Pod
 
 This closure does not establish:
 
-- the full .NET/TypeScript/Python client-by-worker cross-product on Kubernetes; the external-SDK case is Python-to-Python;
+- the full .NET/TypeScript/Python client-by-worker cross-product on Kubernetes; the historical closure case is Python-to-Python, while the separate interactive campaign proves all three client languages against one runtime-native agent workflow rather than all hosted-worker languages;
 - Kubernetes `ContainerIsolationProvider` execution or an ephemeral sandbox-Pod provider; `TrustedProcess` remains a trusted-execution boundary;
 - all 37 Docker scenarios on Kubernetes, or all Docker baseline scenarios under OCI worker isolation;
 - a live strict-digest result from tagged runtime images, identical image builds across every scenario, or whole-image identity from selected-file hashes;
@@ -275,4 +291,5 @@ This closure does not establish:
 - [Runtime Pool Architecture](runtime-pool-architecture.md)
 - [Hosted Multilanguage Execution](hosted-multilanguage-execution.md)
 - [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md)
+- [Interactive Agent SDK Topology Validation](interactive-agent-sdk-topology-validation.md)
 - [External SDK Quickstart](external-sdk-quickstart.md)

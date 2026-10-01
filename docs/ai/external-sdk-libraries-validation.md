@@ -1,6 +1,6 @@
 # External SDK Libraries Validation
 
-**Status:** Branch-closure validation completed for the independent .NET, TypeScript/JavaScript, and Python SDK libraries and their shared wire-contract parity. The separate live fixture-free Docker runtime matrix is GREEN at 37/37 scenarios with `runtimeProvider=ProcessHostPool` and bounded `ContainerIsolationProvider` worker/artifact-selection coverage. The packaged interactive-agent Docker presentation is additionally GREEN for all three external SDK consumers with terminal `Completed` and deterministic replay. Public package-registry publication and the standalone CLI remain separate productization scopes.
+**Status:** Branch-closure validation completed for the independent .NET, TypeScript/JavaScript, and Python SDK libraries and their shared wire-contract parity. The separate live fixture-free Docker runtime matrix is GREEN at 37/37 scenarios with `runtimeProvider=ProcessHostPool` and bounded `ContainerIsolationProvider` worker/artifact-selection coverage. The interactive-agent workflow is additionally GREEN for all three external SDK consumers in the packaged Docker presentation path and through live `ProcessHostPool/HTTP` and `KubernetesPool/HTTP`, with terminal `Completed` and deterministic replay. Public package-registry publication and the standalone CLI remain separate productization scopes.
 
 A separate **3/3 KubernetesPool** closure adds live HTTP routing, hierarchical recovery, and Python SDK-to-Python `TrustedProcess` execution with `Completed` and an uploaded-function marker verified. This is not full Kubernetes client/worker parity or Kubernetes sandbox-Pod validation. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
 
@@ -154,6 +154,21 @@ The demo container consumes independently packaged external SDK artifacts. The .
 One Python run observed a transient business-result publication failure followed by successful publication, terminal `Completed`, and successful deterministic replay. The evidence supports durable convergence for that run; it does not establish first-attempt publication success as an invariant.
 
 See [Interactive Agent SDK Demo](interactive-agent-sdk-demo.md).
+
+## Interactive agent live topology closure
+
+A separate live campaign validates the same interactive workflow with all three external SDK clients on both runtime-hosting boundaries:
+
+```text
+ProcessHostPool/HTTP  .NET / TypeScript / Python  PASS
+KubernetesPool/HTTP   .NET / TypeScript / Python  PASS
+```
+
+Each accepted path requires real JWT/access-context authentication, immutable publication, QueueFirst durable submission, runtime-native OpenAI execution, Child DAG delegation, accepted human input on the same `ExecutionId`, terminal result availability, and deterministic replay. The Kubernetes path additionally requires exact-pool Pod/Service/image attestation and successful scale-out into a real Runtime Pool Pod.
+
+The replay validator distinguishes public `Completed` from terminal-snapshot readiness and retries only the exact transient `Snapshot not found.` result within a bounded 30-second window. Other replay and transport failures remain fail-fast.
+
+This live interactive campaign is not added to the 37/37 Docker matrix or the historical KubernetesPool 3/3 closure. See [Interactive Agent SDK Topology Validation](interactive-agent-sdk-topology-validation.md).
 
 ## KubernetesPool external SDK closure
 

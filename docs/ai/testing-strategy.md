@@ -119,6 +119,14 @@ The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical 
 
 The external Python function runs through `HostRuntime` / `TrustedProcess` inside the Runtime Pool Pod. This does not reinterpret the historical HTTP/gRPC production profiles as a new all-language SDK matrix, prove control-plane crash recovery, or provide a Kubernetes sandbox-worker guarantee.
 
+## Interactive Agent SDK topology validation
+
+A separate live public-SDK campaign validates the same runtime-native interactive agent flow through all three external clients on both `ProcessHostPool/HTTP` and `KubernetesPool/HTTP`. Every accepted path requires terminal completion, unchanged `ExecutionId` after accepted human input, root-step completion, runtime-native OpenAI provider/model/response evidence, public result availability, replay success, replay determinism, and unchanged replay execution identity.
+
+The Kubernetes path additionally requires exact-pool Pod/Service/image attestation and observed QueueFirst scale-out into real Runtime Pool capacity. Replay readiness is bounded and retries only the exact transient `Snapshot not found.` result; unrelated failures remain fail-fast.
+
+This campaign is not added to the 37/37 Docker matrix, the historical KubernetesPool 3/3 closure, or the 36-row adversarial matrix. See [Interactive Agent SDK Topology Validation](interactive-agent-sdk-topology-validation.md).
+
 ## Hosted Worker Isolation Evidence
 
 [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) records the final selected-provider evidence. The deterministic isolation/provider layer proves runtime-side contracts such as exact provider routing, no sandbox-to-process downgrade, OCI digest admission, launch/inspect ordering, applied-state fail-closed behavior, cleanup/quarantine, startup orphan reconciliation, cancellation/failure lifecycle handling, package metadata preservation, lease/epoch behavior, and reuse of the existing journal/result-acceptance path.

@@ -25,6 +25,7 @@ Focused AI runtime documentation is organized under:
 | [`ai/external-sdk-quickstart.md`](ai/external-sdk-quickstart.md) | End-to-end client examples for publishing reusable sample user code, submitting an immutable publication, observing execution, and reading terminal results from .NET, TypeScript/JavaScript, and Python. |
 | [`ai/external-sdk-libraries-validation.md`](ai/external-sdk-libraries-validation.md) | Cross-language parity fixtures, dependency firewalls, local NuGet/npm/wheel package-consumption smoke, validation commands, and explicit non-claims. |
 | [`ai/interactive-agent-sdk-demo.md`](ai/interactive-agent-sdk-demo.md) | Presentation-oriented public-SDK demo with packaged .NET, TypeScript, and Python consumers, JWT/RBAC access-context authentication, Child DAG delegation, human review/resume, terminal results, and deterministic replay validation. |
+| [`ai/interactive-agent-sdk-topology-validation.md`](ai/interactive-agent-sdk-topology-validation.md) | Live six-path interactive validation across .NET/TypeScript/Python clients on `ProcessHostPool/HTTP` and `KubernetesPool/HTTP`, including real auth, OpenAI, Child DAGs, same-execution human input, result, replay readiness, and deterministic replay. |
 | [`ai/multilanguage-runtime-matrix-validation.md`](ai/multilanguage-runtime-matrix-validation.md) | Fixture-free 37/37 Docker closure with `runtimeProvider=ProcessHostPool`: the 33-scenario baseline plus four explicitly scoped hosted-worker provider/artifact-selection scenarios, including pinning, dependency packaging, policies, nested Child DAGs, MCP effects, cancellation, recovery, journal acceptance, isolation selection, and SDK dependency firewalls. |
 | [`ai/kubernetes-pool-matrix-validation.md`](ai/kubernetes-pool-matrix-validation.md) | Validated 3/3 KubernetesPool closure: HTTP routing, hierarchical recovery, Python SDK execution with a verified uploaded-function marker; host-role/RBAC/TTL configuration, two image workflows, diagnostics, and the separate 37 Docker + 3 Kubernetes coverage record. |
 | [`ai/deterministic-dependency-packaging.md`](ai/deterministic-dependency-packaging.md) | Immutable pure-Python wheel, locked Node source-bundle, and managed .NET assembly-closure contracts, execution boundaries, pinning, and validation limits. |
@@ -277,7 +278,11 @@ Validation reference for the dependency firewall, private-identity exclusion, pu
 
 ### [`ai/interactive-agent-sdk-demo.md`](ai/interactive-agent-sdk-demo.md)
 
-Presentation-oriented end-to-end external SDK reference. Documents the packaged .NET, TypeScript, and Python consumers, real JWT plus server-created RBAC access context, runtime-owned OpenAI credential, immutable publication, Child DAG delegation, human review/resume on the same execution, terminal result publication, and deterministic replay. The Docker presentation path is GREEN for all three SDK clients.
+Presentation-oriented end-to-end external SDK reference. Documents the packaged .NET, TypeScript, and Python consumers, real JWT plus server-created RBAC access context, runtime-owned OpenAI credential, immutable publication, Child DAG delegation, human review/resume on the same execution, terminal result publication, and deterministic replay. The packaged Docker path and the separate live `ProcessHostPool/HTTP` and `KubernetesPool/HTTP` topology campaigns are GREEN for all three SDK clients.
+
+### [`ai/interactive-agent-sdk-topology-validation.md`](ai/interactive-agent-sdk-topology-validation.md)
+
+Canonical proof for the live interactive topology campaign. Records the .NET, TypeScript, and Python client results for `ProcessHostPool/HTTP` and `KubernetesPool/HTTP`, the eleven acceptance gates, exact-pool Kubernetes attestation, replay-readiness behavior, and explicit evidence non-claims.
 
 ---
 

@@ -377,9 +377,9 @@ The package smoke builds local artifacts, consumes them from temporary applicati
 
 `demo/interactive-agent-sdk/` provides a presentation-oriented consumer of the public SDK surface. It packages independent .NET, TypeScript, and Python external applications and drives the same durable runtime-native workflow through the MCP boundary.
 
-The Docker presentation path is GREEN for all three SDK consumers with human review/resume, terminal `Completed`, and deterministic replay. The demo is intentionally separate from the 37-scenario runtime matrix: it is a focused end-to-end presentation flow, not an additional matrix count.
+The packaged Docker presentation path is GREEN for all three SDK consumers with human review/resume, terminal `Completed`, and deterministic replay. The same interactive workflow is also GREEN for .NET, TypeScript, and Python clients through live `ProcessHostPool/HTTP` and live `KubernetesPool/HTTP`. These campaigns are intentionally separate from the 37-scenario runtime matrix and historical KubernetesPool 3/3 closure; they are focused end-to-end public-SDK integration proofs, not additional matrix counts.
 
-See [Interactive Agent SDK Demo](interactive-agent-sdk-demo.md) for run instructions and validation boundaries.
+See [Interactive Agent SDK Demo](interactive-agent-sdk-demo.md) for the presentation path and [Interactive Agent SDK Topology Validation](interactive-agent-sdk-topology-validation.md) for the live topology proof.
 
 ## Authentication boundary
 

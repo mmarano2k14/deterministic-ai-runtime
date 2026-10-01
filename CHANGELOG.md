@@ -6,6 +6,114 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+# Unreleased - 2026-10-01 - Interactive Agent SDK Topology Validation
+
+## Scope
+
+Extended the interactive external-SDK validation from native/Docker presentation paths to the real Runtime Pool hosting boundaries while preserving the existing public SDK and runtime authorities.
+
+Validated the same runtime-native interactive agent workflow through `ProcessHostPool/HTTP` and `KubernetesPool/HTTP` for the .NET, TypeScript/JavaScript, and Python external SDK clients.
+
+No new scheduler, queue, Child DAG engine, recovery authority, replay authority, Runtime Pool lifecycle authority, or persistence authority was introduced.
+
+## Public authentication and secret boundary
+
+- Added opt-in standalone JWT/access-context authentication for the Kubernetes matrix harness without changing the historical `MatrixBearer` default.
+- Validated real Bearer JWT authentication and `POST /auth/access-context` before public MCP operations.
+- Kept `OPENAI_API_KEY` on the runtime side; external SDK consumers receive the model selection but not the provider secret.
+- Removed the historical Kubernetes Runtime Pool placeholder OpenAI key only in the interactive validation profile so the runtime-owned credential reaches the Runtime Pool child environment.
+
+## Child DAG availability
+
+- Enabled the existing Child DAG composition feature on the interactive Kubernetes control plane and Runtime Pool children.
+- Reused the existing `IAiChildExecutionRelationStore`, durable relation persistence, continuation, scheduling, recovery, and finalization authorities.
+- Did not add a second Child DAG store or lifecycle implementation.
+
+## ProcessHostPool interactive validation
+
+The final live ProcessHostPool campaign passed all three external clients:
+
+```text
+.NET        PASS
+TypeScript PASS
+Python     PASS
+```
+
+The scenario uses the production ProcessHostPool integration path with real JWT/RBAC context, immutable publication, durable QueueFirst execution, runtime-native OpenAI, Child DAG delegation, human review/input on the same execution, public result retrieval, and deterministic replay.
+
+Final launcher result:
+
+```text
+[processhost-launcher] PASS: ProcessHostPool/HTTP 3/3
+```
+
+## KubernetesPool interactive validation
+
+The final live KubernetesPool campaign passed all three external clients:
+
+```text
+.NET        PASS
+TypeScript PASS
+Python     PASS
+```
+
+The validation reuses the existing Kubernetes Runtime Pool lifecycle and scale-out path. It requires exact-pool Pod/Service/image attestation and fails closed on stale or unrelated Kubernetes resources.
+
+The final run observed the QueueFirst scale-out request transition from `Observed` to `Fulfilled`, selected real Runtime Pool capacity, completed the interactive DAG, and validated the public result and replay for all three clients.
+
+Final launcher result:
+
+```text
+[kubernetes-sdk-matrix] PASS: interactive KubernetesPool/HTTP 3/3
+[kubernetes-launcher] PASS: KubernetesPool/HTTP 3/3
+```
+
+## Validation gates
+
+Every accepted interactive client path requires:
+
+```text
+execution.completed
+execution.sameExecutionIdAfterHumanInput
+humanReview.accepted
+rootSteps.completed
+provider.openai
+provider.model
+provider.responsePayloadPresent
+result.available
+replay.succeeded
+replay.deterministic
+replay.executionIdUnchanged
+```
+
+## Replay readiness
+
+Separated public execution completion from terminal snapshot visibility. A `Completed` execution can become observable before the durable terminal snapshot is queryable for replay.
+
+The external demo consumers retry replay only when the server returns exactly `Snapshot not found.`. The first replay attempt remains immediate. Eligible retries are bounded to a 30-second total readiness window with 250 ms between attempts. Authorization failures, transport failures, determinism failures, identity mismatches, and other replay failures are not retried.
+
+The final Kubernetes run observed one transient `SnapshotPending` replay attempt followed by a real `Ready` response for each external client.
+
+## Evidence accounting
+
+The interactive topology campaign remains separate from the existing executed-coverage records:
+
+```text
+Docker SDK matrix                         37 / 37
+Historical KubernetesPool closure          3 / 3
+Interactive ProcessHostPool/HTTP clients   3 / 3
+Interactive KubernetesPool/HTTP clients    3 / 3
+```
+
+The interactive client results are not added to the 37/37 Docker matrix, the historical KubernetesPool 3/3 closure, or the 36-row adversarial runtime matrix. No synthetic combined scenario count is introduced.
+
+## Documentation
+
+- Added `docs/ai/interactive-agent-sdk-topology-validation.md` as the canonical live topology proof.
+- Updated the interactive demo, external SDK quickstart and validation references, KubernetesPool validation, multilanguage matrix validation, testing strategy, documentation index, repository README, and changelog to preserve exact evidence boundaries.
+
+---
+
 # 0.0.9.6 - 2026-09-24 - Interactive Agent SDK Demo and Docker Presentation
 
 ## Scope
@@ -2193,7 +2301,7 @@ Validation basis: recorded successful target-environment runner output and the s
 
 - Cancellation is cooperative. The matrix validates durable control-state convergence and does not claim immediate operating-system termination of hosted user code.
 - Recovery and replay/journal-result-acceptance coverage remain outside this increment.
-- Existing worker fixtures are intentionally retained for Pack 3 validation; fixture removal and non-fixture execution will be validated as a separate closure gate after the remaining Pack 3 increments.
+- Existing worker fixtures are intentionally retained for matrix validation; fixture removal and non-fixture execution will be validated as a separate closure gate after the remaining matrix increments.
 
 
 ### Parked DAG cancellation terminalization
@@ -2229,7 +2337,7 @@ Validation basis: recorded successful target-environment runner output and the s
 - Preserved all previously validated publication pinning, dependency packaging, hosted custom policy, nested Child DAG, durable MCP effect and cancellation scenarios as mandatory regression coverage.
 - Live Docker ProcessHostPool execution is required before this increment can be marked green.
 - Recovery coverage validates control-plane recovery after runtime ownership becomes unavailable; it does not claim a provider-level process crash injection in this increment.
-- Existing execution fixtures remain intentionally available for Pack 3 validation. Fixture removal and complete non-fixture execution remain a separate closure gate after the remaining Pack 3 increments.
+- Existing execution fixtures remain intentionally available for matrix validation. Fixture removal and complete non-fixture execution remain a separate closure gate after the remaining matrix increments.
 
 ### Deterministic recovery replacement capacity
 
@@ -2293,9 +2401,9 @@ Validation basis: recorded successful target-environment runner output and the s
 
 - Extended the canonical Docker gate from 30 to 33 executed scenarios by adding the three external-client dependency-firewall checks.
 - Added verifier-side exact coverage closure derived from the matrix plan and passed evidence set. The closure records the canonical topology/provider as `docker` / `ProcessHostPool` and writes `executed-coverage-closure.json`.
-- Added fail-closed validation requiring the only unbound roadmap targets after ProcessHost Pack 3 to be `worker-isolation-provider` and `isolation-artifact-selection`.
+- Added fail-closed validation requiring the only unbound roadmap targets after ProcessHost matrix coverage to be `worker-isolation-provider` and `isolation-artifact-selection`.
 - Explicitly records `sandboxed-container` and `OciImage` as not executed; ProcessHost `TrustedProcess` / `HostRuntime` evidence is not promoted into OCI/container coverage.
-- Preserved the fixture-backed Pack 3 execution model. Fixture removal remains a separate full-matrix closure gate before the ProcessHost matrix is considered fixture-independent.
+- Preserved the fixture-backed ProcessHost matrix execution model. Fixture removal remains a separate full-matrix closure gate before the ProcessHost matrix is considered fixture-independent.
 
 
 ## Fixture-free matrix closure

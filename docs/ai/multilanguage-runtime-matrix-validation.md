@@ -196,6 +196,8 @@ The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical 
 | KubernetesPool matrix | 3/3 | Routing; hierarchical recovery; external Python SDK -> production Python worker via `TrustedProcess`. |
 | Cross-topology coverage record | 40 | The two scoped evidence sets, not every scenario on every topology. |
 
+A separate interactive-agent campaign is GREEN for .NET, TypeScript, and Python clients on both `ProcessHostPool/HTTP` and `KubernetesPool/HTTP`. It validates one runtime-native agent workflow with real JWT/access-context authentication, OpenAI execution, Child DAG delegation, human input on the same `ExecutionId`, public result retrieval, and deterministic replay. It is not part of the 37/37 or 3/3 counts. See [Interactive Agent SDK Topology Validation](interactive-agent-sdk-topology-validation.md).
+
 The Kubernetes SDK result uses the `HostRuntime` publication artifact inside a Runtime Pool OCI image. It does not establish Kubernetes `ContainerIsolationProvider` execution. The canonical Kubernetes guide records image provenance, host-role settings, commands, diagnostic bundles, and retained-evidence limits.
 
 ## Canonical Docker command
@@ -215,6 +217,7 @@ GREEN - MATRIX PASSED
 
 ## Related documentation
 
+- [Interactive Agent SDK Topology Validation](interactive-agent-sdk-topology-validation.md)
 - [External SDK Quickstart](external-sdk-quickstart.md)
 - [External SDK Libraries](external-sdk-libraries.md)
 - [External SDK Libraries Validation](external-sdk-libraries-validation.md)

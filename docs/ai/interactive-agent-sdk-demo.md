@@ -1,6 +1,6 @@
 # Interactive Agent SDK Demo
 
-**Status:** GREEN in native/source mode and in the packaged Docker presentation path for .NET, TypeScript/JavaScript, and Python external SDK consumers.
+**Status:** GREEN for .NET, TypeScript/JavaScript, and Python external SDK consumers in native/source mode, the packaged Docker presentation path, live `ProcessHostPool/HTTP`, and live `KubernetesPool/HTTP`.
 
 ## Purpose
 
@@ -117,6 +117,39 @@ Each validated path exercised immutable publication, durable submission, runtime
 
 One Python presentation run observed a transient business-result publication failure followed by a successful retry/convergence before terminal `Completed`; deterministic replay then succeeded. This demonstrates successful durable convergence for that run, not a claim that publication always succeeds on the first attempt.
 
+## Validated runtime-topology paths
+
+The presentation workflow is also validated through the real Runtime Pool hosting boundaries without changing the external SDK contract:
+
+| Runtime topology | .NET | TypeScript | Python |
+| --- | ---: | ---: | ---: |
+| `ProcessHostPool/HTTP` | PASS | PASS | PASS |
+| `KubernetesPool/HTTP` | PASS | PASS | PASS |
+
+Both live topology campaigns exercise the same public flow: real JWT authentication, server-created `X-Access-Context`, immutable publication, QueueFirst durable submission, runtime-native OpenAI execution, Child DAG delegation, human input on the same `ExecutionId`, public terminal result retrieval, and deterministic replay.
+
+The KubernetesPool run additionally proves that the interactive execution can request and use real Kubernetes Runtime Pool capacity. The final run observed the scale-out request transition to `Fulfilled`, attested the exact current pool Pod and Service, and completed all three SDK client paths against that topology.
+
+All three clients passed the same eleven gates:
+
+```text
+execution.completed
+execution.sameExecutionIdAfterHumanInput
+humanReview.accepted
+rootSteps.completed
+provider.openai
+provider.model
+provider.responsePayloadPresent
+result.available
+replay.succeeded
+replay.deterministic
+replay.executionIdUnchanged
+```
+
+Public `Completed` and terminal-snapshot visibility are distinct readiness points. The consumers therefore retry replay only for the exact transient result `Snapshot not found.`, within a bounded 30-second window. A different replay failure, transport error, determinism failure, or execution-identity mismatch fails immediately.
+
+This topology validation is a separate campaign from the fixture-free 37/37 Docker SDK matrix and the historical 3/3 KubernetesPool routing/recovery/Python-worker closure. It is not added to either scenario count. See [Interactive Agent SDK Topology Validation](interactive-agent-sdk-topology-validation.md).
+
 ## What this validation proves
 
 The demo establishes that:
@@ -135,7 +168,8 @@ This presentation scenario does not replace the broader runtime matrices. It doe
 
 - full client-language x hosted-worker-language coverage;
 - every recovery/failure boundary exercised by the 37-scenario Docker runtime matrix;
-- KubernetesPool parity for all three SDK clients;
+- gRPC parity for this interactive-agent validation campaign;
+- full client-language x hosted-worker-language parity on Kubernetes;
 - public NuGet/npm/Python-registry publication;
 - generic exactly-once external side effects;
 - production identity-provider configuration or production secret management.
@@ -144,6 +178,7 @@ For those boundaries, use the dedicated validation documents.
 
 ## Related documentation
 
+- [Interactive Agent SDK Topology Validation](interactive-agent-sdk-topology-validation.md)
 - [External SDK Quickstart](external-sdk-quickstart.md)
 - [External SDK Libraries](external-sdk-libraries.md)
 - [External SDK Libraries Validation](external-sdk-libraries-validation.md)

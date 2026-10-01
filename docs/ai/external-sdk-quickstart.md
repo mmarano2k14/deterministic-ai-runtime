@@ -400,7 +400,7 @@ For a complete presentation-oriented scenario using the same public SDK boundary
 demo/interactive-agent-sdk/
 ```
 
-The demo is GREEN in the packaged Docker path for .NET, TypeScript, and Python external consumers. Each path exercises immutable publication, durable submission, runtime-native OpenAI execution, Child DAG delegation, human review and resume on the same `ExecutionId`, business-result publication, terminal `Completed`, and deterministic replay.
+The demo is GREEN for .NET, TypeScript, and Python external consumers in the packaged Docker path and in live `ProcessHostPool/HTTP` and `KubernetesPool/HTTP` topology validation. Each path exercises immutable publication, durable submission, runtime-native OpenAI execution, Child DAG delegation, human review and resume on the same `ExecutionId`, business-result publication, terminal `Completed`, and deterministic replay.
 
 From the demo directory on Windows:
 
@@ -411,6 +411,15 @@ From the demo directory on Windows:
 Choose the SDK client, enter `i` at the human-review boundary, then enter `x` after completion to validate deterministic replay. `OPENAI_API_KEY` remains on the runtime service and is not passed to the external consumer.
 
 See [Interactive Agent SDK Demo](interactive-agent-sdk-demo.md) for the exact topology, boundaries, and validated matrix.
+
+Run the live topology validation from the repository root:
+
+```powershell
+python .\demo\interactive-agent-sdk\validation\launch_processhostpool_matrix.py --runtime-transport HTTP
+python .\demo\interactive-agent-sdk\validation\launch_kubernetespool_matrix.py
+```
+
+The Kubernetes launcher reuses the existing Runtime Pool lifecycle and performs exact-pool topology attestation. See [Interactive Agent SDK Topology Validation](interactive-agent-sdk-topology-validation.md) for the eleven required gates, replay-readiness semantics, and explicit non-claims.
 
 ## Validation reference
 
