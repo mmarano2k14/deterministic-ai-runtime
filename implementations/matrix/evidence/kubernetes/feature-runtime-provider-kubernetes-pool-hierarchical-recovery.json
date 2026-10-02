@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-runtime-provider-kubernetes-pool-hierarchical-recovery",
+  "status": "passed",
+  "topology": "kubernetes",
+  "runtimeProvider": "KubernetesPool",
+  "transport": "http",
+  "recovery": {
+    "observationMode": "EventDriven",
+    "executionCycleCount": 2,
+    "childDepth": 3,
+    "runtimeProcessFailureCount": 2,
+    "podFailureCount": 2,
+    "recoveredSharedRunCount": 8,
+    "recoveryForensicsProofCount": 8,
+    "runtimeOwnershipTransitionCount": 8,
+    "runtimeOwnershipTransitionViolationCount": 0,
+    "parentReplayExpectedExecutionCount": 54,
+    "parentReplayProvenExecutionCount": 54,
+    "missingRecursiveChildLogicalStepCount": 0,
+    "unexpectedDuplicateRecursiveChildLogicalStepCount": 0,
+    "lostRunCount": 0,
+    "duplicateDurableDispatchCount": 0,
+    "warmReuseProven": true
+  },
+  "evidenceKinds": [
+    "exact-inpod-runtime-process-failure",
+    "process-kill-execution-identity-continuity",
+    "busy-pod-failure",
+    "replacement-pod-capacity",
+    "recovery-forensics",
+    "runtime-ownership-convergence",
+    "terminal-dag-convergence",
+    "parent-replay",
+    "ledger-trace-lifecycle-proof",
+    "warm-pool-reuse"
+  ]
+}

@@ -31,7 +31,7 @@ namespace Multiplexed.AI.Runtime.Invocation
                 var language = factory.ExecutionLanguage;
                 if (kind == AiInvocationKind.Custom)
                 {
-                    if (language is not (AiExecutionLanguages.DotNet or AiExecutionLanguages.Python or AiExecutionLanguages.TypeScript))
+                    if (!AiExecutionLanguages.IsSupported(language))
                     {
                         throw new InvalidOperationException("A custom adapter factory requires a canonical execution language.");
                     }

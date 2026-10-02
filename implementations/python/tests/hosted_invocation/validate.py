@@ -55,6 +55,9 @@ def main() -> int:
         passed = int(counters.get("passed", "0"))
         executed = int(counters.get("executed", "0"))
         required = ("Published_Synchronous_Function_Returns_Real_Computed_Data",
+                    "Pure_Python_Wheel_Is_Executed_From_Immutable_Bytes_Without_Pip",
+                    "Published_Pure_Python_Wheel_Executes_From_The_Pinned_Immutable_Environment",
+                    "Unstarted_Run_Keeps_Original_Wheel_After_Dependency_Republication",
                     "Unstarted_Python_Function_Executes_Original_Code_After_Republication",
                     "Python_Exception_Retains_Uncertain_Invocation_Without_Manufacturing_Business_Failure")
         names = [r.get("testName", "") for r in document.findall(".//{*}UnitTestResult") if r.get("outcome") == "Passed"]

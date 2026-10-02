@@ -1,0 +1,86 @@
+// Complex DAG test: validates multi-level parallelism, branching, and final synchronization across multiple dependency chains.
+{
+  "pipelines": [
+    {
+      "name": "dag-complex",
+      "version": 1,
+      "executionMode": "Dag",
+      "steps": [
+        {
+          "name": "step-1",
+          "stepKey": "hello-world",
+          "order": 1,
+          "config": { "delayMs": 100 }
+        },
+
+        {
+          "name": "step-2",
+          "stepKey": "hello-world",
+          "order": 2,
+          "dependsOn": [ "step-1" ],
+          "config": { "delayMs": 200 }
+        },
+        {
+          "name": "step-3",
+          "stepKey": "hello-world",
+          "order": 3,
+          "dependsOn": [ "step-1" ],
+          "config": { "delayMs": 300 }
+        },
+
+        {
+          "name": "step-4",
+          "stepKey": "hello-world",
+          "order": 4,
+          "dependsOn": [ "step-2" ],
+          "config": { "delayMs": 400 }
+        },
+        {
+          "name": "step-5",
+          "stepKey": "hello-world",
+          "order": 5,
+          "dependsOn": [ "step-2" ],
+          "config": { "delayMs": 500 }
+        },
+
+        {
+          "name": "step-6",
+          "stepKey": "hello-world",
+          "order": 6,
+          "dependsOn": [ "step-3" ],
+          "config": { "delayMs": 600 }
+        },
+        {
+          "name": "step-7",
+          "stepKey": "hello-world",
+          "order": 7,
+          "dependsOn": [ "step-3" ],
+          "config": { "delayMs": 700 }
+        },
+
+        {
+          "name": "step-8",
+          "stepKey": "hello-world",
+          "order": 8,
+          "dependsOn": [ "step-4", "step-5" ],
+          "config": { "delayMs": 800 }
+        },
+        {
+          "name": "step-9",
+          "stepKey": "hello-world",
+          "order": 9,
+          "dependsOn": [ "step-6", "step-7" ],
+          "config": { "delayMs": 900 }
+        },
+
+        {
+          "name": "step-10",
+          "stepKey": "hello-world",
+          "order": 10,
+          "dependsOn": [ "step-8", "step-9" ],
+          "config": { "delayMs": 1000 }
+        }
+      ]
+    }
+  ]
+}

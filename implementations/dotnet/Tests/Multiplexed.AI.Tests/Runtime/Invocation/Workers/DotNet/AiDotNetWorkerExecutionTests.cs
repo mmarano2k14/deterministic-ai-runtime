@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Multiplexed.Abstractions.AI.Invocation.Workers;
 using Multiplexed.AI.Runtime.Invocation.Workers;
@@ -119,5 +120,91 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.DotNet
             Assert.Equal("Liège ไทย", json.RootElement.GetProperty("name").GetString());
             Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("optional").ValueKind);
         }
+        [Fact]
+        public async Task Packaged_Managed_Dependency_Closure_Is_Loaded_Without_NuGet_Restore()
+        {
+            var result = await DotNetWorkerTestSupport.ExecuteAsync(
+                "UseDependency",
+                includeDependency: true,
+                packagedDependency: true);
+
+            Assert.True(result.Success);
+            Assert.Equal("63", result.PayloadJson);
+        }
+
+        [Fact]
+        public async Task Wrong_Package_Kind_Is_Refused_Before_Readiness()
+        {
+            var request = await DotNetWorkerTestSupport.RequestAsync(
+                "UseDependency",
+                includeDependency: true,
+                packagedDependency: true);
+            var dependency = request.Code.Dependencies.Single();
+            dependency = dependency with
+            {
+                Package = dependency.Package! with
+                {
+                    Kind = Multiplexed.Abstractions.AI.Publication.AiPublicationDependencyPackageKind.NodeLockedBundle
+                }
+            };
+            request = request with
+            {
+                Code = request.Code with { Dependencies = new[] { dependency } }
+            };
+
+            var callbacks = 0;
+            var transport = await DotNetWorkerTestSupport.TransportAsync();
+            var failure = await Record.ExceptionAsync(() =>
+                transport.InvokeAsync(
+                    request,
+                    _ =>
+                    {
+                        callbacks++;
+                        return Task.CompletedTask;
+                    }));
+
+            Assert.NotNull(failure);
+            Assert.Equal(0, callbacks);
+        }
+
+        [Fact]
+        public async Task Packaged_Manifest_Digest_Mismatch_Is_Refused_Before_Readiness()
+        {
+            var request = await DotNetWorkerTestSupport.RequestAsync(
+                "UseDependency",
+                includeDependency: true,
+                packagedDependency: true);
+            var dependency = request.Code.Dependencies.Single();
+            var assembly = dependency.Files.Single(file => file.Path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase));
+            var manifest = dependency.Files.Single(file => file.Path == dependency.Package!.ManifestPath);
+            var manifestJson = Encoding.UTF8.GetString(DecodeBase64Url(manifest.Base64Url));
+            var changed = Encoding.UTF8.GetBytes(manifestJson.Replace(assembly.Sha256, new string('0', 64), StringComparison.Ordinal));
+            var changedManifest = DotNetWorkerTestSupport.File(manifest.Path, changed);
+            dependency = dependency with
+            {
+                Files = dependency.Files.Select(file => file.Path == manifest.Path ? changedManifest : file).ToArray()
+            };
+            request = request with { Code = request.Code with { Dependencies = new[] { dependency } } };
+
+            var callbacks = 0;
+            var transport = await DotNetWorkerTestSupport.TransportAsync();
+            var failure = await Record.ExceptionAsync(() =>
+                transport.InvokeAsync(
+                    request,
+                    _ =>
+                    {
+                        callbacks++;
+                        return Task.CompletedTask;
+                    }));
+
+            Assert.NotNull(failure);
+            Assert.Equal(0, callbacks);
+        }
+
+        private static byte[] DecodeBase64Url(string value) =>
+            Convert.FromBase64String(
+                value.Replace('-', '+').Replace('_', '/') +
+                new string('=', (4 - value.Length % 4) % 4));
+
     }
 }

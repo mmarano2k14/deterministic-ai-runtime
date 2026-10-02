@@ -1,0 +1,38 @@
+// Basic DAG test: validates fan-out (parallel execution) and fan-in (merge synchronization).
+{
+  "pipelines": [
+    {
+      "name": "dag-parallel-basic",
+      "version": 1,
+      "executionMode": "Dag",
+      "steps": [
+        {
+          "name": "start",
+          "stepKey": "hello-world",
+          "order": 1
+        },
+        {
+          "name": "a1",
+          "stepKey": "hello-world",
+          "order": 2,
+          "dependsOn": [ "start" ],
+          "config": { "delayMs": 200 }
+        },
+        {
+          "name": "a2",
+          "stepKey": "hello-world",
+          "order": 3,
+          "dependsOn": [ "start" ],
+          "config": { "delayMs": 300 }
+        },
+        {
+          "name": "merge",
+          "stepKey": "hello-world",
+          "order": 4,
+          "dependsOn": [ "a1", "a2" ],
+          "config": { "delayMs": 400 }
+        }
+      ]
+    }
+  ]
+}

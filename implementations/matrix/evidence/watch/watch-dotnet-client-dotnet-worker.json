@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "watch-dotnet-client-dotnet-worker",
+  "status": "passed",
+  "coverageTarget": "execution-watch-e2e",
+  "coverageValues": [],
+  "clientLanguage": "dotnet",
+  "workerLanguage": "dotnet",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-acd8c401c0b5a697873c64fbb9c293ae14fc5b770b3ab838b4d55112f01ef864",
+  "executionId": "published-c168681be6dfbda1ea9638e547d7fefe8e3eb3a9da18d60948f27ebf24b7b799",
+  "initialSnapshotObserved": true,
+  "incrementalEventObserved": true,
+  "resyncObserved": false,
+  "publicSequences": [
+    3,
+    4,
+    5,
+    6
+  ],
+  "publicEventTypes": [
+    "step.started",
+    "step.completed",
+    "execution.completed"
+  ],
+  "terminalStatus": "Completed",
+  "evidence": [
+    "publish",
+    "submit",
+    "sdk-execution-watch",
+    "mcp-http-public-boundary",
+    "initial-snapshot",
+    "ordered-incremental-event",
+    "terminal-watch-convergence",
+    "terminal-result",
+    "public-execution-id"
+  ],
+  "recordedAtUtc": "2026-09-22T09:55:25.7387523+00:00"
+}

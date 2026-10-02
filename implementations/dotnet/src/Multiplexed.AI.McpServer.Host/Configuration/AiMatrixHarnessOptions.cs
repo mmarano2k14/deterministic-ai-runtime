@@ -1,0 +1,36 @@
+﻿namespace Multiplexed.AI.McpServer.Host.Configuration
+{
+    /// <summary>Explicit E2E harness settings. Disabled by default and never required by normal hosts.</summary>
+    public sealed class AiMatrixHarnessOptions
+    {
+        public bool Enabled { get; set; }
+        /// <summary>
+        /// Keeps matrix diagnostics and bootstrap enabled while using the normal standalone
+        /// JWT/access-context authentication boundary instead of the matrix static bearer scheme.
+        /// Disabled by default so historical matrix hosts keep their existing authentication contract.
+        /// </summary>
+        public bool UseStandaloneAuthentication { get; set; }
+        public string BearerToken { get; set; } = string.Empty;
+        public string UserId { get; set; } = "matrix-user";
+        public string TenantId { get; set; } = "matrix-tenant";
+        public string TenantGroupId { get; set; } = "matrix-group";
+        public string Project { get; set; } = "matrix";
+        public string Namespace { get; set; } = "default";
+        /// <summary>Positive snapshot TTL carried by the seeded matrix execution context; not the context-store session timeout.</summary>
+        public int ExecutionContextTtlSeconds { get; set; } = 3600;
+        public string PublicEndpoint { get; set; } = "http://localhost:8081/mcp";
+        public string Topology { get; set; } = "local";
+        public string Provider { get; set; } = "ProcessHostPool";
+        public string RuntimeProvider { get; set; } = "ProcessHostPool";
+        public string WorkerExecutionProvider { get; set; } = "TrustedProcess";
+        public string? DotNetEnvironmentRef { get; set; }
+        public string? TypeScriptEnvironmentRef { get; set; }
+        public string? PythonEnvironmentRef { get; set; }
+        public string ManifestPath { get; set; } = string.Empty;
+        public string EffectProbeMcpEndpoint { get; set; } = "http://127.0.0.1:8090/mcp";
+        public string EffectProbeStateEndpoint { get; set; } = "http://localhost:8090/state";
+        public string EffectEvidenceEndpoint { get; set; } = "http://localhost:8081/matrix/mcp-effect-evidence";
+        public string RecoveryEndpoint { get; set; } = "http://localhost:8081/matrix/recovery";
+        public string JournalResultAcceptanceEndpoint { get; set; } = "http://localhost:8081/matrix/journal-result-acceptance";
+    }
+}

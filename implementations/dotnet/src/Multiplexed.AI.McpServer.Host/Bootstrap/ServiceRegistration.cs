@@ -95,6 +95,11 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     .Get<AiMcpHostOptions>()
                 ?? new AiMcpHostOptions();
 
+            HostAuthenticationRegistration.Configure(
+                services,
+                configuration,
+                hostOptions);
+
             var aiEngineOptions =
                 new AiEngineOptions();
 
@@ -181,6 +186,18 @@ namespace Multiplexed.AI.McpServer.Host.Bootstrap
                     throw new InvalidOperationException(
                         $"Unsupported host mode '{hostOptions.Mode}'.");
             }
+
+            HostedInvocationHostRegistration.Configure(
+                services,
+                configuration);
+
+            PublicSdkPublicationHostRegistration.Configure(
+                services,
+                hostOptions);
+
+            MatrixHarnessRegistration.Configure(
+                services,
+                configuration);
 
             LogHostedServiceRegistrations(
                 services,

@@ -1,0 +1,867 @@
+{
+  "schemaVersion": 1,
+  "matrixId": "multilanguage-runtime-v1",
+  "purpose": "Validate the external SDKs through the shared public server boundary into the existing deterministic runtime without introducing a parallel execution authority.",
+  "languages": {
+    "clients": [
+      "dotnet",
+      "typescript",
+      "python"
+    ],
+    "workers": [
+      "dotnet",
+      "typescript",
+      "python"
+    ]
+  },
+  "dependencyPackageByWorker": {
+    "dotnet": "DotNetAssemblyClosure",
+    "typescript": "NodeLockedBundle",
+    "python": "PythonWheelBundle"
+  },
+  "customPolicyFamilies": [
+    "concurrency",
+    "retry",
+    "delegation"
+  ],
+  "invariants": [
+    "same-public-server-boundary",
+    "existing-publication-authority",
+    "existing-queue-and-scheduler-authority",
+    "existing-recovery-authority",
+    "existing-journal-result-acceptance-authority",
+    "immutable-publication-run-pinning",
+    "no-engine-dependency-in-external-clients",
+    "no-worker-authority-over-dag-transitions",
+    "no-runtime-package-installation",
+    "no-silent-custom-to-native-fallback"
+  ],
+  "coreScenarios": [
+    {
+      "id": "core-dotnet-client-dotnet-worker",
+      "clientLanguage": "dotnet",
+      "workerLanguage": "dotnet",
+      "executor": {
+        "kind": "dotnet",
+        "command": [
+          "dotnet",
+          "run",
+          "--project",
+          "implementations/matrix/clients/dotnet/Multiplexed.AI.Matrix.DotNetClient/Multiplexed.AI.Matrix.DotNetClient.csproj",
+          "--"
+        ]
+      },
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-dotnet-client-typescript-worker",
+      "clientLanguage": "dotnet",
+      "workerLanguage": "typescript",
+      "executor": {
+        "kind": "dotnet",
+        "command": [
+          "dotnet",
+          "run",
+          "--project",
+          "implementations/matrix/clients/dotnet/Multiplexed.AI.Matrix.DotNetClient/Multiplexed.AI.Matrix.DotNetClient.csproj",
+          "--"
+        ]
+      },
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-dotnet-client-python-worker",
+      "clientLanguage": "dotnet",
+      "workerLanguage": "python",
+      "executor": {
+        "kind": "dotnet",
+        "command": [
+          "dotnet",
+          "run",
+          "--project",
+          "implementations/matrix/clients/dotnet/Multiplexed.AI.Matrix.DotNetClient/Multiplexed.AI.Matrix.DotNetClient.csproj",
+          "--"
+        ]
+      },
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-typescript-client-dotnet-worker",
+      "clientLanguage": "typescript",
+      "workerLanguage": "dotnet",
+      "executor": {
+        "kind": "typescript",
+        "command": [
+          "node",
+          "implementations/matrix/clients/typescript/run.mjs"
+        ]
+      },
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-typescript-client-typescript-worker",
+      "clientLanguage": "typescript",
+      "workerLanguage": "typescript",
+      "executor": {
+        "kind": "typescript",
+        "command": [
+          "node",
+          "implementations/matrix/clients/typescript/run.mjs"
+        ]
+      },
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-typescript-client-python-worker",
+      "clientLanguage": "typescript",
+      "workerLanguage": "python",
+      "executor": {
+        "kind": "typescript",
+        "command": [
+          "node",
+          "implementations/matrix/clients/typescript/run.mjs"
+        ]
+      },
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-python-client-dotnet-worker",
+      "clientLanguage": "python",
+      "workerLanguage": "dotnet",
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/run.py"
+        ]
+      },
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-python-client-typescript-worker",
+      "clientLanguage": "python",
+      "workerLanguage": "typescript",
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/run.py"
+        ]
+      },
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    },
+    {
+      "id": "core-python-client-python-worker",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/run.py"
+        ]
+      },
+      "requiredEvidence": [
+        "publish",
+        "submit",
+        "observe",
+        "terminal-result",
+        "public-execution-id"
+      ]
+    }
+  ],
+  "coverageTargets": [
+    {
+      "id": "publication-pinning",
+      "minimumExecutedScenarios": 3,
+      "requiredWorkerLanguages": [
+        "dotnet",
+        "typescript",
+        "python"
+      ],
+      "requiredValues": [],
+      "notes": "Each hosted language must prove that an already submitted execution remains bound to its immutable publication after a later publication is created."
+    },
+    {
+      "id": "deterministic-dependency-packaging",
+      "minimumExecutedScenarios": 3,
+      "requiredWorkerLanguages": [
+        "dotnet",
+        "typescript",
+        "python"
+      ],
+      "requiredValues": [
+        "DotNetAssemblyClosure",
+        "NodeLockedBundle",
+        "PythonWheelBundle"
+      ],
+      "notes": "Package coverage follows the supported package kind for the hosted execution language; no runtime package installation is permitted."
+    },
+    {
+      "id": "custom-policy-family",
+      "minimumExecutedScenarios": 3,
+      "requiredWorkerLanguages": [],
+      "requiredValues": [
+        "concurrency",
+        "retry",
+        "delegation"
+      ],
+      "notes": "Only the hosted policy families already supported by the runtime are in scope. No other policy family is implied."
+    },
+    {
+      "id": "nested-child-dag",
+      "minimumExecutedScenarios": 3,
+      "requiredWorkerLanguages": [
+        "dotnet",
+        "typescript",
+        "python"
+      ],
+      "requiredValues": [],
+      "notes": "Exercise published custom declarations inside nested Child DAGs while preserving the existing parent continuation authority."
+    },
+    {
+      "id": "cancellation",
+      "minimumExecutedScenarios": 3,
+      "requiredClientLanguages": [
+        "dotnet",
+        "typescript",
+        "python"
+      ],
+      "requiredWorkerLanguages": [],
+      "requiredValues": [],
+      "notes": "Each external SDK must exercise the explicit durable cancellation operation. Transport cancellation alone does not satisfy this target."
+    },
+    {
+      "id": "recovery",
+      "minimumExecutedScenarios": 2,
+      "requiredWorkerLanguages": [],
+      "requiredValues": [
+        "in-flight-resume",
+        "local-queued-redispatch"
+      ],
+      "notes": "Use the existing recovery authorities and record the exact recovery path exercised."
+    },
+    {
+      "id": "mcp-effect-evidence",
+      "minimumExecutedScenarios": 2,
+      "requiredWorkerLanguages": [],
+      "requiredValues": [
+        "completed-local-replay",
+        "uncertain-blocks-blind-resend"
+      ],
+      "notes": "The matrix proves durable effect evidence behavior without claiming generic exactly-once delivery."
+    },
+    {
+      "id": "journal-result-acceptance",
+      "minimumExecutedScenarios": 2,
+      "requiredWorkerLanguages": [],
+      "requiredValues": [
+        "accepted-result-replay",
+        "duplicate-delivery-convergence"
+      ],
+      "notes": "Result acceptance remains owned by the existing durable invocation journal and epoch rules."
+    },
+    {
+      "id": "worker-isolation-provider",
+      "minimumExecutedScenarios": 2,
+      "requiredWorkerLanguages": [],
+      "requiredValues": [
+        "trusted-process",
+        "sandboxed-container"
+      ],
+      "notes": "A trusted process and an applied sandboxed container are separate profiles; neither may be reported as the other."
+    },
+    {
+      "id": "isolation-artifact-selection",
+      "minimumExecutedScenarios": 2,
+      "requiredWorkerLanguages": [],
+      "requiredValues": [
+        "HostRuntime",
+        "OciImage"
+      ],
+      "notes": "The SDK expresses execution requirements while the server selects the physical provider."
+    },
+    {
+      "id": "external-client-dependency-firewall",
+      "minimumExecutedScenarios": 3,
+      "requiredClientLanguages": [
+        "dotnet",
+        "typescript",
+        "python"
+      ],
+      "requiredWorkerLanguages": [],
+      "requiredValues": [],
+      "notes": "Validate that each external client remains free of engine/runtime dependencies."
+    }
+  ],
+  "featureScenarios": [
+    {
+      "id": "feature-publication-pinning-python-client-dotnet-worker",
+      "coverageTarget": "publication-pinning",
+      "clientLanguage": "python",
+      "workerLanguage": "dotnet",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "publication-pinning",
+          "--worker",
+          "dotnet"
+        ]
+      }
+    },
+    {
+      "id": "feature-publication-pinning-python-client-typescript-worker",
+      "coverageTarget": "publication-pinning",
+      "clientLanguage": "python",
+      "workerLanguage": "typescript",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "publication-pinning",
+          "--worker",
+          "typescript"
+        ]
+      }
+    },
+    {
+      "id": "feature-publication-pinning-python-client-python-worker",
+      "coverageTarget": "publication-pinning",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "publication-pinning",
+          "--worker",
+          "python"
+        ]
+      }
+    },
+    {
+      "id": "feature-dependency-package-python-client-dotnet-worker",
+      "coverageTarget": "deterministic-dependency-packaging",
+      "clientLanguage": "python",
+      "workerLanguage": "dotnet",
+      "coverageValues": [
+        "DotNetAssemblyClosure"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "deterministic-dependency-packaging",
+          "--worker",
+          "dotnet"
+        ]
+      }
+    },
+    {
+      "id": "feature-dependency-package-python-client-typescript-worker",
+      "coverageTarget": "deterministic-dependency-packaging",
+      "clientLanguage": "python",
+      "workerLanguage": "typescript",
+      "coverageValues": [
+        "NodeLockedBundle"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "deterministic-dependency-packaging",
+          "--worker",
+          "typescript"
+        ]
+      }
+    },
+    {
+      "id": "feature-dependency-package-python-client-python-worker",
+      "coverageTarget": "deterministic-dependency-packaging",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [
+        "PythonWheelBundle"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "deterministic-dependency-packaging",
+          "--worker",
+          "python"
+        ]
+      }
+    },
+    {
+      "id": "feature-custom-policy-concurrency-python-worker",
+      "coverageTarget": "custom-policy-family",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [
+        "concurrency"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "custom-policy-family",
+          "--policy-family",
+          "concurrency",
+          "--worker",
+          "python"
+        ]
+      }
+    },
+    {
+      "id": "feature-custom-policy-retry-typescript-worker",
+      "coverageTarget": "custom-policy-family",
+      "clientLanguage": "python",
+      "workerLanguage": "typescript",
+      "coverageValues": [
+        "retry"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "custom-policy-family",
+          "--policy-family",
+          "retry",
+          "--worker",
+          "typescript"
+        ]
+      }
+    },
+    {
+      "id": "feature-custom-policy-delegation-dotnet-worker",
+      "coverageTarget": "custom-policy-family",
+      "clientLanguage": "python",
+      "workerLanguage": "dotnet",
+      "coverageValues": [
+        "delegation"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "custom-policy-family",
+          "--policy-family",
+          "delegation",
+          "--worker",
+          "dotnet"
+        ]
+      }
+    },
+    {
+      "id": "feature-nested-child-dag-python-client-dotnet-worker",
+      "coverageTarget": "nested-child-dag",
+      "clientLanguage": "python",
+      "workerLanguage": "dotnet",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "nested-child-dag",
+          "--worker",
+          "dotnet"
+        ]
+      }
+    },
+    {
+      "id": "feature-nested-child-dag-python-client-typescript-worker",
+      "coverageTarget": "nested-child-dag",
+      "clientLanguage": "python",
+      "workerLanguage": "typescript",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "nested-child-dag",
+          "--worker",
+          "typescript"
+        ]
+      }
+    },
+    {
+      "id": "feature-nested-child-dag-python-client-python-worker",
+      "coverageTarget": "nested-child-dag",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "nested-child-dag",
+          "--worker",
+          "python"
+        ]
+      }
+    },
+    {
+      "id": "feature-mcp-effect-completed-local-replay-python-client",
+      "coverageTarget": "mcp-effect-evidence",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [
+        "completed-local-replay"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "mcp-effect-evidence",
+          "--effect-case",
+          "completed-local-replay"
+        ]
+      }
+    },
+    {
+      "id": "feature-mcp-effect-uncertain-blocks-blind-resend-python-client",
+      "coverageTarget": "mcp-effect-evidence",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [
+        "uncertain-blocks-blind-resend"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "mcp-effect-evidence",
+          "--effect-case",
+          "uncertain-blocks-blind-resend"
+        ]
+      }
+    },
+    {
+      "id": "feature-cancellation-dotnet-client-dotnet-worker",
+      "coverageTarget": "cancellation",
+      "clientLanguage": "dotnet",
+      "workerLanguage": "dotnet",
+      "coverageValues": [],
+      "executor": {
+        "kind": "dotnet",
+        "command": [
+          "dotnet",
+          "run",
+          "--project",
+          "implementations/matrix/clients/dotnet/Multiplexed.AI.Matrix.DotNetClient/Multiplexed.AI.Matrix.DotNetClient.csproj",
+          "--",
+          "--feature",
+          "cancellation",
+          "--worker",
+          "dotnet"
+        ]
+      }
+    },
+    {
+      "id": "feature-cancellation-typescript-client-typescript-worker",
+      "coverageTarget": "cancellation",
+      "clientLanguage": "typescript",
+      "workerLanguage": "typescript",
+      "coverageValues": [],
+      "executor": {
+        "kind": "typescript",
+        "command": [
+          "node",
+          "implementations/matrix/clients/typescript/run.mjs",
+          "--feature",
+          "cancellation",
+          "--worker",
+          "typescript"
+        ]
+      }
+    },
+    {
+      "id": "feature-cancellation-python-client-python-worker",
+      "coverageTarget": "cancellation",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/run.py",
+          "--feature",
+          "cancellation",
+          "--worker",
+          "python"
+        ]
+      }
+    },
+    {
+      "id": "feature-recovery-in-flight-resume-python-client",
+      "coverageTarget": "recovery",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [
+        "in-flight-resume"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "recovery",
+          "--recovery-case",
+          "in-flight-resume"
+        ]
+      }
+    },
+    {
+      "id": "feature-recovery-local-queued-redispatch-python-client",
+      "coverageTarget": "recovery",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [
+        "local-queued-redispatch"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "recovery",
+          "--recovery-case",
+          "local-queued-redispatch"
+        ]
+      }
+    },
+    {
+      "id": "feature-journal-result-accepted-replay-python-client",
+      "coverageTarget": "journal-result-acceptance",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [
+        "accepted-result-replay"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "journal-result-acceptance",
+          "--journal-case",
+          "accepted-result-replay"
+        ]
+      }
+    },
+    {
+      "id": "feature-journal-duplicate-delivery-convergence-python-client",
+      "coverageTarget": "journal-result-acceptance",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [
+        "duplicate-delivery-convergence"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py",
+          "--feature",
+          "journal-result-acceptance",
+          "--journal-case",
+          "duplicate-delivery-convergence"
+        ]
+      }
+    },
+    {
+      "id": "feature-external-client-dependency-firewall-dotnet-client",
+      "coverageTarget": "external-client-dependency-firewall",
+      "clientLanguage": "dotnet",
+      "workerLanguage": null,
+      "coverageValues": [],
+      "executor": {
+        "kind": "dotnet",
+        "command": [
+          "dotnet",
+          "run",
+          "--project",
+          "implementations/matrix/clients/dotnet/Multiplexed.AI.Matrix.DotNetClient/Multiplexed.AI.Matrix.DotNetClient.csproj",
+          "--"
+        ]
+      }
+    },
+    {
+      "id": "feature-external-client-dependency-firewall-typescript-client",
+      "coverageTarget": "external-client-dependency-firewall",
+      "clientLanguage": "typescript",
+      "workerLanguage": null,
+      "coverageValues": [],
+      "executor": {
+        "kind": "typescript",
+        "command": [
+          "node",
+          "implementations/matrix/clients/typescript/run.mjs"
+        ]
+      }
+    },
+    {
+      "id": "feature-external-client-dependency-firewall-python-client",
+      "coverageTarget": "external-client-dependency-firewall",
+      "clientLanguage": "python",
+      "workerLanguage": null,
+      "coverageValues": [],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/run.py"
+        ]
+      }
+    },
+    {
+      "id": "feature-worker-isolation-provider-trusted-process-python-worker",
+      "coverageTarget": "worker-isolation-provider",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [
+        "trusted-process"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py"
+        ]
+      }
+    },
+    {
+      "id": "feature-worker-isolation-provider-sandboxed-container-python-worker",
+      "coverageTarget": "worker-isolation-provider",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [
+        "sandboxed-container"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py"
+        ]
+      }
+    },
+    {
+      "id": "feature-isolation-artifact-selection-host-runtime-python-worker",
+      "coverageTarget": "isolation-artifact-selection",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [
+        "HostRuntime"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py"
+        ]
+      }
+    },
+    {
+      "id": "feature-isolation-artifact-selection-oci-image-python-worker",
+      "coverageTarget": "isolation-artifact-selection",
+      "clientLanguage": "python",
+      "workerLanguage": "python",
+      "coverageValues": [
+        "OciImage"
+      ],
+      "executor": {
+        "kind": "python",
+        "command": [
+          "python",
+          "implementations/matrix/clients/python/feature.py"
+        ]
+      }
+    }
+  ]
+}

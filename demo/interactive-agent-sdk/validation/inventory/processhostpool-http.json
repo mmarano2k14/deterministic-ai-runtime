@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "source": "runtime-pool-diagnostics",
+  "captureId": "4d73d2be7a084ae0b8f3efb689d8980f",
+  "runtimeProvider": "ProcessHostPool",
+  "runtimeTransport": "HTTP",
+  "poolId": "mcp-http-process-host-pool-7e4460b81452",
+  "controlPlaneEndpoint": "http://127.0.0.1:65498/mcp",
+  "hosts": [
+    {
+      "hostId": "mcp-http-process-host-pool-7e4460b81452-process-host-001-49c9de805980454d8bc75b22eebdbada",
+      "processId": 53820,
+      "stableEndpoint": "http://127.0.0.1:20000",
+      "runtimeInstances": [
+        {
+          "runtimeInstanceId": "mcp-http-process-host-pool-7e4460b81452-host-001-runtime-1-1a6dedcef22249d1892a7935e038a66d",
+          "routeId": null,
+          "processId": 8584,
+          "status": "Ready",
+          "canAcceptRun": true,
+          "providerName": "http",
+          "transportName": "http",
+          "endpoint": "http://127.0.0.1:20000"
+        },
+        {
+          "runtimeInstanceId": "mcp-http-process-host-pool-7e4460b81452-host-001-runtime-2-65c97598886247d583c51ac9b96b2358",
+          "routeId": null,
+          "processId": 12696,
+          "status": "Ready",
+          "canAcceptRun": true,
+          "providerName": "http",
+          "transportName": "http",
+          "endpoint": "http://127.0.0.1:20000"
+        },
+        {
+          "runtimeInstanceId": "mcp-http-process-host-pool-7e4460b81452-host-001-runtime-3-a0475aad921c4903b10af64c45ccd05a",
+          "routeId": null,
+          "processId": 58556,
+          "status": "Ready",
+          "canAcceptRun": true,
+          "providerName": "http",
+          "transportName": "http",
+          "endpoint": "http://127.0.0.1:20000"
+        }
+      ]
+    },
+    {
+      "hostId": "mcp-http-process-host-pool-7e4460b81452-process-host-002-91f0c8df0dfa4ed38be89f775591f905",
+      "processId": 34300,
+      "stableEndpoint": "http://127.0.0.1:20022",
+      "runtimeInstances": [
+        {
+          "runtimeInstanceId": "mcp-http-process-host-pool-7e4460b81452-host-002-runtime-1-6f08b36712454804919406eb217d3b79",
+          "routeId": null,
+          "processId": 54192,
+          "status": "Ready",
+          "canAcceptRun": true,
+          "providerName": "http",
+          "transportName": "http",
+          "endpoint": "http://127.0.0.1:20022"
+        },
+        {
+          "runtimeInstanceId": "mcp-http-process-host-pool-7e4460b81452-host-002-runtime-2-43f8e50ab26c4ba4a24f5b2bd64425fe",
+          "routeId": null,
+          "processId": 44788,
+          "status": "Ready",
+          "canAcceptRun": true,
+          "providerName": "http",
+          "transportName": "http",
+          "endpoint": "http://127.0.0.1:20022"
+        },
+        {
+          "runtimeInstanceId": "mcp-http-process-host-pool-7e4460b81452-host-002-runtime-3-9001fe3a61244255a2f0a43d95f7a83f",
+          "routeId": null,
+          "processId": 61576,
+          "status": "Ready",
+          "canAcceptRun": true,
+          "providerName": "http",
+          "transportName": "http",
+          "endpoint": "http://127.0.0.1:20022"
+        }
+      ]
+    },
+    {
+      "hostId": "mcp-http-process-host-pool-7e4460b81452-process-host-003-e53aa79c18f546a9a8248994a2d910d3",
+      "processId": 61972,
+      "stableEndpoint": "http://127.0.0.1:20044",
+      "runtimeInstances": [
+        {
+          "runtimeInstanceId": "mcp-http-process-host-pool-7e4460b81452-host-003-runtime-1-6c5a0d20bafb42279e9c22beff8d5a33",
+          "routeId": null,
+          "processId": 55420,
+          "status": "Ready",
+          "canAcceptRun": true,
+          "providerName": "http",
+          "transportName": "http",
+          "endpoint": "http://127.0.0.1:20044"
+        },
+        {
+          "runtimeInstanceId": "mcp-http-process-host-pool-7e4460b81452-host-003-runtime-2-98f24393e1074d049e6f9be78dcc9d78",
+          "routeId": null,
+          "processId": 50628,
+          "status": "Ready",
+          "canAcceptRun": true,
+          "providerName": "http",
+          "transportName": "http",
+          "endpoint": "http://127.0.0.1:20044"
+        },
+        {
+          "runtimeInstanceId": "mcp-http-process-host-pool-7e4460b81452-host-003-runtime-3-30f02e58895c45b1b32c505d0f508539",
+          "routeId": null,
+          "processId": 51220,
+          "status": "Ready",
+          "canAcceptRun": true,
+          "providerName": "http",
+          "transportName": "http",
+          "endpoint": "http://127.0.0.1:20044"
+        }
+      ]
+    }
+  ],
+  "capturedAtUtc": "2026-09-30T13:30:06.7131132+00:00"
+}

@@ -8,7 +8,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable.Dag
     {
         public AiDurableInvocationStepAdapterFactory(string executionLanguage)
         {
-            if (executionLanguage is not ("python" or "typescript" or "dotnet"))
+            if (!AiExecutionLanguages.IsSupported(executionLanguage))
                 throw new ArgumentException("Unsupported hosted execution language.", nameof(executionLanguage));
             ExecutionLanguage = executionLanguage;
         }

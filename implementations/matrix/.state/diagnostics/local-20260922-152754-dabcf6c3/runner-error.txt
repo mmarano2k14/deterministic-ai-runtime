@@ -1,0 +1,7 @@
+Matrix service exited before readiness. Url=http://127.0.0.1:8081/health; ExitCode=-532462766
+At D:\Dev\Personal\multiplexed-rbac\implementations\matrix\runtime\local\process-support.ps1:186 char:13
++             throw "Matrix service exited before readiness. Url=$Url;  ...
++             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (Matrix service ...Code=-532462766:String) [], RuntimeException
+    + FullyQualifiedErrorId : Matrix service exited before readiness. Url=http://127.0.0.1:8081/health; ExitCode=-532462766
+ 

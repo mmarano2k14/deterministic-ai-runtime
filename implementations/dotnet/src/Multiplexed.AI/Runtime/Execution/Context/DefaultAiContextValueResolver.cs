@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Context;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
@@ -117,6 +117,73 @@ namespace Multiplexed.AI.Runtime.Execution.Context
                 .ConfigureAwait(false);
 
             return ConvertValue<T>(value);
+        }
+
+        /// <summary>
+        /// Resolves a required runtime path without applying raw/literal fallback.
+        /// </summary>
+        public async Task<T> ResolveRequiredPathAsync<T>(
+            AiStepExecutionContext context,
+            string path,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(context);
+            ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
+            if (!LooksLikeResolvablePath(path))
+            {
+                throw new InvalidOperationException(
+                    $"Required runtime path '{path}' is not a supported runtime path expression.");
+            }
+
+            var metrics = GetMetrics(context);
+
+            metrics?.RecordResolveStarted(
+                context.ExecutionId,
+                context.StepName,
+                path);
+
+            try
+            {
+                var result = await TryResolvePathAsync(context, path, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (!result.Found)
+                {
+                    metrics?.RecordResolveMiss(
+                        context.ExecutionId,
+                        context.StepName,
+                        path);
+
+                    throw new InvalidOperationException(
+                        $"Required runtime path '{path}' could not be resolved.");
+                }
+
+                metrics?.RecordResolveSuccess(
+                    context.ExecutionId,
+                    context.StepName,
+                    path);
+
+                var value = ConvertValue<T>(result.Value);
+
+                if (value is null)
+                {
+                    throw new InvalidOperationException(
+                        $"Required runtime path '{path}' resolved to null.");
+                }
+
+                return value;
+            }
+            catch (Exception ex) when (ex is not InvalidOperationException)
+            {
+                metrics?.RecordResolveFailed(
+                    context.ExecutionId,
+                    context.StepName,
+                    path,
+                    ex);
+
+                throw;
+            }
         }
 
         /// <summary>
@@ -503,6 +570,17 @@ namespace Multiplexed.AI.Runtime.Execution.Context
                 return TryTraverse(resolvedPayload, parts, 5);
             }
 
+            if (string.Equals(parts[3], "payload", StringComparison.Ordinal))
+            {
+                if (!TryGetResultPayload(stepState.Result, out var payload))
+                {
+                    return (false, null);
+                }
+
+                var resolvedPayload = await ResolvePayloadForTraversalAsync(context, payload, cancellationToken).ConfigureAwait(false);
+                return TryTraverse(resolvedPayload, parts, 4);
+            }
+
             if (string.Equals(parts[3], "value", StringComparison.Ordinal))
             {
                 if (!TryGetPublicPropertyValue(stepState.Result, "Value", out var value))
@@ -549,6 +627,39 @@ namespace Multiplexed.AI.Runtime.Execution.Context
             var resolver = context.Services.GetRequiredService<IAiExecutionPayloadResolver>();
             var resolved = await resolver.ResolveAsync(payload, cancellationToken).ConfigureAwait(false);
             return ConvertJsonElementValue(resolved);
+        }
+
+        /// <summary>
+        /// Resolves a payload for nested path traversal. Immutable child-DAG snapshots are stored as
+        /// canonical JSON text when inline and as parsed JSON when artifact-backed; this method normalizes
+        /// those two storage forms without changing the existing general payload-resolution contract.
+        /// </summary>
+        private static async Task<object?> ResolvePayloadForTraversalAsync(
+            AiStepExecutionContext context,
+            AiStoredPayload payload,
+            CancellationToken cancellationToken)
+        {
+            var resolved = await ResolvePayloadAsync(context, payload, cancellationToken).ConfigureAwait(false);
+
+            if (resolved is not string text ||
+                string.IsNullOrWhiteSpace(text) ||
+                string.IsNullOrWhiteSpace(payload.ContentType) ||
+                !payload.ContentType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase))
+            {
+                return resolved;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(text);
+                return ConvertJsonElementValue(document.RootElement.Clone());
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException(
+                    "Execution result payload declares JSON content but does not contain valid JSON.",
+                    ex);
+            }
         }
 
         /// <summary>
@@ -815,6 +926,25 @@ namespace Multiplexed.AI.Runtime.Execution.Context
             }
 
             data = default!;
+            return false;
+        }
+
+        /// <summary>
+        /// Reads result.Payload using reflection so payload-backed primary results can participate in
+        /// normal runtime path resolution without exposing storage details to pipeline authors.
+        /// </summary>
+        private static bool TryGetResultPayload(
+            object result,
+            out AiStoredPayload payload)
+        {
+            if (TryGetPublicPropertyValue(result, "Payload", out var value) &&
+                value is AiStoredPayload storedPayload)
+            {
+                payload = storedPayload;
+                return true;
+            }
+
+            payload = default!;
             return false;
         }
 

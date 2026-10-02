@@ -89,6 +89,45 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.TypeScript
         }
 
         [TypeScriptWorkerFact]
+        public async Task Locked_Node_Dependency_Executes_From_Immutable_Publication_Without_Registry_Resolution()
+        {
+            var profile = await TypeScriptWorkerTestSupport.ProfileAsync();
+            using var fixture = new WorkerTestSupport.PublishedFixture();
+            var p = fixture.Publication;
+            p.Environments.Entries[profile.Runtime.Reference] = profile.Runtime;
+            p.Clock.Set(DateTimeOffset.UtcNow);
+            var original = await p.PublishAsync(TypeScriptWorkerTestSupport.UploadWithLockedDependency(
+                profile.Runtime, revision: "1", factor: "4"));
+            var parent = await p.CreateAsync(original);
+            Assert.Equal(AiExecutionStatus.Waiting, (await p.RunNextAsync(parent.ExecutionId)).Status);
+
+            var replacement = await p.PublishAsync(TypeScriptWorkerTestSupport.UploadWithLockedDependency(
+                profile.Runtime, revision: "2", factor: "9"));
+            Assert.NotEqual(original.PublicationRef, replacement.PublicationRef);
+
+            var identity = new AiDurableInvocationIdentity(
+                PublicationTestSupport.Scope.TenantId, parent.ExecutionId, "first");
+            var options = new AiWorkerSupervisionOptions();
+            using var capacity = new AiWorkerProcessCapacity(options);
+            var supervisor = TypeScriptWorkerTestSupport.Supervisor(
+                fixture, await TypeScriptWorkerTestSupport.TransportAsync(), capacity, options);
+
+            Assert.Equal(AiWorkerDispatchDisposition.Accepted,
+                (await supervisor.DispatchAsync(PublicationTestSupport.Scope, identity)).Disposition);
+            var recorded = (await p.Journal.GetAsync(PublicationTestSupport.Scope, identity))!;
+            Assert.Equal(original.PublicationRef, recorded.Definition.Target.PublicationRef);
+            using var payload = JsonDocument.Parse(recorded.Result!.PayloadJson);
+            Assert.Equal(1, payload.RootElement.GetProperty("revision").GetInt32());
+            Assert.Equal(4, payload.RootElement.GetProperty("amount").GetInt32());
+
+            var engine = new AiDagExecutionEngine(
+                p.EngineServices, DagTestProxy.Noop<IAiDagExecutionEngineRuntimeServices>());
+            await engine.ResumeExternalWaitingStepAsync(parent.ExecutionId, "first");
+            await p.RunNextAsync(parent.ExecutionId);
+            Assert.Equal(0, p.LatestLookups);
+        }
+
+        [TypeScriptWorkerFact]
         public async Task TypeScript_Exception_Retains_Uncertain_Invocation_Without_Manufacturing_Business_Failure()
         {
             var profile = await TypeScriptWorkerTestSupport.ProfileAsync();

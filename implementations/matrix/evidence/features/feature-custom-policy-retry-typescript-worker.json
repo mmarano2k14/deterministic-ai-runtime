@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-custom-policy-retry-typescript-worker",
+  "status": "passed",
+  "coverageTarget": "custom-policy-family",
+  "coverageValues": [
+    "retry"
+  ],
+  "clientLanguage": "python",
+  "workerLanguage": "typescript",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-6174bba5e484dfe983e2f12b55a47149b9423a091da35936ac651772e33a1064",
+  "executionId": "published-82b3842d8dbbbfdc02f541e94722ae47b279a3d9e9b6e887962276b764efcd6d",
+  "policyFamily": "retry",
+  "policyDecision": "stop",
+  "expectedTerminalStatus": "Failed",
+  "terminalStatus": "Failed",
+  "failureCode": "execution_failed",
+  "evidence": [
+    "publish",
+    "submit",
+    "hosted-custom-policy",
+    "policy-stop-enforced",
+    "observe",
+    "terminal-result"
+  ],
+  "recordedAtUtc": "2026-09-21T23:13:03.311+00:00"
+}

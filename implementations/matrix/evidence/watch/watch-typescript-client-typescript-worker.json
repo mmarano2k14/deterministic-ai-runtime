@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "watch-typescript-client-typescript-worker",
+  "status": "passed",
+  "coverageTarget": "execution-watch-e2e",
+  "coverageValues": [],
+  "clientLanguage": "typescript",
+  "workerLanguage": "typescript",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-7d26f0ac9f7472f359dbb8469997e324ab58378c123e2541d905e651e4a85003",
+  "executionId": "published-50a78d5422557da6fb18c00c37008b34b70f2e44b855a62e7b96322c3a5944bf",
+  "initialSnapshotObserved": true,
+  "incrementalEventObserved": true,
+  "resyncObserved": false,
+  "publicSequences": [
+    3,
+    4,
+    5,
+    6
+  ],
+  "publicEventTypes": [
+    "step.started",
+    "step.completed",
+    "execution.completed"
+  ],
+  "terminalStatus": "Completed",
+  "evidence": [
+    "publish",
+    "submit",
+    "sdk-execution-watch",
+    "mcp-http-public-boundary",
+    "initial-snapshot",
+    "ordered-incremental-event",
+    "terminal-watch-convergence",
+    "terminal-result",
+    "public-execution-id"
+  ],
+  "recordedAtUtc": "2026-09-22T09:55:34.876Z"
+}

@@ -1,0 +1,9 @@
+Native command failed. Executable=C:\Users\mmara\AppData\Local\Python\pythoncore-3.12-64\python.exe; ExitCode=1; Arguments=.\implementations\matrix\control_matrix.py run 
+--scenario all --manifest D:\Dev\Personal\multiplexed-rbac\implementations\matrix\.state\runtime-manifest.json --no-build; LogPath=
+At D:\Dev\Personal\multiplexed-rbac\implementations\matrix\runtime\local\process-support.ps1:40 char:9
++         throw "Native command failed. Executable=$Executable; ExitCod ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (Native command ...build; LogPath=:String) [], RuntimeException
+    + FullyQualifiedErrorId : Native command failed. Executable=C:\Users\mmara\AppData\Local\Python\pythoncore-3.12-64\python.exe; ExitCode=1; Arguments=.\implementations\matrix\ 
+   control_matrix.py run --scenario all --manifest D:\Dev\Personal\multiplexed-rbac\implementations\matrix\.state\runtime-manifest.json --no-build; LogPath=
+ 

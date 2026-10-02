@@ -30,6 +30,19 @@ namespace Multiplexed.AI.Runtime.Publication
             return compiled.Publication;
         }
 
+        public async Task<AiPipelineDefinition> ReadDefinitionAsync(
+            AiDurableInvocationScope scope,
+            string publicationRef,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(publicationRef);
+            var guard = await _identity.AuthorizeAsync(scope, _options.Read, cancellationToken).ConfigureAwait(false);
+            var result = await _store.ReadVerifiedAsync(publicationRef, guard, cancellationToken).ConfigureAwait(false);
+            guard.RequireCurrent();
+            cancellationToken.ThrowIfCancellationRequested();
+            return result.Definition;
+        }
+
         public async Task<AiPipelinePublication> ReadAsync(AiDurableInvocationScope scope, string publicationRef,
             CancellationToken cancellationToken = default)
         {

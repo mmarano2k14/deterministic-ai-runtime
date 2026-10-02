@@ -1,0 +1,30 @@
+// Invalid DAG test: contains a circular dependency (A → C → B → A) and must be rejected by validation logic.
+{
+  "pipelines": [
+    {
+      "name": "dag-invalid-cycle",
+      "version": 1,
+      "executionMode": "Dag",
+      "steps": [
+        {
+          "name": "A",
+          "stepKey": "hello-world",
+          "order": 1,
+          "dependsOn": [ "C" ]
+        },
+        {
+          "name": "B",
+          "stepKey": "hello-world",
+          "order": 2,
+          "dependsOn": [ "A" ]
+        },
+        {
+          "name": "C",
+          "stepKey": "hello-world",
+          "order": 3,
+          "dependsOn": [ "B" ]
+        }
+      ]
+    }
+  ]
+}

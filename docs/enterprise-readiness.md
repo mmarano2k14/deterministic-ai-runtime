@@ -389,17 +389,23 @@ The existing Kubernetes mode remains one `RuntimeInstanceOnly` runtime per Pod/S
 
 ## Hosted Multilanguage Execution Boundary
 
-The server-side foundation now includes real Python, TypeScript, and .NET function execution, immutable publication and whole-run pinning, durable invocation results, existing-DAG continuation, hosted custom `Concurrency` policies, and authorized outbound MCP.
+The server-side foundation now includes real Python, TypeScript, and .NET function execution, immutable publication and whole-run pinning, deterministic dependency packaging, published custom Child DAG binding, durable invocation results, existing-DAG continuation, hosted custom `Concurrency`, `Retry`, and `Delegation` policies, authorized outbound MCP, and an opt-in durable MCP external-effect evidence boundary.
 
 | Enterprise concern | Current answer |
 |---|---|
-| Code changes during a run | Published code, explicit dependencies, and environment identity remain pinned, including unstarted call sites. |
-| Function-process replacement | Journal leases and epochs govern result authority; the existing DAG applies the accepted result. External side effects still require their own idempotency/reconciliation contract. |
-| Tenant code isolation | The process provider is for explicitly approved trusted execution. Unsupported sandbox, egress, OCI, and sealed-closure requirements are rejected rather than downgraded. |
-| MCP auditability | Stable effect and intent metadata are present; durable outbound-effect storage and reconciliation are not. |
-| SDK availability | Server foundations are implemented. An independent external SDK library and public publication/submission surface remain separate work. |
+| Code/dependency changes during a run | Published code, deterministic dependency bundles, and environment identity remain pinned, including unstarted root and published-child call sites. Supported package forms are pure-Python wheels, locked Node source bundles, and managed .NET assembly closures; newer publications do not replace material already pinned to a run. |
+| Published Child DAGs | An allocated `ChildExecutionId` is immutably bound before dispatch to the original publication and exact nested definition. Native-only child subtrees remain on the historical unbound path. |
+| Function-process replacement | Journal leases and epochs govern hosted-function result authority; the existing DAG applies the accepted result. Outbound MCP can separately use durable effect fencing/evidence, but ambiguous external-provider truth still requires provider-specific reconciliation/idempotency or operator handling. |
+| Tenant code isolation | The trusted-process provider remains for explicitly approved trusted execution and rejects stronger requirements. A separate selected Linux/amd64 OCI `SandboxedContainer` provider enforces exact-image, non-root, deny-all-network, read-only-root, bounded tmpfs, dropped-capability, `no-new-privileges`, CPU/memory/PID, cleanup/quarantine, and restart-orphan controls before tenant material is released. |
+| Policy authority | Hosted `Concurrency`, `Retry`, and `Delegation` workers return family-specific evidence only. Admission, retry budget/state transitions, delegation relation CAS, child allocation, dispatch, recovery, and continuation remain server-owned. |
+| MCP auditability | Stable `EffectId`/`RequestDigest` identity, immutable durable intent, pre-`tools/call` dispatch fencing, confirmed `Completed` replay, `NotSent`/`Uncertain` evidence, explicit reconciliation, tenant-scoped Mongo persistence, and restart-safe fail-closed behavior are available when the durable journal is configured. This is not a generic exactly-once or automatic-redelivery guarantee. |
+| SDK availability | Portable public SDK contracts, the authorized publication/execution server boundary, and independent .NET, TypeScript/JavaScript, and Python SDK client packages are implemented and validated. The fixture-free Docker runtime matrix is GREEN at 37/37 scenarios, comprising the existing `ProcessHostPool` baseline plus bounded `ContainerIsolationProvider` provider/artifact-selection closure. Public registry publication and the standalone CLI remain separate productization work. |
 
-Targeted results are documented in [Hosted Multilanguage Validation](ai/hosted-multilanguage-validation.md); contracts and limits are documented in [Hosted Multilanguage Execution](ai/hosted-multilanguage-execution.md). These results do not certify public hosting of hostile code, general package installation, custom publication inside nested Child DAGs, or every remote policy family.
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](ai/kubernetes-pool-matrix-validation.md).
+
+This bounded result does not close production packaging, multi-node fault domains, control-plane failover, or Kubernetes sandbox-worker isolation.
+
+Targeted language/publication results are documented in [Hosted Multilanguage Validation](ai/hosted-multilanguage-validation.md); contracts and limits are documented in [Hosted Multilanguage Execution](ai/hosted-multilanguage-execution.md). The public contract/server boundary is documented in [Public SDK Boundary](ai/public-sdk-boundary.md) with closure evidence in [Public SDK Boundary Validation](ai/public-sdk-boundary-validation.md). The independent clients, command-line build/test/package instructions, cross-language parity, package-smoke evidence, and live fixture-free matrix closure are documented in [External SDK Libraries](ai/external-sdk-libraries.md), [External SDK Libraries Validation](ai/external-sdk-libraries-validation.md), and [Multilanguage Runtime Matrix Validation](ai/multilanguage-runtime-matrix-validation.md). The selected physical isolation provider is documented in [Hosted Worker Isolation](ai/hosted-worker-isolation.md) with final evidence in [Hosted Worker Isolation Validation](ai/hosted-worker-isolation-validation.md). Durable outbound MCP effects are documented separately in [Durable MCP Effect Evidence](ai/durable-mcp-effect-evidence.md) and [Durable MCP Effect Evidence Validation](ai/durable-mcp-effect-evidence-validation.md). Published custom Child DAG support remains bounded to the exercised nested depth. Hosted policy support is also finite: `Retention` remains native-only and policy taxonomy values without independent checkpoints are not advertised as hosted. The isolation evidence is bounded to the selected Linux/amd64 Docker-compatible provider and does not certify every OCI implementation, Kubernetes sandbox-Pod hosting, arbitrary package-manager installation or native package ecosystems, unlimited published-custom nesting, database-failover behavior for that path, or arbitrary future policy families.
 
 ---
 
@@ -414,13 +420,13 @@ The following areas are still evolving:
 - OpenTelemetry exporters
 - Prometheus/Grafana integration
 - Kubernetes deployment package
-- Kubernetes pod/deployment scale-out adapter
+- broader Kubernetes deployment/autoscaler integration beyond the validated Pod/Runtime Pool scale-out path
 - Redis command queue runtime provider
-- gRPC runtime provider
+- broader gRPC deployment/interoperability hardening beyond the validated runtime provider
 - production multi-control-plane leader election
 - full provider capability negotiation
 - database-backed tenant runtime settings provider
-- public SDK/API polish
+- public SDK registry distribution, standalone CLI packaging, and broader public API polish
 - enterprise sample applications
 - continued documentation refinement beyond Phase 0 V1
 

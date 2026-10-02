@@ -1,0 +1,100 @@
+TAP version 13
+# Subtest: immediate success is returned unchanged
+ok 1 - immediate success is returned unchanged
+  ---
+  duration_ms: 2.84425
+  type: 'test'
+  ...
+# Subtest: only missing snapshot responses are retried to actual success
+ok 2 - only missing snapshot responses are retried to actual success
+  ---
+  duration_ms: 5.427476
+  type: 'test'
+  ...
+# Subtest: other failure is returned, not retried
+ok 3 - other failure is returned, not retried
+  ---
+  duration_ms: 0.489162
+  type: 'test'
+  ...
+# Subtest: determinism failure is not retried
+ok 4 - determinism failure is not retried
+  ---
+  duration_ms: 0.228347
+  type: 'test'
+  ...
+# Subtest: noncompleted execution does not wait
+ok 5 - noncompleted execution does not wait
+  ---
+  duration_ms: 0.146496
+  type: 'test'
+  ...
+# Subtest: nonexact missing reason is not retried
+ok 6 - nonexact missing reason is not retried
+  ---
+  duration_ms: 0.136271
+  type: 'test'
+  ...
+# Subtest: changed ExecutionId fails immediately
+ok 7 - changed ExecutionId fails immediately
+  ---
+  duration_ms: 0.754063
+  type: 'test'
+  ...
+# Subtest: transport failure propagates once
+ok 8 - transport failure propagates once
+  ---
+  duration_ms: 0.381073
+  type: 'test'
+  ...
+# Subtest: permanent absence fails at deadline
+ok 9 - permanent absence fails at deadline
+  ---
+  duration_ms: 24.913029
+  type: 'test'
+  ...
+# Subtest: inflight deadline is propagated through AbortSignal
+ok 10 - inflight deadline is propagated through AbortSignal
+  ---
+  duration_ms: 25.365837
+  type: 'test'
+  ...
+# Subtest: uncooperative async transport cannot make the wait unbounded
+ok 11 - uncooperative async transport cannot make the wait unbounded
+  ---
+  duration_ms: 26.070607
+  type: 'test'
+  ...
+# Subtest: caller cancellation propagates unchanged
+ok 12 - caller cancellation propagates unchanged
+  ---
+  duration_ms: 0.495691
+  type: 'test'
+  ...
+# Subtest: already cancelled caller does not make any request
+ok 13 - already cancelled caller does not make any request
+  ---
+  duration_ms: 0.197101
+  type: 'test'
+  ...
+# Subtest: invalid durations fail before calling transport
+ok 14 - invalid durations fail before calling transport
+  ---
+  duration_ms: 0.284028
+  type: 'test'
+  ...
+# Subtest: each readiness attempt is traced
+ok 15 - each readiness attempt is traced
+  ---
+  duration_ms: 1.374688
+  type: 'test'
+  ...
+1..15
+# tests 15
+# suites 0
+# pass 15
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 160.629706

@@ -1,0 +1,20 @@
+{
+  "name": "multiplexed-interactive-agent-sdk-demo-typescript",
+  "version": "0.0.0-dev",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@multiplexed/ai-sdk": "file:../.packages/typescript/multiplexed-ai-sdk-0.0.0-dev.tgz"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "typescript": "5.8.3"
+  }
+}

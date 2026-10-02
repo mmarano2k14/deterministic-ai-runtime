@@ -28,6 +28,8 @@ It provides durable DAG execution, Redis-backed coordination, provider-based dis
 ## Start here
 
 - **Understand the runtime:** [Architecture Quick Start](docs/ai/architecture-quick-start.md) — core components, durable truth, failure boundaries, and trade-offs.
+- **External SDKs:** [.NET, TypeScript / JavaScript, and Python](#sdk) — publish user code and manage durable executions through the public MCP boundary.
+- **Interactive external SDK agent validation:** [Topology validation](docs/ai/interactive-agent-sdk-topology-validation.md) and [presentation demo](docs/ai/interactive-agent-sdk-demo.md) — run the same durable agent flow through the .NET, TypeScript, or Python SDK against the real public boundary, including live `ProcessHostPool/HTTP` and `KubernetesPool/HTTP` proofs.
 - **Complete documentation:** [docs/index.md](docs/index.md)
 - **Interactive AI Runtime Analysis Demo:** [demo/rbac-aiAnalysis/nextjs/README.md](demo/rbac-aiAnalysis/nextjs/README.md)
 - **Installation / local Kubernetes:** [Kubernetes / Minikube installation and recovery guide](docs/ai/kubernetes-local-environment.md)
@@ -51,6 +53,7 @@ It provides durable DAG execution, Redis-backed coordination, provider-based dis
 | Durable authority | Failure journal, append-only Lifecycle Journal, Ledger, trace, Recovery Forensics — independent stores correlated by first-class identities. |
 | Event-driven lifecycle | Canonical engine facts through one Event Manager and central projection catalog; no second bus. |
 | Multi-tenancy | RBAC context survives async dispatch; tenant-scoped admission, capacity, recovery, Ledger, replay, and Forensics. |
+| External SDKs | Independent .NET, TypeScript / JavaScript, and Python clients; immutable publication, durable submission, observation and Watch, results, cancellation, pause/resume, human input, and deterministic replay validation. The same interactive agent flow is separately GREEN for all three clients in the packaged Docker presentation path, `ProcessHostPool/HTTP`, and `KubernetesPool/HTTP`. See [SDK execution evidence](#sdk). |
 
 Configuration and policy drive retry, retention, concurrency, admission, isolation, hosting, and recovery — without engine rewrites.
 
@@ -99,6 +102,10 @@ Dedicated recursive-child replay  NOT_EVALUATED
 
 **Historical P35 stress campaign:** both HTTP and gRPC completed 35 / 35 — 105 tenants, 315 real DAG executions, 70 real process kills, 210 recovered jobs per transport (HTTP batch: ~4.19M datastore ops, 18.29 GiB). P35 is the experimental edge of the tested machine, not a universal throughput guarantee.
 
+### SDK-to-runtime validation
+
+The SDK execution record is separate from the adversarial matrix above: **37/37 Docker scenarios** with `ProcessHostPool`, plus **3/3 KubernetesPool scenarios** covering live HTTP routing, hierarchical recovery, and external Python SDK execution with a public `Completed` result and the uploaded-function marker verified. This is **40 validated scenarios across two topologies**, not a homogeneous `40/40` matrix. Separate real MCP/HTTP public-SDK E2E validation is also green for `execution.watch()` and for pause/resume/human-input/replay control flows in **.NET, TypeScript, and Python**. The interactive agent scenario is additionally GREEN for all three clients through the packaged Docker presentation path, live `ProcessHostPool/HTTP`, and live `KubernetesPool/HTTP`: real JWT/access-context authentication, immutable publication, durable execution, runtime-native OpenAI, Child DAG delegation, human review/resume on the same `ExecutionId`, terminal `Completed`, public result retrieval, and deterministic replay. These E2E checks are separate validation campaigns and are not added to the 37/37 or historical KubernetesPool 3/3 scenario counts. See the [interactive topology validation](docs/ai/interactive-agent-sdk-topology-validation.md) and the [SDK section](#sdk) for the exact scope.
+
 ---
 
 ## Quick start
@@ -118,6 +125,159 @@ Long-running ProcessHostPool and KubernetesPool proofs run with targeted filters
 ## Deep reference
 
 The architecture, identity model, recovery semantics, replay, observability, and full capability matrix are below — collapsed so this page stays scannable. Expand what you need; each section mirrors a dedicated document under [`docs/`](docs/index.md).
+
+<a id="sdk"></a>
+
+<details>
+
+<summary><b>External SDKs (.NET, TypeScript / JavaScript &amp; Python), publication &amp; validated execution</b></summary>
+
+## External SDKs
+
+Independent .NET, TypeScript / JavaScript, and Python SDKs let an external application publish user code and manage durable executions through **MCP Streamable HTTP**. They use portable public contracts, without direct or transitive dependencies on runtime engine assemblies or private control-plane contracts.
+
+**The SDK client language and the hosted function language are independent.** A Python client can publish a .NET function, and a .NET client can publish Python or TypeScript code. The Docker matrix validates all nine client/worker language combinations; the Kubernetes scope is narrower and is stated below.
+
+| Client | Package | Repository source |
+|---|---|---|
+| .NET | `Multiplexed.AI.Sdk` | [`implementations/dotnet/src/Multiplexed.AI.Sdk/`](implementations/dotnet/src/Multiplexed.AI.Sdk/) |
+| TypeScript / JavaScript | `@multiplexed/ai-sdk` | [`implementations/node/sdk/`](implementations/node/sdk/) |
+| Python | `multiplexed-ai-sdk` | [`implementations/python/sdk/`](implementations/python/sdk/) |
+
+Local package build/install/import behavior is validated. **Public NuGet, npm, and Python package-index releases are not claimed by this validation**; registry publication and a standalone runtime CLI remain separate deliverables.
+
+### Public operations and execution flow
+
+All three clients expose the same ten public operations:
+
+```text
+sdk.publish_pipeline
+sdk.execution.submit
+sdk.execution.observe
+sdk.execution.watch
+sdk.execution.result
+sdk.execution.cancel
+sdk.execution.pause
+sdk.execution.resume
+sdk.execution.input.submit
+sdk.execution.replay
+```
+
+```text
+External application / SDK client
+    -> publish pipeline definition + user functions
+    -> immutable publication reference
+    -> submit durable execution
+    -> existing shared queue, admission, and runtime placement
+    -> observe / watch public execution progress
+    -> pause / resume / human input / cancel through public control operations
+    -> production hosted worker executes the pinned function
+    -> durable result acceptance and DAG convergence
+    -> terminal result
+    -> optional deterministic replay validation
+```
+
+The SDK does not create Pods, select execution ownership, or become a scheduler, recovery coordinator, or business-effect retry authority. RBAC and tenant ownership remain server-enforced; transport credentials and access-context headers are not serialized into publication or execution business payloads. Compatible repeated submissions converge through the existing idempotency/run-pin authority; conflicting reuse is rejected.
+
+Cancelling an in-flight client request is not durable execution cancellation. The explicit cancellation operation requests cancellation from the runtime; acceptance does not mean the execution is already terminal. Automatic transport retry is limited to the safe-read operations `observe`, `watch`, and `result`; command-side operations are not automatically retried.
+
+### Watch, execution control, and replay
+
+`observe()` returns an authoritative point-in-time public snapshot. `watch()` exposes an ordered public observation stream with resume/resync behavior; it is an observation surface, not an execution authority.
+
+Pause is cooperative: already-running work may drain, while new claims are gated once the pause state becomes authoritative. Resume and accepted human input make the **existing execution** runnable again and wake/re-enqueue that same execution without changing its `ExecutionId`, immutable run pin, or durable DAG.
+
+`execution.replay` performs deterministic validation/replay of the existing execution. It does not create a new execution, re-run LLM calls, or re-emit external business effects.
+
+### Published code and composition
+
+Published Python and TypeScript sources and precompiled .NET assemblies execute against immutable code, dependency material, and environment bindings pinned for the run. A pipeline language is the default; an explicit custom-step language can override it without changing unrelated steps.
+
+The Docker validation includes nested published Child DAGs, custom `Concurrency`, `Retry`, and `Delegation` policies at their existing checkpoints, and the finite `PythonWheelBundle`, `NodeLockedBundle`, and `DotNetAssemblyClosure` dependency formats. `Retention` remains native-only. The runtime does not resolve packages from registries during execution. See [Hosted Multilanguage Execution](docs/ai/hosted-multilanguage-execution.md) and [Deterministic Dependency Packaging](docs/ai/deterministic-dependency-packaging.md).
+
+Outbound MCP is distinct from the inbound MCP SDK boundary. Its opt-in durable effect evidence supports local replay of confirmed outcomes and fails closed on `Uncertain` effects rather than blindly resending them. This is not a generic exactly-once guarantee for external tools. See [Durable MCP Effect Evidence](docs/ai/durable-mcp-effect-evidence.md).
+
+### Runtime hosting and worker execution
+
+Two provider dimensions describe different responsibilities:
+
+| Dimension | Values | Responsibility |
+|---|---|---|
+| `runtimeProvider` | `ProcessHostPool`, `KubernetesPool` | Runtime-host lifecycle, membership, and capacity. |
+| `workerExecutionProvider` | `TrustedProcess`, `ContainerIsolationProvider` | Physical hosted-function execution boundary. |
+
+`KubernetesPool` is not a third hosted-worker invocation transport. The validated Docker OCI cases use the production Python worker in a sibling container through the host Docker socket, not Docker-in-Docker. They do not imply that all Docker scenarios or all three worker languages were rerun under container isolation.
+
+### Docker SDK matrix: 37/37
+
+The [fixture-free Docker matrix](docs/ai/multilanguage-runtime-matrix-validation.md) validates all nine SDK client/worker combinations, publication pinning and dependency packaging, custom policy families, nested Child DAGs, durable MCP evidence, cancellation, runtime recovery, journal result acceptance, client dependency firewalls, and the selected isolation-provider/artifact cases.
+
+All 37 scenarios use `runtimeProvider=ProcessHostPool`. `TrustedProcess` coverage and the bounded `ContainerIsolationProvider` / `OciImage` cases remain explicitly distinguished in the evidence.
+
+### KubernetesPool SDK execution and closure: 3/3
+
+The external Kubernetes scenario follows the real queue-first path:
+
+```text
+External Python SDK
+    -> public MCP publication / QueueFirst submission
+    -> existing KubernetesPool scale-out and Runtime Pool Pod
+    -> RuntimeInstanceOnly child runtime
+    -> production Python worker: HostRuntime / TrustedProcess
+    -> public result: Completed
+    -> uploaded-function marker: VERIFIED
+```
+
+The OCI image packages the Runtime Pool host and production workers. **It does not turn this function execution into a Kubernetes sandbox-Pod or `ContainerIsolationProvider` proof.** The control plane owns durable hosted-invocation reconciliation; runtime children own hosted-worker polling. Workers retain the reads and transitions required for their execution path.
+
+| Accepted KubernetesPool evidence | Result |
+|---|---|
+| Live HTTP routing | Three runtime instances, three routed commands, deletion `ACCEPTED`. |
+| Hierarchical recovery | Two runtime-process failures, two Pod failures, eight recovered shared runs, eight ownership transitions, zero violations, parent replay `54/54`, no lost runs or duplicate durable dispatches, warm reuse `PASS`. |
+| External Python SDK -> Python worker | Public `Completed` result, uploaded-function marker verified, one ready Pod and one Service. |
+
+The final closure ran the SDK scenario and revalidated existing routing/recovery evidence. It did not rerun every prior workload or establish a shared image build for all three scenarios. The accepted record is **37 Docker + 3 KubernetesPool = 40 validated scenarios across two topologies**, not a homogeneous `40/40` matrix, full Kubernetes client/worker parity, or an addition to the separate 36-row adversarial matrix.
+
+Run commands, runtime-image selection, host-role configuration, RBAC project alignment, snapshot TTL, evidence files, and diagnostic collection are documented in [KubernetesPool Matrix Validation](docs/ai/kubernetes-pool-matrix-validation.md).
+
+### Public SDK Watch and execution-control E2E
+
+Separate real MCP/HTTP E2E validation is green across all three external SDK clients:
+
+| Public SDK E2E | .NET | TypeScript | Python |
+|---|---:|---:|---:|
+| `execution.watch()` | PASS | PASS | PASS |
+| pause / resume / human input / replay | PASS | PASS | PASS |
+
+These checks validate the public SDK boundary and control flow. They are separate from the 37/37 Docker matrix and the 3/3 KubernetesPool closure above.
+
+### Interactive SDK agent validation
+
+The same runtime-native interactive agent pipeline is validated through three independently scoped paths. The live topology runs use the same external .NET, TypeScript, and Python consumers and the same public MCP contract; they do not introduce topology-specific SDK contracts.
+
+| Interactive path | .NET | TypeScript | Python |
+|---|---:|---:|---:|
+| Packaged Docker presentation | PASS | PASS | PASS |
+| `ProcessHostPool/HTTP` | PASS | PASS | PASS |
+| `KubernetesPool/HTTP` | PASS | PASS | PASS |
+
+The live `ProcessHostPool/HTTP` and `KubernetesPool/HTTP` runs require all eleven validation gates to pass: terminal completion, same `ExecutionId` after human input, accepted human review, root-step completion, OpenAI provider/model/response evidence, terminal result availability, replay success, replay determinism, and unchanged replay execution identity. The Kubernetes run also performs exact-pool Pod/Service/image attestation and observes QueueFirst scale-out into a real Runtime Pool Pod.
+
+Replay readiness is treated separately from public execution completion. If the server reports exactly `Snapshot not found.` immediately after `Completed`, the consumer retries the same public replay operation within a bounded 30-second readiness window; unrelated replay, transport, authorization, determinism, or identity failures are not retried.
+
+The Docker presentation path additionally validates local package consumption inside the container build: the .NET consumer resolves the freshly packed local SDK artifacts, while the TypeScript and Python consumers build/install from repository-local SDK sources. These interactive paths are integration proofs, not additions to the 37/37 Docker matrix or the historical KubernetesPool 3/3 closure.
+
+See [Interactive Agent SDK Topology Validation](docs/ai/interactive-agent-sdk-topology-validation.md), [Interactive Agent SDK Demo](docs/ai/interactive-agent-sdk-demo.md), and [`demo/interactive-agent-sdk/`](demo/interactive-agent-sdk/).
+
+### SDK documentation and samples
+
+Start with the [External SDK Quickstart](docs/ai/external-sdk-quickstart.md) for publication-to-result examples in all three client languages. [External SDK Libraries](docs/ai/external-sdk-libraries.md) covers local packaging, transport configuration, and client semantics; [Public SDK Boundary](docs/ai/public-sdk-boundary.md) defines the portable contracts and authorization boundary. For the three-client presentation flow, see [Interactive Agent SDK Demo](docs/ai/interactive-agent-sdk-demo.md); for the live `ProcessHostPool/HTTP` and `KubernetesPool/HTTP` proofs, see [Interactive Agent SDK Topology Validation](docs/ai/interactive-agent-sdk-topology-validation.md).
+
+Reusable user-code samples are under [`implementations/sdk/samples/published-functions/`](implementations/sdk/samples/published-functions/). They are published function inputs, not substitutes for the production hosted workers.
+
+---
+
+</details>
 
 <details>
 
@@ -1022,9 +1182,9 @@ See [Step plugins](docs/ai/step-plugins.md).
 
 Published Python and TypeScript sources and precompiled .NET assemblies execute in hosted processes through immutable publications, whole-run version pinning, and a durable invocation journal. The existing DAG retains claim, retry, recovery, and continuation authority; hosted function workers do not become runtime instances.
 
-Custom `Concurrency` policies use the same language infrastructure at their existing admission checkpoint. Outbound MCP is a separate invocation mode using server-owned connections and the existing RBAC engine.
+Custom `Concurrency`, `Retry`, and `Delegation` policies use the same language infrastructure at their existing family checkpoints; `Retention` remains native-only. Outbound MCP is a separate invocation mode using server-owned connections and the existing RBAC engine.
 
-**Scope:** opt-in server-side execution foundation, not the external SDK library. Process isolation is not a hostile-code sandbox, and MCP effect identity does not provide durable external-effect replay.
+**Scope:** this is the opt-in server-side execution layer; the independently consumable clients are described in the [External SDKs section](#sdk). `TrustedProcess` isolation is not a hostile-code sandbox. MCP effect identity alone does not provide durable replay; the separate opt-in [durable MCP effect journal](docs/ai/durable-mcp-effect-evidence.md) adds confirmed-outcome replay and fail-closed uncertainty handling, not generic exactly-once external execution.
 
 See [Hosted Multilanguage Execution](docs/ai/hosted-multilanguage-execution.md) and [Hosted Multilanguage Validation](docs/ai/hosted-multilanguage-validation.md).
 
@@ -1084,7 +1244,18 @@ See [Hosted Multilanguage Execution](docs/ai/hosted-multilanguage-execution.md) 
 | Multi-control-plane claim arbitration | Further hardening |
 | Recovery-of-recovery | Not yet validated |
 | Dedicated recursive-child replay | NOT_EVALUATED |
-| Public API / SDK polish | Planned |
+| Portable public publication/execution boundary | Implemented / RBAC-protected |
+| External .NET, TypeScript / JavaScript, and Python SDKs | Implemented / validated |
+| Public SDK execution Watch | Implemented / validated in .NET, TypeScript, and Python |
+| Public SDK pause / resume | Implemented / validated in .NET, TypeScript, and Python |
+| Public SDK human input | Implemented / validated in .NET, TypeScript, and Python |
+| Public SDK deterministic replay validation | Implemented / validated in .NET, TypeScript, and Python |
+| Real MCP/HTTP SDK control E2E | 3 / 3 VERIFIED |
+| Interactive Docker SDK agent demo | 3 / 3 VERIFIED; `Completed` + deterministic replay |
+| SDK-to-runtime Docker matrix | 37 / 37 VERIFIED; bounded provider/artifact scope |
+| KubernetesPool routing / recovery / Python SDK closure | 3 / 3 VERIFIED; separate evidence |
+| Public SDK registry releases and standalone runtime CLI | Separate deliverables |
+| Additional public API / SDK polish | Planned |
 
 ---
 
@@ -1200,11 +1371,14 @@ Redis and MongoDB must be reachable according to the runtime/demo configuration.
 
 This project is licensed under the **Business Source License 1.1 (BSL 1.1)**.
 
-It is free to use for development, testing, evaluation, and internal purposes. Production use to provide a competing AI orchestration, workflow engine, or distributed runtime platform requires an explicit commercial agreement.
+The source code may be used for **development, testing, evaluation, research, and other non-production purposes** in accordance with the BSL 1.1 terms.
 
-The licensed source automatically converts to the **Apache License 2.0 on January 1, 2029**.
+**Production use is not permitted without a separate commercial license or explicit written authorization from the Licensor.** This includes production deployments, SaaS or managed-service offerings, embedding the runtime into commercial products, white-label or OEM use, and commercial redistribution.
 
-See the repository `LICENSE` file for the complete and authoritative terms.
+The Licensed Work will transition to the **Apache License 2.0** on the applicable Change Date defined in the repository license terms.
+
+See the repository `LICENSE.md` file for the complete and authoritative licensing terms.
+
 
 ---
 

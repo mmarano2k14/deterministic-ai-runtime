@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Multiplexed.Abstractions.AI.Execution.Control;
@@ -189,6 +189,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Control
             Assert.Equal(AiExecutionControlAction.WaitForInput, state.PendingAction);
             Assert.Equal("approval:pricing", state.WaitingKey);
             Assert.Equal("human-approval", state.WaitingStepName);
+            Assert.Equal(AiExecutionInputWaitMode.ExecutionGate, state.InputWaitMode);
             Assert.Equal("approval required", state.Reason);
             Assert.Equal("runtime", state.RequestedBy);
             Assert.NotNull(state.WaitingStartedAtUtc);
@@ -243,6 +244,107 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Execution.Control
             Assert.True(decision.CanContinue);
             Assert.False(decision.ShouldStopClaiming);
             Assert.False(decision.ShouldCancel);
+
+            await _store.DeleteAsync(executionId).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Verifies that a new waiting boundary cannot inherit input from a previous completed wait.
+        /// </summary>
+        [Fact]
+        public async Task MarkWaitingForInputAsync_WhenStartingNewWait_ShouldClearPreviousInput()
+        {
+            var executionId = CreateExecutionId();
+
+            await _service.MarkWaitingForInputAsync(
+                    executionId,
+                    waitingKey: "approval:first",
+                    waitingStepName: "first-approval",
+                    requestedBy: "runtime")
+                .ConfigureAwait(false);
+
+            await _service.SubmitHumanInputAsync(
+                    executionId,
+                    waitingKey: "approval:first",
+                    input: new Dictionary<string, object?> { ["approved"] = true },
+                    submittedBy: "operator")
+                .ConfigureAwait(false);
+
+            await _service.MarkRunningAsync(executionId, "runtime").ConfigureAwait(false);
+
+            var state = await _service.MarkWaitingForInputAsync(
+                    executionId,
+                    waitingKey: "approval:second",
+                    waitingStepName: "second-approval",
+                    requestedBy: "runtime")
+                .ConfigureAwait(false);
+
+            Assert.Equal(AiExecutionControlStatus.WaitingForInput, state.Status);
+            Assert.Equal("approval:second", state.WaitingKey);
+            Assert.Equal("second-approval", state.WaitingStepName);
+            Assert.Empty(state.Input);
+            Assert.Null(state.InputReceivedAtUtc);
+            Assert.NotNull(state.WaitingStartedAtUtc);
+
+            await _store.DeleteAsync(executionId).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Verifies that an exact parked-step input wait persists its continuation mode.
+        /// </summary>
+        [Fact]
+        public async Task MarkWaitingForInputAsync_WithExternalWaitMode_ShouldPersistMode()
+        {
+            var executionId = CreateExecutionId();
+
+            var state = await _service.MarkWaitingForInputAsync(
+                    executionId,
+                    waitingKey: "approval:parked",
+                    waitingStepName: "approval",
+                    reason: "approval required",
+                    requestedBy: "execution.await-input",
+                    inputWaitMode: AiExecutionInputWaitMode.ExternalWaitStep)
+                .ConfigureAwait(false);
+
+            Assert.Equal(AiExecutionInputWaitMode.ExternalWaitStep, state.InputWaitMode);
+
+            var persisted = await _store.GetAsync(executionId).ConfigureAwait(false);
+            Assert.NotNull(persisted);
+            Assert.Equal(AiExecutionInputWaitMode.ExternalWaitStep, persisted!.InputWaitMode);
+
+            await _store.DeleteAsync(executionId).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Verifies that submitted input is accepted only while the durable wait is active.
+        /// </summary>
+        [Fact]
+        public async Task SubmitHumanInputAsync_WhenWaitAlreadyReleased_ShouldRejectDuplicateSubmission()
+        {
+            var executionId = CreateExecutionId();
+
+            await _service.MarkWaitingForInputAsync(
+                    executionId,
+                    waitingKey: "approval:once",
+                    waitingStepName: "approval",
+                    requestedBy: "runtime")
+                .ConfigureAwait(false);
+
+            await _service.SubmitHumanInputAsync(
+                    executionId,
+                    waitingKey: "approval:once",
+                    input: new Dictionary<string, object?> { ["approved"] = true },
+                    submittedBy: "operator")
+                .ConfigureAwait(false);
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                _service.SubmitHumanInputAsync(
+                    executionId,
+                    waitingKey: "approval:once",
+                    input: new Dictionary<string, object?> { ["approved"] = false },
+                    submittedBy: "operator"));
+
+            Assert.Contains("not currently accepting input", exception.Message, StringComparison.Ordinal);
 
             await _store.DeleteAsync(executionId).ConfigureAwait(false);
         }

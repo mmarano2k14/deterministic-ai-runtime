@@ -455,7 +455,7 @@ A product needs clear APIs, SDK surfaces, CLI direction, examples, diagnostics, 
 - Add better error results.
 - Add typed result objects where useful.
 - Add API documentation.
-- Add SDK packaging direction.
+- Harden SDK package versioning, public registry distribution, release automation, and compatibility policy.
 - Add CLI direction.
 - Add local developer setup.
 - Add quickstart documentation.

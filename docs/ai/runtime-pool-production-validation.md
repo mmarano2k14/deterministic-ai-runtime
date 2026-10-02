@@ -484,6 +484,12 @@ See [Engine Event Observation and Lifecycle Catalog](engine-event-observation.md
 
 ---
 
+## KubernetesPool public-SDK closure
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
+The external Python function runs through `HostRuntime` / `TrustedProcess` inside the Runtime Pool Pod. This does not reinterpret the historical HTTP/gRPC production profiles as a new all-language SDK matrix, prove control-plane crash recovery, or provide a Kubernetes sandbox-worker guarantee.
+
 ## Related Documents
 
 - [Runtime Pool Architecture](runtime-pool-architecture.md)

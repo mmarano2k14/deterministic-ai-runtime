@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Publication;
 using Multiplexed.AI.Runtime.Publication;
 
@@ -27,7 +28,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.TypeScript
         public static AiPublicationEnvironment CreateRuntime(string reference, string runtimeVersion,
             string executableSha256, string workerScriptSha256)
         {
-            var runtime = new AiPublicationEnvironment(reference, "typescript", runtimeVersion, executableSha256);
+            var runtime = new AiPublicationEnvironment(reference, AiExecutionLanguages.TypeScript, runtimeVersion, executableSha256);
             ValidateVersion(runtimeVersion);
             AiPublicationJson.ValidateEnvironment(runtime);
             AiPublicationJson.ValidateHash(workerScriptSha256);
@@ -47,7 +48,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.TypeScript
             IEnumerable<string>? approvedLaunchRoots = null)
         {
             ArgumentNullException.ThrowIfNull(runtime);
-            if (runtime.ExecutionLanguage != "typescript")
+            if (runtime.ExecutionLanguage != AiExecutionLanguages.TypeScript)
                 throw new NotSupportedException("The TypeScript source loader cannot execute another language.");
             ValidateVersion(runtime.RuntimeVersion);
             if (string.IsNullOrEmpty(workerScriptPath) || !Path.IsPathFullyQualified(workerScriptPath) ||

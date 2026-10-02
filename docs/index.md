@@ -19,10 +19,23 @@ Focused AI runtime documentation is organized under:
 | [`../README.md`](../README.md) | Main repository entry point with the current runtime capabilities, validated evidence, roadmap, and documentation map. |
 | [`runtime-internals.md`](runtime-internals.md) | Complete technical reference preserved from the original README. |
 | [`enterprise-readiness.md`](enterprise-readiness.md) | Matrix of enterprise AI execution questions and runtime answers. |
-| [`ai/architecture-overview.md`](ai/architecture-overview.md) | High-level runtime architecture and major runtime layers, including shared control-plane orchestration, provider dispatch, Redis coordination, and multi-tenant runtime isolation. |
-| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Published Python, TypeScript and .NET functions, immutable environments, durable invocation, custom Concurrency policies, outbound MCP, and explicit SDK/security boundaries. |
+| [`ai/architecture-overview.md`](ai/architecture-overview.md) | High-level runtime architecture and major runtime layers, including shared control-plane orchestration, provider dispatch, Redis coordination, multi-tenant runtime isolation, and selected OCI hosted-worker isolation. |
+| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Published Python, TypeScript and .NET functions, immutable environments, deterministic dependency bundles, published custom Child DAG binding, durable invocation, hosted custom Concurrency/Retry/Delegation policies, trusted-process versus OCI physical providers, outbound MCP, and explicit SDK/security boundaries. |
+| [`ai/external-sdk-libraries.md`](ai/external-sdk-libraries.md) | Independent .NET, TypeScript/JavaScript and Python SDK clients, shared MCP protocol, retry/cancellation boundaries, package roots, and command-line build/test/package/install instructions for every language. |
+| [`ai/external-sdk-quickstart.md`](ai/external-sdk-quickstart.md) | End-to-end client examples for publishing reusable sample user code, submitting an immutable publication, observing execution, and reading terminal results from .NET, TypeScript/JavaScript, and Python. |
+| [`ai/external-sdk-libraries-validation.md`](ai/external-sdk-libraries-validation.md) | Cross-language parity fixtures, dependency firewalls, local NuGet/npm/wheel package-consumption smoke, validation commands, and explicit non-claims. |
+| [`ai/interactive-agent-sdk-demo.md`](ai/interactive-agent-sdk-demo.md) | Presentation-oriented public-SDK demo with packaged .NET, TypeScript, and Python consumers, JWT/RBAC access-context authentication, Child DAG delegation, human review/resume, terminal results, and deterministic replay validation. |
+| [`ai/interactive-agent-sdk-topology-validation.md`](ai/interactive-agent-sdk-topology-validation.md) | Live six-path interactive validation across .NET/TypeScript/Python clients on `ProcessHostPool/HTTP` and `KubernetesPool/HTTP`, including real auth, OpenAI, Child DAGs, same-execution human input, result, replay readiness, and deterministic replay. |
+| [`ai/multilanguage-runtime-matrix-validation.md`](ai/multilanguage-runtime-matrix-validation.md) | Fixture-free 37/37 Docker closure with `runtimeProvider=ProcessHostPool`: the 33-scenario baseline plus four explicitly scoped hosted-worker provider/artifact-selection scenarios, including pinning, dependency packaging, policies, nested Child DAGs, MCP effects, cancellation, recovery, journal acceptance, isolation selection, and SDK dependency firewalls. |
+| [`ai/kubernetes-pool-matrix-validation.md`](ai/kubernetes-pool-matrix-validation.md) | Validated 3/3 KubernetesPool closure: HTTP routing, hierarchical recovery, Python SDK execution with a verified uploaded-function marker; host-role/RBAC/TTL configuration, two image workflows, diagnostics, and the separate 37 Docker + 3 Kubernetes coverage record. |
+| [`ai/deterministic-dependency-packaging.md`](ai/deterministic-dependency-packaging.md) | Immutable pure-Python wheel, locked Node source-bundle, and managed .NET assembly-closure contracts, execution boundaries, pinning, and validation limits. |
 | [`ai/hosted-multilanguage-validation.md`](ai/hosted-multilanguage-validation.md) | Inspected language, durability, boundary and MongoDB/Redis results, with overlap, skipped-case and host-report limitations. |
-| [`ai/child-dag-composition.md`](ai/child-dag-composition.md) | Implemented / validated durable Child DAG composition with `WaitingForExternal`, deterministic continuation, recursive Depth3 validation, EventDriven recovery observation, warm reuse, replay, lifecycle, Ledger, trace, and Forensics evidence. |
+| [`ai/hosted-worker-isolation.md`](ai/hosted-worker-isolation.md) | Selected OCI hosted-worker isolation architecture: provider routing, exact-image admission, applied-state attestation, tenant-material release gate, lifecycle cleanup/quarantine, and orphan reconciliation. |
+| [`ai/hosted-worker-isolation-validation.md`](ai/hosted-worker-isolation-validation.md) | Isolation evidence separating deterministic provider tests, 4 explicit real Docker/Linux enforcement/worker-execution tests, and the 37/37 public-SDK runtime-matrix closure. |
+| [`ai/durable-mcp-effect-evidence.md`](ai/durable-mcp-effect-evidence.md) | Durable outbound MCP effect identity, immutable intent, pre-call dispatch fencing, `Completed` replay, `NotSent`/`Uncertain` classification, explicit reconciliation, restart behavior, and authority boundaries. |
+| [`ai/durable-invocation-journal.md`](ai/durable-invocation-journal.md) | Durable hosted-function invocation authority: frozen identity/input, worker lease and epoch fencing, classified CAS outcomes, read/write amplification reductions, continuation keyset fairness, shared stdio protocol boundaries, MongoDB attribution, and measured production index strategy. |
+| [`ai/durable-mcp-effect-evidence-validation.md`](ai/durable-mcp-effect-evidence-validation.md) | Validation layers for durable MCP effects: deterministic state/authority proofs, real outbound `tools/call` boundary tests, and opt-in MongoDB persistence/reconstruction evidence. |
+| [`ai/child-dag-composition.md`](ai/child-dag-composition.md) | Implemented / validated durable Child DAG composition with `WaitingForExternal`, deterministic continuation, native recursive Depth3 validation, published custom Child DAG integration, EventDriven recovery observation, warm reuse, replay, lifecycle, Ledger, trace, and Forensics evidence. |
 | [`ai/multi-tenant-control-plane-isolation.md`](ai/multi-tenant-control-plane-isolation.md) | Multi-tenant control-plane isolation, RBAC execution-context propagation, durable `ExecutionContextSnapshot`, tenant-aware registry/capacity/admission, Shared/Dedicated/Hybrid runtime visibility, and tenant-aware scale-out. |
 | [`ai/multi-tenant-runtime-flow.md`](ai/multi-tenant-runtime-flow.md) | End-to-end ASCII runtime flow explaining MCP/RBAC context resolution, durable `ExecutionContextSnapshot`, shared run persistence, tenant-aware admission, tenant-aware scale-out, shared queue dispatch, local runtime queue execution, DAG worker loop, execution control, finalization, and observability. |
 | [`ai/runtime-control-plane.md`](ai/runtime-control-plane.md) | Runtime control-plane foundation covering replay, execution control, runtime queues, runtime registry/capacity, discovery, admission, shared controller orchestration, scale-out lifecycle, and tenant-aware dispatch. |
@@ -46,7 +59,7 @@ Focused AI runtime documentation is organized under:
 | [`ai/recovery-replay-ledger-trace-proof.md`](ai/recovery-replay-ledger-trace-proof.md) | Recovery proof reference explaining why recovered work must validate replay, ledger, trace, completion evidence, step evidence, forensics, and tenant-scoped observability after convergence. |
 | [`ai/shared-controller-usage.md`](ai/shared-controller-usage.md) | Shared runtime controller usage, queue-first/direct-dispatch modes, Redis stores, scale-out request persistence, tenant snapshot propagation, manual drain, and background pump setup. |
 | [`ai/shared-queue-pump-and-worker-capacity.md`](ai/shared-queue-pump-and-worker-capacity.md) | Shared queue pump, fulfilled-run requeue, dispatch-time admission, context restoration, worker capacity visibility, and `MaxLocalWorkersPerExecution`. |
-| [`ai/testing-strategy.md`](ai/testing-strategy.md) | Testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, Redis/local scale-out, HTTP/gRPC process-host provisioning, runtime crash recovery, safe-tenant isolation, recovery forensics, replay/ledger/trace proof, requeue, dispatch, and execution evidence. |
+| [`ai/testing-strategy.md`](ai/testing-strategy.md) | Testing strategy and validation approach for distributed runtime guarantees, RBAC context propagation, tenant isolation, hosted-worker OCI isolation, Redis/local scale-out, HTTP/gRPC process-host provisioning, runtime crash recovery, safe-tenant isolation, recovery forensics, replay/ledger/trace proof, requeue, dispatch, and execution evidence. |
 | [`ai/concurrency-hardening-and-adversarial-validation.md`](ai/concurrency-hardening-and-adversarial-validation.md) | Adversarial concurrency and crash-recovery validation reference covering exact pre-crash inventories, durable crash gates, readiness, single-flight scale-out, claims and leases, P10–P35 validation evidence, local saturation boundaries, content-agnostic steps, and production runtime-pool interpretation. |
 | [`ai/adversarial-runtime-validation-matrix.md`](ai/adversarial-runtime-validation-matrix.md) | Canonical nine-row semantic failure-boundary matrix across HTTP/gRPC × ProcessHostPool/KubernetesPool, including early crash, Child DAG invocation, continuation-consume, recursive Depth2/Depth3 failure, deterministic seeds, exact ownership/recovery proof, and explicit claim boundaries. |
 | [`ai/adversarial-runtime-validation-evidence-index.md`](ai/adversarial-runtime-validation-evidence-index.md) | Row-level evidence provenance for the complete 36/36 matrix, including raw xUnit artifact names, durations, SHA-256 hashes, aggregate proof totals, and explicit non-claims. |
@@ -112,9 +125,10 @@ Start with:
 30. [`ai/observability-tracing.md`](ai/observability-tracing.md)
 31. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
 32. [`ai/redis-performance-diagnostics.md`](ai/redis-performance-diagnostics.md)
-33. [`ai/mongodb-performance-diagnostics.md`](ai/mongodb-performance-diagnostics.md)
-34. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-35. [`runtime-internals.md`](runtime-internals.md)
+33. [`ai/durable-invocation-journal.md`](ai/durable-invocation-journal.md)
+34. [`ai/mongodb-performance-diagnostics.md`](ai/mongodb-performance-diagnostics.md)
+35. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+36. [`runtime-internals.md`](runtime-internals.md)
 
 This path gives both the strategic positioning and the complete technical depth.
 
@@ -155,11 +169,12 @@ Start with:
 31. [`ai/observability-tracing.md`](ai/observability-tracing.md)
 32. [`ai/runtime-metrics.md`](ai/runtime-metrics.md)
 33. [`ai/redis-performance-diagnostics.md`](ai/redis-performance-diagnostics.md)
-34. [`ai/mongodb-performance-diagnostics.md`](ai/mongodb-performance-diagnostics.md)
-35. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
-36. [`ai/testing-strategy.md`](ai/testing-strategy.md)
-37. [`runtime-internals.md`](runtime-internals.md)
-38. [`roadmap.md`](roadmap.md)
+34. [`ai/durable-invocation-journal.md`](ai/durable-invocation-journal.md)
+35. [`ai/mongodb-performance-diagnostics.md`](ai/mongodb-performance-diagnostics.md)
+36. [`ai/replay-and-audit.md`](ai/replay-and-audit.md)
+37. [`ai/testing-strategy.md`](ai/testing-strategy.md)
+38. [`runtime-internals.md`](runtime-internals.md)
+39. [`roadmap.md`](roadmap.md)
 
 This path gives the current architecture, configuration model, RBAC/context propagation model, tenant isolation model, control-plane/runtime split, extension model, technical reference, and next planned improvements.
 
@@ -227,13 +242,47 @@ This document explains:
 
 ### [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md)
 
-Server-side execution reference covering effective language selection, immutable publication and run pinning, worker lease/epoch authority, durable result application, actual Python/TypeScript/.NET execution, custom `Concurrency` policies, execution requirements, and authorized outbound MCP.
+Server-side execution reference covering effective language selection, immutable publication and run pinning, deterministic dependency packaging, published custom Child DAG binding, worker lease/epoch authority, durable result application, actual Python/TypeScript/.NET execution, hosted custom policy families, execution requirements, and authorized outbound MCP.
 
-The hosted function process is not a trusted runtime instance. The public SDK library, hostile-code sandboxing, nested custom publication, and durable MCP external-effect evidence remain separate capabilities.
+The hosted function worker is not a trusted runtime instance. Published custom Child DAGs and deterministic dependency bundles reuse the same immutable publication, durable journal, hosted worker and existing continuation authorities. Pure-Python wheels, locked Node source bundles, and managed .NET assembly closures are supported. Physical execution can remain an explicitly trusted process or use the selected Linux/amd64 OCI `SandboxedContainer` provider. Durable outbound MCP effect evidence is a separate opt-in server boundary with immutable intent, dispatch fencing, confirmed-result replay, conservative uncertainty handling, and explicit reconciliation; it does not create generic exactly-once semantics or retry authority. A portable public SDK contract/server boundary is implemented for publication and execution lifecycle operations without exposing engine DLLs or runtime ownership identities. Independent .NET, TypeScript/JavaScript, and Python external SDK clients consume that boundary with shared parity/package validation plus a fixture-free 37/37 Docker runtime matrix covering the existing `ProcessHostPool` baseline and bounded `ContainerIsolationProvider` provider/artifact-selection scenarios. Public registry publication, the standalone CLI, native package ecosystems, Kubernetes sandbox-Pod materialization, and broader hostile-code/platform guarantees remain separate capabilities.
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](ai/kubernetes-pool-matrix-validation.md).
 
 ### [`ai/hosted-multilanguage-validation.md`](ai/hosted-multilanguage-validation.md)
 
 Result-artifact inventory for the hosted execution foundation. Separates inspected TRX results from reported HTTP/gRPC host validation and from unsupported production guarantees.
+
+### [`ai/hosted-worker-isolation.md`](ai/hosted-worker-isolation.md)
+
+Physical execution reference for the selected OCI `SandboxedContainer` provider. Covers immutable provider routing, exact OCI image identity, server-owned resource and user profile, applied-state attestation before tenant material release, lifecycle cleanup, shared capacity quarantine, and restart orphan reconciliation without moving durable execution authority into the provider.
+
+### [`ai/hosted-worker-isolation-validation.md`](ai/hosted-worker-isolation-validation.md)
+
+Validation reference separating deterministic engine-probe/provider tests from real Docker/Linux kernel/cgroup enforcement. Records the final 86-test deterministic target and 2-test real-engine target, together with the exact limitations of those results.
+
+### [`ai/durable-mcp-effect-evidence.md`](ai/durable-mcp-effect-evidence.md)
+
+Outbound MCP durable-effect reference covering stable logical identity, immutable intent, the pre-`tools/call` dispatch fence, `Completed` local replay, `NotSent`/`Uncertain` classification, explicit provider reconciliation, restart behavior, tenant-scoped evidence, and the no-blind-re-emission rule.
+
+### [`ai/durable-mcp-effect-evidence-validation.md`](ai/durable-mcp-effect-evidence-validation.md)
+
+Validation reference separating deterministic durable-effect proofs, the selected real outbound `tools/call` boundary tests, and opt-in MongoDB persistence/reconstruction tests. Skipped MongoDB tests are explicitly not counted as passing evidence.
+
+### [`ai/public-sdk-boundary.md`](ai/public-sdk-boundary.md)
+
+Portable public publication/pipeline and execution/observation/control contracts, engine-dependency firewall, public execution identity, idempotent submission model, and the explicit server-adapter boundary.
+
+### [`ai/public-sdk-boundary-validation.md`](ai/public-sdk-boundary-validation.md)
+
+Validation reference for the dependency firewall, private-identity exclusion, public server interface, existing run-pinning/authorization compatibility, and branch-closure limits.
+
+### [`ai/interactive-agent-sdk-demo.md`](ai/interactive-agent-sdk-demo.md)
+
+Presentation-oriented end-to-end external SDK reference. Documents the packaged .NET, TypeScript, and Python consumers, real JWT plus server-created RBAC access context, runtime-owned OpenAI credential, immutable publication, Child DAG delegation, human review/resume on the same execution, terminal result publication, and deterministic replay. The packaged Docker path and the separate live `ProcessHostPool/HTTP` and `KubernetesPool/HTTP` topology campaigns are GREEN for all three SDK clients.
+
+### [`ai/interactive-agent-sdk-topology-validation.md`](ai/interactive-agent-sdk-topology-validation.md)
+
+Canonical proof for the live interactive topology campaign. Records the .NET, TypeScript, and Python client results for `ProcessHostPool/HTTP` and `KubernetesPool/HTTP`, the eleven acceptance gates, exact-pool Kubernetes attestation, replay-readiness behavior, and explicit evidence non-claims.
 
 ---
 
@@ -862,7 +911,15 @@ The project roadmap organized into phases:
 | [`ai/config-driven-runtime.md`](ai/config-driven-runtime.md) | How pipeline definitions and structured configuration drive runtime behavior, with tenant runtime settings moving toward config/database-backed resolution. |
 | [`ai/policy-driven-execution.md`](ai/policy-driven-execution.md) | Shared policy model used by retry, retention, concurrency, throttling, admission control, and future tenant-specific governance. |
 | [`ai/context-resolution-and-helpers.md`](ai/context-resolution-and-helpers.md) | Input resolution, step context building, payload rehydration, provider metadata, policy context, helper services, and durable execution context snapshot propagation. |
-| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Native/custom/MCP binding, published code and dependencies, language workers, execution requirements, and the external SDK boundary. |
+| [`ai/hosted-multilanguage-execution.md`](ai/hosted-multilanguage-execution.md) | Native/custom/MCP binding, published code and deterministic dependency bundles, language workers, execution requirements, and their relationship to the public SDK boundary. |
+| [`ai/public-sdk-boundary.md`](ai/public-sdk-boundary.md) | Portable publication/execution contracts, dependency firewall, public identity model, and explicit mapping into existing server authorities. |
+| [`ai/public-sdk-boundary-validation.md`](ai/public-sdk-boundary-validation.md) | Validation and limits for the public contract/server boundary. |
+| [`ai/external-sdk-libraries.md`](ai/external-sdk-libraries.md) | Independent .NET, TypeScript/JavaScript and Python clients over the public SDK boundary, including command-line usage for each language. |
+| [`ai/external-sdk-quickstart.md`](ai/external-sdk-quickstart.md) | End-to-end .NET, TypeScript/JavaScript, and Python client examples for publishing sample user code, submitting an immutable publication, observing execution, and reading the terminal result. |
+| [`ai/external-sdk-libraries-validation.md`](ai/external-sdk-libraries-validation.md) | Shared cross-language parity, local package build/install/import evidence, and linkage to the live runtime closure. |
+| [`ai/multilanguage-runtime-matrix-validation.md`](ai/multilanguage-runtime-matrix-validation.md) | Fixture-free 37/37 Docker validation across external SDK clients and production hosted workers with `runtimeProvider=ProcessHostPool`, bounded `ContainerIsolationProvider` worker selection, pinning, dependency packaging, policies, nested Child DAGs, MCP effects, cancellation, recovery, journal acceptance, and dependency firewalls. |
+| [`ai/kubernetes-pool-matrix-validation.md`](ai/kubernetes-pool-matrix-validation.md) | Validated 3/3 KubernetesPool closure: HTTP routing, hierarchical recovery, Python SDK execution with a verified uploaded-function marker; host-role/RBAC/TTL configuration, two image workflows, diagnostics, and the separate 37 Docker + 3 Kubernetes coverage record. |
+| [`ai/deterministic-dependency-packaging.md`](ai/deterministic-dependency-packaging.md) | Supported immutable package forms, package-manifest integrity, republish pinning, worker revalidation, and unsupported package-manager/native dependency boundaries. |
 | [`ai/step-plugins.md`](ai/step-plugins.md) | Step keys, registered executors, class attributes, assembly scanning, provider abstractions, and plugin-style runtime extension. |
 | [`ai/rag-pipelines.md`](ai/rag-pipelines.md) | RAG retrieval, merge, compose, provider-oriented workflow execution, auto-registered RAG steps, and deterministic RAG pipelines. |
 

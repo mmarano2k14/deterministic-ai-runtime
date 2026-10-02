@@ -111,6 +111,24 @@ namespace Multiplexed.AI.Stores
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Applies an already-evaluated retry/failure decision atomically to the currently claimed step.
+        /// </summary>
+        /// <remarks>
+        /// This boundary is used when retry policy evaluation cannot be performed inside the store,
+        /// for example when a hosted custom retry policy must execute before the claim-fenced mutation.
+        /// The store must not recompute or replace the supplied policy decision.
+        /// </remarks>
+        Task<bool> TryFailStepWithDecisionAsync(
+            string executionId,
+            string stepName,
+            string claimToken,
+            string? error,
+            AiDagStepFailureDecision decision,
+            AiStepResult? result = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("This DAG store does not support explicit retry decisions.");
+
+        /// <summary>
         /// Applies the existing failure/retry transition while atomically retaining a complete
         /// durable invocation result and its receipt. Providers must implement this boundary;
         /// falling back to the error-only operation would discard application evidence.

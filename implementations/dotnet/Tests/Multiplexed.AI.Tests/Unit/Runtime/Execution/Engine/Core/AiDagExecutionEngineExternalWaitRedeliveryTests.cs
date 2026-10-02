@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Multiplexed.Abstractions.AI.Concurrency;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Cleanup;
@@ -81,11 +81,67 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Engine.Core
             Assert.Contains($"StepStatus='{stepStatus}'", exception.Message);
         }
 
+        [Fact]
+        public async Task TryResumeSubmittedInputWaitAsync_WhenExactInputWaitIsParked_ShouldResumeStep()
+        {
+            var record = CreateRecord(AiExecutionStatus.Waiting);
+            var state = CreateState(AiStepExecutionStatus.WaitingForExternal);
+            var dagStore = CreateDagStore(record, state);
+            var control = CreateControlService(new AiExecutionControlState
+            {
+                ExecutionId = record.ExecutionId,
+                Status = AiExecutionControlStatus.Resuming,
+                PendingAction = AiExecutionControlAction.SubmitInput,
+                WaitingKey = "approval:test",
+                WaitingStepName = "execute-child-dag",
+                InputWaitMode = AiExecutionInputWaitMode.ExternalWaitStep,
+                InputReceivedAtUtc = DateTime.UtcNow
+            });
+            var engine = CreateEngine(dagStore, control);
+
+            var resumed = await engine.TryResumeSubmittedInputWaitAsync(record.ExecutionId);
+
+            Assert.True(resumed);
+            Assert.Equal(AiStepExecutionStatus.Ready, state.Steps["execute-child-dag"].Status);
+        }
+
+        [Fact]
+        public async Task TryResumeSubmittedInputWaitAsync_WhenWaitUsesExecutionGate_ShouldNotTouchParkedStep()
+        {
+            var record = CreateRecord(AiExecutionStatus.Waiting);
+            var state = CreateState(AiStepExecutionStatus.WaitingForExternal);
+            var dagStore = CreateDagStore(record, state);
+            var control = CreateControlService(new AiExecutionControlState
+            {
+                ExecutionId = record.ExecutionId,
+                Status = AiExecutionControlStatus.Resuming,
+                PendingAction = AiExecutionControlAction.SubmitInput,
+                WaitingKey = "approval:test",
+                WaitingStepName = "execute-child-dag",
+                InputWaitMode = AiExecutionInputWaitMode.ExecutionGate,
+                InputReceivedAtUtc = DateTime.UtcNow
+            });
+            var engine = CreateEngine(dagStore, control);
+
+            var resumed = await engine.TryResumeSubmittedInputWaitAsync(record.ExecutionId);
+
+            Assert.False(resumed);
+            Assert.Equal(AiStepExecutionStatus.WaitingForExternal, state.Steps["execute-child-dag"].Status);
+        }
+
+        private static IAiExecutionControlService CreateControlService(AiExecutionControlState state)
+        {
+            var service = DispatchProxy.Create<IAiExecutionControlService, ExecutionControlProxy>();
+            ((ExecutionControlProxy)(object)service).State = state;
+            return service;
+        }
+
         private static AiDagExecutionEngine CreateEngine(
-            IAiDagExecutionStore dagStore)
+            IAiDagExecutionStore dagStore,
+            IAiExecutionControlService? executionControlService = null)
         {
             return new AiDagExecutionEngine(
-                new TestEngineServices(dagStore),
+                new TestEngineServices(dagStore, executionControlService),
                 NullProxy.Create<IAiDagExecutionEngineRuntimeServices>());
         }
 
@@ -163,8 +219,40 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Engine.Core
                     nameof(IAiDagExecutionStore.GetStateAsync) =>
                         Task.FromResult(State),
 
+                    nameof(IAiDagExecutionStore.TryResumeExternalWaitingStepAsync) =>
+                        ResumeExternalWait((string)args![1]!),
+
                     _ => throw new NotSupportedException(
                         $"Unit DAG store proxy does not support '{targetMethod.Name}'.")
+                };
+            }
+
+            private Task<bool> ResumeExternalWait(string stepName)
+            {
+                if (State is null ||
+                    !State.Steps.TryGetValue(stepName, out var step) ||
+                    step.Status != AiStepExecutionStatus.WaitingForExternal)
+                {
+                    return Task.FromResult(false);
+                }
+
+                step.MarkReadyFromExternalWait();
+                return Task.FromResult(true);
+            }
+        }
+
+        private class ExecutionControlProxy : DispatchProxy
+        {
+            public AiExecutionControlState? State { get; set; }
+
+            protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+            {
+                ArgumentNullException.ThrowIfNull(targetMethod);
+                return targetMethod.Name switch
+                {
+                    nameof(IAiExecutionControlService.GetStateAsync) => Task.FromResult(State),
+                    _ => throw new NotSupportedException(
+                        $"Execution-control proxy does not support '{targetMethod.Name}'.")
                 };
             }
         }
@@ -172,9 +260,11 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Engine.Core
         private sealed class TestEngineServices : IAiDagExecutionEngineServices
         {
             public TestEngineServices(
-                IAiDagExecutionStore dagStore)
+                IAiDagExecutionStore dagStore,
+                IAiExecutionControlService? executionControlService = null)
             {
                 DagStore = dagStore;
+                ExecutionControlService = executionControlService ?? NullProxy.Create<IAiExecutionControlService>();
             }
 
             public IAiExecutionStore Store { get; } =
@@ -242,8 +332,7 @@ namespace Multiplexed.AI.Tests.Unit.Runtime.Execution.Engine.Core
             public IAiExecutionControlGate ExecutionControlGate { get; } =
                 NullProxy.Create<IAiExecutionControlGate>();
 
-            public IAiExecutionControlService ExecutionControlService { get; } =
-                NullProxy.Create<IAiExecutionControlService>();
+            public IAiExecutionControlService ExecutionControlService { get; }
 
             public IAiExecutionReplayMetadataService ReplayMetadataService { get; } =
                 NullProxy.Create<IAiExecutionReplayMetadataService>();

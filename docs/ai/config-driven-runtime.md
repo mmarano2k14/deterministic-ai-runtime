@@ -790,6 +790,14 @@ Both are valid, but they belong to different layers.
 
 ---
 
+## Published-code KubernetesPool configuration boundary
+
+The validated SDK profile distinguishes runtime-host configuration from hosted-worker execution. `AiKubernetesRuntimePoolHost` selects the Pod image and projects child environment settings; `AiHostedInvocation` controls publication-only identities, local worker profiles, polling, and background DAG reconciliation.
+
+The profile keeps `EnableLocalWorkerProfiles=false`, `EnableWorkerPolling=false`, and `EnableDagReconciliation=true` on the control plane, with the inverse role split for runtime-child worker profiles/polling and background reconciliation. Invocation adapters are registered regardless of that reconciliation switch.
+
+`AiMatrixHarness:ExecutionContextTtlSeconds=3600` initializes the serialized snapshot value before persistence. `AiMatrixHarness:Project`, `Multiplexed.Rbac.Core:Project`, and `AiKubernetesRuntimePoolHost:ChildEnvironmentVariables:Multiplexed.Rbac.Core__Project` all use `matrix`. These are matrix-host settings, not tenant code parameters or permission grants. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md) for the complete replay-safe store, image, and bootstrap contract.
+
 ## Process-Host Runtime Configuration
 
 The production scenario framework now validates real process-host runtime execution through provider-specific host configuration.

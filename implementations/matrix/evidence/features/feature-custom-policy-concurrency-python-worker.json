@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-custom-policy-concurrency-python-worker",
+  "status": "passed",
+  "coverageTarget": "custom-policy-family",
+  "coverageValues": [
+    "concurrency"
+  ],
+  "clientLanguage": "python",
+  "workerLanguage": "python",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-5708b2580420db173707390301e2517520c96cc3a6b550ded33c068db9770a79",
+  "executionId": "published-27d1ef6e2a2c48aa63c3148abab6bb06a1e07ba9d29a94bafd37a29d50141aa2",
+  "policyFamily": "concurrency",
+  "policyDecision": "allow",
+  "expectedTerminalStatus": "Completed",
+  "terminalStatus": "Completed",
+  "failureCode": null,
+  "evidence": [
+    "publish",
+    "submit",
+    "hosted-custom-policy",
+    "policy-allow-enforced",
+    "observe",
+    "terminal-result"
+  ],
+  "recordedAtUtc": "2026-09-21T23:12:56.946+00:00"
+}

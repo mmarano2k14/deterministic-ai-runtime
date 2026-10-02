@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "scope": "selected-runtime-files-not-whole-image",
+  "status": "captured",
+  "localImageId": "sha256:d39cae555d8f60335f3cab39bcc98676b7f7b7330c978355da7f9642ace8f659",
+  "hashes": {
+    "/app/Multiplexed.AI.McpServer.Host.dll": "913e7c90e9dd8e3542ba12bf7b05e9c778f645369458a3e92924528834c13c51",
+    "/app/Multiplexed.AI.McpServer.dll": "962e8305a82f051cb0ddc0cab35737a3b1646362d90cf432e76014a867b8bcf9",
+    "/app/Multiplexed.AI.dll": "1882a1982aa48471fae9baf6362438c6fc8949e8ef50e864f9038971dddf8d3f",
+    "/app/Multiplexed.Abstractions.dll": "c16aebd6297ba0340b744f8bd950e23f6f0e6eeae73cab493474d9f9fd671e7f",
+    "/app/workers/dotnet/Multiplexed.AI.HostedInvocation.DotNetWorker.dll": "6b0d32b82e4b79b894e9d7639b026b123bd48e77390d48ca7f0c182e423a6848",
+    "/app/workers/typescript/worker.mjs": "ae06626508b08ebed765432a893519ec3dc48e4fa176aeb617a756cbe5a4302e",
+    "/app/workers/python/worker.py": "57fed162ddd81bdfb215163a753c851a865f45624c1b7b06a20b42a513469464",
+    "/usr/local/bin/python3.12": "4dbf3143240288fb2170257ffaa7bd030cdda5d2703d1f5f30b627042267e2e3"
+  }
+}

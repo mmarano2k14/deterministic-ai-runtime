@@ -1,0 +1,14 @@
+.packages/
+typescript/node_modules/
+typescript/dist/
+dotnet/bin/
+dotnet/obj/
+python/.venv/
+python/**/*.egg-info/
+python/**/__pycache__/
+.env
+.state/
+diagnostics/
+*.log
+
+validation/evidence/

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "matrixId": "kubernetes-pool-runtime-recovery-v1",
+  "baselineMatrixId": "multilanguage-runtime-v1",
+  "baselineExecutedCoverage": 37,
+  "scenario": {
+    "id": "feature-runtime-provider-kubernetes-pool-hierarchical-recovery",
+    "topology": "kubernetes",
+    "runtimeProvider": "KubernetesPool",
+    "transport": "http",
+    "requiredObservationMode": "EventDriven",
+    "minimumExecutionCycleCount": 2,
+    "minimumChildDepth": 3,
+    "minimumRuntimeProcessFailureCount": 1,
+    "minimumPodFailureCount": 1,
+    "requiredEvidenceKinds": [
+      "exact-inpod-runtime-process-failure",
+      "process-kill-execution-identity-continuity",
+      "busy-pod-failure",
+      "replacement-pod-capacity",
+      "recovery-forensics",
+      "runtime-ownership-convergence",
+      "terminal-dag-convergence",
+      "parent-replay",
+      "ledger-trace-lifecycle-proof",
+      "warm-pool-reuse"
+    ]
+  },
+  "claimBoundary": "This sidecar reuses the existing KubernetesPool full-failure production harness. It records evidence only after the engine has proven in-Pod runtime-process failure, distinct busy-Pod failure, durable recovery, exact ownership convergence, replay, ledger/trace/lifecycle consistency, terminal DAG convergence, and warm-pool reuse. It does not introduce a second recovery, scheduler, journal, result-acceptance, or Kubernetes lifecycle authority and does not extend the canonical 37/37 baseline yet."
+}

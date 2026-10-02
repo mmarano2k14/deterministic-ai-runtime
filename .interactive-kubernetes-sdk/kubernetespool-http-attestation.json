@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "requested": {
+    "runtimeProvider": "KubernetesPool",
+    "runtimeTransport": "HTTP"
+  },
+  "observed": {
+    "source": "kubernetes-cluster-inspection",
+    "runtimeProvider": "KubernetesPool",
+    "runtimeTransport": "HTTP",
+    "namespace": "ai-runtime",
+    "poolId": "mcp-http-kubernetes-pool-fcbeb9919aa0",
+    "podNames": [
+      "runtime-pool-7g-mcp-http-kubernetes-pool-fcbeb9919-c5a3ddc58206"
+    ],
+    "readyPodNames": [
+      "runtime-pool-7g-mcp-http-kubernetes-pool-fcbeb9919-c5a3ddc58206"
+    ],
+    "serviceNames": [
+      "runtime-pool-7g-mcp-http-kubernetes-pool-fcbeb9919-c-52a6f1e886"
+    ],
+    "runtimeInstanceCount": 1,
+    "runtimeContainerImages": [
+      "multiplexed-ai-runtime:matrix-sdk"
+    ]
+  },
+  "verified": true,
+  "checks": [
+    {
+      "name": "runtimeProvider",
+      "expected": "KubernetesPool",
+      "actual": "KubernetesPool",
+      "passed": true
+    },
+    {
+      "name": "runtimeTransport",
+      "expected": "HTTP",
+      "actual": "HTTP",
+      "passed": true
+    },
+    {
+      "name": "poolId-present",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "namespace-present",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "pool-pod-count",
+      "expected": ">=1",
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "ready-pod-count",
+      "expected": ">=1",
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "pool-service-count",
+      "expected": ">=1",
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "runtime-instance-count-annotation",
+      "expected": ">=1",
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "runtime-image",
+      "expected": "multiplexed-ai-runtime:matrix-sdk",
+      "actual": [
+        "multiplexed-ai-runtime:matrix-sdk"
+      ],
+      "passed": true
+    },
+    {
+      "name": "pod-name-presence",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "service-name-presence",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    }
+  ],
+  "verifiedAtUtc": "2026-09-30T23:44:25.784498Z"
+}

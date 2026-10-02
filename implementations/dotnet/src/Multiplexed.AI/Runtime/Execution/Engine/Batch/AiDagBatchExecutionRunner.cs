@@ -401,11 +401,18 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Batch
                             ? "Step execution failed."
                             : result.Error;
 
-                        var failed = result.InvocationReceipt is null
-                            ? await _engineServices.DagStore.TryFailStepAsync(
-                                executionId, claimedStep.StepName, claimedStep.ClaimToken, error, cancellationToken)
-                            : await _engineServices.DagStore.TryFailStepWithResultAsync(
-                                executionId, claimedStep.StepName, claimedStep.ClaimToken, result, cancellationToken);
+                        var failed = await AiDagExecutionHelpers.TryPersistClaimedStepFailureAsync(
+                            _engineServices,
+                            record,
+                            state,
+                            resolvedPipeline,
+                            claimedStep.StepName,
+                            claimedStep.ClaimToken,
+                            error,
+                            result,
+                            exception: null,
+                            buildExecutionContext: buildExecutionContext,
+                            cancellationToken: cancellationToken).ConfigureAwait(false);
 
                         if (!failed)
                         {

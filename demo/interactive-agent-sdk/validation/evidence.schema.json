@@ -1,0 +1,360 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multiplexed.local/schemas/interactive-agent-sdk-evidence-v1.json",
+  "title": "Interactive Agent SDK Topology Validation Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "scenarioId",
+    "sdkClient",
+    "runtimeProvider",
+    "runtimeTransport",
+    "publication",
+    "execution",
+    "humanReview",
+    "provider",
+    "rootSteps",
+    "result",
+    "replay",
+    "timing",
+    "topology"
+  ],
+  "properties": {
+    "contractVersion": {
+      "const": 1
+    },
+    "scenarioId": {
+      "const": "interactive-agent-sdk-canonical-v1"
+    },
+    "sdkClient": {
+      "enum": [
+        "dotnet",
+        "typescript",
+        "python"
+      ]
+    },
+    "runtimeProvider": {
+      "enum": [
+        "ProcessHostPool",
+        "KubernetesPool"
+      ]
+    },
+    "runtimeTransport": {
+      "enum": [
+        "HTTP",
+        "gRPC"
+      ]
+    },
+    "publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accepted",
+        "publicationRef",
+        "pipelineName",
+        "pipelineVersion"
+      ],
+      "properties": {
+        "accepted": {
+          "const": true
+        },
+        "publicationRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pipelineName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pipelineVersion": {
+          "const": "1"
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executionId",
+        "executionIdAfterHumanInput",
+        "sameExecutionIdAfterHumanInput",
+        "status"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executionIdAfterHumanInput": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sameExecutionIdAfterHumanInput": {
+          "const": true
+        },
+        "status": {
+          "const": "Completed"
+        }
+      }
+    },
+    "humanReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "waitingBoundaryReached",
+        "waitingStepName",
+        "waitingKey",
+        "accepted",
+        "approved"
+      ],
+      "properties": {
+        "waitingBoundaryReached": {
+          "const": true
+        },
+        "waitingStepName": {
+          "const": "await-review"
+        },
+        "waitingKey": {
+          "const": "interactive-agent-review"
+        },
+        "accepted": {
+          "const": true
+        },
+        "approved": {
+          "const": true
+        },
+        "feedback": {
+          "type": "string"
+        }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "model",
+        "responsePayloadPresent"
+      ],
+      "properties": {
+        "name": {
+          "const": "openai"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "responsePayloadPresent": {
+          "const": true
+        }
+      }
+    },
+    "rootSteps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plan",
+        "delegate-analysis",
+        "await-review",
+        "final-answer",
+        "publish-result"
+      ],
+      "properties": {
+        "plan": {
+          "const": "Completed"
+        },
+        "delegate-analysis": {
+          "const": "Completed"
+        },
+        "await-review": {
+          "const": "Completed"
+        },
+        "final-answer": {
+          "const": "Completed"
+        },
+        "publish-result": {
+          "const": "Completed"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "available"
+      ],
+      "properties": {
+        "available": {
+          "const": true
+        },
+        "requestId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "succeeded",
+        "deterministic",
+        "executionIdUnchanged"
+      ],
+      "properties": {
+        "succeeded": {
+          "const": true
+        },
+        "deterministic": {
+          "const": true
+        },
+        "executionIdUnchanged": {
+          "const": true
+        }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startedAtUtc",
+        "completedAtUtc"
+      ],
+      "properties": {
+        "startedAtUtc": {
+          "type": "string",
+          "minLength": 1
+        },
+        "completedAtUtc": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "topology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "requested",
+        "observed",
+        "verified",
+        "checks",
+        "verifiedAtUtc"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "requested": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "runtimeProvider",
+            "runtimeTransport"
+          ],
+          "properties": {
+            "runtimeProvider": {
+              "enum": [
+                "ProcessHostPool",
+                "KubernetesPool"
+              ]
+            },
+            "runtimeTransport": {
+              "enum": [
+                "HTTP",
+                "gRPC"
+              ]
+            }
+          }
+        },
+        "observed": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "source",
+            "runtimeProvider",
+            "runtimeTransport"
+          ],
+          "properties": {
+            "source": {
+              "type": "string",
+              "minLength": 1
+            },
+            "runtimeProvider": {
+              "type": "string",
+              "minLength": 1
+            },
+            "runtimeTransport": {
+              "type": "string",
+              "minLength": 1
+            },
+            "hostMode": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "providerName": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "scaleOutMode": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "hostCreationMode": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "verified": {
+          "const": true
+        },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "expected",
+              "actual",
+              "passed"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expected": {},
+              "actual": {},
+              "passed": {
+                "const": true
+              }
+            }
+          }
+        },
+        "verifiedAtUtc": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

@@ -106,6 +106,12 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     : $"{pipelineName}:{resolvedPipeline.Version}";
             var runtimeInstanceId = _services.RuntimeInstanceIdentity.RuntimeInstanceId;
 
+            ProjectAuthoritativeClaimIntoExecutionView(
+                record,
+                stepState,
+                claimedStep,
+                runtimeInstanceId);
+
             var concurrencyContext = new AiConcurrencyContext
             {
                 ExecutionId = record.ExecutionId,
@@ -260,5 +266,48 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                     return AiStepResult.Fail(ex.Message);
             }
         }
+
+        /// <summary>
+        /// Projects the already-authoritative distributed claim into the execution-local
+        /// state view used by the selected step adapter. This does not write durable state;
+        /// the DAG store claim remains the ownership authority.
+        /// </summary>
+        private static void ProjectAuthoritativeClaimIntoExecutionView(
+            AiExecutionRecord record,
+            AiStepState? stepState,
+            AiClaimedStep claimedStep,
+            string runtimeInstanceId)
+        {
+            if (!string.Equals(claimedStep.ExecutionId, record.ExecutionId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Claimed execution '{claimedStep.ExecutionId}' does not match record '{record.ExecutionId}'.");
+            }
+
+            if (stepState is null)
+            {
+                throw new InvalidOperationException(
+                    $"Claimed step '{claimedStep.StepName}' is missing from execution '{record.ExecutionId}' state.");
+            }
+
+            if (string.IsNullOrWhiteSpace(claimedStep.ClaimToken))
+            {
+                throw new InvalidOperationException(
+                    $"Claimed step '{claimedStep.StepName}' has no claim token.");
+            }
+
+            if (stepState.Status is AiStepExecutionStatus.Completed or AiStepExecutionStatus.Failed)
+            {
+                throw new InvalidOperationException(
+                    $"Claimed step '{claimedStep.StepName}' is already terminal in the execution-local state view.");
+            }
+
+            // Redis/Lua has already committed the claim. The batch state was loaded before
+            // that atomic transition, so only mirror claim identity/status for adapter execution.
+            stepState.Status = AiStepExecutionStatus.Running;
+            stepState.ClaimedBy = runtimeInstanceId;
+            stepState.ClaimToken = claimedStep.ClaimToken;
+        }
+
     }
 }

@@ -228,6 +228,21 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         cancellationToken)
                     .ConfigureAwait(false);
             }
+
+            // Recovery and state reconstruction may take long enough for an external pause,
+            // cancellation, or human-input wait to arrive after the initial claim gate.
+            // Re-check before selecting any new ready step so stale pre-control work is not admitted.
+            controlDecision = await CheckExecutionControlAsync(
+                    executionId,
+                    pipelineKey,
+                    workerId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (controlDecision is { CanContinue: false })
+            {
+                return null;
+            }
+
             if (state is null || state.Steps.Count == 0)
             {
                 await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -384,6 +399,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         .ConfigureAwait(false);
                     var claimed = await TryClaimStepAsync(
                             executionId,
+                            pipelineKey,
                             readyStep.StepName,
                             workerId,
                             cancellationToken)
@@ -639,6 +655,21 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         cancellationToken)
                     .ConfigureAwait(false);
             }
+
+            // Recovery and state reconstruction may take long enough for an external pause,
+            // cancellation, or human-input wait to arrive after the initial batch claim gate.
+            // Re-check before selecting any new ready step so stale pre-control work is not admitted.
+            controlDecision = await CheckExecutionControlAsync(
+                    executionId,
+                    pipelineKey,
+                    workerId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (controlDecision is { CanContinue: false })
+            {
+                return Array.Empty<AiClaimedStep>();
+            }
+
             if (state is null || state.Steps.Count == 0)
             {
                 await AiDagExecutionHelpers.RecordDagLedgerEventAsync(
@@ -803,6 +834,7 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
                         .ConfigureAwait(false);
                     var claimed = await TryClaimStepAsync(
                             executionId,
+                            pipelineKey,
                             readyStep.StepName,
                             workerId,
                             cancellationToken)
@@ -1306,6 +1338,9 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
         /// <param name="executionId">
         /// The execution identifier.
         /// </param>
+        /// <param name="pipelineKey">
+        /// The stable pipeline key used for execution-control ledger correlation.
+        /// </param>
         /// <param name="stepName">
         /// The step name to claim.
         /// </param>
@@ -1318,12 +1353,31 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Steps
         /// <returns>
         /// The claimed step when claim acquisition succeeds; otherwise, <c>null</c>.
         /// </returns>
+        /// <remarks>
+        /// Execution control is re-checked immediately before the durable DAG claim.
+        /// This closes the cooperative-pause race where a worker passed the earlier
+        /// admission gate and a pause/cancel/input-wait arrived while it was resolving
+        /// recovery, policy, or concurrency admission.
+        /// </remarks>
         private async Task<AiClaimedStep?> TryClaimStepAsync(
             string executionId,
+            string pipelineKey,
             string stepName,
             string workerId,
             CancellationToken cancellationToken)
         {
+            var controlDecision = await CheckExecutionControlAsync(
+                    executionId,
+                    pipelineKey,
+                    workerId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (controlDecision is { CanContinue: false })
+            {
+                return null;
+            }
+
             return await _services.ObservabilityService.Tracer.TraceStorageAsync(
                     new AiStorageTraceContext
                     {

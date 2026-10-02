@@ -50,9 +50,11 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers
         [InlineData(101)]
         public async Task Invalid_Worker_Epoch_Cap_Is_Refused(int cap)
         {
-            var (journal, _, _) = DurableInvocationTestSupport.Create();
+            var (journal, store, _) = DurableInvocationTestSupport.Create();
             await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () => await journal.TryAcquireWorkerLeaseAsync(
                 DurableInvocationTestSupport.Scope, DurableInvocationTestSupport.Identity, "worker-a", TimeSpan.FromSeconds(30), true, cap));
+            Assert.Equal(0, store.GetCalls);
+            Assert.Equal(0, store.CasCalls);
         }
         [Fact]
         public async Task General_Journal_Lease_Api_Retains_Its_Existing_Contract()

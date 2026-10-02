@@ -13,6 +13,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable.Dag
         private readonly AiDurableInvocationScope[] _tenants;
         private readonly TimeSpan _interval;
         private readonly int _batch;
+        private readonly Dictionary<AiDurableInvocationScope, AiDurableInvocationContinuationCursor?> _cursors = new();
         public AiDurableInvocationDagReconcilerHostedService(IServiceScopeFactory scopes,
             AiDurableInvocationDagReconciliationOptions options, ILogger<AiDurableInvocationDagReconcilerHostedService> logger)
         {
@@ -38,8 +39,10 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable.Dag
                         try
                         {
                             using var scope = _scopes.CreateScope();
-                            await scope.ServiceProvider.GetRequiredService<AiDurableInvocationDagReconciler>()
-                                .ReconcileAsync(tenant, _batch, stoppingToken).ConfigureAwait(false);
+                            _cursors.TryGetValue(tenant, out var cursor);
+                            var result = await scope.ServiceProvider.GetRequiredService<AiDurableInvocationDagReconciler>()
+                                .ReconcilePageAsync(tenant, _batch, cursor, stoppingToken).ConfigureAwait(false);
+                            _cursors[tenant] = result.NextCursor;
                         }
                         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
                         catch (Exception exception)

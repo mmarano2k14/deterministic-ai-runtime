@@ -49,6 +49,20 @@ function dependency(name, source, version = '1.0.0') {
   return { name, version, files: [file('index.ts', source)] };
 }
 
+function lockedDependency(name, sources, entryPoint = 'src/index.ts', version = '2.0.1') {
+  const sourceFiles = Object.entries(sources).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+    .map(([relative, source]) => file(relative, source));
+  const manifest = {
+    schemaVersion: 1, packageName: name, version, entryPoint,
+    files: sourceFiles.map(item => ({ path: item.path, sha256: item.sha256 }))
+  };
+  return {
+    name, version,
+    files: [file('bundle.manifest.json', JSON.stringify(manifest)), ...sourceFiles],
+    package: { schemaVersion: 1, kind: 'NodeLockedBundle', manifestPath: 'bundle.manifest.json' }
+  };
+}
+
 async function invoke(value, timeoutMs = 20000, workerPath = worker) {
   const child = spawn(process.execPath, [
     workerPath,
@@ -113,6 +127,73 @@ test('vendored dependency is imported through an exact host-generated alias', as
     export function run(inputs: { amount: number }, context: unknown) { return { success: true, payload: scale(inputs.amount) }; }`;
   const dep = dependency('rules', `export function scale(value: number): number { return value * 3; }`);
   assert.equal(terminal(await invoke(request(source, { dependencies: [dep] }))).payload, 63);
+});
+
+test('locked Node dependency executes only its manifest-pinned TypeScript closure', async () => {
+  const source = `import { scale } from '#rules';
+    export function run(inputs: { amount: number }, context: unknown) { return { success: true, payload: scale(inputs.amount) }; }`;
+  const dep = lockedDependency('rules', {
+    'src/index.ts': `export { scale } from './math.ts';`,
+    'src/math.ts': `export function scale(value: number): number { return value * 4; }`
+  });
+  assert.equal(terminal(await invoke(request(source, { dependencies: [dep] }))).payload, 84);
+});
+
+test('locked Node dependency rejects a source digest mismatch before readiness', async () => {
+  const dep = lockedDependency('rules', { 'src/index.ts': `export const value = 1;` });
+  const manifest = JSON.parse(Buffer.from(dep.files[0].base64Url, 'base64url').toString('utf8'));
+  manifest.files[0].sha256 = '0'.repeat(64);
+  dep.files[0] = file('bundle.manifest.json', JSON.stringify(manifest));
+  const result = await invoke(request(`import { value } from '#rules'; export function run() { return { success: true, payload: value }; }`,
+    { dependencies: [dep] }));
+  assert.notEqual(result.code, 0);
+  assert.equal(result.frames.length, 0);
+});
+
+test('locked Node dependency rejects package identity substitution', async () => {
+  const dep = lockedDependency('rules', { 'src/index.ts': `export const value = 1;` });
+  const manifest = JSON.parse(Buffer.from(dep.files[0].base64Url, 'base64url').toString('utf8'));
+  manifest.packageName = 'other';
+  dep.files[0] = file('bundle.manifest.json', JSON.stringify(manifest));
+  const result = await invoke(request(simple, { dependencies: [dep] }));
+  assert.notEqual(result.code, 0);
+  assert.equal(result.frames.length, 0);
+});
+
+test('locked Node dependency rejects undeclared extra source material', async () => {
+  const dep = lockedDependency('rules', { 'src/index.ts': `export const value = 1;` });
+  dep.files.push(file('src/extra.ts', 'export const extra = true;'));
+  const result = await invoke(request(simple, { dependencies: [dep] }));
+  assert.notEqual(result.code, 0);
+  assert.equal(result.frames.length, 0);
+});
+
+test('locked Node dependency rejects a declaration-only entry point', async () => {
+  const dep = lockedDependency('rules', { 'types.d.ts': `export declare const value: number;` }, 'types.d.ts');
+  const result = await invoke(request(simple, { dependencies: [dep] }));
+  assert.notEqual(result.code, 0);
+  assert.equal(result.frames.length, 0);
+});
+
+test('TypeScript worker rejects another packaged dependency kind before readiness', async () => {
+  const dep = lockedDependency('rules', { 'src/index.ts': `export const value = 1;` });
+  dep.package.kind = 'PythonWheelBundle';
+  const result = await invoke(request(simple, { dependencies: [dep] }));
+  assert.notEqual(result.code, 0);
+  assert.equal(result.frames.length, 0);
+});
+
+test('locked Node dependency rejects noncanonical manifest ordering', async () => {
+  const dep = lockedDependency('rules', {
+    'src/a.ts': 'export const a = 1;',
+    'src/index.ts': `export { a } from './a.ts';`
+  });
+  const manifest = JSON.parse(Buffer.from(dep.files[0].base64Url, 'base64url').toString('utf8'));
+  manifest.files.reverse();
+  dep.files[0] = file('bundle.manifest.json', JSON.stringify(manifest));
+  const result = await invoke(request(simple, { dependencies: [dep] }));
+  assert.notEqual(result.code, 0);
+  assert.equal(result.frames.length, 0);
 });
 
 test('console and process stdout cannot forge protocol frames', async () => {

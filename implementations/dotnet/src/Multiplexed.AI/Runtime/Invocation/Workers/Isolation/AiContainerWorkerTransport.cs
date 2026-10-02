@@ -1,0 +1,419 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using Multiplexed.Abstractions.AI.Invocation.Durable;
+using Multiplexed.Abstractions.AI.Invocation.Workers;
+using Multiplexed.AI.Runtime.Publication;
+
+namespace Multiplexed.AI.Runtime.Invocation.Workers.Isolation
+{
+    /// <summary>
+    /// One-assignment OCI transport using a deployment-owned Docker-compatible engine.
+    /// The existing worker JSON-line protocol remains unchanged; the container image supplies
+    /// the language worker entry point and receives the immutable request over private stdio.
+    /// </summary>
+    public sealed class AiContainerWorkerTransport : IAiWorkerInvocationTransport
+    {
+        private readonly IAiContainerWorkerCatalog _catalog;
+        private readonly AiWorkerProcessTransportOptions _options;
+        private readonly TimeProvider _time;
+        private readonly AiWorkerExecutionAdmissionPolicy _executionPolicy;
+        private readonly ConcurrentDictionary<string, Lazy<Task>> _startupReconciliations = new(StringComparer.Ordinal);
+
+        public AiContainerWorkerTransport(
+            IAiContainerWorkerCatalog catalog,
+            AiWorkerProcessTransportOptions options,
+            TimeProvider? timeProvider = null,
+            AiWorkerExecutionAdmissionPolicy? executionPolicy = null)
+        {
+            _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
+            _options = options ?? throw new ArgumentNullException(nameof(options));
+            _time = timeProvider ?? TimeProvider.System;
+            _executionPolicy = executionPolicy ?? new AiWorkerExecutionAdmissionPolicy();
+            AiPublicationExecutionDescriptors.ValidateRequirements(_executionPolicy.MinimumRequirements);
+        }
+
+        public async Task<AiDurableInvocationResult> InvokeAsync(
+            AiWorkerInvocationRequest request,
+            Func<CancellationToken, Task> heartbeat,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(heartbeat);
+            var bytes = AiWorkerInvocationProtocol.EncodeRequest(request, _options.MaxRequestBytes);
+            var remaining = request.DeadlineUtc - _time.GetUtcNow();
+            if (remaining <= TimeSpan.Zero)
+                throw new TimeoutException("Worker invocation deadline has already elapsed.");
+
+            using var deadline = new CancellationTokenSource(remaining, _time);
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+            var token = stop.Token;
+            var profile = _catalog.Resolve(request.Code.Runtime);
+            AiContainerWorkerExecutionAdmission.Require(request.Code, profile, _executionPolicy);
+
+            var engineProfile = CreateEngineProfile(profile);
+            await using var verifiedFiles = await AiWorkerVerifiedLaunchFiles.OpenAsync(engineProfile, token).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            await EnsureStartupReconciliationAsync(profile).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+
+            var containerName = "multiplexed-ai-" + Guid.NewGuid().ToString("N");
+            var plan = AiContainerWorkerLaunchPlan.Create(profile, containerName);
+            using var process = new Process { StartInfo = CreateStartInfo(profile, plan) };
+            var started = false;
+            var containerMayStillRun = false;
+            Task? stderr = null;
+            Exception? stderrFailure = null;
+            CancellationTokenRegistration cancellation = default;
+
+            try
+            {
+                token.ThrowIfCancellationRequested();
+                if (!process.Start()) throw new IOException("The container engine did not start.");
+                started = true;
+                containerMayStillRun = true;
+                cancellation = token.Register(() => RequestStop(process));
+                stderr = DrainStderrAsync();
+                await AwaitIsolationAttestationAsync(profile, containerName, process, token).ConfigureAwait(false);
+                var exchange = AiWorkerStdioSession.ExchangeAsync(
+                    request, bytes, process.StandardInput.BaseStream, process.StandardOutput.BaseStream,
+                    process.StandardInput.Close, heartbeat, AwaitTerminalBoundaryAsync, _options, _time, token,
+                    "Container worker exited before its required protocol frame.");
+                Observe(exchange);
+                var result = await exchange.WaitAsync(token).ConfigureAwait(false);
+                await stderr.WaitAsync(_options.ShutdownTimeout, _time, token).ConfigureAwait(false);
+                containerMayStillRun = false;
+                return result;
+            }
+            catch (OperationCanceledException) when (stderrFailure is not null)
+            {
+                throw new IOException("Container diagnostics exceeded their bound or could not be drained.", stderrFailure);
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException("Worker invocation deadline elapsed.");
+            }
+            finally
+            {
+                cancellation.Dispose();
+                Exception? cleanupFailure = null;
+                if (started)
+                {
+                    try
+                    {
+                        if (!process.HasExited)
+                        {
+                            containerMayStillRun = true;
+                            RequestStop(process);
+                            await process.WaitForExitAsync(CancellationToken.None)
+                                .WaitAsync(_options.ShutdownTimeout, _time, CancellationToken.None).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            // An attached engine client may exit because it was killed or lost while the
+                            // container continues independently. Only the normal result path above proves
+                            // that this invocation completed with the expected engine/container lifecycle.
+                            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        cleanupFailure = exception;
+                    }
+                    finally
+                    {
+                        try { process.StandardInput.Close(); } catch { }
+                        try { process.StandardOutput.Close(); } catch { }
+                        try { process.StandardError.Close(); } catch { }
+                        if (stderr is not null) Observe(stderr);
+                    }
+                }
+
+                if (containerMayStillRun)
+                {
+                    try { await ForceRemoveAsync(profile, containerName).ConfigureAwait(false); }
+                    catch (Exception exception) { cleanupFailure ??= exception; }
+                }
+
+                if (cleanupFailure is not null)
+                    throw new AiWorkerProcessCleanupException(cleanupFailure);
+            }
+
+            async Task AwaitTerminalBoundaryAsync(CancellationToken waitToken)
+            {
+                await process.WaitForExitAsync(waitToken).ConfigureAwait(false);
+                if (process.ExitCode != 0)
+                    throw new IOException("Container engine exited unsuccessfully after the worker result.");
+            }
+
+            async Task DrainStderrAsync()
+            {
+                try
+                {
+                    var buffer = new byte[4096]; long total = 0;
+                    while (true)
+                    {
+                        var read = await process.StandardError.BaseStream.ReadAsync(buffer.AsMemory(), token).ConfigureAwait(false);
+                        if (read == 0) return;
+                        if ((total += read) > _options.MaxStderrBytes)
+                            throw new IOException("Container engine stderr exceeded its configured byte limit.");
+                    }
+                }
+                catch (Exception exception) when (!token.IsCancellationRequested)
+                {
+                    Interlocked.CompareExchange(ref stderrFailure, exception, null);
+                    stop.Cancel(); throw;
+                }
+            }
+        }
+
+        public static ProcessStartInfo CreateStartInfo(AiContainerWorkerProfile profile, AiContainerWorkerLaunchPlan plan)
+        {
+            ArgumentNullException.ThrowIfNull(profile);
+            ArgumentNullException.ThrowIfNull(plan);
+            var info = new ProcessStartInfo
+            {
+                FileName = profile.EngineExecutablePath,
+                WorkingDirectory = profile.EngineWorkingDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            info.Environment.Clear();
+            foreach (var item in profile.EngineEnvironment) info.Environment.Add(item.Key, item.Value);
+            foreach (var argument in plan.Arguments) info.ArgumentList.Add(argument);
+            return info;
+        }
+
+        private static AiWorkerProcessProfile CreateEngineProfile(AiContainerWorkerProfile profile) => new(
+            profile.Runtime,
+            profile.EngineExecutablePath,
+            profile.EngineExecutableSha256,
+            Array.Empty<string>(),
+            profile.EngineWorkingDirectory,
+            profile.EngineEnvironment,
+            executionDescriptor: profile.ExecutionDescriptor,
+            approvedLaunchRoots: profile.ApprovedLaunchRoots);
+
+
+
+        private Task EnsureStartupReconciliationAsync(AiContainerWorkerProfile profile)
+        {
+            var environment = string.Join("\n", profile.EngineEnvironment
+                .OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(item => item.Key.Length + ":" + item.Key + item.Value.Length + ":" + item.Value));
+            var key = string.Join("\n", profile.EngineExecutablePath, profile.EngineExecutableSha256,
+                profile.EngineWorkingDirectory, profile.ContainerOwnerScope, environment);
+            return _startupReconciliations.GetOrAdd(key, _ => new Lazy<Task>(
+                () => ReconcileOwnedContainersAsync(profile),
+                LazyThreadSafetyMode.ExecutionAndPublication)).Value;
+        }
+
+        private async Task ReconcileOwnedContainersAsync(AiContainerWorkerProfile profile)
+        {
+            try
+            {
+                using var list = new Process
+                {
+                    StartInfo = CreateEngineControlStartInfo(profile, new[]
+                    {
+                        "ps",
+                        "--all",
+                        "--filter", $"label={AiContainerWorkerOwnership.ManagedLabel}={AiContainerWorkerOwnership.ManagedLabelValue}",
+                        "--filter", $"label={AiContainerWorkerOwnership.OwnerScopeLabel}={profile.ContainerOwnerScope}",
+                        "--format", "{{.Names}}"
+                    })
+                };
+                if (!list.Start()) throw new IOException("Container startup-reconciliation process did not start.");
+                var stdoutTask = list.StandardOutput.ReadToEndAsync();
+                var stderrTask = list.StandardError.ReadToEndAsync();
+                try
+                {
+                    await list.WaitForExitAsync(CancellationToken.None)
+                        .WaitAsync(_options.StartupTimeout, _time, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                    RequestStop(list);
+                    try
+                    {
+                        await list.WaitForExitAsync(CancellationToken.None)
+                            .WaitAsync(_options.ShutdownTimeout, _time, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        Observe(stdoutTask);
+                        Observe(stderrTask);
+                        throw new AiWorkerProcessCleanupException(cleanupException);
+                    }
+                    Observe(stdoutTask);
+                    Observe(stderrTask);
+                    throw;
+                }
+
+                var stdout = await stdoutTask.ConfigureAwait(false);
+                var stderr = await stderrTask.ConfigureAwait(false);
+                if (stdout.Length > _options.MaxFrameBytes || stderr.Length > _options.MaxStderrBytes)
+                    throw new IOException("Container startup-reconciliation output exceeded configured bounds.");
+                if (list.ExitCode != 0)
+                    throw new IOException("Existing isolated containers could not be enumerated safely.");
+
+                var names = stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                foreach (var name in names)
+                {
+                    if (!AiContainerWorkerOwnership.IsManagedContainerName(name))
+                        throw new IOException("Container startup reconciliation returned an unexpected container identity.");
+                    await ForceRemoveAsync(profile, name).ConfigureAwait(false);
+                }
+            }
+            catch (AiWorkerProcessCleanupException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                throw new AiWorkerProcessCleanupException(exception);
+            }
+        }
+
+        private async Task AwaitIsolationAttestationAsync(
+            AiContainerWorkerProfile profile,
+            string containerName,
+            Process attachedRunProcess,
+            CancellationToken cancellationToken)
+        {
+            var expires = _time.GetUtcNow() + _options.StartupTimeout;
+            Exception? lastFailure = null;
+            while (_time.GetUtcNow() < expires)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (attachedRunProcess.HasExited)
+                    throw new IOException("Container engine exited before isolation attestation completed.", lastFailure);
+
+                using var inspect = new Process
+                {
+                    StartInfo = CreateEngineControlStartInfo(profile, new[] { "inspect", "--type", "container", containerName })
+                };
+                if (!inspect.Start()) throw new IOException("Container inspection process did not start.");
+                var stdoutTask = inspect.StandardOutput.ReadToEndAsync(cancellationToken);
+                var stderrTask = inspect.StandardError.ReadToEndAsync(cancellationToken);
+                var remaining = expires - _time.GetUtcNow();
+                if (remaining <= TimeSpan.Zero) break;
+                try
+                {
+                    await inspect.WaitForExitAsync(cancellationToken)
+                        .WaitAsync(remaining, _time, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    RequestStop(inspect);
+                    try
+                    {
+                        await inspect.WaitForExitAsync(CancellationToken.None)
+                            .WaitAsync(_options.ShutdownTimeout, _time, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        Observe(stdoutTask);
+                        Observe(stderrTask);
+                        throw new AiWorkerProcessCleanupException(cleanupException);
+                    }
+                    Observe(stdoutTask);
+                    Observe(stderrTask);
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    lastFailure = exception;
+                    RequestStop(inspect);
+                    try
+                    {
+                        await inspect.WaitForExitAsync(CancellationToken.None)
+                            .WaitAsync(_options.ShutdownTimeout, _time, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        Observe(stdoutTask);
+                        Observe(stderrTask);
+                        throw new AiWorkerProcessCleanupException(cleanupException);
+                    }
+                    Observe(stdoutTask);
+                    Observe(stderrTask);
+                    continue;
+                }
+
+                var stdout = await stdoutTask.ConfigureAwait(false);
+                var stderrText = await stderrTask.ConfigureAwait(false);
+                if (stdout.Length > _options.MaxFrameBytes || stderrText.Length > _options.MaxStderrBytes)
+                    throw new IOException("Container inspection output exceeded configured bounds.");
+                if (inspect.ExitCode == 0)
+                {
+                    AiContainerWorkerIsolationAttestation.Validate(stdout, profile);
+                    return;
+                }
+
+                lastFailure = new IOException("Container inspection did not yet identify the launched container.");
+                remaining = expires - _time.GetUtcNow();
+                if (remaining <= TimeSpan.Zero) break;
+                await Task.Delay(remaining < TimeSpan.FromMilliseconds(25) ? remaining : TimeSpan.FromMilliseconds(25),
+                    _time, cancellationToken).ConfigureAwait(false);
+            }
+            throw new IOException("Container isolation attestation did not complete before worker startup timeout.", lastFailure);
+        }
+
+        private async Task ForceRemoveAsync(AiContainerWorkerProfile profile, string containerName)
+        {
+            using var cleanup = new Process
+            {
+                StartInfo = CreateEngineControlStartInfo(profile, new[] { "rm", "--force", containerName })
+            };
+            if (!cleanup.Start()) throw new IOException("Container cleanup process did not start.");
+            var stdout = cleanup.StandardOutput.ReadToEndAsync();
+            var stderr = cleanup.StandardError.ReadToEndAsync();
+            try
+            {
+                await cleanup.WaitForExitAsync(CancellationToken.None)
+                    .WaitAsync(_options.ShutdownTimeout, _time, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch
+            {
+                RequestStop(cleanup);
+                try { await cleanup.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false); } catch { }
+                Observe(stdout);
+                Observe(stderr);
+                throw;
+            }
+            _ = await stdout.ConfigureAwait(false);
+            _ = await stderr.ConfigureAwait(false);
+            if (cleanup.ExitCode != 0)
+                throw new IOException("Container cleanup could not be confirmed.");
+        }
+
+        private static ProcessStartInfo CreateEngineControlStartInfo(AiContainerWorkerProfile profile, IEnumerable<string> arguments)
+        {
+            var info = new ProcessStartInfo
+            {
+                FileName = profile.EngineExecutablePath,
+                WorkingDirectory = profile.EngineWorkingDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            info.Environment.Clear();
+            foreach (var item in profile.EngineEnvironment) info.Environment.Add(item.Key, item.Value);
+            foreach (var argument in arguments) info.ArgumentList.Add(argument);
+            return info;
+        }
+
+        private static void RequestStop(Process process)
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+            catch { }
+        }
+
+        private static void Observe(Task task) => _ = task.ContinueWith(t => { _ = t.Exception; }, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+}

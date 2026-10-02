@@ -2,11 +2,16 @@
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Observability.Ledger;
 using Multiplexed.Abstractions.AI.Pipeline;
+using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Runtime.AI.Concurrency;
 using Multiplexed.AI.Runtime.Execution.Engine.Core;
 using Multiplexed.AI.Runtime.Observability.Helpers;
 using System.Text.Json;
 using Multiplexed.Abstractions.AI.Observability.Events;
+using Multiplexed.Abstractions.AI.Invocation;
+using Multiplexed.AI.Abstractions.AI.Policies;
+using Multiplexed.AI.Runtime.AI.Retry;
+using Multiplexed.AI.Runtime.Execution.Engine.Models;
 
 namespace Multiplexed.AI.Runtime.Execution.Engine.Helpers
 {
@@ -562,6 +567,100 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Helpers
             return recoveredStepNames
                 .OrderBy(stepName => stepName, StringComparer.Ordinal)
                 .ToArray();
+        }
+
+
+        /// <summary>
+        /// Persists one claimed-step failure while preserving custom Retry policy authority.
+        /// </summary>
+        /// <remarks>
+        /// Native-only retry declarations keep the historical store-owned retry transition.
+        /// When any effective retry declaration is custom, the runtime policy engine evaluates
+        /// the complete ordered retry policy set first and the store atomically commits that
+        /// already-evaluated decision under the existing claim token.
+        /// </remarks>
+        public static async Task<bool> TryPersistClaimedStepFailureAsync(
+            IAiDagExecutionEngineServices services,
+            AiExecutionRecord record,
+            AiExecutionState state,
+            ResolvedAiPipeline resolvedPipeline,
+            string stepName,
+            string claimToken,
+            string? error,
+            AiStepResult? result,
+            Exception? exception,
+            Func<AiExecutionRecord, AiExecutionState, CancellationToken, AiExecutionContext> buildExecutionContext,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(services);
+            ArgumentNullException.ThrowIfNull(record);
+            ArgumentNullException.ThrowIfNull(state);
+            ArgumentNullException.ThrowIfNull(resolvedPipeline);
+            ArgumentException.ThrowIfNullOrWhiteSpace(stepName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(claimToken);
+            ArgumentNullException.ThrowIfNull(buildExecutionContext);
+
+            var dagStore = RequireDagStore(services.DagStore);
+            var resolvedStep = resolvedPipeline.Steps.Single(step =>
+                string.Equals(step.Name, stepName, StringComparison.Ordinal));
+
+            var hasCustomRetry = resolvedStep.RetryPolicyBindings.Any(binding =>
+                binding.Invocation.Kind == AiInvocationKind.Custom);
+
+            if (!hasCustomRetry)
+            {
+                return result?.InvocationReceipt is null
+                    ? await dagStore.TryFailStepAsync(
+                        record.ExecutionId,
+                        stepName,
+                        claimToken,
+                        error,
+                        cancellationToken).ConfigureAwait(false)
+                    : await dagStore.TryFailStepWithResultAsync(
+                        record.ExecutionId,
+                        stepName,
+                        claimToken,
+                        result,
+                        cancellationToken).ConfigureAwait(false);
+            }
+
+            var executionContext = buildExecutionContext(
+                record,
+                state,
+                cancellationToken);
+            var stepContext = new AiStepExecutionContext(
+                executionContext,
+                resolvedStep);
+            var stepState = stepContext.StepState;
+
+            var retryDecision = await services.PolicyEngineFactory
+                .Create<IAiRetryEngine>(AiPolicyKind.Retry, stepContext)
+                .HandleFailureAsync(
+                    stepState,
+                    error,
+                    exception,
+                    DateTime.UtcNow,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            var storeDecision = retryDecision.Kind == AiRetryDecisionKind.Retry
+                ? AiDagStepFailureDecision.Retry(
+                    retryDecision.Delay
+                        ?? throw new InvalidOperationException("Retry decision did not provide a delay."),
+                    retryDecision.Reason)
+                : AiDagStepFailureDecision.Fail(retryDecision.Reason);
+
+            var durableResult = result?.InvocationReceipt is null ? null : result;
+
+            return await dagStore.TryFailStepWithDecisionAsync(
+                    record.ExecutionId,
+                    stepName,
+                    claimToken,
+                    error,
+                    storeDecision,
+                    durableResult,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         public static AiPipelineStepDefinition FindPipelineStep(

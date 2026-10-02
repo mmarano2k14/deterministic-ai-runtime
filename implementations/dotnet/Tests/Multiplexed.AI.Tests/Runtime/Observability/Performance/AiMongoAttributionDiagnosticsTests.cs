@@ -1,4 +1,4 @@
-using Multiplexed.AI.Runtime.Observability.Performance;
+﻿using Multiplexed.AI.Runtime.Observability.Performance;
 using System;
 using System.Threading.Tasks;
 using Xunit;
@@ -265,6 +265,48 @@ namespace Multiplexed.AI.Tests.Runtime.Observability.Performance
             var actual = Assert.Single(aggregate.ProcessSnapshots);
             Assert.Equal("host:42", actual.ProcessIdentity);
             Assert.Same(operation, Assert.Single(actual.Operations));
+        }
+
+
+        [Fact]
+        public void Invocation_And_McpEffect_Operations_Should_Be_Attributable()
+        {
+            using var scope = EnableScope();
+
+            var operations = new (string Operation, string Command)[]
+            {
+                (AiMongoAttributionOperations.InvocationGet, AiMongoAttributionCommands.Find),
+                (AiMongoAttributionOperations.InvocationPrepareInsert, AiMongoAttributionCommands.Insert),
+                (AiMongoAttributionOperations.InvocationDispatchScan, AiMongoAttributionCommands.Find),
+                (AiMongoAttributionOperations.InvocationContinuationScan, AiMongoAttributionCommands.Find),
+                (AiMongoAttributionOperations.InvocationCas, AiMongoAttributionCommands.Update),
+                (AiMongoAttributionOperations.InvocationResultAcceptance, AiMongoAttributionCommands.Update),
+                (AiMongoAttributionOperations.McpEffectGet, AiMongoAttributionCommands.Find),
+                (AiMongoAttributionOperations.McpEffectPrepareInsert, AiMongoAttributionCommands.Insert),
+                (AiMongoAttributionOperations.McpEffectReconcileScan, AiMongoAttributionCommands.Find),
+                (AiMongoAttributionOperations.McpEffectCas, AiMongoAttributionCommands.Update)
+            };
+
+            foreach (var item in operations)
+            {
+                var measurement = AiMongoAttributionDiagnostics.StartOperation(
+                    item.Operation,
+                    item.Command,
+                    requestedDocuments: 1);
+                Assert.True(measurement.IsActive);
+                measurement.Succeed(1);
+            }
+
+            var recorded = AiMongoAttributionDiagnostics.SnapshotCurrentProcessOperations();
+            foreach (var item in operations)
+            {
+                Assert.Contains(
+                    recorded,
+                    snapshot => snapshot.Operation == item.Operation &&
+                                snapshot.Command == item.Command &&
+                                snapshot.Calls == 1L &&
+                                snapshot.Successes == 1L);
+            }
         }
 
         public void Dispose()

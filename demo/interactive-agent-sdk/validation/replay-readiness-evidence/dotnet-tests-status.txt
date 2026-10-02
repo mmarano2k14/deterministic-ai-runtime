@@ -1,0 +1,1 @@
+NOT RUN. The working environment has no dotnet SDK. A 15-case executable test project is supplied.

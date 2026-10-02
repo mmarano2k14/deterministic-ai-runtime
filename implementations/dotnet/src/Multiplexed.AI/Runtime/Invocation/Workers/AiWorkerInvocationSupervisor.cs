@@ -45,7 +45,33 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
             if (await _controlPlane.ResolveAsync(cancellationToken).ConfigureAwait(false) != scope.ControlPlaneId)
                 throw new UnauthorizedAccessException("Worker dispatch belongs to a different logical control plane.");
             var current = await _journal.GetAsync(scope, identity, cancellationToken).ConfigureAwait(false);
-            if (current is null) return new(AiWorkerDispatchDisposition.NotReady);
+            return current is null
+                ? new(AiWorkerDispatchDisposition.NotReady)
+                : await DispatchCandidateAsync(scope, current, cancellationToken).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Dispatches an already loaded page candidate. The candidate is a CAS hint only; the
+        /// journal remains authoritative and reloads after a failed first CAS.
+        /// </summary>
+        public async Task<AiWorkerDispatchResult> DispatchAsync(AiDurableInvocationScope scope,
+            AiDurableInvocationRecord candidateSnapshot, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ArgumentNullException.ThrowIfNull(candidateSnapshot);
+            AiDurableInvocationValidation.ValidateScope(scope);
+            AiDurableInvocationValidation.ValidateRecord(candidateSnapshot);
+            AiDurableInvocationValidation.Require(candidateSnapshot.Definition.Scope == scope,
+                "Worker dispatch candidate belongs to a different ownership scope.");
+            if (await _controlPlane.ResolveAsync(cancellationToken).ConfigureAwait(false) != scope.ControlPlaneId)
+                throw new UnauthorizedAccessException("Worker dispatch belongs to a different logical control plane.");
+            return await DispatchCandidateAsync(scope, candidateSnapshot, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task<AiWorkerDispatchResult> DispatchCandidateAsync(AiDurableInvocationScope scope,
+            AiDurableInvocationRecord current, CancellationToken cancellationToken)
+        {
+            var identity = current.Definition.Identity;
             if (AiDurableInvocationValidation.Terminal(current)) return new(AiWorkerDispatchDisposition.AlreadyTerminal, current.OperationId);
             if (current.Lease?.ExpiresAtUtc > _time.GetUtcNow()) return new(AiWorkerDispatchDisposition.NotReady, current.OperationId);
             if (current.Lease is not null && (!_options.AllowExpiredLeaseReassignment || current.Lease.Epoch >= _options.MaxAssignmentEpoch))
@@ -53,11 +79,12 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
             using var slot = _capacity.TryEnter();
             if (slot is null) return new(AiWorkerDispatchDisposition.Busy, current.OperationId);
             AiDurableInvocationRecord? leased = null;
+            var failurePhase = "acquire-worker-lease";
             try
             {
                 // A new physical worker identity never changes the logical operation/effect identities.
                 var workerId = "hosted-" + Guid.NewGuid().ToString("N");
-                leased = await _journal.TryAcquireWorkerLeaseAsync(scope, identity, workerId, _options.LeaseDuration,
+                leased = await _journal.TryAcquireWorkerLeaseAsync(scope, current, workerId, _options.LeaseDuration,
                     _options.AllowExpiredLeaseReassignment, _options.MaxAssignmentEpoch, cancellationToken).ConfigureAwait(false);
                 if (leased is null) return new(AiWorkerDispatchDisposition.NotReady, current.OperationId);
                 using var guard = new AiWorkerLeaseGuard(_journal, leased, _options, _time);
@@ -66,6 +93,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
                 using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, guard.LostToken, deadline.Token);
                 try
                 {
+                    failurePhase = "prepare-worker-code";
                     var code = await _preparer.PrepareAsync(leased, stop.Token).ConfigureAwait(false);
                     if (code.Target != leased.Definition.Target) throw new InvalidOperationException("Worker preparation substituted an immutable target.");
                     stop.Token.ThrowIfCancellationRequested();
@@ -77,11 +105,14 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
                         Activity.Current?.IdFormat == ActivityIdFormat.W3C ? Activity.Current.Id : null,
                         inputs.RootElement.Clone(), code);
                     // Materialization can consume time. No process may start after the safety deadline.
+                    failurePhase = "pre-launch-heartbeat";
                     await guard.HeartbeatAsync(stop.Token).ConfigureAwait(false);
                     _logger.LogDebug("Worker dispatch started. OperationId={OperationId}, Epoch={Epoch}, Language={Language}.",
                         leased.OperationId, leased.Lease.Epoch, code.Target.ExecutionLanguage);
+                    failurePhase = "invoke-worker-transport";
                     var result = await _transport.InvokeAsync(request, guard.HeartbeatAsync, stop.Token).ConfigureAwait(false);
                     stop.Token.ThrowIfCancellationRequested();
+                    failurePhase = "complete-journal-result";
                     var completion = await _journal.CompleteAsync(scope, identity, guard.Lease, result, stop.Token).ConfigureAwait(false);
                     var disposition = completion switch
                     {
@@ -112,8 +143,8 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
                 return new(AiWorkerDispatchDisposition.TechnicalFailure, current.OperationId, leased?.Lease?.Epoch, exception.GetType().FullName);
             }
             void LogFailure(Exception exception) => _logger.LogWarning(
-                "Worker dispatch retained for reconciliation. OperationId={OperationId}, Epoch={Epoch}, ExceptionType={ExceptionType}.",
-                current.OperationId, leased?.Lease?.Epoch, exception.GetType().FullName);
+                "Worker dispatch retained for reconciliation. OperationId={OperationId}, Epoch={Epoch}, Phase={Phase}, ExceptionType={ExceptionType}.",
+                current.OperationId, leased?.Lease?.Epoch, failurePhase, exception.GetType().FullName);
         }
     }
 }

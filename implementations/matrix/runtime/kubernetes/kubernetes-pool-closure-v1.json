@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "matrixId": "kubernetes-pool-cross-topology-closure-v1",
+  "baseline": {
+    "matrixId": "multilanguage-runtime-v1",
+    "topology": "docker",
+    "executedScenarioCount": 37,
+    "runtimeProvider": "ProcessHostPool",
+    "workerExecutionProviders": [
+      "TrustedProcess",
+      "ContainerIsolationProvider"
+    ]
+  },
+  "kubernetes": {
+    "topology": "kubernetes",
+    "runtimeProvider": "KubernetesPool",
+    "executedScenarioCount": 3,
+    "scenarioIds": [
+      "feature-runtime-provider-kubernetes-pool-http-command-routing",
+      "feature-runtime-provider-kubernetes-pool-hierarchical-recovery",
+      "feature-runtime-provider-kubernetes-pool-external-sdk-python-worker"
+    ]
+  },
+  "crossTopologyExecutedScenarioCount": 40,
+  "claimBoundary": "The closure preserves the previously executed 37/37 Docker baseline and adds three independently executed KubernetesPool scenarios: live Runtime Pool routing, hierarchical failure/recovery convergence, and external Python SDK publication/execution through the public boundary. The closure does not represent a 40-scenario homogeneous topology matrix and does not duplicate Kubernetes lifecycle, scheduler, journal, recovery, DAG, or result-acceptance authorities."
+}

@@ -1,0 +1,129 @@
+services:
+  mongo:
+    image: mongo:8.0
+    command: ["mongod", "--quiet", "--bind_ip_all"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 5s
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  runtime:
+    image: deterministic-ai-runtime-demo:local
+    build:
+      context: ../..
+      dockerfile: demo/interactive-agent-sdk/docker/Dockerfile.runtime
+    environment:
+      ASPNETCORE_URLS: http://+:8081
+      ASPNETCORE_ENVIRONMENT: Production
+
+      ConnectionStrings__Redis: redis:6379
+      ConnectionStrings__Mongo: mongodb://mongo:27017
+      Mongo__DatabaseName: multiplexed-ai-demo
+
+      AiMcpHost__Mode: ControlPlaneWithLocalRuntimeInstances
+      AiMcpHost__Port: "8081"
+      AiMcpHost__EnableSharedQueuePump: "true"
+      AiMcpHost__SharedQueuePumpIntervalSeconds: "1"
+      AiMcpHost__EnableReplayTools: "true"
+      AiMcpHost__EnableObservabilityTools: "false"
+
+      AiLocalRuntimeInstancePool__Enabled: "true"
+      AiLocalRuntimeInstancePool__InstanceCount: "3"
+      AiLocalRuntimeInstancePool__WorkerCountPerInstance: "10"
+      AiLocalRuntimeInstancePool__MaxConcurrentRunsPerInstance: "5"
+      AiLocalRuntimeInstancePool__RuntimeInstanceIdPrefix: mcp-runtime-local
+
+      AiRuntimeInstanceRegistration__Enabled: "true"
+      AiRuntimeInstanceRegistration__HeartbeatInterval: "00:00:02"
+      AiRuntimeInstanceRegistration__RegistryTtl: "00:00:30"
+      AiRuntimeInstanceRegistration__CapacityTtl: "00:00:30"
+
+      AiSharedQueueBackgroundService__Enabled: "true"
+      AiSharedQueueBackgroundService__WaitForRuntimeReadiness: "true"
+      AiSharedQueuePump__Enabled: "true"
+
+      AiEngine__Snapshots__Enabled: "true"
+      AiEngine__Snapshots__Mongo__Enabled: "true"
+      AiEngine__Snapshots__Mongo__ConnectionString: mongodb://mongo:27017
+      AiEngine__Snapshots__Mongo__DatabaseName: multiplexed-ai-demo
+
+      AiEngine__PayloadStore__Enabled: "true"
+      AiEngine__PayloadStore__Provider: mongo-redis
+      AiEngine__PayloadStore__RequireReplaySafePayloads: "true"
+      AiEngine__Payloads__RequireReplaySafePayloads: "true"
+      AiEngine__PayloadStore__Mongo__Enabled: "true"
+      AiEngine__PayloadStore__Mongo__ConnectionString: mongodb://mongo:27017
+      AiEngine__PayloadStore__Mongo__DatabaseName: multiplexed-ai-demo
+      AiEngine__PayloadStore__RedisCache__Enabled: "true"
+      AiEngine__PayloadStore__RedisCache__KeyPrefix: ai:payload:interactive-demo
+      AiEngine__PayloadStore__RedisCache__ExpirationSeconds: "3600"
+
+      AiDecisionLedger__Provider: mongo
+      AiExecutionReplay__MetadataStore__Provider: mongo
+      AiExecutionReplay__MetadataStore__Mongo__DatabaseName: multiplexed-ai-demo
+      AiExecutionReplay__MetadataStore__Mongo__CollectionName: ai_execution_replay_metadata
+
+      AiChildDagComposition__Enabled: "true"
+
+      AiMcpAuthentication__Enabled: "true"
+      AiMcpAuthentication__Issuer: ${AI_DEMO_JWT_ISSUER:-multiplexed-local}
+      AiMcpAuthentication__Audience: ${AI_DEMO_JWT_AUDIENCE:-multiplexed-ai-sdk}
+      AiMcpAuthentication__SymmetricSigningKey: ${AI_DEMO_SIGNING_KEY:-local-demo-only-signing-key-please-change-2026}
+      AiMcpAuthentication__ExecutionContextTtlSeconds: "3600"
+
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in demo/interactive-agent-sdk/.env}
+    ports:
+      - "${AI_DEMO_RUNTIME_PORT:-8081}:8081"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8081/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 20s
+    restart: unless-stopped
+
+  demo:
+    profiles: ["demo"]
+    image: deterministic-ai-runtime-sdk-demo:local
+    build:
+      context: ../..
+      dockerfile: demo/interactive-agent-sdk/docker/Dockerfile.demo
+    environment:
+      AI_RUNTIME_ENDPOINT: http://runtime:8081/mcp
+      AI_RUNTIME_ACCESS_CONTEXT_ENDPOINT: http://runtime:8081/auth/access-context
+      AI_RUNTIME_ACCESS_CONTEXT_HEADER: X-Access-Context
+      AI_RUNTIME_HEALTH_ENDPOINT: http://runtime:8081/health
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4}
+      AI_DEMO_VERBOSE: ${AI_DEMO_VERBOSE:-false}
+
+      AiMcpAuthentication__Issuer: ${AI_DEMO_JWT_ISSUER:-multiplexed-local}
+      AiMcpAuthentication__Audience: ${AI_DEMO_JWT_AUDIENCE:-multiplexed-ai-sdk}
+      AiMcpAuthentication__SymmetricSigningKey: ${AI_DEMO_SIGNING_KEY:-local-demo-only-signing-key-please-change-2026}
+
+      AI_DEMO_PROJECT: ${AI_DEMO_PROJECT:-rbac-demo}
+      AI_DEMO_NAMESPACE: ${AI_DEMO_NAMESPACE:-default}
+      AI_DEMO_USER_ID: ${AI_DEMO_USER_ID:-interactive-agent-demo}
+      AI_DEMO_TENANT_ID: ${AI_DEMO_TENANT_ID:-interactive-agent-tenant}
+      AI_DEMO_TENANT_GROUP_ID: ${AI_DEMO_TENANT_GROUP_ID:-interactive-agent-group}
+      AI_DEMO_TOKEN_TTL_SECONDS: ${AI_DEMO_TOKEN_TTL_SECONDS:-3600}
+    depends_on:
+      runtime:
+        condition: service_healthy
+    stdin_open: true
+    tty: true

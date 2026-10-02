@@ -44,7 +44,9 @@ The current architecture is built around the following core foundations:
 | Execution Identity | Provide stable identifiers for executions, runs, runtime instances, workers, and correlation. |
 | Deterministic Runtime | Execute AI workflows through controlled state transitions instead of uncontrolled execution. |
 | DAG Execution | Represent workflows as step-based directed execution graphs. |
-| Durable Child DAG Composition | **Implemented / validated.** Delegate from one DAG to another, park the parent durably, recover nested work through existing runtime recovery, and resume the same parent execution through deterministic continuation. Recursive Depth3 and centralized EventDriven lifecycle validation are green. |
+| Durable Child DAG Composition | **Implemented / validated.** Delegate from one DAG to another, park the parent durably, recover nested work through existing runtime recovery, and resume the same parent execution through deterministic continuation. Native recursive Depth3 and centralized EventDriven lifecycle validation are green; immutable published custom child binding and hosted Python/TypeScript/.NET execution are supported with a separately bounded nested proof. |
+| Deterministic Dependency Packaging | **Implemented for the selected finite formats.** Pure-Python wheel bundles, locked Node source bundles, and managed .NET assembly closures are captured before manifest visibility, hash-verified, bound to the existing immutable environment, revalidated by hosted workers, and retained by whole-run pinning. Runtime package-manager/network resolution remains excluded. |
+| Hosted Worker Isolation | **Implemented / validated for the selected OCI provider.** Linux/amd64 `SandboxedContainer` execution uses exact image-manifest digests, non-root execution, denied egress, read-only root, bounded tmpfs, capability removal, `no-new-privileges`, CPU/memory/PID limits, applied-state attestation before tenant material release, shared cleanup/quarantine, and restart orphan reconciliation. The final evidence separates deterministic provider/isolation tests from 4 explicit real-engine Docker/Linux tests and the 37/37 public-SDK runtime-matrix closure. Kubernetes sandbox-Pod materialization remains separate future provider work. |
 | Execution State | Track workflow progress, step status, retry direction, pause/resume/cancel state, retention decisions, memory/context evidence direction, and finalization. |
 | Worker Model | Allow work to be processed by workers inside runtime instances. |
 | Queue Model | Support local queues and shared queue direction for multi-instance execution. |
@@ -53,20 +55,21 @@ The current architecture is built around the following core foundations:
 | Decision Ledger | Record structured decisions that explain runtime behavior. |
 | Configuration-Driven Runtime | Allow runtime behavior to be controlled through options, providers, host modes, queue settings, worker settings, replay settings, retention settings, and observability settings. |
 | Context-Driven Execution | Allow execution behavior to depend on tenant, project, pipeline, execution, run, step, user, RBAC, provider, model, operation, runtime instance, worker, and correlation context. |
-| Policy-Driven Runtime | Evaluate important runtime decisions through policies rather than hardcoded behavior. |
+| Policy-Driven Runtime | Evaluate important runtime decisions through policies rather than hardcoded behavior. Hosted custom execution is implemented for `Concurrency`, `Retry`, and `Delegation` through distinct family contracts at their existing checkpoints; `Retention` remains native-only. |
 | Policy Engine | Provide a foundation for allowed, denied, failed, throttled, delayed, blocked, approval-required, and retry-later decisions. |
 | Provider-Driven Architecture | Allow runtime hosting, storage, hot state, shared queue, registry, ledger, replay, observability, memory/context, and provider concerns to evolve behind abstractions. |
 | Control Plane | Operate the runtime through execution control, replay, diagnostics, and queue/instance visibility. |
 | MCP Direction | Expose runtime operations through a tool-based control surface. |
+| Durable MCP External Effect Evidence | **Implemented as an opt-in bounded server capability.** Stable logical effect identity and immutable intent feed a durable pre-`tools/call` dispatch fence; confirmed results replay locally, pre-call non-emission can be recorded as `NotSent`, ambiguous outcomes remain fail-closed, and explicit reconciliation can resolve evidence without reissuing the business call. No generic exactly-once or automatic-redelivery claim is made. |
 | Storage Direction | Use fast coordination storage and durable history storage according to responsibility. |
 | Retention / Eviction / Compaction / Snapshotting | Control how execution state, hot state, payloads, replay data, ledger data, claims, coordination records, snapshots, archives, memory/context evidence, and historical records are retained, compacted, archived, or evicted safely. |
 | Observability Direction | Expose logs, metrics, traces, runtime events, runtime telemetry, provider/transport telemetry, lifecycle telemetry, memory/context telemetry direction, and decision history. |
 | Execution Control and State Lifecycle | Support run lifecycle, execution lifecycle, step lifecycle, pause, resume, cancel, retry, waiting-for-input direction, claims, and finalization. |
 | Testing and Reliability Strategy | Prove runtime behavior through tests for execution, replay, ledger, policy, MCP, providers, queues, lifecycle, observability, and distributed execution. |
-| Developer Experience / API / SDK / CLI | Prepare quickstart, public API surface, SDK direction, CLI direction, examples, diagnostics, and onboarding. |
+| Developer Experience / API / SDK / CLI | Public SDK boundary plus .NET, TypeScript/JavaScript, and Python clients implemented; continue with CLI, public registry distribution, examples, diagnostics, and onboarding. |
 | Security and Encryption Hardening | Prepare RBAC-aware access control, redaction, sensitive payload protection, encrypted ledger payload direction, encrypted retention archive direction, and secure operational surfaces. |
 | Memory / Context / Reasoning Lifecycle | Prepare scoped memory, context injection, memory decay, freshness, runtime reasoning evidence, memory replay, and policy-driven memory governance. |
-| Productization Direction | Prepare dashboard, pipeline builder, hosting, API/SDK/CLI, security hardening, memory/context governance, and enterprise readiness. |
+| Productization Direction | Continue dashboard, pipeline builder, hosting, SDK public distribution/CLI packaging, security hardening, memory/context governance, and enterprise readiness on top of the implemented public boundary and clients. |
 
 ---
 
@@ -313,7 +316,7 @@ The runtime foundation is designed to orchestrate these steps in a controlled wa
 
 ## 6A. Durable Child DAG Composition Foundation — Implemented / Validated
 
-The runtime now contains a native durable Child DAG composition path rather than only a future nested-workflow direction.
+The runtime contains a durable Child DAG composition path rather than only a future nested-workflow direction. The lifecycle primitive remains native runtime orchestration, while exact inline child definitions can now also bind immutable published custom implementations to the allocated child execution.
 
 ```text
 Parent DAG
@@ -331,9 +334,9 @@ deterministic continuation
 same parent ExecutionId resumes
 ```
 
-The capability reuses the existing DAG engine, execution state, Policy Engine, shared queue, recovery, replay, Ledger, tracing, and Forensics foundations. It does not create a second orchestration engine.
+The capability reuses the existing DAG engine, execution state, Policy Engine, shared queue, recovery, replay, Ledger, tracing, and Forensics foundations. It does not create a second orchestration engine. For published custom children, immutable publication compilation records the exact nested declaration path and an allocated `ChildExecutionId` is bound before dispatch to the original publication. Python, TypeScript, and .NET child functions then reuse the existing durable invocation journal, hosted worker path, completion coordinator, and parent continuation. Native-only child subtrees remain on the historical path without a publication binding.
 
-The recursive production proof is green through `ChildDepth = 3`, including `3×3×3×2×Depth3` validation and larger `5×5×5×2×Depth3` high-scale scenarios. Canonical lifecycle observation is centralized through the existing Event Manager and correlated with the durable Ledger, Runtime Lifecycle Journal, replay, trace, and Recovery Forensics. Exact per-depth child logical-step accounting is closed for the bounded recursive proof, and the canonical nine-row deterministic adversarial matrix is green across HTTP/gRPC × ProcessHostPool/KubernetesPool. The capability is therefore **Implemented / validated**.
+The native recursive production proof is green through `ChildDepth = 3`, including `3×3×3×2×Depth3` validation and larger `5×5×5×2×Depth3` high-scale scenarios. Canonical lifecycle observation is centralized through the existing Event Manager and correlated with the durable Ledger, Runtime Lifecycle Journal, replay, trace, and Recovery Forensics. Exact per-depth child logical-step accounting is closed for the bounded recursive proof, and the canonical nine-row deterministic adversarial matrix is green across HTTP/gRPC × ProcessHostPool/KubernetesPool. Published custom Child DAG validation is a separate bounded proof domain and explicitly exercises two nested Child DAG levels; it does not inherit the native Depth3 claim. The capability is therefore **Implemented / validated** within those documented boundaries.
 
 The 36/36 row-level proof archive is indexed in [`../ai/adversarial-runtime-validation-evidence-index.md`](../ai/adversarial-runtime-validation-evidence-index.md).
 
@@ -925,6 +928,37 @@ See:
 
 ---
 
+## Durable Hosted Invocation Foundation
+
+Published hosted-function execution now has a hardened durable invocation boundary in addition to the general worker foundation.
+
+The journal preserves:
+
+```text
+immutable invocation identity
+frozen publication/input
+worker lease
+assignment epoch
+result acceptance CAS
+durable continuation obligation
+```
+
+Recent hardening reduces persistence amplification without changing those authorities:
+
+- dispatch-page snapshots feed the first lease CAS directly;
+- CAS outcomes distinguish revision contention from authoritative predicate rejection;
+- continuation fairness uses non-authoritative keyset paging instead of durable fairness-only writes;
+- hosted policy ownership checks share one tenant/user/project/namespace/lifecycle boundary;
+- supported hosted languages use one shared registry;
+- invocation timing uses `TimeProvider`;
+- process and container workers share stdio protocol handling while keeping physical lifecycle/security separate;
+- MongoDB dispatch discovery uses a measured hybrid Prepared/expired-leased strategy;
+- continuation paging uses the selected filter/order-aware v2 index.
+
+See [Durable Invocation Journal and Hosted Worker Authority](../ai/durable-invocation-journal.md).
+
+---
+
 ## 23. Storage Foundation
 
 The architecture separates fast runtime coordination from durable audit and history storage.
@@ -1327,6 +1361,7 @@ The visual pipeline builder can be built on top of:
 - model/provider configuration;
 - retry policies;
 - concurrency policies;
+- Child DAG delegation policies;
 - human-in-the-loop steps;
 - validation;
 - versioning direction;
@@ -1338,7 +1373,9 @@ This means the product can evolve from a developer-defined runtime into a visual
 
 ## 30. Developer Experience, API, SDK, and CLI Foundation
 
-The project already has the runtime foundation required for better developer experience and public API packaging.
+The project now has both the runtime foundation and an implemented public SDK contract/server boundary for the first developer-facing publication/execution surface. The external .NET, TypeScript/JavaScript, and Python clients are additionally closed through a fixture-free 37/37 Docker runtime matrix using public SDK samples and production hosted workers: 33 baseline `ProcessHostPool` scenarios plus four provider/artifact-selection scenarios using `runtimeProvider=ProcessHostPool` with explicit trusted-process/container-isolation worker selection.
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](../ai/kubernetes-pool-matrix-validation.md).
 
 The developer experience direction can build on:
 
@@ -1352,15 +1389,18 @@ The developer experience direction can build on:
 - policy engine foundation;
 - retention lifecycle foundation;
 - observability direction;
-- integration testing direction.
+- integration testing direction;
+- portable public publication/pipeline contracts;
+- portable execution/observation/control contracts;
+- an authorized MCP server adapter that maps those contracts into existing runtime authorities.
 
 The productization direction includes:
 
 - quickstart;
 - local setup;
 - API documentation;
-- RunId / ExecutionId clarity;
-- SDK direction;
+- public `ExecutionId` semantics without exposing scheduling/placement identities;
+- external language SDK packaging;
 - CLI direction;
 - examples;
 - diagnostics;
@@ -1548,13 +1588,13 @@ AI workflow execution becomes credible only when reliability is tested, not just
 
 ## 34. Kubernetes-Ready Foundation
 
-The architecture is aligned with a Kubernetes-style deployment model.
+The architecture is exercised by real Kubernetes host and KubernetesPool scenarios. Deployment concepts below remain useful, but runtime hosting is no longer only a future alignment target.
 
 The mapping is natural:
 
 | Runtime Concept | Kubernetes-Style Interpretation |
 |---|---|
-| Runtime instance | Process, container, or pod |
+| Runtime instance | Independent runtime process; KubernetesPool can host several per Pod, whose UID identifies the physical failure boundary. |
 | Worker | Local execution slot inside a runtime instance |
 | Shared queue | Global work queue |
 | Local queue | Instance-local work queue |
@@ -1563,7 +1603,7 @@ The mapping is natural:
 | Observability | Logs, metrics, traces, dashboards |
 | Replay and ledger | Audit and diagnostic layer |
 
-This foundation allows the platform to move toward a Kubernetes demo and future production deployment model.
+The additional public-SDK KubernetesPool closure is validated, including Python function execution through the public boundary. Production deployment packaging, multi-node operations, and managed-hosting hardening remain separate work. See [KubernetesPool Matrix Validation](../ai/kubernetes-pool-matrix-validation.md).
 
 ---
 
@@ -1644,7 +1684,7 @@ It is the foundation for a complete AI workflow execution platform.
 |---|---|
 | Deterministic execution | Foundation exists |
 | DAG workflow execution | Foundation exists |
-| Durable Child DAG composition | **Implemented / validated** — recursive Depth3 production validation and centralized EventDriven lifecycle observation are green |
+| Durable Child DAG composition | **Implemented / validated** — native recursive Depth3 production validation and centralized EventDriven lifecycle observation are green; published custom child binding/execution is supported with a separately bounded nested proof |
 | Execution state | Foundation exists |
 | Step lifecycle | Foundation exists |
 | Worker model | Foundation exists |
@@ -1684,7 +1724,9 @@ It is the foundation for a complete AI workflow execution platform.
 | Correlation | Foundation exists |
 | Execution control and state lifecycle | Foundation exists |
 | Testing and reliability strategy | Foundation exists / active direction |
-| Developer experience / API / SDK / CLI | Productization target |
+| Public SDK contract/server boundary | Implemented / validated foundation |
+| External SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python, including fixture-free 37/37 Docker runtime closure with `runtimeProvider=ProcessHostPool` and bounded `ContainerIsolationProvider` worker-selection scenarios; separate 3/3 KubernetesPool closure including Python SDK execution with `Completed` and a verified marker |
+| CLI / public SDK registry distribution / broader API productization | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |
 | Memory decay policy direction | Productization target |

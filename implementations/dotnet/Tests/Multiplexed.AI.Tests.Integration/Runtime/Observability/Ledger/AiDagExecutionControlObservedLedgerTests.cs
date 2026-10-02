@@ -204,6 +204,159 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
                 entry.EventType == AiEngineEvents.HumanInput.Waiting);
         }
 
+        /// <summary>
+        /// Verifies that a pause arriving after the initial claim gate but before the durable
+        /// single-step ownership transfer prevents the claim.
+        /// </summary>
+        [Fact]
+        public async Task ClaimNextAsync_WhenPauseArrivesAfterInitialGate_ShouldNotClaimReadyStep()
+        {
+            var executionId = "exec-control-late-pause-single";
+            var pipelineKey = "test-pipeline:v1";
+            var workerId = "worker-1";
+            var ledger = new InMemoryAiDecisionLedger();
+
+            var running = AiExecutionControlDecision.Continue(AiExecutionControlStatus.Running);
+            var pausing = AiExecutionControlDecision.StopClaiming(
+                AiExecutionControlStatus.Pausing,
+                "Pause requested while claim preparation was in flight.");
+
+            var services = CreateServices(ledger, running);
+            var dagStore = services.DagStore!;
+            var controlGate = services.ExecutionControlGate;
+            var gateCalls = 0;
+
+            controlGate
+                .CheckBeforeAdvanceAsync(
+                    executionId,
+                    Arg.Any<CancellationToken>())
+                .Returns(_ =>
+                {
+                    gateCalls++;
+                    return Task.FromResult(gateCalls < 3 ? running : pausing);
+                });
+
+            var state = new AiExecutionState
+            {
+                ExecutionId = executionId,
+                PipelineName = "test-pipeline"
+            };
+            state.Steps["step-a"] = new AiStepState
+            {
+                StepName = "step-a",
+                Status = AiStepExecutionStatus.Ready
+            };
+
+            dagStore
+                .RecoverTimedOutStepsAsync(
+                    executionId,
+                    Arg.Any<CancellationToken>())
+                .Returns(0);
+            dagStore
+                .GetStateAsync(
+                    executionId,
+                    Arg.Any<CancellationToken>())
+                .Returns(state);
+
+            var service = new AiDagStepClaimService(services);
+
+            var claimed = await service.ClaimNextAsync(
+                executionId,
+                CreatePipeline(),
+                pipelineKey,
+                workerId,
+                CancellationToken.None);
+
+            Assert.Null(claimed);
+            Assert.True(gateCalls >= 3);
+            await services.ExecutionControlService.Received(1).MarkPausedAsync(
+                executionId,
+                workerId,
+                Arg.Any<CancellationToken>());
+            await dagStore.DidNotReceive().TryClaimStepAsync(
+                executionId,
+                "step-a",
+                workerId,
+                Arg.Any<CancellationToken>());
+        }
+
+        /// <summary>
+        /// Verifies that a pause arriving after the initial batch gate but before the durable
+        /// step ownership transfer prevents the batch claim.
+        /// </summary>
+        [Fact]
+        public async Task ClaimBatchAsync_WhenPauseArrivesAfterInitialGate_ShouldNotClaimReadyStep()
+        {
+            var executionId = "exec-control-late-pause-batch";
+            var pipelineKey = "test-pipeline:v1";
+            var workerId = "worker-1";
+            var ledger = new InMemoryAiDecisionLedger();
+
+            var running = AiExecutionControlDecision.Continue(AiExecutionControlStatus.Running);
+            var pausing = AiExecutionControlDecision.StopClaiming(
+                AiExecutionControlStatus.Pausing,
+                "Pause requested while batch claim preparation was in flight.");
+
+            var services = CreateServices(ledger, running);
+            var dagStore = services.DagStore!;
+            var controlGate = services.ExecutionControlGate;
+            var gateCalls = 0;
+
+            controlGate
+                .CheckBeforeAdvanceAsync(
+                    executionId,
+                    Arg.Any<CancellationToken>())
+                .Returns(_ =>
+                {
+                    gateCalls++;
+                    return Task.FromResult(gateCalls < 3 ? running : pausing);
+                });
+
+            var state = new AiExecutionState
+            {
+                ExecutionId = executionId,
+                PipelineName = "test-pipeline"
+            };
+            state.Steps["step-a"] = new AiStepState
+            {
+                StepName = "step-a",
+                Status = AiStepExecutionStatus.Ready
+            };
+
+            dagStore
+                .RecoverTimedOutStepsAsync(
+                    executionId,
+                    Arg.Any<CancellationToken>())
+                .Returns(0);
+            dagStore
+                .GetStateAsync(
+                    executionId,
+                    Arg.Any<CancellationToken>())
+                .Returns(state);
+
+            var service = new AiDagStepClaimService(services);
+
+            var claimed = await service.ClaimBatchAsync(
+                executionId,
+                CreatePipeline(),
+                pipelineKey,
+                workerId,
+                maxSteps: 4,
+                cancellationToken: CancellationToken.None);
+
+            Assert.Empty(claimed);
+            Assert.True(gateCalls >= 3);
+            await services.ExecutionControlService.Received(1).MarkPausedAsync(
+                executionId,
+                workerId,
+                Arg.Any<CancellationToken>());
+            await dagStore.DidNotReceive().TryClaimStepAsync(
+                executionId,
+                "step-a",
+                workerId,
+                Arg.Any<CancellationToken>());
+        }
+
         private static IAiDagExecutionEngineServices CreateServices(
             InMemoryAiDecisionLedger ledger,
             AiExecutionControlDecision controlDecision)
@@ -214,6 +367,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
             var runtimeMetrics = Substitute.For<IAiRuntimeMetrics>();
             var logger = Substitute.For<IAiRuntimeLogger>();
             var controlGate = Substitute.For<IAiExecutionControlGate>();
+            var controlService = Substitute.For<IAiExecutionControlService>();
             var concurrencyGate = Substitute.For<IAiConcurrencyGate>();
 
             IAiRuntimeInstanceIdentityDescriptor runtimeInstanceIdentity =
@@ -242,6 +396,35 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
                     Arg.Any<CancellationToken>())
                 .Returns(controlDecision);
 
+            controlService
+                .MarkPausedAsync(
+                    Arg.Any<string>(),
+                    Arg.Any<string?>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(callInfo => Task.FromResult(new AiExecutionControlState
+                {
+                    ExecutionId = callInfo.ArgAt<string>(0),
+                    Status = AiExecutionControlStatus.Paused,
+                    PendingAction = AiExecutionControlAction.Pause,
+                    RequestedBy = callInfo.ArgAt<string?>(1),
+                    PausedAtUtc = DateTime.UtcNow,
+                    UpdatedAtUtc = DateTime.UtcNow
+                }));
+
+            controlService
+                .MarkRunningAsync(
+                    Arg.Any<string>(),
+                    Arg.Any<string?>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(callInfo => Task.FromResult(new AiExecutionControlState
+                {
+                    ExecutionId = callInfo.ArgAt<string>(0),
+                    Status = AiExecutionControlStatus.Running,
+                    PendingAction = AiExecutionControlAction.None,
+                    RequestedBy = callInfo.ArgAt<string?>(1),
+                    UpdatedAtUtc = DateTime.UtcNow
+                }));
+
             concurrencyGate
                 .TryAcquireAsync(
                     Arg.Any<AiConcurrencyContext>(),
@@ -253,6 +436,7 @@ namespace Multiplexed.AI.Tests.Integration.Runtime.Observability.Ledger
             services.ObservabilityService.Returns(observability);
             services.Logger.Returns(logger);
             services.ExecutionControlGate.Returns(controlGate);
+            services.ExecutionControlService.Returns(controlService);
             services.ConcurrencyGate.Returns(concurrencyGate);
 
             return services;

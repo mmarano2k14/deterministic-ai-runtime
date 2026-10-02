@@ -11,7 +11,7 @@ namespace Multiplexed.AI.Runtime.Invocation
     /// Each adapter has its own identity; the shared transport must be concurrency-safe.
     /// </summary>
     [AiPolicyDiscoveryIgnore]
-    internal sealed class AiConcurrencyPolicyAdapter : IAiPolicy, IAiPolicyInvocationIdentity
+    public sealed class AiConcurrencyPolicyAdapter : IAiPolicy, IAiPolicyInvocationIdentity
     {
         private readonly IAiConcurrencyPolicyTransport _transport;
         private readonly AiPolicyInvocationBinding _binding;
@@ -22,13 +22,15 @@ namespace Multiplexed.AI.Runtime.Invocation
         private readonly string _stepKey;
         private readonly CancellationToken _executionCancellation;
         private readonly TimeSpan _timeout;
+        private readonly TimeProvider _timeProvider;
         private readonly string _requestId = Guid.NewGuid().ToString("N");
         private int _started;
 
         public AiConcurrencyPolicyAdapter(
             IAiConcurrencyPolicyTransport transport, AiPolicyInvocationBinding binding,
             string tenantId, string? tenantGroupId, string executionId, string stepName,
-            string stepKey, CancellationToken executionCancellation, TimeSpan timeout)
+            string stepKey, CancellationToken executionCancellation, TimeSpan timeout,
+            TimeProvider? timeProvider = null)
         {
             _transport = transport;
             _binding = binding;
@@ -39,6 +41,7 @@ namespace Multiplexed.AI.Runtime.Invocation
             _stepKey = stepKey;
             _executionCancellation = executionCancellation;
             _timeout = timeout;
+            _timeProvider = timeProvider ?? TimeProvider.System;
             var metadata = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 [AiPolicyInvocationMetadataKeys.RequestId] = _requestId,
@@ -82,7 +85,7 @@ namespace Multiplexed.AI.Runtime.Invocation
             var request = new AiConcurrencyPolicyRequest(
                 _requestId, Key, _binding.Scope.ToString(), _binding.OwnerStepName,
                 _binding.Invocation.ExecutionLanguage!, _binding.Invocation.ImplementationRef!,
-                DateTimeOffset.UtcNow.Add(_timeout),
+                _timeProvider.GetUtcNow().Add(_timeout),
                 new AiConcurrencyPolicyInput(
                     _tenantId, _tenantGroupId, _executionId, input.PipelineKey, _stepName,
                     _stepKey, input.RuntimeInstanceId, input.Provider, input.Model, input.Operation),

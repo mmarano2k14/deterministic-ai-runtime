@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "core-dotnet-client-typescript-worker",
+  "status": "passed",
+  "clientLanguage": "dotnet",
+  "workerLanguage": "typescript",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-1ec82d955879a958e5b1f91b69aa32c5c3ee76eae445d762c170c79627407b49",
+  "executionId": "published-3d53ffc0dd44b81e8409b18bd6ca21fc8d408a81fda8ca32525a1298fbc037c5",
+  "terminalStatus": "Completed",
+  "evidence": [
+    "publish",
+    "submit",
+    "observe",
+    "terminal-result",
+    "public-execution-id"
+  ],
+  "recordedAtUtc": "2026-09-21T23:11:18.9711698+00:00"
+}

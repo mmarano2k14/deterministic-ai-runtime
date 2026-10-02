@@ -33,7 +33,7 @@ function count(name) {
   return Number(match[1]);
 }
 const nodeResults = { total: count('tests'), passed: count('pass'), failed: count('fail'), skipped: count('skipped'), cancelled: count('cancelled') };
-if (nodeResults.total < 38 || nodeResults.passed !== nodeResults.total || nodeResults.failed || nodeResults.skipped || nodeResults.cancelled) {
+if (nodeResults.total < 45 || nodeResults.passed !== nodeResults.total || nodeResults.failed || nodeResults.skipped || nodeResults.cancelled) {
   throw new Error('Node compatibility validation is empty, incomplete or unsuccessful.');
 }
 if (nodeOnly) {
@@ -61,7 +61,8 @@ if (nodeOnly) {
     'Published_Synchronous_Function_Returns_Real_Computed_Data',
     'Unstarted_TypeScript_Function_Executes_Original_Code_After_Republication',
     'Corrupt_Host_Compiler_Fails_Before_Process_Readiness',
-    'TypeScript_Process_Executes_A_Custom_Concurrency_Policy'
+    'TypeScript_Process_Executes_A_Custom_Concurrency_Policy',
+    'Locked_Node_Dependency_Executes_From_Immutable_Publication_Without_Registry_Resolution'
   ]) {
     if (!rows.some(row => row.includes(required))) throw new Error(`Required real-process proof is missing: ${required}`);
   }

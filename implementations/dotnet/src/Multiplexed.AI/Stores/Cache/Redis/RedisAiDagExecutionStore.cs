@@ -285,6 +285,28 @@ namespace Multiplexed.AI.Stores.Cache.Redis
         }
 
         /// <summary>
+        /// Applies an already-evaluated retry/failure decision through the same atomic Redis step transition.
+        /// </summary>
+        public Task<bool> TryFailStepWithDecisionAsync(
+            string executionId,
+            string stepName,
+            string claimToken,
+            string? error,
+            AiDagStepFailureDecision decision,
+            AiStepResult? result = null,
+            CancellationToken cancellationToken = default)
+        {
+            return _services.TransitionService.TryFailStepWithDecisionAsync(
+                executionId,
+                stepName,
+                claimToken,
+                error,
+                decision,
+                result,
+                cancellationToken);
+        }
+
+        /// <summary>
         /// Recovers timed-out running DAG steps.
         /// </summary>
         /// <param name="executionId">The unique execution identifier.</param>

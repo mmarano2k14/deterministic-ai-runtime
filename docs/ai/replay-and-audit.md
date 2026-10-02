@@ -84,7 +84,9 @@ Hosted custom functions add a durable result-reuse path alongside the existing r
 
 This recovery/application path is not a new replay mode. It does not turn arbitrary function side effects into exactly-once operations, and controlled restoration from serialized stores is distinct from a host kill or database restart.
 
-Outbound MCP carries stable effect identity and an intent digest, but does not yet persist a durable effect journal or reconcile uncertain remote outcomes. Those metadata fields alone cannot prove that a tool executed, deduplicate repeated calls remotely, or reconstruct a lost tool response. The existing audit-only snapshot inspection remains separate from any deliberate new tool execution.
+Outbound MCP can now opt into a separate durable effect-evidence journal. It freezes one logical effect intent, commits `Dispatching` before the physical `tools/call`, persists confirmed `Completed` responses before they return through the normal DAG path, and reuses those confirmed responses locally on a later invocation without a second business call. Classified pre-call non-emission can be stored as `NotSent`; ambiguous post-boundary outcomes remain fail-closed `Uncertain` or stale `Dispatching` until explicit reconciliation.
+
+This is not a new Replay Engine mode and does not make arbitrary remote providers exactly-once. The existing audit-only snapshot/replay path still does not deliberately re-execute external tools. Durable MCP effect replay means reuse of already-confirmed stored effect evidence, not re-running the business action. See [Durable MCP Effect Evidence](durable-mcp-effect-evidence.md) and [Durable MCP Effect Evidence Validation](durable-mcp-effect-evidence-validation.md).
 
 The hosted custom `Concurrency` policy path likewise does not introduce a durable policy-result replay store. See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md) and [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) for these exact boundaries.
 

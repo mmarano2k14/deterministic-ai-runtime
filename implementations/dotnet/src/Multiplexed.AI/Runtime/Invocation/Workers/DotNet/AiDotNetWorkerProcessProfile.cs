@@ -1,4 +1,5 @@
 using System.Globalization;
+using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Publication;
 
 namespace Multiplexed.AI.Runtime.Invocation.Workers.DotNet
@@ -20,7 +21,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.DotNet
             IEnumerable<string>? approvedLaunchRoots = null)
         {
             ArgumentNullException.ThrowIfNull(runtime);
-            if (runtime.ExecutionLanguage != "dotnet")
+            if (runtime.ExecutionLanguage != AiExecutionLanguages.DotNet)
                 throw new NotSupportedException("The .NET assembly loader cannot execute another language.");
             if (!Version.TryParse(runtime.RuntimeVersion, out var version) || version.Major != 10 ||
                 version.Minor != 0 || version.Build < 0 || version.Revision != -1 ||

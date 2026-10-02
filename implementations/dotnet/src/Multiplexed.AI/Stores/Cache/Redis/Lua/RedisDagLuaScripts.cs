@@ -521,6 +521,109 @@ namespace Multiplexed.AI.Stores.Cache.Redis.Lua
             """);
 
         /// <summary>
+        /// Applies a retry/fail decision that has already been evaluated by the runtime policy engine.
+        ///
+        /// IMPORTANT:
+        /// - The existing claim token remains the mutation fence.
+        /// - This script does not resolve Retry.MaxRetries, strategy, or policy declarations.
+        /// - A retry decision is therefore committed exactly as supplied by the runtime policy authority.
+        /// - Native retry transitions continue to use <see cref="FailPreparedScript"/> unchanged.
+        /// </summary>
+        public static readonly LuaScript FailWithDecisionPreparedScript = LuaScript.Prepare(
+            """
+            local function normalize_array(value)
+                if value == nil or value == cjson.null then
+                    return cjson.decode('[]')
+                end
+
+                local count = 0
+                for _, _ in ipairs(value) do
+                    count = count + 1
+                end
+
+                if count == 0 then
+                    return cjson.decode('[]')
+                end
+
+                return value
+            end
+
+            local raw = redis.call('GET', @stepKey)
+            if not raw then
+                return 0
+            end
+
+            local step = cjson.decode(raw)
+            if not step then
+                return 0
+            end
+
+            if step.Status ~= "Running" then
+                return 0
+            end
+
+            if step.ClaimToken ~= @claimToken then
+                return 0
+            end
+
+            local nowUnix = tonumber(@nowUnix)
+            local shouldRetry = tonumber(@shouldRetry) == 1
+            local retryDelayMs = tonumber(@retryDelayMs) or 0
+            local decisionReason = @decisionReason
+
+            if retryDelayMs < 0 then
+                retryDelayMs = 0
+            end
+
+            local retryState = step.RetryState
+            if retryState == nil or retryState == cjson.null then
+                retryState = {}
+            end
+
+            local retryCount = tonumber(retryState.RetryCount) or 0
+
+            if @resultJson ~= '' then
+                step.Result = cjson.decode(@resultJson)
+            end
+
+            step.Error = @error
+            step.UpdatedAtUtc = nowUnix
+            step.ClaimedBy = cjson.null
+            step.ClaimToken = cjson.null
+            step.ClaimedAtUtc = cjson.null
+            step.LeaseExpiresAtUtc = cjson.null
+
+            if shouldRetry then
+                retryCount = retryCount + 1
+                local nextRetryAtUtc = nowUnix + retryDelayMs
+
+                retryState.RetryCount = retryCount
+                if decisionReason ~= '' then
+                    retryState.RetryReason = decisionReason
+                else
+                    retryState.RetryReason = @error
+                end
+                retryState.LastRetryAtUtc = nowUnix
+                retryState.NextRetryAtUtc = nextRetryAtUtc
+
+                step.RetryState = retryState
+                step.Status = "WaitingForRetry"
+                step.CompletedAtUtc = cjson.null
+            else
+                retryState.NextRetryAtUtc = cjson.null
+                step.RetryState = retryState
+                step.Status = "Failed"
+                step.CompletedAtUtc = nowUnix
+            end
+
+            step.Version = (step.Version or 0) + 1
+            step.DependsOn = normalize_array(step.DependsOn)
+
+            redis.call('SET', @stepKey, cjson.encode(step))
+            return 1
+            """);
+
+        /// <summary>
         /// Recovers timed-out running steps.
         ///
         /// RULES:

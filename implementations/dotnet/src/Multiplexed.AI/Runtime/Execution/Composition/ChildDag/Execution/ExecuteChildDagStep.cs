@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Multiplexed.Abstractions.AI.ControlPlane.Discovery;
 using Multiplexed.Abstractions.AI.Execution;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Identity;
@@ -7,6 +8,7 @@ using Multiplexed.Abstractions.AI.Execution.Context;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Relations.Persistence;
 using Multiplexed.Abstractions.AI.Pipeline;
+using Multiplexed.Abstractions.AI.Invocation.Durable;
 using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Allocation;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Delegation;
@@ -16,6 +18,7 @@ using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Identity;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Snapshots;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Suspension;
 using Multiplexed.AI.Runtime.Execution.Context;
+using Multiplexed.AI.Runtime.Publication;
 using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag;
 
 
@@ -207,6 +210,22 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution
                         continue;
 
                     case AiChildExecutionRelationStatus.ChildAllocated:
+                        var publicationBindingCoordinator = context.Services
+                            .GetService<AiPublishedChildDagBindingCoordinator>();
+                        if (publicationBindingCoordinator is not null)
+                        {
+                            await publicationBindingCoordinator
+                                .BindBeforeDispatchAsync(
+                                    new AiDurableInvocationScope(
+                                        executionContextSnapshot.TenantId,
+                                        executionContextSnapshot.TenantGroupId,
+                                        controlPlaneId),
+                                    context.Record,
+                                    relation,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+
                         await this.dispatcher
                             .DispatchAsync(relation.ToInvocationIdentity(), cancellationToken)
                             .ConfigureAwait(false);

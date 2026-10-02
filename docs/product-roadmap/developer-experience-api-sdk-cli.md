@@ -85,7 +85,9 @@ These include:
 
 The server-side foundation also implements immutable code publication and whole-run pinning, durable hosted-function invocation, real Python/TypeScript/.NET execution, custom `Concurrency` policies, and outbound MCP integration. These capabilities and their current limits are documented in [Hosted Multilanguage Execution](../ai/hosted-multilanguage-execution.md).
 
-This is not an external SDK release. Publication services remain server components, and creating a pinned run does not itself enqueue or start it. [Hosted Multilanguage Validation](../ai/hosted-multilanguage-validation.md) records the supplied execution evidence without treating public API productization as complete.
+The public SDK contract/server boundary is implemented separately from the hosted-execution internals. Publication services remain server components, while portable public contracts and an authorized MCP server adapter expose publication plus execution submit/observe/result/cancel operations. Independent .NET, TypeScript/JavaScript, and Python SDK clients are implemented on top of that boundary. Their live fixture-free Docker runtime closure is GREEN at 37/37 scenarios using public SDK samples and production hosted workers: the existing 33-scenario `ProcessHostPool` baseline plus four provider/artifact-selection scenarios using `runtimeProvider=ProcessHostPool` with explicit trusted-process/container-isolation worker selection. CLI distribution and public package-registry release remain separate productization work. [Public SDK Boundary](../ai/public-sdk-boundary.md), [External SDK Libraries](../ai/external-sdk-libraries.md), and [Multilanguage Runtime Matrix Validation](../ai/multilanguage-runtime-matrix-validation.md) document these layers.
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](../ai/kubernetes-pool-matrix-validation.md).
 
 The roadmap is not to invent developer experience from zero.
 
@@ -143,7 +145,7 @@ The API should be:
 
 - predictable;
 - strongly typed where possible;
-- explicit about RunId and ExecutionId;
+- explicit that portable execution operations use `ExecutionId`, while operational/admin APIs may expose richer run identities only where appropriate;
 - explicit about status;
 - explicit about errors;
 - correlation-friendly;
@@ -152,70 +154,63 @@ The API should be:
 - policy-aware;
 - compatible with MCP and dashboard usage.
 
-A developer should not need to guess whether a command returns a RunId, ExecutionId, or both.
+A developer should not need to guess which identity is public execution identity and which identities belong only to server scheduling/operations.
 
 ---
 
-## RunId and ExecutionId Clarity
+## Public Execution Identity
 
-The API must clearly explain:
+The implemented public SDK boundary deliberately exposes `ExecutionId` as the durable external execution handle while keeping queue/control-plane placement identities private.
 
 ```text
-RunId       = submitted/control-plane/queue identity
+Public contract:
 ExecutionId = durable workflow execution identity
+
+Server internals:
+SharedRunId / LocalRunId / RuntimeInstanceId / WorkerId / lease / epoch
 ```
 
-This distinction is central to:
-
-- shared queue;
-- runtime instance assignment;
-- cancellation;
-- replay;
-- Decision Ledger correlation;
-- dashboard views;
-- MCP tools.
-
-API responses should make this mapping easy to inspect.
+This prevents clients from becoming coupled to scheduling, placement, claim, or recovery internals. Operational/admin surfaces may still correlate richer identities where explicitly authorized, but they are not part of the portable SDK execution contract.
 
 ---
 
 # 2. SDK Direction
 
-An SDK can make the runtime easier to integrate.
+The public SDK boundary provides the stable portable contracts and server adapter used by the implemented .NET, TypeScript/JavaScript, and Python external client libraries.
 
-A future SDK can provide:
+Implemented boundary capabilities include:
 
-- client for submitting runs;
-- client for inspecting executions;
-- client for replay operations;
-- client for Decision Ledger inspection;
-- client for MCP/control-plane operations direction;
-- helper models for status;
-- helper models for errors;
-- correlation helper direction;
-- policy context helper direction;
-- retry helper direction;
-- diagnostics helper direction.
+- publication and pipeline wire models;
+- deterministic dependency/source upload descriptors;
+- execution submission;
+- execution observation;
+- terminal result projection;
+- cancellation requests;
+- explicit schema versions;
+- submission idempotency keys;
+- dependency isolation from engine DLLs.
 
-The SDK should not hide the runtime model too much.
+The language-specific client packaging layer is now implemented for .NET, TypeScript/JavaScript, and Python. The next planned SDK-v1 capability is `execution.watch()`: an ordered, authorized execution-change stream with an initial snapshot, public sequence/cursor, reconnect/resume, gap detection, and resynchronization. It is not implemented yet. Future client evolution can add replay, ledger, diagnostics, richer helpers, and CLI workflows only as corresponding public server capabilities are exposed, without moving runtime authority into the client.
 
-It should make the important concepts easier to use.
+The SDK should not hide the runtime model too much. It should make the important concepts easier to use while preserving server ownership of execution.
 
 ---
 
 ## External SDK Boundary
 
-The SDK must be an independent library with portable wire models, not an extraction of the engine's internal CLR contracts. It must have no direct or transitive dependency on runtime DLLs. The target includes pipeline/step/policy builders, publication of code and explicit dependencies, submission, status, cancellation, and diagnostics through an authorized Gateway/MCP boundary.
+The independent boundary is now implemented as `Multiplexed.AI.Sdk.Contracts` plus an authorized server adapter. The public contract assembly uses portable wire models and has no direct or transitive dependency on runtime engine DLLs. It covers pipeline/publication material plus submission, observation, result, and cancellation contracts.
 
-The platform hosts approved execution environments. The runtime retains authorization, authoritative publication validation, DAG lifecycle, retries, recovery, and result acceptance. A developer-operated worker is not required by the main target model.
+The platform hosts approved execution environments. The runtime retains authorization, authoritative publication validation, DAG lifecycle, retries, recovery, result acceptance, queue ownership, and worker placement. A developer-operated worker is not required by the main target model.
 
 Language defaults and local overrides describe function execution, not the programming language used to build the SDK client. Native primitives remain native and MCP remains a distinct invocation mode. SDK conveniences must not override immutable run pins or turn uncertain external effects into automatic retries.
+
+The external .NET/TypeScript/Python client packages are implemented. What remains separate is public registry release/versioning, CLI tooling, and any broader HTTP/Gateway product surface desired around the same contracts.
 
 ---
 
 ## SDK Responsibilities
 
-An SDK can help developers with:
+The implemented contract/server boundary standardizes request/response shapes, and the external client libraries now provide the publication/execution operations over that boundary. Future convenience layers can additionally help developers with:
 
 - request creation;
 - response parsing;
@@ -677,14 +672,13 @@ This path should be easy to follow.
 
 As the platform evolves, public API and SDK surfaces should avoid unnecessary breaking changes.
 
-The project should eventually define:
+The project now separates public models from internal models and uses explicit schema versions at the SDK boundary. Productization should continue defining:
 
-- public models;
-- internal models;
-- versioning direction;
 - compatibility guidelines;
-- deprecation direction;
-- migration notes.
+- deprecation policy;
+- migration notes;
+- distribution/package versioning;
+- generated client/API documentation.
 
 This matters if external developers or partners begin using the runtime.
 
@@ -730,13 +724,21 @@ This project should keep that trust.
 | Product roadmap documentation | Foundation exists |
 | Immutable publication and run pinning | Server implementation with targeted validation |
 | Hosted Python / TypeScript / .NET functions | Server implementation with real-process validation |
-| Hosted custom Concurrency policies | Implemented at the existing checkpoint; other families are not implied |
-| Outbound MCP transport and effect metadata | Implemented; durable external-effect evidence remains separate |
-| API packaging | Productization target |
-| SDK | Productization target |
+| Deterministic dependency packaging | Pure-Python wheels, locked Node source bundles, and managed .NET assembly closures implemented server-side; no runtime `pip`/npm/NuGet resolution |
+| Hosted worker isolation | Selected Linux/amd64 OCI `SandboxedContainer` provider implemented and validated server-side; the public SDK boundary remains provider-agnostic and Kubernetes sandbox-Pod materialization remains separate |
+| Hosted custom Concurrency policies | Implemented at the existing admission checkpoint |
+| Hosted custom Retry policies | Implemented at the existing retry checkpoint through `retry/v1`; retry lifecycle authority remains server-side |
+| Hosted custom Delegation policies | Implemented at the existing pre-child-allocation checkpoint through `delegation/v1`; child lifecycle authority remains server-side |
+| Hosted custom Retention | Native-only in the current capability matrix |
+| Policy kinds without independent checkpoints | `Timeout`, `CircuitBreaker`, `RateLimit`, `Validation`, and `Routing` are not advertised as hosted families |
+| Outbound MCP transport and effect metadata | Implemented |
+| Durable MCP external-effect evidence | Implemented server-side as an opt-in boundary with immutable intent, dispatch fencing, confirmed replay, conservative uncertainty handling, explicit reconciliation, and tenant-scoped persistence; public SDK clients remain provider-agnostic and must not become retry authority |
+| Public SDK contracts + server boundary | Implemented and validated for publication, submission, observation, result, and cancellation; contract assembly is engine-independent |
+| External SDK client libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python with shared protocol/parity validation, local package smoke, and fixture-free 37/37 Docker runtime closure with `runtimeProvider=ProcessHostPool` and bounded `ContainerIsolationProvider` worker-selection scenarios; separate 3/3 KubernetesPool closure including Python SDK execution with `Completed` and a verified marker |
+| Broader API packaging | Productization target beyond the implemented MCP public boundary |
 | CLI | Productization target |
-| Quickstart documentation | Productization target |
-| Examples | Productization target |
+| Quickstart documentation | Initial external SDK quickstart implemented for .NET, TypeScript/JavaScript, and Python; broader onboarding remains productization work |
+| Examples | Reusable published-function and MCP effect-server samples implemented; broader example catalog remains productization work |
 | Developer onboarding path | Productization target |
 
 ---
@@ -794,16 +796,23 @@ Prepare initial commands for:
 - instance;
 - diagnostics.
 
-## Milestone 5 — SDK Direction
+## Milestone 5 — External SDK Libraries
 
-Prepare client models and helpers for:
+**Status:** Implemented / validated foundation.
 
-- run submission;
-- status polling;
-- replay retrieval;
-- diagnostics;
-- error handling;
-- correlation propagation.
+Language-specific .NET, TypeScript/JavaScript, and Python client libraries now exist on the public contract/server boundary, with support for:
+
+- pipeline publication;
+- execution submission;
+- execution observation;
+- terminal result retrieval;
+- explicit cancellation requests;
+- normalized client errors;
+- transport-owned authentication;
+- correlation fields already present in the public contracts;
+- shared protocol/parity validation and local package smoke.
+
+Polling/wait helpers, replay/diagnostic client surfaces, and richer convenience builders remain future SDK conveniences and require corresponding public server capabilities where applicable. Command-line build, test, pack, install, and validation examples for all three languages are documented in [External SDK Libraries](../ai/external-sdk-libraries.md).
 
 ---
 
@@ -817,8 +826,9 @@ Developer experience should continue improving through:
 - MCP tool docs;
 - examples;
 - configuration samples;
-- SDK direction;
+- public SDK registry distribution/versioning;
 - CLI direction;
+- `execution.watch()` realtime/resume semantics;
 - diagnostics;
 - error model;
 - policy authoring examples;

@@ -692,6 +692,12 @@ Each guarantee should map to tests.
 
 # Productization Roadmap
 
+## Public SDK cross-topology evidence
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](../ai/kubernetes-pool-matrix-validation.md).
+
+The new evidence is Python SDK-to-Python `TrustedProcess` execution. The Docker client-by-worker matrix, four selected real-engine isolation tests, historical Runtime Pool profiles, and semantic adversarial matrix retain their own counts and scopes. No universal provider/language cross-product is inferred.
+
 ## Runtime Pool Reliability Evidence
 
 The Runtime Pool foundation is covered by a dedicated validation ladder.

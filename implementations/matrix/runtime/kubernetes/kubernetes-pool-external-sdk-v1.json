@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "matrixId": "kubernetes-pool-external-sdk-execution-v1",
+  "baselineMatrixId": "multilanguage-runtime-v1",
+  "baselineExecutedCoverage": 37,
+  "scenario": {
+    "id": "feature-runtime-provider-kubernetes-pool-external-sdk-python-worker",
+    "topology": "kubernetes",
+    "runtimeProvider": "KubernetesPool",
+    "workerExecutionProvider": "TrustedProcess",
+    "clientLanguage": "python",
+    "workerLanguage": "python",
+    "requiredTerminalStatus": "Completed",
+    "requiredEvidenceKinds": [
+      "external-sdk-publication",
+      "publication-only-runtime-identity",
+      "control-plane-worker-polling-disabled",
+      "runtime-worker-polling-enabled",
+      "scale-out-watcher-ready",
+      "kubernetes-runtime-pool-ready",
+      "published-function-terminal-result"
+    ]
+  },
+  "claimBoundary": "This scenario proves external Python SDK publication and execution through the existing KubernetesPool runtime-hosting provider. Kubernetes lifecycle, scheduling, durable journal, result acceptance, and recovery remain owned by the existing engine. The control plane advertises an exact publication-only Linux host runtime while worker polling is owned by RuntimeInstanceOnly children inside the KubernetesPool Pod."
+}

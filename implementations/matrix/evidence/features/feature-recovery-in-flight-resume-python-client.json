@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-recovery-in-flight-resume-python-client",
+  "status": "passed",
+  "coverageTarget": "recovery",
+  "coverageValues": [
+    "in-flight-resume"
+  ],
+  "clientLanguage": "python",
+  "workerLanguage": null,
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-ba6693bea3551266b1dbec8594c396614b1160c9542090b604751c02fcadb03e",
+  "executionId": "published-58053c5e8b11a779c093ac17281f10ddc391607046daa9cf75272153bb52b97a",
+  "originalExecutionId": "published-58053c5e8b11a779c093ac17281f10ddc391607046daa9cf75272153bb52b97a",
+  "recoveredExecutionId": "published-58053c5e8b11a779c093ac17281f10ddc391607046daa9cf75272153bb52b97a",
+  "activeStatusBeforeRecovery": "Pending",
+  "activeStepStatusBeforeRecovery": "Running",
+  "sharedRunId": "sdk-published-58053c5e8b11a779c093ac17281f10ddc391607046daa9cf75272153bb52b97a",
+  "failedRuntimeInstanceId": "host-4840e5f810c3447d8b321d84663073d0:runtime-instance-1",
+  "failedLocalRunId": "f636a72fc33d4f74a45c98e063509d2f",
+  "replacementRuntimeInstanceId": "host-4840e5f810c3447d8b321d84663073d0:runtime-instance-2",
+  "replacementLocalRunId": "4d175dfc2e81dd5eabcef462373963be",
+  "runtimeIndexStatus": "requeued-for-recovery",
+  "recoveryAction": "requeue-shared-run",
+  "recoveryReason": "transitionReason=runtime-execution-recovery-requeue;accepted=True;changed=True;ownershipReason=shared-run-ownership-resolved;queueStatus=Dispatched;sharedRunStatus=Dispatched;claimTokenPresent=True;requestSharedRunIdPresent=True",
+  "recoveryObservedBy": "explicit-reconciler",
+  "terminalStatus": "Completed",
+  "evidence": [
+    "publish",
+    "submit",
+    "active-execution-observed",
+    "runtime-ownership-marked-unavailable",
+    "production-recovery-reconciler",
+    "shared-run-requeued-for-recovery",
+    "same-execution-id-resumed",
+    "terminal-result"
+  ],
+  "recordedAtUtc": "2026-09-21T23:14:15.326+00:00"
+}

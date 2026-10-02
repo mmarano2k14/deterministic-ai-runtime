@@ -45,6 +45,37 @@ namespace Multiplexed.AI.Runtime.Publication
             if (pin.UserId != guard.UserId) throw new UnauthorizedAccessException("The run pin belongs to another execution identity.");
             return pin;
         }
+        internal async Task SaveChildBindingAsync(AiPublicationChildRunBinding binding, AiPublicationIdentity.Guard guard, CancellationToken token)
+        {
+            ValidateChildBinding(binding, guard.Partition, binding.ExecutionId);
+            if (binding.UserId != guard.UserId)
+                throw new UnauthorizedAccessException("The child publication binding belongs to another execution identity.");
+            await SaveExactAsync(AiPublicationJson.ChildBindingKey(guard.Partition, binding.ExecutionId), AiPublicationJson.Serialize(binding),
+                "publication-child-run-binding", binding.ExecutionId, guard, token).ConfigureAwait(false);
+        }
+        internal async Task<AiPublicationChildRunBinding?> ReadChildBindingAsync(string executionId, AiPublicationIdentity.Guard guard, CancellationToken token)
+        {
+            AiPublicationJson.Text(executionId, nameof(executionId)); guard.RequireCurrent(); token.ThrowIfCancellationRequested();
+            var json = await Resolve().LoadAsync(AiPublicationJson.ChildBindingKey(guard.Partition, executionId), token).ConfigureAwait(false);
+            guard.RequireCurrent(); token.ThrowIfCancellationRequested();
+            if (json is null) return null;
+            var binding = AiPublicationJson.Read<AiPublicationChildRunBinding>(json);
+            ValidateChildBinding(binding, guard.Partition, executionId);
+            if (binding.UserId != guard.UserId)
+                throw new UnauthorizedAccessException("The child publication binding belongs to another execution identity.");
+            return binding;
+        }
+        internal async Task<AiPublicationExecutionBinding?> ReadExecutionBindingAsync(
+            string executionId, AiPublicationIdentity.Guard guard, CancellationToken token)
+        {
+            var root = await ReadPinAsync(executionId, guard, token).ConfigureAwait(false);
+            if (root is not null)
+                return new AiPublicationExecutionBinding(root.PublicationRef, root.PublicationSha256, root.DefinitionSha256, null);
+            var child = await ReadChildBindingAsync(executionId, guard, token).ConfigureAwait(false);
+            return child is null
+                ? null
+                : new AiPublicationExecutionBinding(child.PublicationRef, child.PublicationSha256, child.DefinitionSha256, child.DefinitionPath);
+        }
         private async Task SaveExactAsync(string key, string json, string kind, string? executionId,
             AiPublicationIdentity.Guard guard, CancellationToken token)
         {
@@ -66,9 +97,12 @@ namespace Multiplexed.AI.Runtime.Publication
             var manifestJson = await LoadAsync(AiPublicationJson.Key(partition, "manifest", hash), hash, null, guard, token).ConfigureAwait(false);
             AiPublicationJson.ValidateJson(manifestJson, AiPublicationJson.MaxManifestBytes);
             var manifest = AiPublicationJson.Read<AiPipelinePublicationManifest>(manifestJson);
-            if (manifest.SchemaVersion != 1 || manifest.Partition != partition || manifest.Functions is null ||
+            if (manifest.SchemaVersion is not (1 or 2) || manifest.Partition != partition || manifest.Functions is null ||
                 manifest.Functions.Count > _options.MaxFunctions)
                 throw new InvalidOperationException("Unsupported or foreign publication manifest.");
+            var hasNestedFunctions = manifest.Functions.Any(function => function.Site.DefinitionPath is not null);
+            if ((manifest.SchemaVersion == 1 && hasNestedFunctions) || (manifest.SchemaVersion == 2 && !hasNestedFunctions))
+                throw new InvalidOperationException("Publication manifest schema does not match its declaration-site model.");
             var definitionJson = await DocumentAsync(manifest.Definition, "definition", guard, token).ConfigureAwait(false);
             var definition = AiPublicationJson.Read<AiPipelineDefinition>(definitionJson);
             if (definition.Name != manifest.PipelineName || definition.Version != manifest.PipelineVersion)
@@ -172,6 +206,22 @@ namespace Multiplexed.AI.Runtime.Publication
                 AiPublicationJson.ReferenceHash(pin.PublicationRef, "pub-") != pin.PublicationSha256 ||
                 AiDurableInvocationJson.Normalize(pin.InputsJson, true) != pin.InputsJson || AiPublicationJson.Hash(pin.InputsJson) != pin.InputsSha256)
                 throw new InvalidOperationException("Immutable run pin is inconsistent.");
+        }
+        private static void ValidateChildBinding(
+            AiPublicationChildRunBinding binding, AiPublicationPartition partition, string executionId)
+        {
+            ArgumentNullException.ThrowIfNull(binding);
+            AiPublicationJson.Text(binding.ExecutionId, "ChildExecutionId");
+            AiPublicationJson.Text(binding.ParentExecutionId, "ParentExecutionId");
+            AiPublicationJson.Text(binding.UserId, "UserId");
+            AiPublicationJson.Text(binding.PipelineName, "ChildPipelineName");
+            AiPublicationJson.Text(binding.PipelineVersion, "ChildPipelineVersion");
+            AiPublicationJson.ValidateHash(binding.DefinitionSha256);
+            AiPublicationJson.ValidateHash(binding.PublicationSha256);
+            AiPublicationDefinitionPath.Validate(binding.DefinitionPath);
+            if (binding.SchemaVersion != 1 || binding.Partition != partition || binding.ExecutionId != executionId ||
+                AiPublicationJson.ReferenceHash(binding.PublicationRef, "pub-") != binding.PublicationSha256)
+                throw new InvalidOperationException("Immutable child publication binding is inconsistent.");
         }
     }
 }

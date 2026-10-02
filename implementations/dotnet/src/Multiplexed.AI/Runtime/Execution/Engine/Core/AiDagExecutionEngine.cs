@@ -1,4 +1,5 @@
-﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Control;
 using Multiplexed.Abstractions.AI.Execution.Payloads.Models;
 using Multiplexed.Abstractions.AI.Observability.Tracing;
 using Multiplexed.Abstractions.AI.Pipeline;
@@ -411,6 +412,66 @@ namespace Multiplexed.AI.Runtime.Execution.Engine.Core
 
             throw new InvalidOperationException(
                 $"Execution '{executionId}' step '{stepName}' cannot be continued from status '{status}'.");
+        }
+
+        /// <summary>
+        /// Reactivates an exact parked input-wait step when durable input arrived before the
+        /// runtime worker was able to release the external wait.
+        /// </summary>
+        /// <remarks>
+        /// This closes the cross-store timing window between durable execution-control input
+        /// acceptance and the DAG's WaitingForExternal transition. It does not create a new
+        /// execution or recovery attempt and reuses the normal external-wait transition.
+        /// </remarks>
+        /// <param name="executionId">The durable execution identifier.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns><c>true</c> when an exact parked input step was reactivated.</returns>
+        public async Task<bool> TryResumeSubmittedInputWaitAsync(
+            string executionId,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(executionId);
+
+            var controlState = await _engineServices.ExecutionControlService
+                .GetStateAsync(executionId, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (controlState is null ||
+                controlState.InputWaitMode != AiExecutionInputWaitMode.ExternalWaitStep ||
+                !controlState.InputReceivedAtUtc.HasValue ||
+                string.IsNullOrWhiteSpace(controlState.WaitingStepName))
+            {
+                return false;
+            }
+
+            AiExecutionState? state;
+            if (_engineServices.DagStore is not null)
+            {
+                state = await _engineServices.DagStore
+                    .GetStateAsync(executionId, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                state = await _engineServices.Store
+                    .GetStateAsync(executionId, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            if (state is null ||
+                !state.Steps.TryGetValue(controlState.WaitingStepName, out var waitingStep) ||
+                waitingStep.Status != AiStepExecutionStatus.WaitingForExternal)
+            {
+                return false;
+            }
+
+            await ResumeExternalWaitingStepAsync(
+                    executionId,
+                    controlState.WaitingStepName,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return true;
         }
 
         /// <summary>

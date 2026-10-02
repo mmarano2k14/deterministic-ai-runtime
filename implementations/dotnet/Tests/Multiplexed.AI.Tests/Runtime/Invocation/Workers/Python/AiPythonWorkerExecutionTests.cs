@@ -46,6 +46,23 @@ namespace Multiplexed.AI.Tests.Runtime.Invocation.Workers.Python
         }
 
         [PythonWorkerFact]
+        public async Task Pure_Python_Wheel_Is_Executed_From_Immutable_Bytes_Without_Pip()
+        {
+            var request = await PythonWorkerTestSupport.RequestAsync(
+                "from wheel_rules import transform\ndef run(inputs, context):\n    return {\"success\": True, \"payload\": transform(inputs[\"amount\"])}");
+            request = request with
+            {
+                Code = request.Code with { Dependencies = new[] { PythonWorkerTestSupport.WheelDependency() } }
+            };
+
+            var result = await (await PythonWorkerTestSupport.TransportAsync()).InvokeAsync(
+                request, _ => Task.CompletedTask);
+
+            Assert.True(result.Success);
+            Assert.Equal("84", result.PayloadJson);
+        }
+
+        [PythonWorkerFact]
         public async Task Ordinary_And_FileDescriptor_Stdout_Do_Not_Forge_Protocol_Frames()
         {
             var result = await PythonWorkerTestSupport.ExecuteAsync("import os, sys\nprint('import log')\ndef run(inputs, context):\n    print('function log')\n    sys.__stdout__.write('original stdout\\n')\n    os.write(1, b'raw stdout\\n')\n    return {\"success\": True, \"payload\": 42}");

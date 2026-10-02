@@ -553,7 +553,7 @@ This is required for:
 - local runtime providers;
 - HTTP runtime providers;
 - gRPC runtime providers;
-- future Kubernetes control-plane/runtime-pod separation.
+- implemented Kubernetes control-plane/runtime-Pod separation, including the separately validated Python SDK KubernetesPool path.
 
 The control-plane host must not become the dispatch target simply because it executed the pump.
 
@@ -1082,7 +1082,7 @@ This model supports:
 - HTTP provider dispatch;
 - gRPC provider dispatch;
 - process-host runtime dispatch;
-- future Kubernetes runtime pod dispatch;
+- implemented Kubernetes runtime-Pod dispatch through existing runtime providers;
 - multi-control-plane hardening.
 
 Admission reservations protect selected runtime capacity during heavy distributed dispatch.
@@ -1375,7 +1375,7 @@ Strict replay validation passes after recovery.
 | Runtime recovery forensics | Implemented / validated |
 | Retention and replay compatibility | Implemented / validated foundations |
 | Archive-backed resolver reconstruction after retention | Foundation available |
-| Kubernetes deployment scenario | Planned |
+| Kubernetes runtime-host execution | Implemented / bounded routing, recovery, and Python SDK execution validation; broader deployment packaging remains separate |
 | Production multi-control-plane leadership | Planned |
 | Public dashboard / operational UI | Planned |
 
@@ -1439,6 +1439,7 @@ Do not describe gRPC provider as future-only.
 
 ## Related Documents
 
+- [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md)
 - [Architecture Overview](architecture-overview.md)
 - [Runtime Instance Provider Model](runtime-instance-provider-model.md)
 - [HTTP Runtime Provider](http-runtime-provider.md)

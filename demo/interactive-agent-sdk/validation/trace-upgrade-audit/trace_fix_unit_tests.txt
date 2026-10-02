@@ -1,0 +1,15 @@
+test_ambiguous_predicate_fails_closed (__main__.TraceUpgradeTests.test_ambiguous_predicate_fails_closed) ... ok
+test_fresh_install_and_repeat (__main__.TraceUpgradeTests.test_fresh_install_and_repeat) ... ok
+test_fresh_mongo_trace_upgrade (__main__.TraceUpgradeTests.test_fresh_mongo_trace_upgrade) ... ok
+test_marker_without_helpers_fails_closed (__main__.TraceUpgradeTests.test_marker_without_helpers_fails_closed) ... ok
+test_pre_mongo_trace_upgrade_with_namespace_hotfix (__main__.TraceUpgradeTests.test_pre_mongo_trace_upgrade_with_namespace_hotfix) ... ok
+test_pre_mongo_trace_upgrade_without_namespace_hotfix (__main__.TraceUpgradeTests.test_pre_mongo_trace_upgrade_without_namespace_hotfix) ... ok
+test_repeated_upgrade_does_not_duplicate_helpers (__main__.TraceUpgradeTests.test_repeated_upgrade_does_not_duplicate_helpers) ... ok
+test_snapshot_lines_match_after_upgrade (__main__.TraceUpgradeTests.test_snapshot_lines_match_after_upgrade) ... ok
+test_unknown_predicate_code_fails_closed (__main__.TraceUpgradeTests.test_unknown_predicate_code_fails_closed) ... ok
+test_unknown_predicate_edit_fails_closed (__main__.TraceUpgradeTests.test_unknown_predicate_edit_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.006s
+
+OK

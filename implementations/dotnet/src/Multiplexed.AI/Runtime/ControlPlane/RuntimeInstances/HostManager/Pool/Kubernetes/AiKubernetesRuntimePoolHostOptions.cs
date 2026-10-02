@@ -17,6 +17,26 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
         public string RuntimeImage { get; set; } = string.Empty;
 
         /// <summary>
+        /// Gets or sets the repository portion of an exact immutable runtime image.
+        /// </summary>
+        /// <remarks>
+        /// Configure this together with <see cref="RuntimeImageDigest"/> instead of
+        /// <see cref="RuntimeImage"/> for deterministic Kubernetes matrix profiles.
+        /// </remarks>
+        public string RuntimeImageRepository { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the algorithm-qualified immutable runtime image digest.
+        /// </summary>
+        public string RuntimeImageDigest { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether legacy RuntimeImage values must already
+        /// be exact repository@sha256 references.
+        /// </summary>
+        public bool RequireImmutableRuntimeImage { get; set; }
+
+        /// <summary>
         /// Gets or sets the runtime pool container name.
         /// </summary>
         public string ContainerName { get; set; } = "runtime-pool";

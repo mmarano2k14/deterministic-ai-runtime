@@ -6,6 +6,3523 @@ This project follows a deterministic runtime and observability model designed fo
 
 ---
 
+# Unreleased - 2026-10-01 - Interactive Agent SDK Topology Validation
+
+## Scope
+
+Extended the interactive external-SDK validation from native/Docker presentation paths to the real Runtime Pool hosting boundaries while preserving the existing public SDK and runtime authorities.
+
+Validated the same runtime-native interactive agent workflow through `ProcessHostPool/HTTP` and `KubernetesPool/HTTP` for the .NET, TypeScript/JavaScript, and Python external SDK clients.
+
+No new scheduler, queue, Child DAG engine, recovery authority, replay authority, Runtime Pool lifecycle authority, or persistence authority was introduced.
+
+## Public authentication and secret boundary
+
+- Added opt-in standalone JWT/access-context authentication for the Kubernetes matrix harness without changing the historical `MatrixBearer` default.
+- Validated real Bearer JWT authentication and `POST /auth/access-context` before public MCP operations.
+- Kept `OPENAI_API_KEY` on the runtime side; external SDK consumers receive the model selection but not the provider secret.
+- Removed the historical Kubernetes Runtime Pool placeholder OpenAI key only in the interactive validation profile so the runtime-owned credential reaches the Runtime Pool child environment.
+
+## Child DAG availability
+
+- Enabled the existing Child DAG composition feature on the interactive Kubernetes control plane and Runtime Pool children.
+- Reused the existing `IAiChildExecutionRelationStore`, durable relation persistence, continuation, scheduling, recovery, and finalization authorities.
+- Did not add a second Child DAG store or lifecycle implementation.
+
+## ProcessHostPool interactive validation
+
+The final live ProcessHostPool campaign passed all three external clients:
+
+```text
+.NET        PASS
+TypeScript PASS
+Python     PASS
+```
+
+The scenario uses the production ProcessHostPool integration path with real JWT/RBAC context, immutable publication, durable QueueFirst execution, runtime-native OpenAI, Child DAG delegation, human review/input on the same execution, public result retrieval, and deterministic replay.
+
+Final launcher result:
+
+```text
+[processhost-launcher] PASS: ProcessHostPool/HTTP 3/3
+```
+
+## KubernetesPool interactive validation
+
+The final live KubernetesPool campaign passed all three external clients:
+
+```text
+.NET        PASS
+TypeScript PASS
+Python     PASS
+```
+
+The validation reuses the existing Kubernetes Runtime Pool lifecycle and scale-out path. It requires exact-pool Pod/Service/image attestation and fails closed on stale or unrelated Kubernetes resources.
+
+The final run observed the QueueFirst scale-out request transition from `Observed` to `Fulfilled`, selected real Runtime Pool capacity, completed the interactive DAG, and validated the public result and replay for all three clients.
+
+Final launcher result:
+
+```text
+[kubernetes-sdk-matrix] PASS: interactive KubernetesPool/HTTP 3/3
+[kubernetes-launcher] PASS: KubernetesPool/HTTP 3/3
+```
+
+## Validation gates
+
+Every accepted interactive client path requires:
+
+```text
+execution.completed
+execution.sameExecutionIdAfterHumanInput
+humanReview.accepted
+rootSteps.completed
+provider.openai
+provider.model
+provider.responsePayloadPresent
+result.available
+replay.succeeded
+replay.deterministic
+replay.executionIdUnchanged
+```
+
+## Replay readiness
+
+Separated public execution completion from terminal snapshot visibility. A `Completed` execution can become observable before the durable terminal snapshot is queryable for replay.
+
+The external demo consumers retry replay only when the server returns exactly `Snapshot not found.`. The first replay attempt remains immediate. Eligible retries are bounded to a 30-second total readiness window with 250 ms between attempts. Authorization failures, transport failures, determinism failures, identity mismatches, and other replay failures are not retried.
+
+The final Kubernetes run observed one transient `SnapshotPending` replay attempt followed by a real `Ready` response for each external client.
+
+## Evidence accounting
+
+The interactive topology campaign remains separate from the existing executed-coverage records:
+
+```text
+Docker SDK matrix                         37 / 37
+Historical KubernetesPool closure          3 / 3
+Interactive ProcessHostPool/HTTP clients   3 / 3
+Interactive KubernetesPool/HTTP clients    3 / 3
+```
+
+The interactive client results are not added to the 37/37 Docker matrix, the historical KubernetesPool 3/3 closure, or the 36-row adversarial runtime matrix. No synthetic combined scenario count is introduced.
+
+## Documentation
+
+- Added `docs/ai/interactive-agent-sdk-topology-validation.md` as the canonical live topology proof.
+- Updated the interactive demo, external SDK quickstart and validation references, KubernetesPool validation, multilanguage matrix validation, testing strategy, documentation index, repository README, and changelog to preserve exact evidence boundaries.
+
+---
+
+# 0.0.9.6 - 2026-09-24 - Interactive Agent SDK Demo and Docker Presentation
+
+## Scope
+
+Added a presentation-oriented external SDK demo that exercises the real public runtime boundary through the .NET, TypeScript / JavaScript, and Python SDKs.
+
+The demo validates one runtime-native durable agent flow across all three client languages while preserving the existing public SDK, RBAC, execution-ownership, DAG, Child DAG, human-input, replay, durable-invocation, and result-acceptance authorities.
+
+No demo-specific execution engine, scheduler, queue, persistence path, replay authority, or direct runtime-store integration was introduced.
+
+---
+
+## Interactive External SDK Demo
+
+Added a dedicated external-application demo under:
+
+```text
+demo/interactive-agent-sdk
+```
+
+The same logical application flow is implemented independently with:
+
+```text
+.NET
+TypeScript / JavaScript
+Python
+```
+
+Each client uses the public SDK boundary rather than direct engine or control-plane references.
+
+The validated flow is:
+
+```text
+external SDK consumer
+    -> real JWT Bearer
+    -> server-created RBAC access context
+    -> public MCP SDK transport
+    -> immutable pipeline publication
+    -> durable execution submission
+    -> root ai.prompt
+    -> Child DAG delegation
+    -> child ai.prompt
+    -> child result publication
+    -> durable parent continuation
+    -> execution.await-input
+    -> public human-input submission
+    -> same ExecutionId resumes
+    -> final ai.prompt
+    -> business-result publication
+    -> public result retrieval
+    -> deterministic replay validation
+```
+
+The external applications do not reference runtime engine assemblies, control-plane implementation classes, persistence stores, test harness APIs, matrix infrastructure, or `IAiPublicSdkBoundary` directly.
+
+---
+
+## Runtime-Native OpenAI Execution
+
+The demo uses the existing runtime-native:
+
+```text
+ai.prompt
+```
+
+step with provider:
+
+```text
+openai
+```
+
+The external SDK consumer supplies the model selection through:
+
+```text
+OPENAI_MODEL
+```
+
+The OpenAI credential remains server-owned through:
+
+```text
+OPENAI_API_KEY
+```
+
+`OPENAI_API_KEY` is not serialized into:
+
+```text
+publication content
+execution input
+public Watch events
+human-input payloads
+SDK transport payloads
+business-result payloads
+```
+
+The root `execution.publish-result` publishes the complete final `ai.prompt` result object so the public SDK result can expose the runtime-produced answer and provider/model metadata without a demo-only side channel.
+
+---
+
+## Human Review and Same-Execution Resume
+
+The demo includes a durable human-review boundary through:
+
+```text
+execution.await-input
+```
+
+The public SDK uses:
+
+```text
+sdk.execution.input.submit
+```
+
+to resume the existing execution.
+
+Accepted input preserves:
+
+```text
+same ExecutionId
+same immutable publication/run pin
+same durable DAG
+same execution ownership
+same waiting logical step
+```
+
+No second execution is created for human review continuation.
+
+The interactive console exposes:
+
+```text
+[p] pause
+[r] resume
+[i] submit human input
+[s] status
+[c] cancel
+[q] detach
+```
+
+After terminal convergence it exposes:
+
+```text
+[x] deterministic replay validation
+[q] exit
+```
+
+---
+
+## Presentation Console
+
+Added a presentation-oriented console mode that suppresses low-level raw Watch noise and displays the meaningful durable lifecycle transitions.
+
+Representative output includes:
+
+```text
+Publishing immutable pipeline
+Submitting durable execution
+Planning
+Delegated analysis
+Human review
+Final OpenAI answer
+Business result published
+Execution completed
+```
+
+The terminal view includes:
+
+```text
+final OpenAI response
+provider/model metadata
+available token metadata
+ExecutionId
+terminal execution status
+pipeline step states
+human-review decision
+```
+
+Raw SDK command and Watch diagnostics remain available through:
+
+```text
+AI_DEMO_VERBOSE=true
+```
+
+---
+
+## Local Authentication and RBAC Access Context
+
+The demo uses the real JWT and public access-context path.
+
+The consumer starts with:
+
+```text
+AI_RUNTIME_TOKEN
+```
+
+When no pre-created access context is provided, the demo calls:
+
+```text
+POST /auth/access-context
+```
+
+and uses the returned server-created access-context handle for subsequent SDK transport calls.
+
+The SDK transport continues to manage access-context rotation through the public header contract.
+
+For local development, a helper creates a short-lived HS256 bearer token for the standalone `JwtBearer` host.
+
+The helper is limited to local development and does not install a fake authentication handler.
+
+The local token contains only the capabilities required by the demo:
+
+```text
+code:publication:publish
+code:publication:read
+code:publication:execute
+shared-run:execution:submit
+execution:control:read
+execution:control:cancel
+execution:control:pause
+execution:control:resume
+execution:control:input
+replay:execution:run
+```
+
+The local symmetric signing key remains issuer authority and is not a production consumer credential.
+
+---
+
+## Native / Source-Mode Packaging
+
+Added bootstrap support for building and consuming local SDK artifacts without publishing them to public registries.
+
+The local demo consumes:
+
+```text
+Multiplexed.AI.Sdk
+Multiplexed.AI.Sdk.Contracts
+@multiplexed/ai-sdk
+multiplexed-ai-sdk
+```
+
+from repository-local build/package outputs.
+
+The .NET demo packages are pinned to:
+
+```text
+0.0.0-local
+```
+
+for local demo consumption.
+
+This prevents the demo from accidentally resolving a future published package version instead of the freshly built local SDK artifact.
+
+The bootstrap smoke validation does not require authentication, access-context creation, runtime execution, or OpenAI access.
+
+---
+
+## Docker Presentation Packaging
+
+Added a reproducible Docker distribution path for the interactive SDK demo.
+
+The Docker topology is:
+
+```text
+docker compose
+|
++-- mongo
++-- redis
++-- runtime
+|   +-- public MCP endpoint
+|   +-- JWT/access-context boundary
+|   +-- local runtime-instance pool
+|   +-- shared queue pump
+|   +-- Mongo durable state/evidence
+|   +-- Redis coordination/cache
+|   +-- Child DAG composition
+|   +-- OpenAI provider
+|   +-- deterministic replay
+|
++-- demo
+    +-- packaged .NET SDK consumer
+    +-- packaged TypeScript SDK consumer
+    +-- packaged Python SDK consumer
+```
+
+The demo image contains all three external clients and provides one launcher for selecting the client language at runtime.
+
+The runtime, MongoDB, and Redis remain separate services.
+
+The demo container does not receive:
+
+```text
+OPENAI_API_KEY
+```
+
+Only the runtime service receives the OpenAI credential.
+
+---
+
+## Docker .NET Local Package Build
+
+The Docker build packs the .NET SDK and contracts into repository-local demo packages before restoring the external .NET consumer.
+
+The restore path explicitly verifies that the consumer resolved:
+
+```text
+Multiplexed.AI.Sdk/0.0.0-local
+Multiplexed.AI.Sdk.Contracts/0.0.0-local
+```
+
+The container build therefore validates local package consumption rather than relying on an installed or remotely published SDK.
+
+---
+
+## .NET 10 Output-Path Compatibility
+
+Hardened the Docker .NET build for .NET 10/MSBuild command-line parsing when an output path ends in:
+
+```text
+dotnet
+```
+
+`dotnet pack -o .../dotnet` and `dotnet publish -o .../dotnet` can be misparsed by the .NET 10 CLI/MSBuild path handling and surface:
+
+```text
+MSB1008: Only one project can be specified.
+```
+
+The demo build now passes explicit MSBuild properties instead of the affected short output option:
+
+```text
+/p:PackageOutputPath=...
+/p:PublishDir=...
+```
+
+The workaround is applied to the relevant local package and Docker publish paths.
+
+This change affects build/distribution behavior only and does not alter SDK or runtime contracts.
+
+---
+
+## Docker Build Diagnostics
+
+The .NET Docker build was split into explicit stages for:
+
+```text
+Contracts package
+SDK package
+consumer restore
+local-package resolution verification
+consumer publish
+```
+
+This provides direct failure attribution instead of one chained shell command covering the entire .NET build.
+
+TypeScript and Python continue to build independently in their own Docker stages.
+
+---
+
+## TypeScript Consumer Packaging
+
+The TypeScript Docker path:
+
+```text
+builds the repository-local SDK
+creates the local package artifact
+installs the SDK into the external demo application
+compiles the demo application
+prunes development-only dependencies
+```
+
+The final image contains the built TypeScript application and its production runtime dependencies.
+
+No public npm registry publication is required.
+
+---
+
+## Python Consumer Packaging
+
+The Python Docker path:
+
+```text
+creates an isolated virtual environment
+builds/installs the repository-local Python SDK
+builds/installs the external Python demo application
+copies the resulting environment into the final demo image
+```
+
+No public Python package-index publication is required.
+
+---
+
+## Docker Launcher
+
+Added an interactive Docker launcher with runtime selection:
+
+```text
+1. .NET
+2. TypeScript
+3. Python
+```
+
+The launcher:
+
+```text
+waits for runtime health
+creates the local demo JWT when required
+starts the selected external SDK client
+preserves interactive human-review input
+supports post-terminal deterministic replay validation
+```
+
+Windows execution is wrapped by:
+
+```text
+docker-demo.ps1
+```
+
+The underlying Docker Compose profile can also be invoked directly.
+
+---
+
+## Environment Configuration
+
+The Docker presentation path uses a local environment file derived from:
+
+```text
+.env.docker.example
+```
+
+Required runtime provider configuration includes:
+
+```text
+OPENAI_API_KEY
+```
+
+Optional model configuration includes:
+
+```text
+OPENAI_MODEL
+```
+
+Consumer-side configuration remains separate from provider credentials.
+
+Native/source-mode consumer configuration includes:
+
+```text
+AI_RUNTIME_ENDPOINT
+AI_RUNTIME_TOKEN
+OPENAI_MODEL
+```
+
+Optional consumer settings include:
+
+```text
+AI_RUNTIME_ACCESS_CONTEXT
+AI_RUNTIME_ACCESS_CONTEXT_ENDPOINT
+AI_RUNTIME_ACCESS_CONTEXT_HEADER
+AI_DEMO_VERBOSE
+```
+
+The runtime-side OpenAI credential remains:
+
+```text
+OPENAI_API_KEY
+```
+
+and is not a consumer SDK setting.
+
+---
+
+## Deterministic Replay
+
+Each interactive client can invoke:
+
+```text
+sdk.execution.replay
+```
+
+after terminal completion.
+
+Replay validates the existing durable execution.
+
+It does not:
+
+```text
+create a new ExecutionId
+create a second logical execution
+re-run OpenAI calls
+re-emit business effects
+```
+
+The demo therefore exercises the same replay authority already exposed by the public SDK.
+
+---
+
+## Validation
+
+### Native / Source Mode
+
+The interactive vertical slice is green for all three external SDK clients:
+
+```text
+.NET        GREEN
+TypeScript GREEN
+Python     GREEN
+```
+
+### Docker Presentation Mode
+
+The containerized presentation path is also green for all three clients:
+
+```text
+.NET        PASS
+TypeScript PASS
+Python     PASS
+```
+
+For each client, the validated Docker flow covers:
+
+```text
+runtime health
+local JWT creation
+RBAC access-context creation
+immutable publication
+durable submission
+root OpenAI step
+Child DAG delegation
+durable child completion
+parent continuation
+human-review parking
+accepted human input
+same-ExecutionId resume
+final OpenAI step
+business-result publication
+terminal Completed state
+deterministic replay
+```
+
+Final Docker replay evidence:
+
+```text
+.NET
+Succeeded:     True
+Deterministic: True
+
+TypeScript
+Succeeded:     true
+Deterministic: true
+
+Python
+Succeeded:     True
+Deterministic: True
+```
+
+All three terminal executions completed with every demo pipeline step in:
+
+```text
+Completed
+```
+
+state.
+
+One Python validation run observed a transient business-result publication failure followed by successful retry/convergence to `Completed`; deterministic replay of the final durable execution remained successful.
+
+---
+
+## Validation Scope
+
+The interactive demo validation is separate from the existing SDK runtime matrix and KubernetesPool closure.
+
+Existing independently scoped records remain:
+
+```text
+Docker SDK matrix         37 / 37
+KubernetesPool closure     3 / 3
+Interactive Docker demo    3 / 3 client paths
+```
+
+The interactive demo results are not added to the 37/37 or 3/3 scenario counts.
+
+The demo validates the exercised presentation path through the real public SDK/MCP boundary.
+
+It does not claim:
+
+```text
+a new runtime topology
+full Kubernetes interactive-demo parity
+public package-registry publication
+a second scheduler or recovery model
+a new replay authority
+```
+
+---
+
+## Documentation
+
+Added and updated documentation for the interactive SDK demonstration, including:
+
+```text
+interactive-agent-sdk-demo.md
+external SDK quickstart references
+external SDK libraries references
+external SDK validation references
+documentation index
+repository README
+demo README
+```
+
+The repository README now records the interactive Docker demo as a separate three-client validation proof without modifying the existing adversarial, Docker-matrix, or KubernetesPool counts.
+
+The demo README documents:
+
+```text
+validation status
+runtime flow
+console modes
+OpenAI credential boundary
+Docker startup
+native/source-mode startup
+local JWT behavior
+human input
+deterministic replay
+public-boundary restrictions
+```
+
+---
+
+## Compatibility
+
+No runtime execution identity model was replaced.
+
+No persistence schema migration is required.
+
+No new DAG engine, queue, scheduler, recovery authority, replay authority, or result-acceptance authority was introduced.
+
+The existing authorities remain unchanged for:
+
+```text
+RBAC and tenant ownership
+immutable publication/run pinning
+ExecutionId identity
+DAG scheduling and transitions
+Child DAG composition
+human-input durability
+runtime placement
+shared queue/admission
+durable invocation result acceptance
+execution control
+recovery
+deterministic replay
+```
+
+The external SDK clients remain independent from runtime engine assemblies and private control-plane implementation contracts.
+
+---
+
+## Limitations
+
+The demo uses local-development JWT signing configuration for its self-contained Docker presentation flow. That signing configuration must not be reused in production.
+
+The demo is an integration and presentation proof, not an additional runtime-matrix topology.
+
+Public NuGet, npm, and Python package-index publication is not implied by local package consumption.
+
+The Docker presentation validates the current .NET, TypeScript, and Python client implementations against the exercised runtime configuration; it does not establish broader topology coverage beyond the paths explicitly executed.
+
+---
+
+## 0.0.9.5 - 2026-09-23 - SDK Watch, Execution Control and Replay
+
+## Scope
+
+Extend the external SDK surface with ordered execution observation, execution-control commands, human-input submission, deterministic replay validation, and the runtime wake behavior required to continue an existing execution after a durable control transition.
+
+The work applies consistently to the .NET, TypeScript / JavaScript, and Python external SDKs and preserves the existing public-boundary, RBAC, execution-ownership, DAG, durable-invocation, recovery, and result-acceptance authorities.
+
+---
+
+## Public SDK Surface
+
+The shared public protocol now exposes ten operations:
+
+```text
+sdk.publish_pipeline
+sdk.execution.submit
+sdk.execution.observe
+sdk.execution.watch
+sdk.execution.result
+sdk.execution.cancel
+sdk.execution.pause
+sdk.execution.resume
+sdk.execution.input.submit
+sdk.execution.replay
+```
+
+`observe`, `watch`, and `result` remain safe-read operations.
+
+Command-side operations are not automatically retried:
+
+```text
+publish
+submit
+cancel
+pause
+resume
+input.submit
+replay
+```
+
+Automatic command retries remain excluded until an explicit durable public-command idempotency contract exists.
+
+---
+
+## Execution Watch
+
+Added ordered public execution observation through `sdk.execution.watch`.
+
+### Public semantics
+
+```text
+observe()
+    = authoritative point-in-time public snapshot
+
+watch()
+    = ordered public observation stream
+```
+
+The Watch surface is observational only and does not own execution transitions.
+
+### Client APIs
+
+Added native asynchronous iteration patterns for all external SDKs:
+
+```text
+.NET
+IAsyncEnumerable<AiSdkExecutionWatchEvent>
+
+TypeScript
+AsyncIterable<AiSdkExecutionWatchEvent>
+
+Python
+AsyncIterator<AiSdkExecutionWatchEvent>
+```
+
+### Cursor and recovery behavior
+
+Added support for:
+
+- monotonic public per-execution sequencing;
+- resumable cursors;
+- initial snapshots;
+- duplicate-sequence suppression;
+- gap detection;
+- authoritative resynchronization;
+- expired-cursor handling;
+- fail-closed handling of regressing sequence values.
+
+The public sequence remains independent from internal Mongo revisions, worker epochs, leases, DAG revisions, or runtime tokens.
+
+### Bounded consumption and retention
+
+Watch consumption was bounded to avoid unbounded subscriber materialization.
+
+Default server-side values:
+
+```text
+RetainedPublicEventLimit = 4096
+LedgerReadBatchSize      = 256
+PollInterval             = 100 ms
+```
+
+Public Watch retention remains separate from durable Decision Ledger retention.
+
+### Distributed ProcessHost visibility
+
+The Watch-only ProcessHost path uses durable Decision Ledger persistence so control-plane and runtime processes observe the same event source across process boundaries.
+
+---
+
+## Execution Control
+
+Added public Pause and Resume operations:
+
+```text
+sdk.execution.pause
+sdk.execution.resume
+```
+
+with server-side capabilities:
+
+```text
+execution/control/pause
+execution/control/resume
+```
+
+The public boundary continues to enforce authorization, execution ownership, immutable run pinning, tenant scope, project scope, namespace scope, and user scope before invoking runtime control authority.
+
+---
+
+## Cooperative Pause
+
+Hardened DAG step claiming so Pause is re-checked before a new claim is committed.
+
+The claim path now performs late execution-control fences around candidate selection and policy/concurrency evaluation.
+
+Behavior:
+
+```text
+already-running work may drain
+new claims stop after Pause becomes authoritative
+```
+
+This preserves cooperative Pause without forcibly invalidating already-running durable work.
+
+### Durable custom-function pause semantics
+
+A hosted custom-function step may legitimately transition:
+
+```text
+WaitingForExternal
+    -> Ready
+```
+
+after its durable external result arrives.
+
+The continuation still requires a new DAG claim.
+
+Therefore a valid paused state is:
+
+```text
+executionStatus = Waiting
+firstStatus     = Ready
+secondStatus    = Pending
+```
+
+This state proves that the durable result arrived while Pause prevented the continuation claim.
+
+---
+
+## Resume Wake / Re-enqueue
+
+Fixed the case where Resume changed durable execution-control state to runnable but the physical run had already been released and was not scheduled again.
+
+Accepted Resume now:
+
+```text
+updates the existing durable control state
+    -> makes the existing execution runnable
+    -> requests wake/re-enqueue through the existing shared runtime scheduling authority
+    -> continues the same execution
+```
+
+The wake path preserves:
+
+```text
+same ExecutionId
+same immutable publication/run pin
+same durable DAG
+same execution ownership
+```
+
+No new execution, queue, scheduler, DAG engine, or recovery authority is introduced.
+
+The wake operation is treated as:
+
+```text
+ensure the existing runnable execution is scheduled
+```
+
+rather than unconditional creation of another physical run.
+
+---
+
+## Human Input
+
+Added the public operation:
+
+```text
+sdk.execution.input.submit
+```
+
+with capability:
+
+```text
+execution/control/input
+```
+
+The operation maps to the existing durable human-input authority.
+
+Accepted human input can make an execution runnable again and uses the same shared runtime wake/re-enqueue path as Resume.
+
+Rejected or unauthorized input does not schedule the execution.
+
+No separate public approval/rejection command model was introduced; the public primitive remains generic typed input submission.
+
+---
+
+## Deterministic Replay
+
+Added the public operation:
+
+```text
+sdk.execution.replay
+```
+
+with capability:
+
+```text
+replay/execution/run
+```
+
+Current replay behavior is deterministic replay/validation of the existing execution.
+
+It does not:
+
+```text
+create a new ExecutionId
+clone the original execution
+re-run LLM calls
+re-issue external business effects
+```
+
+Replay remains bound to the existing persisted execution evidence and runtime replay authority.
+
+---
+
+## Runtime Pool Host Build Closure
+
+Hardened RuntimePool E2E build behavior so the host layout used by child runtime processes is built with the test configuration.
+
+The test project now ensures the external MCP host artifacts are available before RuntimePool launch.
+
+Required host artifacts include:
+
+```text
+Multiplexed.AI.McpServer.Host.dll
+Multiplexed.AI.McpServer.Host.deps.json
+Multiplexed.AI.McpServer.Host.runtimeconfig.json
+```
+
+This avoids stale or incomplete RuntimePool host layouts during real process-boundary validation.
+
+---
+
+## Multilanguage Control Parity
+
+Aligned .NET, TypeScript, and Python Control E2E pause-gate assertions with the durable invocation lifecycle.
+
+All clients now recognize:
+
+```text
+Waiting / Ready / Pending
+```
+
+as the expected positive Pause proof for the hosted-function continuation path.
+
+---
+
+## Inline Control Worker Source Encoding
+
+Corrected the TypeScript matrix client generation of inline control-worker source.
+
+Changes:
+
+- replaced literal backslash-n sequences in generated TypeScript worker source with real newline characters;
+- replaced literal backslash-n sequences in generated Python worker source with real newline characters in the same helper;
+- used explicit UTF-8 encoding for the affected generated source payloads.
+
+This allows generated worker source to execute correctly and publish its durable invocation result instead of remaining indefinitely in `WaitingForExternal`.
+
+This correction is limited to validation-source generation and does not change runtime or public SDK contracts.
+
+---
+
+## Authorization and Ownership
+
+All new public operations preserve the existing execution ownership model.
+
+Control and replay commands are authorized against the existing immutable execution/run pin and public access context.
+
+No cross-tenant, cross-project, cross-namespace, or cross-user control wake is permitted.
+
+For unauthorized Resume or Human Input:
+
+```text
+durable state remains unchanged
+wake request count remains zero
+```
+
+---
+
+## Compatibility
+
+No existing execution identity model was replaced.
+
+No persistence schema migration is required by this workstream.
+
+No new DAG engine, queue, scheduler, replay authority, recovery authority, or result-acceptance path was introduced.
+
+The following existing invariants remain authoritative:
+
+- lease authority;
+- worker epoch fencing;
+- durable claim/CAS fencing;
+- stale-result rejection;
+- DAG scheduling and transitions;
+- DAG finalization;
+- Child DAG durability;
+- recovery identity;
+- durable invocation journal identity;
+- immutable publication/run pinning;
+- execution ownership;
+- hosted worker lifecycle ownership;
+- Watch sequence semantics;
+- Watch retention semantics.
+
+The external SDKs remain independent from engine assemblies, internal CLR contracts, MongoDB, Redis, DAG stores, invocation-journal implementations, and control-plane implementation classes.
+
+---
+
+## Validation
+
+### Watch
+
+Real MCP/HTTP Watch E2E passed for all three external SDKs:
+
+```text
+.NET        PASS
+TypeScript PASS
+Python     PASS
+```
+
+Validated behavior includes public Watch transport, ordered observation, reconnect/resume behavior, cursor handling, authoritative resynchronization, RBAC enforcement, and bounded consumption.
+
+### Execution Control and Replay
+
+Real MCP/HTTP execution-control E2E passed for all three external SDKs:
+
+```text
+control-dotnet-client-dotnet-worker:         PASSED
+control-typescript-client-typescript-worker: PASSED
+control-python-client-python-worker:         PASSED
+```
+
+The validated flow covers:
+
+```text
+pause
+pause-gated continuation
+resume
+wake/re-enqueue of the existing execution
+human input submission
+wake/re-enqueue after accepted input
+replay validation
+terminal convergence
+```
+
+The real Pause proof observed across the clients is:
+
+```text
+executionStatus='Waiting'
+firstStatus='Ready'
+secondStatus='Pending'
+gated='True'
+```
+
+The TypeScript matrix client syntax was checked with `node --check`.
+
+Generated TypeScript inline worker source was materialized and syntax-checked.
+
+Generated Python inline worker source was materialized and compiled with `py_compile`.
+
+---
+
+## Validation Scope
+
+The Watch and execution-control E2E campaigns are separate from the existing SDK runtime matrix and KubernetesPool closure evidence.
+
+They must not be merged into a synthetic combined scenario count.
+
+Existing validation counts remain independently scoped:
+
+```text
+Docker SDK matrix        37 / 37
+KubernetesPool closure    3 / 3
+```
+
+The Watch and Control E2E results prove public SDK behavior for the exercised MCP/HTTP ProcessHost-based validation paths.
+
+They do not claim full Kubernetes execution-control parity or broader topology coverage that was not explicitly executed.
+
+---
+
+## Limitations
+
+The current Watch stream remains an observation projection and is not an execution authority.
+
+Historical control and human-input event classes are not implicitly added to the existing Watch sequence when doing so would alter previously established sequence behavior.
+
+Current replay validates the existing execution and does not create a second logical execution.
+
+Command-side automatic retry remains disabled.
+
+The matrix harness remains internal validation infrastructure and is not required by normal SDK consumers.
+
+
+---
+
+## 0.0.9.5 - 2026-09-22 - Invocation Durability, Correctness and Performance
+
+## Scope
+
+This changelog consolidates the Invocation durability, correctness, hosted-policy infrastructure, worker transport, MongoDB observability, query-shape optimization, and validation work completed on the branch.
+
+The changes preserve the existing durable execution model and do not redefine DAG scheduling, execution ownership, recovery authority, lease/epoch fencing, immutable publication pinning, or result-acceptance semantics.
+
+## Hosted policy ownership normalization
+
+- Added a shared hosted-policy ownership revalidation path used by Concurrency, Retry, and Delegation policy preparation.
+- Revalidation now consistently verifies `ExecutionId`, `TenantId`, `TenantGroupId`, `UserId`, project, current namespace, execution lifecycle state, and terminal state.
+- Ownership is revalidated after publication/package I/O so stale execution ownership cannot be accepted after external work.
+- Policy-specific business semantics remain isolated and are not merged into the shared infrastructure.
+- Existing execution ownership and RBAC authority remain unchanged.
+
+## Execution-language normalization
+
+- Centralized supported hosted execution-language identifiers.
+- Added common support checks for `.NET`, Python, and TypeScript.
+- Preserved exact public/runtime language tokens: `dotnet`, `python`, and `typescript`.
+- No case-insensitive aliases or compatibility widening were introduced.
+- Existing language-selection precedence remains unchanged.
+
+## Time authority normalization
+
+- Replaced direct wall-clock usage in Invocation policy and MCP-related deadline paths with the configured `TimeProvider`.
+- Lease/deadline logic now uses the same time authority across production and deterministic tests.
+- Updated worker lease-guard timer behavior so timer wakeups re-evaluate remaining duration through the configured `TimeProvider`.
+- The timer is now only a wakeup mechanism; `TimeProvider` remains authoritative for whether a lease deadline has elapsed.
+- This prevents real-time timer progression from invalidating fake-time durability tests.
+
+## Dispatch read-amplification reduction
+
+- Reused the full dispatch candidate snapshot for the first worker-lease compare-and-swap attempt.
+- Removed the unconditional record reload that previously occurred between candidate discovery and the initial lease CAS.
+- Candidate records remain advisory snapshots only.
+- Durable lease acquisition authority remains the MongoDB CAS predicate.
+- A record reload is performed only when required after a failed CAS path.
+- Shared argument validation is performed before store access so invalid worker-epoch capacity values cannot be hidden by an early missing-record return.
+
+## Classified CAS outcomes
+
+- Added internal CAS outcome classification: `Applied`, `RevisionConflict`, and `AuthorityPredicateRejected`.
+- Preserved the legacy store compatibility surface while allowing internal callers to distinguish concurrency conflicts from authority-predicate rejection.
+- After a failed MongoDB replace, a changed revision is classified as `RevisionConflict`; an unchanged revision with a rejected authoritative predicate is classified as `AuthorityPredicateRejected`.
+- Revision conflicts can carry the current durable record and therefore avoid an additional `Get`.
+- Authority-predicate rejection stops optimistic retry loops.
+- Historical lease-acquisition behavior remains preserved where authority rejection is required to surface as an exception.
+- Result-completion paths continue mapping lease-authority rejection to the appropriate lease-rejected outcome.
+
+## Continuation fairness without fairness-only durability writes
+
+- Removed durable revision/updated-time writes whose only purpose was to rotate continuation scan fairness.
+- Added process-local keyset paging based on `UpdatedAtUtc` and `OperationId`.
+- The continuation cursor is non-authoritative and restart-safe.
+- Durable Invocation state remains authoritative.
+- Compatibility behavior remains available for stores that do not expose the optimized page capability.
+- Continuation scheduling, finalization, recovery, and result-acceptance semantics are unchanged.
+
+## Hosted policy preparation infrastructure cleanup
+
+- Added a shared hosted-policy publication preparation core.
+- Centralized common infrastructure for parent execution loading, execution-context restoration, scope restoration, RBAC publication authorization, immutable code materialization, post-I/O ownership/lifecycle revalidation, and final execution-context restoration.
+- Concurrency, Retry, and Delegation preparation now reuse the shared infrastructure.
+- Policy-specific declaration and business rules remain separate.
+- Added a common policy declaration reader for case-insensitive configuration lookup, duplicate-case rejection, deserialization, and declaration extraction.
+- Existing Concurrency-specific resolver and merge semantics remain unchanged.
+
+## Shared worker stdio protocol
+
+- Added a shared worker stdio session implementation used by process and container transports.
+- Centralized request framing, ready handshake, heartbeat processing, result-frame validation, EOF handling, frame-count bounds, timeout/deadline handling, and `TimeProvider`-based waits.
+- Process lifecycle remains transport-specific: executable validation, process launch, kill, reaping, cleanup/quarantine, and exit validation.
+- Container lifecycle remains provider-specific: OCI launch, engine attestation, ownership labels, reconciliation, force removal, quarantine, and exit validation.
+- Protocol reuse does not merge process and container lifecycle authority.
+
+## MongoDB attribution and CAS plumbing
+
+- Added explicit MongoDB operation attribution for durable Invocation operations:
+  - `Invocation.Get`
+  - `Invocation.PrepareInsert`
+  - `Invocation.DispatchScan`
+  - `Invocation.ContinuationScan`
+  - `Invocation.CAS`
+  - `Invocation.ResultAcceptance`
+- Added equivalent attribution for durable MCP-effect operations:
+  - `McpEffect.Get`
+  - `McpEffect.PrepareInsert`
+  - `McpEffect.ReconcileScan`
+  - `McpEffect.CAS`
+- Reads used to classify a rejected CAS are attributed to the originating CAS operation instead of appearing as normal record loads.
+- Added common low-level MongoDB CAS replacement plumbing for `IsUpsert = false`, collation propagation, acknowledged-write verification, and `ModifiedCount == 1` success handling.
+- Invocation and MCP-effect state machines remain separate.
+
+## MongoDB performance measurement baseline
+
+- Added deterministic local measurement coverage for durable Invocation codec and MongoDB query behavior.
+- Added codec measurement output for encode/decode latency, bytes per operation, operations per second, JSON/BSON size, and relative size ratios.
+- Added MongoDB `explain("executionStats")` measurement against captured production query shapes.
+- Added configurable document counts for local performance experiments.
+- Added opt-in MongoDB connection configuration for integration measurements.
+- Measurement code is isolated from production execution behavior.
+
+## Dispatch index experiments and production strategy
+
+The original dispatch query combined Prepared invocations and expired Leased invocations through one query shape ordered by `UpdatedAt` and `_id`.
+
+The historical dispatch index was optimized for lease expiry:
+
+```text
+controlPlaneId
+tenantId
+tenantGroupId
+language
+status
+leaseExpiresAt
+updatedAt
+```
+
+Controlled query-plan measurements showed that this shape could examine thousands of keys/documents before returning a page.
+
+A sort-first candidate index was evaluated:
+
+```text
+controlPlaneId
+tenantId
+tenantGroupId
+language
+status
+updatedAt
+_id
+leaseExpiresAt
+```
+
+It performed extremely well for Prepared-heavy and mixed distributions, but degraded significantly when most Leased records were still live. A global replacement of the historical dispatch index was therefore rejected.
+
+The selected production strategy splits dispatch discovery into two independently indexed branches.
+
+Prepared branch:
+
+```text
+status = Prepared
+ORDER BY updatedAt, _id
+LIMIT pageSize
+```
+
+with:
+
+```text
+ix_durable_invocation_dispatch_prepared_v2
+
+controlPlaneId
+tenantId
+tenantGroupId
+language
+status
+updatedAt
+_id
+```
+
+Expired-Leased branch:
+
+```text
+status = Leased
+leaseExpiresAt <= now
+ORDER BY updatedAt, _id
+LIMIT pageSize
+```
+
+using:
+
+```text
+ix_durable_invocation_dispatch
+
+controlPlaneId
+tenantId
+tenantGroupId
+language
+status
+leaseExpiresAt
+updatedAt
+```
+
+The two sorted result sets are merged by `UpdatedAtUtc` and `OperationId`, deduplicated by `OperationId`, and truncated to the requested page size.
+
+Discovery remains advisory. Lease, epoch, revision, and MongoDB CAS remain authoritative.
+
+The optimized strategy is also used by dispatch-candidate listing so the legacy OR-query path is not retained in parallel.
+
+## Continuation index promotion
+
+A continuation index candidate was promoted after query-plan validation:
+
+```text
+ix_durable_invocation_continuation_v2
+
+controlPlaneId
+tenantId
+tenantGroupId
+continuationStatus
+status
+updatedAt
+_id
+```
+
+The production continuation query uses this index explicitly.
+
+The previous continuation index is retained temporarily to avoid destructive migration behavior against existing databases.
+
+## Query-plan validation
+
+Controlled MongoDB experiments validated the production index choices.
+
+Prepared dispatch:
+
+```text
+returned       = 100
+keys examined  = 100
+docs examined  = 100
+plan           = LIMIT -> FETCH -> IXSCAN
+index          = ix_durable_invocation_dispatch_prepared_v2
+```
+
+Expired-Leased dispatch:
+
+```text
+expired probe  = 2500
+live probe     = 2500
+returned       = 100
+keys examined  = 2500
+docs examined  = 2500
+index          = ix_durable_invocation_dispatch
+```
+
+Continuation:
+
+```text
+returned       = 100
+keys examined  = 100
+docs examined  = 100
+index          = ix_durable_invocation_continuation_v2
+```
+
+The continuation winning plan uses ordered index scans with `SORT_MERGE`, avoiding the previous broad blocking-sort behavior.
+
+Controlled hybrid-dispatch tests verified equivalent first-page results across Prepared-dense, live-lease-heavy, and realistic mixed distributions.
+
+## Production explain instrumentation correction
+
+- Preserved captured MongoDB `hint` values when replaying production find commands through `explain`.
+- Added explicit validation that production measurements use:
+  - `ix_durable_invocation_dispatch_prepared_v2`
+  - `ix_durable_invocation_dispatch`
+  - `ix_durable_invocation_continuation_v2`
+- Added expired/live lease probe data so the final expired-Leased plan is measured against a non-empty representative population.
+- The correction affects measurement fidelity only and does not alter production query behavior.
+
+## Temporary MongoDB database-name test correction
+
+- Corrected the temporary integration-database-name guard test.
+- Database-name generation intentionally truncates long prefixes to preserve a unique GUID suffix while staying within the MongoDB server limit.
+- Validation now checks maximum length, preserved safe prefix portion, separator, valid 32-character GUID suffix, and uniqueness.
+- No production runtime behavior changed.
+
+## Documentation
+
+Updated Invocation-related documentation to reflect:
+
+- durable authority boundaries;
+- hosted-policy ownership revalidation;
+- language/time normalization;
+- classified CAS outcomes;
+- dispatch snapshot reuse;
+- continuation keyset fairness;
+- shared stdio protocol;
+- MongoDB operation attribution;
+- hybrid dispatch indexing;
+- continuation v2 indexing;
+- measured query-plan evidence;
+- current public SDK boundary;
+- planned `execution.watch()` work as a future capability rather than an implemented API.
+
+Historical validation evidence remains identified as historical where it was not rerun during this branch.
+
+## Compatibility and preserved invariants
+
+The following architectural invariants remain unchanged:
+
+- immutable publication/run pinning;
+- tenant, tenant-group, user, project, and namespace execution ownership;
+- RBAC authority;
+- worker lease authority;
+- worker epoch fencing;
+- stale-result rejection;
+- durable result acceptance;
+- DAG scheduling and transitions;
+- DAG finalization;
+- child execution durability;
+- recovery identity;
+- MCP-effect durability;
+- process/container lifecycle ownership;
+- public SDK independence from engine assemblies and internal CLR contracts.
+
+## Validation status
+
+The branch was validated through targeted correctness, integration, performance, and matrix testing.
+
+Validated areas include hosted policy ownership revalidation, execution-language validation, deterministic time/lease behavior, dispatch candidate reuse, worker-epoch admission validation, classified CAS outcomes, continuation paging/fairness, shared stdio session behavior, MongoDB attribution, MongoDB CAS plumbing, dispatch index experiments, hybrid dispatch semantic equivalence, production MongoDB query plans and index hints, continuation index behavior, temporary MongoDB database-name guard, and selected legacy/new runtime matrix regression coverage.
+
+The final production query-plan validation confirmed:
+
+```text
+Prepared dispatch
+    -> ix_durable_invocation_dispatch_prepared_v2
+
+Expired-Leased dispatch
+    -> ix_durable_invocation_dispatch
+
+Continuation
+    -> ix_durable_invocation_continuation_v2
+```
+
+No change in durable authority was introduced by the performance optimizations.
+
+
+---
+
+## 0.0.9.5 - 2026-09-21 - Invocation Correctness Normalization
+
+### Hosted policy ownership revalidation
+
+- Added a shared hosted-policy ownership revalidation primitive used by the Concurrency, Retry, and Delegation publication/preparation paths.
+- Normalized the common security and lifecycle checks across hosted policy families without merging their business-specific decision semantics.
+- Revalidation now consistently covers:
+  - execution identity;
+  - tenant identity;
+  - tenant-group identity;
+  - user identity;
+  - project;
+  - current namespace;
+  - parent execution lifecycle / terminal state.
+- Preserved the existing publication/package I/O boundary and revalidated ownership after external publication/package resolution before worker preparation or invocation proceeds.
+- Corrected the previous validation drift where Retry and Delegation revalidated a narrower ownership set than Concurrency.
+- Preserved family-specific Concurrency, Retry, and Delegation contracts, merge behavior, and decision semantics.
+- No change was made to durable invocation identity, lease ownership, epoch fencing, CAS transitions, stale-result rejection, result acceptance, durable continuation, immutable publication/run pinning, DAG scheduling, or recovery authority.
+
+### Validation
+
+- Added regression coverage for project and namespace drift occurring between the initial durable parent read and the post-publication ownership revalidation.
+- Added equivalent ownership-boundary validation for Retry and Delegation to match the established Concurrency boundary.
+- Targeted ownership-normalization tests were validated successfully in the target environment.
+
+---
+
+## Invocation Execution Language Normalization
+
+### Central execution-language authority
+
+- Consolidated the supported hosted execution languages behind `AiExecutionLanguages`.
+- Established the common language authority through:
+  - `AiExecutionLanguages.DotNet`;
+  - `AiExecutionLanguages.Python`;
+  - `AiExecutionLanguages.TypeScript`;
+  - `AiExecutionLanguages.All`;
+  - `AiExecutionLanguages.IsSupported(...)`.
+- Replaced duplicated literal language arrays and repeated explicit language comparisons across Invocation and hosted execution infrastructure.
+- Updated invocation binding, durable invocation validation, DAG adapters, hosted policy infrastructure, worker polling, worker profile registration, dependency-package validation, and host registration paths to consume the shared language authority where applicable.
+- Preserved the supported language set exactly as:
+  - `dotnet`;
+  - `python`;
+  - `typescript`.
+- Preserved exact language-token behavior; no new language, alias, fallback, or case-insensitive interpretation was introduced.
+- No change was made to worker protocol semantics, publication contracts, durable journal behavior, policy semantics, lease/epoch fencing, result acceptance, continuation, or recovery.
+
+### Validation
+
+- Added coverage verifying that `AiExecutionLanguages.All` contains the exact supported language set without duplicates.
+- Added coverage for `AiExecutionLanguages.IsSupported(...)` acceptance and rejection behavior.
+- Added guards against accidental mutable language registration and against reintroducing duplicated literal language lists in normalized paths.
+- Targeted execution-language normalization tests were validated successfully in the target environment.
+
+---
+
+## Invocation TimeProvider Normalization
+
+### Consistent invocation clock authority
+
+- Replaced remaining direct wall-clock deadline calculations in normalized Invocation policy/MCP paths with the configured `TimeProvider`.
+- Propagated `TimeProvider` through hosted policy factories/adapters and MCP invocation paths so deadlines are derived from a single configurable clock authority.
+- Normalized deadline calculation to use `TimeProvider.GetUtcNow()` while preserving the existing timeout durations and expiration semantics.
+- Retained `TimeProvider.System` as the compatibility fallback for direct constructions that do not supply an explicit provider.
+- Removed direct `DateTimeOffset.UtcNow` usage from the normalized Runtime/Invocation paths covered by this increment.
+- Preserved policy behavior, MCP effect semantics, durable invocation identity, lease/epoch authority, CAS transitions, result acceptance, continuation, and recovery behavior.
+
+### Worker lease-guard timer consistency
+
+- Corrected a timing inconsistency exposed by fake-clock validation of container worker lifecycle durability.
+- The worker lease guard previously used a timer callback that could mark a lease as lost solely because real timer time elapsed, even when the configured `TimeProvider` had not advanced to the lease-expiration boundary.
+- Changed the lease-guard timer callback to re-evaluate remaining lease time through the configured `TimeProvider` before declaring lease loss.
+- When the configured clock still reports remaining lease time, the guard re-arms the timer instead of transitioning to `LeaseLost`.
+- The timer now acts only as a wake-up mechanism; `TimeProvider` remains the time authority.
+- Production behavior with `TimeProvider.System` remains equivalent at the actual lease-expiration boundary.
+- No change was made to lease duration, renewal interval, safety margin, epoch fencing, stale-result rejection, CAS authority, container lifecycle ownership, or durable continuation semantics.
+
+### Validation
+
+- Added deterministic clock-propagation coverage for Concurrency, Retry, Delegation, and MCP invocation deadline calculation.
+- Revalidated the container lifecycle regression in which a cancelled container assignment is redispatched while an old epoch is prevented from winning.
+- Confirmed the expected redispatch result is restored to `Accepted` while stale-epoch fencing remains enforced.
+- Targeted TimeProvider and worker lease-guard validation completed successfully in the target environment.
+
+---
+
+## Increment A Closure
+
+The Invocation correctness-normalization increment now includes:
+
+```text
+Hosted policy ownership normalization
+    -> consistent tenant / user / project / namespace / lifecycle revalidation
+
+Execution-language normalization
+    -> one shared source of truth for dotnet / python / typescript
+
+TimeProvider normalization
+    -> one configurable invocation clock authority
+
+Lease-guard timer consistency
+    -> timer wake-up separated from authoritative clock evaluation
+```
+
+The increment intentionally does not redesign the durable invocation model.
+
+The following authorities remain unchanged in principle:
+
+```text
+immutable invocation identity
+lease ownership
+epoch / fencing semantics
+CAS-based transitions
+stale-result rejection
+result acceptance
+durable continuation
+immutable publication / run pinning
+DAG scheduling
+recovery authority
+```
+
+The next planned Invocation work is dispatch read-amplification reduction: reuse the dispatch candidate snapshot for the first worker-lease CAS attempt and reload the durable record only after genuine CAS contention or rejection.
+
+
+---
+
+## 0.0.9.5 - 2026-09-21 - KubernetesPool Matrix SDK
+
+Validation paragraphs are incremental records of the evidence available for each change. Earlier statements that live execution or closure was pending are retained as historical validation status; the final closure section below records the subsequent successful target-environment result. Packaging test counts refer to successive suite snapshots and must not be added together or treated as live infrastructure runs.
+
+### Provider and evidence model foundation
+
+- Split matrix provider evidence into explicit runtime-hosting and hosted-worker execution dimensions without changing the established public SDK boundary or durable execution authorities.
+- Added `runtimeProvider` to distinguish `ProcessHostPool` from the existing `KubernetesPool` runtime topology.
+- Added `workerExecutionProvider` to distinguish `TrustedProcess` from `ContainerIsolationProvider` hosted-worker execution.
+- Preserved the legacy `provider` evidence field for compatibility with the validated Docker baseline while the matrix transitions to the explicit dimensions.
+- Kept `KubernetesPool` out of `AiWorkerInvocationTransportRouter`; KubernetesPool remains a runtime-host creation/capacity topology and is not introduced as a third hosted-worker transport.
+- Extended the matrix harness manifest and .NET, TypeScript, and Python matrix clients to propagate the explicit provider dimensions into evidence.
+- Extended the canonical Docker verifier to fail closed when runtime-provider or worker-execution-provider evidence does not match the executed path.
+- Updated exact-coverage evidence to record executed runtime providers and worker-execution providers separately.
+
+### Deterministic Kubernetes Runtime Pool image selection
+
+- Added an opt-in immutable Kubernetes Runtime Pool image configuration using `RuntimeImageRepository` plus an algorithm-qualified `RuntimeImageDigest`.
+- Added exact `repository@sha256:<64-hex>` image resolution before the Runtime Pool Pod specification is created.
+- Added `RequireImmutableRuntimeImage` for deterministic matrix/CI profiles while preserving historical `RuntimeImage` compatibility by default.
+- Added fail-closed validation for partial repository/digest configuration, ambiguous dual image authorities, invalid digests, and mutable image references when immutable enforcement is enabled.
+- Preserved the existing Kubernetes SDK resource factory and host creation strategy; the resolved exact image is projected through the existing Runtime Pool Pod specification rather than through a parallel Kubernetes lifecycle path.
+
+### Compatibility and authority boundaries
+
+- Preserved the validated `37/37` Docker/ProcessHostPool + local OCI isolation baseline as the starting point for KubernetesPool matrix work.
+- No scheduler, admission authority, durable journal, recovery coordinator, DAG transition, continuation, result-acceptance authority, or Kubernetes Pod lifecycle authority was duplicated or moved.
+- Existing KubernetesPool process membership, capacity, Gateway routing, Pod replacement, and recovery paths remain unchanged.
+
+### Validation
+
+- Matrix Python structural/unit suite: `101/101` passed.
+- Python matrix clients and Docker verifier compile successfully.
+- TypeScript matrix client passes Node syntax validation.
+- The packaging environment does not provide the .NET CLI or a live Kubernetes cluster, so .NET compilation and live KubernetesPool execution remain target-environment validation.
+- No KubernetesPool E2E GREEN claim is made by this increment.
+
+### Live KubernetesPool execution evidence
+
+- Added a KubernetesPool matrix sidecar that reuses the existing real Kubernetes SDK Runtime Pool execution scenario instead of introducing a second Pod lifecycle or runtime-hosting implementation.
+- Added optional matrix-only repository/digest overrides to the existing HTTP KubernetesPool command-routing scenario so deterministic target environments can exercise the immutable image authority introduced earlier on this branch.
+- Added machine-readable execution evidence for real Pod creation, Runtime Pool readiness, stable Service routing, exact in-Pod runtime identities, and accepted Kubernetes SDK deletion.
+- Added a dedicated KubernetesPool execution verifier that validates `topology=kubernetes`, `runtimeProvider=KubernetesPool`, the expected HTTP transport, at least three unique RuntimeInstance identities, at least three successful routed commands, and successful deletion acceptance.
+- Added a target-environment PowerShell runner with Kubernetes, Redis, and MongoDB preflight checks. The runner invokes the existing `HttpKubernetesPoolMcpCommandScenarioTests` production path and then verifies the emitted evidence.
+- Kept this live KubernetesPool proof outside the canonical Docker `37/37` total. The existing `37/37` ProcessHostPool plus ContainerIsolationProvider closure remains the preserved baseline until the final Kubernetes matrix closure explicitly incorporates executed Kubernetes scenarios.
+- No `IAiWorkerInvocationTransport`, scheduler, admission, journal, DAG, continuation, result-acceptance, Pod lifecycle, Runtime Pool membership, Gateway routing, replacement, or recovery authority was added or replaced.
+
+### Validation
+
+- Matrix Python structural/unit suite: `106/106` passed.
+- KubernetesPool sidecar verifier accepts a synthetic exact-image evidence document under immutable-image enforcement.
+- Python verifier compilation succeeds.
+- Live Kubernetes execution remains target-environment validation; no KubernetesPool E2E GREEN claim is made by this increment before the runner succeeds against the real cluster.
+
+
+### KubernetesPool lifecycle and recovery evidence
+
+- Added a KubernetesPool recovery sidecar that reuses the existing EventDriven full-failure production canary rather than introducing a matrix-owned recovery implementation.
+- Added opt-in machine-readable recovery evidence emitted from the existing Kubernetes Runtime Pool production harness only when the matrix recovery runner requests it. Normal integration-test execution remains side-effect free.
+- Recorded exact in-Pod runtime-process failure, process-kill execution-identity continuity, distinct busy-Pod failure, replacement Pod capacity, recovery-forensics coverage, runtime ownership convergence, terminal DAG convergence, parent replay, ledger/trace/lifecycle proof, and warm-pool reuse.
+- Added a dedicated recovery verifier that fails closed on missing recovery evidence, ownership-transition violations, replay gaps, missing recursive Child DAG steps, unexpected duplicate recursive steps, lost runs, duplicate durable dispatches, or missing warm reuse.
+- Added a target-environment PowerShell runner that invokes `Http_KubernetesPool_EventDriven_Canary_Should_Reuse_The_Same_FullFailure_Scenario` through the existing engine and then verifies the emitted evidence.
+- Preserved the canonical Docker `37/37` closure as the baseline. Kubernetes lifecycle/recovery evidence remains a separate executed sidecar until final KubernetesPool matrix closure.
+- No scheduler, queue, journal, lease/epoch, recovery reconciler, DAG transition, continuation, result-acceptance, Runtime Pool membership, Pod lifecycle, Gateway routing, replacement, or cleanup authority was added or moved.
+
+### Validation
+
+- Matrix Python structural/unit suite: `110/110` passed.
+- Python recovery verifier compilation and synthetic evidence verification are executed in the packaging environment.
+- Live Kubernetes lifecycle/recovery execution remains target-environment validation; no KubernetesPool recovery GREEN claim is made before the real EventDriven production canary succeeds.
+
+### External SDK publication/execution through KubernetesPool
+
+- Added a public-boundary KubernetesPool scenario that uses the existing external Python SDK to publish user-supplied function source, submit a durable execution, observe terminal convergence, and retrieve the public terminal result from a real KubernetesPool-hosted runtime.
+- Added a publication-only remote runtime identity so a control-plane host can advertise an exact Linux runtime environment without installing or polling a local worker for that environment.
+- Added independent `EnableWorkerPolling` and `EnableDagReconciliation` host-role controls. The Kubernetes matrix profile keeps durable DAG reconciliation on the control plane while RuntimeInstanceOnly children inside the existing KubernetesPool Pod own hosted-worker polling.
+- Preserved the existing publication, scheduler, durable journal, lease/epoch, recovery, DAG continuation, result-acceptance, Kubernetes lifecycle, Runtime Pool membership, and Gateway authorities; no Kubernetes-specific hosted-worker transport was introduced.
+- Added a dedicated Kubernetes Runtime Pool OCI image containing the existing MCP host and the production .NET, TypeScript, and Python hosted workers without Docker-in-Docker or Docker-socket dependencies.
+- Added exact publication-runtime projection from the control plane to the Kubernetes child runtime. The external publication targets the same runtime reference, version, platform, and Python executable SHA-256 that the in-Pod production worker catalog exposes.
+- Extended the external Python matrix client with an opt-in terminal-output marker assertion. The KubernetesPool SDK scenario fails if a terminal `Completed` result does not contain the marker embedded in the uploaded external function payload.
+- Added live Kubernetes evidence for the same pool id, including Runtime Pool Pod presence, Pod readiness, stable Service presence, and the observed Runtime Pool image.
+- Added optional strict Runtime Pool image enforcement using `repository@sha256:<digest>` while preserving the default local Minikube image workflow for target environments that load a tagged OCI image with `ImagePullPolicy=Never`.
+- Corrected the target-environment PowerShell runner runtime-probe commands to avoid parser-sensitive nested shell quoting; executable discovery, .NET runtime-version extraction, and Python executable hashing now use parser-safe argument forms without changing the validated runtime identity contract.
+
+### Cross-topology KubernetesPool closure model
+
+- Added an explicit closure plan that preserves the previously executed 37-scenario Docker baseline and binds three independently executed KubernetesPool scenarios: live command routing, hierarchical failure/recovery convergence, and external SDK publication/execution.
+- Added a closure verifier that delegates to the existing execution, recovery, and external-SDK verifiers and confirms that the canonical Docker plan still contains exactly 37 unique scenarios.
+- Defined the resulting coverage record as 40 executed scenarios across two topologies (`37 Docker + 3 Kubernetes`) rather than a homogeneous `40/40` topology matrix.
+- The external-SDK runner invokes the final closure verifier only after its own SDK and live Kubernetes evidence pass; the prior Kubernetes execution and recovery evidence documents remain required inputs.
+
+### Validation
+
+- Matrix Python structural/unit suite: `119/119` passed in the packaging environment.
+- Python external-SDK and closure verifiers compile successfully; synthetic external-SDK evidence validates exact publication identity, worker-authority split, terminal uploaded-function marker, Pod readiness, Service presence, and exact OCI image enforcement.
+- The target environment has already validated the branch's KubernetesPool live-routing and hierarchical recovery sidecars. External SDK execution through KubernetesPool and the final cross-topology closure remain target-environment validation for this increment; no final KubernetesPool closure GREEN claim is made before that runner succeeds.
+
+### KubernetesPool closure runner resilience
+
+- Removed the hard precondition that aborted external-SDK execution when prior live-routing evidence was absent.
+- Added automatic regeneration of the lightweight KubernetesPool live-routing sidecar through the existing `run-kubernetes-pool-execution.ps1` runner when its evidence document is missing.
+- Kept hierarchical recovery evidence non-implicit: missing recovery evidence no longer blocks the external-SDK execution scenario, but final cross-topology closure is explicitly left pending until recovery evidence is available.
+- Preserved the existing KubernetesPool execution, recovery, publication, scheduler, journal, DAG, and result-acceptance authorities; this change affects matrix orchestration only.
+- Added structural guards for automatic live-routing evidence refresh and non-destructive recovery-evidence handling.
+
+### Windows PowerShell process compatibility
+
+- Replaced unsupported `ProcessStartInfo.ArgumentList` and `ProcessStartInfo.Environment` usage with `ProcessStartInfo.Arguments` and `ProcessStartInfo.EnvironmentVariables` for Windows PowerShell 5.1 compatibility.
+- Removed parser-sensitive nested shell probes from the target-environment runner. Executable resolution was subsequently consolidated into the canonical runtime-image probe described below.
+- Prevented the local Windows control plane from registering or hashing Windows-local hosted-worker executables for a Linux publication target. The control plane advertises publication-only runtime metadata; the Kubernetes runtime children register the production worker profiles.
+
+### QueueFirst submission and scale-out observation
+
+- Aligned the external-SDK Kubernetes scenario with the historical production scenario by using `SubmitMode=QueueFirst` instead of immediate `DirectDispatch`.
+- Retained the existing durable path from shared-queue submission through dispatch admission, persisted scale-out request, scale-out watcher, KubernetesPool capacity creation and subsequent dispatch when capacity becomes available.
+- Added the matrix-only `/matrix/scaleout` endpoint to expose existing watcher registration/readiness and persisted request state without creating capacity or introducing another scale-out authority.
+- Wait for the scale-out watcher to complete its initial store scan before starting external SDK publication/submission.
+- Report request identity, status, provider hint, requested capacity, rejection reason and fulfilled runtime identity while observing the existing scale-out path.
+- Scope Pod observation to the current Runtime Pool and collect diagnostics when the request is rejected.
+
+### Publication diagnostics and replay-safe payload storage
+
+- Added explicit external Python SDK stage output for publication, submission, terminal observation, result retrieval and uploaded-function marker verification.
+- Added `/matrix/publication-environment/{reference}` preflight inspection to verify the advertised language, runtime version, executable identity and execution descriptor before publication.
+- Preserved structured Python SDK remote-tool failure details, including `kind`, `code`, `retryable`, `message`, `remoteContent` and `remoteStructuredContent`, instead of reducing publication failures to a generic remote-tool error. No automatic publication retry was introduced.
+- Configured replay-safe payload storage with `AiEngine:PayloadStore=mongo-redis` on the local control plane and the corresponding child configuration inside the Kubernetes Runtime Pool.
+- Use host-local Redis/MongoDB endpoints for the Windows control plane and `host.minikube.internal` endpoints for the Minikube runtime profile. The immutable publication store's replay-safe payload requirement remains enforced.
+- Aligned the `RequiredSetting` helper signature with the `IDictionary<string, string?>` settings passed by `ConfigureReplaySafePayloadStore`, removing the incompatible interface conversion in profile generation.
+
+### Cold-start observation budgets
+
+- Increased the external-SDK terminal-observation budget from 90 to 300 seconds, the Pod-creation observation budget from 75 to 180 seconds, and the matrix runner's hard deadline from 150 to 360 seconds to accommodate the existing Kubernetes cold scale-out path.
+- Kept the production Runtime Pool host-readiness timeout at its existing three-minute value. Matrix observation deadlines do not change production readiness semantics, execution ownership or result-acceptance rules.
+- Kept successful terminal completion and uploaded-function marker verification mandatory; a ready Pod or accepted submission alone cannot satisfy the scenario.
+
+### KubernetesPool external SDK runtime readiness
+
+#### Runtime image identity resolution
+
+- Added a matrix-only image probe that resolves .NET, Node and Python executable aliases inside the selected Linux runtime image before composing hosted-worker profiles.
+- Replaced direct registration of `/usr/local/bin/python3` with the canonical executable target returned by `readlink -e`. Version discovery and the Python executable SHA-256 now use that same target.
+- Retained production launch-path validation, including rejection of symbolic links and reparse points. No worker security checks were bypassed or weakened.
+- Probe commands use Python subprocess argument vectors without a shell. Runtime version discovery does not depend on nested `sh -c`, Node evaluation expressions or Python command strings passed through Windows PowerShell.
+- All probes use one inspected local Docker image ID. The local ID is recorded separately from the configured Kubernetes image reference and is not treated as a repository manifest digest.
+- Invalid image metadata, missing canonical targets, malformed runtime versions, invalid executable hashes and native-process failures stop the probe before publication or scale-out.
+- Node version discovery does not impose a 22/24 allowlist. Runtime capability and publication compatibility remain enforced by the existing worker implementation.
+- Image probe results are retained in `.matrix-kubernetes-sdk/runtime-image-identity.json`.
+
+#### Readiness diagnostics
+
+- Disabled immediate `DeleteResourcesOnFailure` only in the external-SDK matrix profile, allowing failure diagnostics to inspect the requested Pod before the runner's existing final cleanup.
+- Added current-pool Pod descriptions, timestamped container logs, Service details and scale-out snapshots under `.matrix-kubernetes-sdk/diagnostics/<pool-id>/`.
+- Resource selection uses the exact current pool annotation. Historical Runtime Pool resources are excluded from the diagnostic output.
+- Diagnostic native-process output is captured from both standard streams with bounded waits. Diagnostic failures do not replace the original readiness or SDK error.
+- Made local hosted-worker profile registration explicit on in-Pod RuntimeInstanceOnly children. The control plane retains publication-only runtime identities with local worker profiles and worker polling disabled.
+
+#### Preserved behavior
+
+- No production runtime implementation, SDK implementation, worker implementation or runtime image Dockerfile was changed.
+- Existing KubernetesPool creation, registration, readiness, gateway routing, scaling and recovery authorities remain unchanged.
+- QueueFirst submission, admission, durable invocation leases, result acceptance, RBAC, immutable publication and DAG reconciliation ownership remain unchanged.
+- Runtime host readiness and external SDK observation deadlines were not increased.
+- The uploaded-function marker remains mandatory for successful external-SDK scenario evidence and final branch closure.
+- This update does not require rebuilding an otherwise current runtime image. Changes to code or configuration baked into an image still require rebuilding and loading that image.
+
+#### Validation
+
+- Local matrix suite: `python -m unittest discover -s implementations/matrix/tests -v` completed with **132 tests passed**.
+- Added behavioral probe tests for canonical path propagation, exact versions and hashes, one-image probe consistency, shell-free arguments, invalid inputs, native-process errors, CLI behavior and Node versions beyond 22/24.
+- A POSIX filesystem test created a real symbolic link and verified that `readlink -e` returned its existing regular-file target.
+- Kubernetes verifier tests use synthetic evidence fixtures. Their output is not a live KubernetesPool execution result.
+- .NET compilation, Windows PowerShell execution, image execution and live Minikube validation were not performed in the local validation environment because those tools were unavailable.
+- The corrected external-SDK KubernetesPool scenario remains pending live validation through terminal completion and verification of the uploaded-function marker. No final branch GREEN closure is asserted.
+
+### KubernetesPool matrix execution-context bootstrap correction
+
+#### Execution-context bootstrap
+
+- Added `AiMatrixHarness:ExecutionContextTtlSeconds` with a default of `3600` and an explicit positive-value check in the opt-in matrix bootstrap.
+- Set the seeded RBAC execution context's `TtlSeconds` before context-store persistence. Context-store expiry and snapshot TTL remain separate concerns; the context store's session idle timeout is unchanged.
+- Added the TTL to the local client manifest as `executionContextTtlSeconds`, without adding a field to the public SDK contracts or accepting a client-selected bootstrap value.
+- Configured the external-SDK Kubernetes profile with an explicit `3600`-second context snapshot TTL.
+- Reject invalid harness values before storing a context or writing a manifest. Disabled harnesses retain their no-op behavior.
+- Preserved namespace permissions, tenant ownership, access-context transport, and the original context-to-snapshot mapping.
+
+#### Runner diagnostics
+
+- Require a positive integer manifest TTL before external SDK publication/submission, with an explicit failure message for a stale or invalid bootstrap manifest.
+- Continue observing the exact current pool after its first Pod has appeared. A terminal `Failed` or `Succeeded` Pod before client completion triggers diagnostics and scenario failure rather than relying solely on the eventual scale-out rejection.
+- Keep existing bounded diagnostics, exact pool scoping and final cleanup. No global resource scan or new Kubernetes lifecycle authority is introduced.
+
+#### Regression coverage
+
+- Added ten C# cases covering the three matrix topology labels, default and explicit positive TTLs, invalid TTL rejection, disabled-harness behavior, and preservation of strict nonpositive-TTL rejection by the production Kubernetes validator.
+- The C# regression composes the actual bootstrap service, snapshot accessor, Pod plan/spec builder, argument factory, configuration binder and in-Pod validator. A serialized context-store test double replaces storage I/O; no cluster or Redis server is started.
+- Added six Python structural checks for TTL assignment, validation order, explicit profile configuration, manifest preflight, continued Pod monitoring, and unchanged production argument/validator contracts.
+
+#### Validation and compatibility
+
+- Python matrix suite executed locally: 138 tests passed. Verifier success output in that suite is generated from synthetic fixtures and is not live Kubernetes evidence.
+- C# cases were added but not compiled or executed in the packaging environment because the .NET SDK was unavailable.
+- PowerShell, Docker and Minikube execution were not performed in the packaging environment.
+- Production KubernetesPool validation and command-line factory files are byte-for-byte unchanged. No scheduler, queue, admission, scale-out storage, recovery, worker transport or SDK implementation was modified.
+- No readiness or SDK observation timeout was increased. The positive value is execution-context snapshot metadata, not an extension of the startup wait.
+- Rebuild/load the runtime image and republish the local control-plane host after the compiled bootstrap change. The runner without `-SkipImageBuild` performs both operations for the default mutable local image.
+- Real external-SDK terminal completion and uploaded-function marker verification remain required before closure.
+
+### KubernetesPool post-readiness execution diagnostics
+
+#### Changes
+
+- Persist control-plane standard output and standard error from host startup to separate diagnostic files. Drain both redirected streams concurrently through .NET stream-copy tasks without PowerShell event callbacks or an unbounded in-memory host-log buffer.
+- Request all available current-container Pod logs instead of retaining only the final 300 lines. Capture previous-container logs when a restart is recorded. Resource selection remains restricted to the current pool annotation.
+- Capture missing failure diagnostics before host termination and resource cleanup. Drain and close host output files before copying the available evidence into a timestamped failure archive.
+- Include SDK logs, host logs, local image identity, scale-out state, Kubernetes resource state and available Pod diagnostics in the failure archive. Exclude full profiles and access-context manifests from automatic bundling.
+- Add read-only SHA-256 comparison for eight explicitly named host, engine, abstraction, worker and Python executable files between the already-probed local image and a running pool container.
+- Distinguish matching selected files, mismatched selected files and unavailable evidence. Report exact per-file differences. Do not infer whole-image equality or compare Docker index/manifest identifiers directly with CRI configuration identifiers.
+
+#### Compatibility and limits
+
+- No engine code, SDK contract, runtime-image contents, image-load command, admission policy, scheduler, shared-queue behavior, journal, recovery authority, or existing execution deadline changed.
+- Retain Windows PowerShell 5.1-compatible process argument and environment APIs. Host output is retained in files instead of being inherited solely by the terminal. Runner progress remains visible, with a bounded console tail after failure.
+- Diagnostic failures are warnings or unavailable evidence and do not replace the SDK scenario outcome.
+- Artifact capture requires permission to execute the read-only hash command in the current pool container. A matching subset of files is not a proof of complete image equivalence.
+- Capturing all available logs cannot recover cluster-rotated or deleted logs. Bounded capture or process-shutdown failures can produce partial evidence and are reported.
+- Full profiles and manifests are excluded, but operational logs can still contain sensitive information.
+
+#### Validation
+
+- 158 Python unit, structural and verifier-fixture tests passed, including 20 new artifact-probe and capture-structure tests.
+- Real local `sha256sum` output was exercised against temporary files, including paths containing spaces.
+- Docker/Minikube execution and Windows PowerShell 5.1 were not available for end-to-end validation in this environment.
+- The diagnostic evidence available for this increment confirmed successful scale-out and Pod readiness, but not completion of the external published function. Final closure was not yet validated at this point.
+
+### Hosted DAG adapter registration independent of reconciliation
+
+#### Changes
+
+- Register the existing durable DAG adapter core for every enabled hosted-invocation host before optional background reconciliation registration.
+- Install `Custom/python`, `Custom/typescript` and `Custom/dotnet` adapters on runtime-only hosts while retaining `EnableDagReconciliation=false`.
+- Preserve the control-plane reconciliation scope and the runtime worker-polling role. Core registration does not add a hosted reconciliation loop.
+- Retain disabled-host behavior, idempotent adapter installation, explicit-DAG requirements and fail-closed native-fallback rejection.
+- Replace the obsolete structural check that prohibited core registration with separate capability-presence and background-role assertions.
+- Add registration/resolution regressions and document the required runtime-image rebuild.
+
+#### Compatibility and scope
+
+- Runtime hosts no longer depend on the reconciliation flag to resolve published custom DAG steps.
+- Publication-only control-plane and combined process-host configurations continue to install one factory per custom language.
+- The production change is limited to `HostedInvocationHostRegistration`. Existing engine, SDK, Kubernetes provider, durable journal, DAG transitions, ownership, publication and worker transports are unchanged.
+- No timeout, retry or role-configuration value is increased or rewritten.
+- Terminal-status projection for failures before durable execution creation is not changed by this entry.
+
+#### Validation
+
+- Executed 165 Python tests successfully, including seven new source-layout regression guards. Verifier success output is generated from fixtures, not live infrastructure.
+- Added 14 C# cases covering runtime-only custom-language resolution, reconciliation/worker role separation, preinstalled adapter idempotence, disabled capability, native-fallback rejection and sequential-mode rejection.
+- C# compilation/execution, PowerShell and live Docker/Minikube execution were not performed in the validation environment.
+- All 934 inspected engine C# source files remain byte-identical to the supplied implementation baseline.
+- Rebuild and load the runtime image before real execution validation. Do not reuse an image built before the host-registration correction.
+- End-to-end completion remains pending until the public result is `Completed` and the uploaded-function marker is verified.
+
+### Kubernetes external-SDK RBAC project alignment
+
+#### Configuration and runner behavior
+
+- Use one explicit matrix project for `AiMatrixHarness:Project`,
+  `Multiplexed.Rbac.Core:Project`, and the runtime-child environment entry
+  `AiKubernetesRuntimePoolHost:ChildEnvironmentVariables:Multiplexed.Rbac.Core__Project`.
+- Route the child setting through the existing in-Pod command-line and process
+  environment configuration. The durable snapshot project remains execution-owner
+  data and is not treated as a replacement for the host-owned TRN builder setting.
+- Remove the separate parent-only project argument from the PowerShell runner.
+  The generated profile now supplies both host project settings.
+- Validate all three explicit profile values before starting the control plane.
+  Missing or inconsistent project values fail before SDK publication/submission;
+  aligned values are reported without logging credentials or permission sets.
+
+#### Authorization and compatibility
+
+- Preserve the existing seven exact matrix permissions. No wildcard, administrative
+  permission, synthetic worker identity, or child matrix bootstrap is introduced.
+- Leave publication authorization, tenant/group/control-plane guards, execution-owner
+  checks, immutable binding validation and all RBAC engine code unchanged.
+- Preserve the existing control-plane/runtime-child reconciliation and polling split.
+- Leave runtime image content, external SDK contracts, scheduler, durable invocation
+  journal, recovery behavior, and execution/readiness timeouts unchanged.
+- Permit reuse of an image already containing the required hosted DAG adapters;
+  the runner recompiles the profile-writing test project before generating settings.
+
+#### Tests and validation
+
+- Add 13 isolated C# regression cases using the production matrix context bootstrap,
+  serialized snapshot restoration, Kubernetes in-Pod argument factory, .NET
+  environment configuration provider, RBAC registration, and publication target guard.
+- Cover aligned parent/child authorization, missing or foreign child project,
+  missing execute permission, foreign tenant/group/control-plane scope, absent
+  live context, unrelated capabilities, and continued rejection of missing
+  immutable publication bindings. These cases do not execute uploaded code.
+- Add eight Python source-contract checks for profile wiring, single project
+  authority, runner preflight ordering, exact grant preservation and regression scope.
+- Execute 173 Python tests successfully. Verifier outputs come from fixtures and
+  are not evidence of a live Kubernetes execution.
+- C# compilation and regression execution, PowerShell, Docker, and Minikube are
+  pending target-environment validation. Public `Completed` and uploaded-function
+  marker verification remain required for scenario closure.
+
+### KubernetesPool external SDK execution and branch validation closure
+
+#### Validation result
+
+The external Python SDK scenario completed successfully against a live KubernetesPool runtime. Publication and submission succeeded through the public MCP boundary. The public execution result reached `Completed`, and the uploaded function marker was verified.
+
+```text
+scenario=feature-runtime-provider-kubernetes-pool-external-sdk-python-worker
+client=python
+worker=python
+runtimeProvider=KubernetesPool
+workerExecutionProvider=TrustedProcess
+publicationEnvironment=matrix-kubernetes-python
+runtimeVersion=3.12.14
+runtimeImage=multiplexed-ai-runtime:matrix-sdk
+terminalStatus=Completed
+uploadedFunctionMarker=VERIFIED
+pods=1
+readyPods=1
+services=1
+authority=control-plane-reconciliation/runtime-worker-polling
+```
+
+The runner reported aligned RBAC project configuration for the execution context, control-plane host, and runtime child (`matrix`), and a positive execution-context snapshot TTL of 3600 seconds.
+
+#### Execution identifiers
+
+```text
+controlPlaneId=matrix-kubernetes-sdk-a70b41dd
+publicationRef=pub-2a5f3e37e0452305c5d5b923070bc144413d7418c25217169a26d8c37e6a2600
+executionId=published-a87fd7a22ee7847a916b5f963c1b33739530c7f47a3139a6185075f5ecb6cac4
+```
+
+#### Branch closure
+
+The final verifier accepted all three KubernetesPool scenario evidence sets:
+
+| Scenario | Accepted evidence |
+| --- | --- |
+| Live HTTP command routing | Three runtime instances, three successful routed commands, deletion accepted; recorded runtime image `multiplexed-ai-runtime:k8s-debug-143`. |
+| Hierarchical recovery | Two runtime-process failures, two Pod failures, eight recovered shared runs, eight ownership transitions, zero ownership violations, 54/54 parent replays, zero lost runs, zero duplicate durable dispatches, warm-pool reuse passed. |
+| External SDK publication and execution | Python publication and submission, one ready runtime Pod, terminal public result `Completed`, uploaded function marker verified. |
+
+Final verifier result: `3/3 KubernetesPool branch scenarios passed` and `GREEN - KUBERNETESPOOL MATRIX CLOSURE PASSED`.
+
+#### Scope and limitations
+
+The current runner executed the external SDK scenario and revalidated previously collected routing and recovery evidence. The closure output does not establish that the routing, recovery, or Docker workloads were rerun during this invocation.
+
+The preserved Docker baseline remains 37/37 scenarios with `runtimeProvider=ProcessHostPool`. The combined coverage record is **40 validated scenarios across two topologies: 37 Docker and three KubernetesPool scenarios**, not a homogeneous 40-scenario topology matrix.
+
+The external KubernetesPool scenario validates a Python SDK client and a Python worker using `TrustedProcess` inside the runtime Pod. It does not establish a Kubernetes-specific `ContainerIsolationProvider` execution result or a complete cross-language Kubernetes matrix.
+
+The initial build/test summary reports one successful test. It must not be represented as execution of every previously added C# regression test.
+
+Validation basis: recorded successful target-environment runner output and the scenario evidence accepted by its verifiers. No additional test execution is claimed by this documentation update.
+
+#### Validation boundaries retained at closure
+
+- The latest recorded packaging suite contains 173 passing Python unit, structural and verifier-fixture tests. This is distinct from the three accepted live KubernetesPool scenario evidence sets.
+- Ten execution-context bootstrap cases, fourteen hosted-adapter cases and thirteen RBAC alignment cases were added in C#. The available one-test target summary does not establish execution of all of these regression cases.
+- The accepted live routing evidence records `multiplexed-ai-runtime:k8s-debug-143`, while the external-SDK evidence records `multiplexed-ai-runtime:matrix-sdk`. These are separate scenario/image records, not proof that every workload ran against the same image.
+- The successful local workflow uses the recorded tagged runtime images. Opt-in immutable-image enforcement and synthetic strict-digest verifier tests must not be presented as a live digest-pinned deployment result for this run.
+- The runtime OCI image packages the MCP host and production workers. The validated external function path is `HostRuntime` with `TrustedProcess` inside the Pod, not a separate OCI worker-container execution through `ContainerIsolationProvider`.
+- Final validation records technical scenario closure only; no repository commit, push, merge or release operation is established by the runner output.
+
+
+---
+
+## 0.0.9.5 - 2026-09-19 - OCI / Container Isolation
+
+### Provider wiring
+
+- Added optional deployment-owned OCI worker configuration to the hosted invocation host.
+- Added bounded configuration for the container engine path, working directory, owner scope, engine environment, resource limits, immutable runtime references, OCI repositories, manifest digests, and non-root container users.
+- Registered configured OCI runtimes in the existing immutable publication environment catalog alongside trusted-process `HostRuntime` environments.
+- Preserved exact provider selection through the pinned execution descriptor: `HostRuntime` remains routed to the trusted-process transport and `OciImage` to the isolated-container transport.
+- Composed the isolated-container provider behind the existing `IAiWorkerInvocationTransport` boundary without adding scheduler, queue, durable journal, recovery, DAG-transition, or result-acceptance authority.
+- Corrected container-provider dependency injection so isolated execution uses its own strict `SandboxedContainer` / `DenyAll` / `SealedClosure` admission policy instead of inheriting the trusted-process minimum policy.
+- Preserved fail-closed behavior when an OCI profile is missing or does not match the exact pinned runtime and execution descriptor.
+- Added provider-integration coverage proving that explicit container registration can execute through the routed transport while the trusted-process provider keeps its independent admission policy.
+- Updated matrix structural validation to assert optional container-provider registration order and immutable OCI isolation requirements.
+
+### Real container execution
+
+- Extended the server-owned OCI launch plan so the immutable image entry point receives the same exact runtime identity contract used by production hosted workers: runtime reference, runtime version, runtime SHA-256, and bounded heartbeat interval.
+- Added a bounded container heartbeat setting to the deployment-owned OCI worker profile and host configuration without exposing worker arguments to tenant-controlled publication input.
+- Preserved immutable `repository@sha256:<manifest-digest>` execution with `--pull=never`; runtime execution still cannot fall back to tags or perform an implicit image pull.
+- Replaced the real-engine shell-only fixture image with a Linux/amd64 image that embeds the production Python hosted worker and runs it under the required isolated interpreter flags.
+- Updated real-engine preparation to build from the repository root, publish the test image through a local registry solely to obtain an OCI manifest digest, preload the exact digest locally, and capture the exact CPython runtime version carried by that image.
+- Added opt-in real-engine coverage that invokes the production `AiContainerWorkerTransport`, sends a real published Python function over the existing private worker protocol, validates the returned payload, and verifies that no managed container remains after successful completion.
+- Retained kernel/cgroup isolation and forced-removal coverage by overriding the prepared worker image entry point only inside the real-engine enforcement probes.
+- Updated the container-engine test probe and transport tests for the post-image production worker argument contract.
+- Added matrix structural coverage tying the OCI launch plan to the production hosted-worker runtime identity contract and embedded worker entry point.
+
+### Lifecycle and durability closure
+
+- Added container-provider lifecycle coverage proving caller cancellation removes the active isolated assignment without accepting a durable result.
+- Added deterministic expired-lease redispatch coverage through the same isolated provider while preserving the original durable operation identity and advancing only the worker assignment epoch.
+- Added failure/retry closure proving an isolated worker/engine failure retains the durable invocation for reconciliation instead of fabricating a result or directly mutating DAG state.
+- Verified that a late result from the superseded container assignment is rejected by the existing durable journal lease authority after a replacement assignment succeeds.
+- Verified that replay of the already accepted result from the authoritative replacement assignment converges as `AlreadyAccepted` and leaves continuation ownership unchanged.
+- Preserved shared supervisor capacity semantics: confirmed cleanup returns capacity normally, while the previously established unconfirmed-cleanup path remains quarantined.
+- Extended the build-owned container-engine probe with deterministic one-shot hang/failure modes used only to exercise cancellation, failure, lease expiry, and reassignment without adding production behavior.
+- Added opt-in real-engine coverage that runs a long-lived published function inside the production Python hosted-worker image, observes live worker heartbeats, cancels the active invocation, and verifies that no managed container remains afterward.
+- Updated the real-engine preparation runner to emit detailed test execution output so each successful `ContainerRealEngine` scenario is visible in the validation terminal.
+- No scheduler, queue, recovery coordinator, DAG transition, continuation, journal acceptance, or result authority was duplicated or moved into the container provider.
+
+### Validation
+
+- Matrix Python structural/unit suite before final isolation-matrix binding: `99/99` passed.
+- The packaging environment does not provide the .NET CLI or a Docker-compatible engine, so .NET and real-engine execution remains target-environment validation.
+- Real Docker-compatible engine closure was subsequently confirmed as `4/4` passed in the target development environment before the final matrix binding changes.
+
+### Matrix closure and exact isolation evidence
+
+- Bound the previously deferred `worker-isolation-provider` coverage to exactly `trusted-process` and `sandboxed-container` executable scenarios.
+- Bound the previously deferred `isolation-artifact-selection` coverage to exactly `HostRuntime` and `OciImage` executable scenarios.
+- Kept the isolation closure intentionally bounded to the external Python SDK and production Python hosted worker; the existing 3 x 3 public SDK / hosted worker matrix remains unchanged.
+- Extended the matrix harness manifest with deployment-owned container environment references without exposing engine configuration, mutable image tags, mounts, network policy, resource limits, or Docker arguments through the public SDK.
+- Added a canonical `matrix-python-oci` environment that is resolved by the existing immutable publication environment catalog to an exact OCI manifest digest.
+- Extended the canonical Docker matrix runner to prepare and preload the exact OCI worker image before starting the matrix stack.
+- Added the Docker CLI to the runtime matrix image and mounted the host Docker socket for the local/CI isolation profile so isolated workers are launched as sibling containers rather than through Docker-in-Docker.
+- Preserved `--pull=never` execution after image preparation; runtime invocation cannot resolve a mutable tag or implicitly pull worker code.
+- Added public SDK isolation probes that fail unless the sandboxed-container path executes non-root, uses a read-only root filesystem, and exposes loopback-only networking.
+- Preserved the trusted-process path independently as `HostRuntime -> TrustedProcess -> ProcessHostPool`.
+- Preserved the isolated path independently as `OciImage -> SandboxedContainer -> ContainerIsolationProvider`.
+- Extended the canonical verifier to validate immutable environment references, provider identity, artifact kind, isolation-provider value, production-worker execution evidence, and sandbox enforcement evidence.
+- Raised the exact planned canonical gate from 33 scenarios to 37 scenarios: 9 core scenarios plus 28 feature scenarios.
+- Removed the two isolation targets from deferred coverage; `executed-coverage-closure.json` now requires all declared final-roadmap coverage targets to have executed evidence before closure can pass.
+- Recorded the final closure provider set as `ProcessHostPool` plus `ContainerIsolationProvider` while retaining `docker` as the topology.
+- Documented that the OCI matrix path is a local/CI Docker-socket profile and must not be presented as production Kubernetes coverage.
+
+### Validation update
+
+- Matrix Python structural/unit suite after isolation closure changes: `99/99` passed.
+- Real Docker-compatible engine closure before the matrix integration changes: `4/4` passed in the target development environment, including production worker execution and active cancellation cleanup.
+- The final `37/37` Docker matrix result is not claimed until the updated canonical matrix is executed in the target development environment.
+
+---
+
+## 0.0.9.4 - 2026-09-19 - SDK / Runtime Matrix
+
+## Multilanguage runtime matrix foundation
+
+- Added a versioned executable matrix plan for the three external client languages and three hosted execution languages.
+- Added explicit coverage targets for publication pinning, deterministic dependency packaging, hosted policy families, nested Child DAGs, cancellation, recovery, MCP effect evidence, journal result acceptance, worker isolation/provider selection and external-client dependency firewalls.
+- Added validation that separates declared matrix coverage from actually executed evidence.
+
+## Production-like ProcessHostPool matrix
+
+- Added a real 3 x 3 external-SDK-to-hosted-worker execution matrix over the public MCP boundary.
+- Added Docker Compose orchestration with MongoDB, Redis, the real MCP runtime host, independent .NET/TypeScript/Python SDK client containers, hosted .NET/TypeScript/Python process workers, shared evidence and a terminal verifier.
+- Added a Docker-only canonical validation path; .NET, Node, Python, MongoDB and Redis are no longer host prerequisites for third-party matrix execution.
+- Added a local developer topology that runs MongoDB, Redis and the real runtime locally while reusing the same SDK scenarios and evidence model.
+- Added deployment-configured hosted invocation registration to the real MCP host using the existing immutable publication service, durable invocation journal, worker supervisor and polling authorities.
+- Added exact host runtime hashing and versioned HostRuntime execution descriptors for .NET, TypeScript and Python process workers.
+- Added automatic runtime-manifest production so client tests consume the exact registered environment references rather than manually supplied or invented values.
+- Added an explicit opt-in matrix authentication/context bootstrap that preserves the MCP authentication and RBAC middleware path while isolating test credentials and tenant scope.
+- Added bounded additional transport headers to the .NET, TypeScript and Python SDK transports so the public access-context handle can cross the real external SDK boundary without exposing engine contracts.
+- Disabled access-context rotation only inside the opt-in matrix harness; normal runtime host behavior is unchanged.
+- Added topology/provider fields to live evidence so local/process and docker/process proof cannot be conflated with future isolated-container proof.
+- Added structural regression tests for Docker services, exact SDK project references, Windows npm wrapper resolution, manifest-driven environment selection and opt-in host registration.
+- Added runtime health probing without relying on utilities absent from the final runtime image.
+- Added local worker-fixture staging so local and containerized client execution consume the same publication payload layout.
+- Switched the harness access-context bootstrap to the normal context-store write path while keeping the normal MCP RBAC middleware active.
+- Bound the harness RBAC project through the exact runtime configuration key so generated permission TRNs and runtime authorization resolve the same project.
+- Hardened runtime-version discovery to require an installed .NET 10.0.x runtime instead of selecting an unrelated installed runtime.
+- Corrected Docker .NET publication to use explicit MSBuild `PublishDir` properties, avoiding the `MSB1008` multi-project parse failure observed with the output alias in the Linux SDK image.
+- Removed the test-suite project reference from the production MCP host project graph so container publication no longer compiles test assemblies or emits unrelated xUnit analyzer warnings.
+- Renamed the matrix authentication scheme constant to avoid hiding the inherited authentication-handler `Scheme` member.
+- Reduced Docker .NET publication verbosity while preserving build failures as errors.
+- Corrected core hosted-code fixtures to publish custom invocations as explicit DAG pipelines; no unsupported sequential durable-invocation fallback is claimed.
+- Registered the existing durable invocation DAG adapters alongside hosted workers so .NET, TypeScript and Python custom steps resolve through the established journal/continuation authority.
+- Aligned the matrix control-plane identity across MCP host configuration, AI engine discovery, publication scopes and hosted-worker polling, using a matrix-specific Redis discovery key.
+- Made anonymous health probes return no authentication result instead of emitting misleading invalid-bearer diagnostics; protected MCP requests remain fail-closed.
+
+- Configured both matrix process topologies to use replay-safe `mongo-redis` payload storage, with MongoDB as the durable source of truth and Redis as the bounded cache.
+- Added explicit payload-store Mongo connection/database configuration so immutable publication payloads and replay data do not fall back to the in-memory provider.
+- Added matrix regression coverage that rejects process-topology configurations missing replay-safe payload-store settings.
+
+- Enabled MCP structured content on all five public SDK tools so successful DTO responses are emitted through `structuredContent` consistently for .NET, TypeScript and Python external SDK clients.
+- Added regression coverage requiring every public SDK MCP tool to keep structured-content emission enabled.
+
+### Durable continuation shared-queue pump
+
+- Enabled the shared queue background service explicitly in both process-matrix topologies so deterministic `QueueFirst` durable-invocation continuations are actually pumped after admission.
+- Kept continuation routing on the existing shared-controller/shared-queue authority; no worker-side resume or direct DAG continuation path was introduced.
+- Enabled the existing shared queue pump explicitly alongside the MCP host pump gate to avoid configuration where continuation records are accepted globally but never dispatched.
+- Added regression coverage requiring both local/process and docker/process matrix hosts to keep the shared queue continuation pump enabled.
+
+## Validation limitations
+
+- This delivery targets ProcessHostPool / HostRuntime / TrustedProcess execution only.
+- Sandboxed OCI worker enforcement is not claimed by this delivery.
+- Docker Compose and local live execution must be run on a machine with the respective topology prerequisites before the matrix can be marked green.
+- Corrected public observation/result/cancellation reads for immutable published DAG executions to use the distributed DAG execution store, matching the existing published-run creation authority.
+- Added regression coverage preventing the public SDK boundary from reading published DAG execution state through the sequential execution store.
+
+### Durable hosted continuation reconciliation
+
+- Enabled the existing tenant-scoped durable invocation DAG reconciler for production-like hosted process execution.
+- Reused the exact worker polling scope for continuation reconciliation so accepted worker results are resumed only by the control-plane continuation authority.
+- Preserved worker authority boundaries: hosted workers accept results into the existing journal but do not resume DAGs, select successors, or finalize executions.
+- Added matrix regression coverage preventing hosted custom execution from being configured without control-plane continuation reconciliation.
+
+### Local runtime provider routing and matrix runner
+
+- Corrected pooled local runtime instance descriptors to advertise the canonical `local` runtime provider capability instead of the unroutable `local-pool` topology label.
+- Preserved local-pool topology through the existing host/pool metadata while allowing dispatch to resolve through the existing `LocalAiRuntimeInstanceProvider`.
+- Added regression coverage preventing pooled local runtime descriptors from publishing an unregistered provider name.
+- Added a Windows PowerShell Docker matrix runner that captures full build/runtime logs, waits for one-shot clients and the terminal verifier, prints service exit states and the final verifier result, and returns the verifier outcome as the process exit code.
+- Removed the abort-on-first-container-exit command from the canonical matrix documentation because one-shot SDK clients must complete before the terminal verifier is allowed to run.
+
+### Published execution definition dispatch
+
+- Preserved the verified frozen publication definition returned by execute-authorized published DAG admission and propagated it with the immutable definition snapshot into the runtime run request.
+- Prevented successful shared-run admission from queueing preallocated published executions without an executable definition source, which otherwise failed during runtime `resolve-definition`.
+- Kept public SDK submission on the existing publication `execute` authorization path; no additional publication `read` capability is required to dispatch the pinned definition.
+- Added regression coverage for frozen-definition propagation from public SDK submission into runtime dispatch.
+
+### Claimed durable step execution and pooled runtime child isolation
+
+- Projected the already-authoritative distributed DAG claim into the execution-local step state before invoking a claimed adapter, preserving the durable adapter Running-state guard without adding a post-claim store read.
+- Kept durable claim ownership in the DAG store; the execution-local projection carries only the current Running status, runtime owner and claim token used by the selected adapter.
+- Prevented pooled local runtime child service providers from inheriting the control-plane local runtime scaler after the local host factory is intentionally removed, so runtime children cannot instantiate or own pool topology.
+- Added regression coverage for claimed-step execution context projection and pooled runtime child dependency isolation.
+
+### Canonical hosted worker launch paths and dispatch diagnostics
+
+- Resolved Docker-hosted .NET, Node.js and Python executables to canonical physical paths before runtime hashing and TrustedProcess profile construction, preserving strict symbolic-link and reparse-point rejection for approved launch paths.
+- Added fail-fast validation of deployment-owned hosted worker launch profiles during explicit host registration so invalid executable or worker paths are rejected before a durable DAG invocation can park.
+- Added bounded worker-dispatch phase diagnostics for preparation, pre-launch heartbeat, process transport and journal completion without emitting tenant worker stderr or exception messages.
+- Added regression coverage for canonical executable resolution, hosted profile preflight, bounded dispatch phase diagnostics and continued strict link rejection.
+
+### Python matrix evidence timestamp
+
+- Corrected Python matrix evidence emission to preserve the public SDK observation timestamp as its wire-format string instead of treating it as a datetime object.
+- Added regression coverage tying matrix evidence serialization to the `AiSdkExecutionObservation.updated_at_utc` string contract.
+
+### Publication pinning and deterministic dependency package matrix
+
+- Bound six external-SDK feature scenarios using the Python public SDK client across .NET, TypeScript and Python hosted worker languages while preserving the previously validated 3 x 3 core client matrix.
+- Added publication-pinning evidence that submits an immutable publication, publishes a distinct poison replacement, observes the original reference while the run remains nonterminal, and requires terminal completion on the original publication identity.
+- Added deterministic dependency-package fixtures for `DotNetAssemblyClosure`, `NodeLockedBundle` and `PythonWheelBundle` using exact immutable manifests and language-native worker materialization.
+- Reused the existing publication, admission, hosted-worker, durable invocation, shared-queue continuation and result-acceptance authorities; no package-manager installation path, alternate scheduler or worker-owned DAG transition was introduced.
+- Extended the local/process and docker/process matrix drivers and Docker verifier to record only the six feature combinations actually executed while retaining the nine core scenarios as a regression gate.
+
+### Hosted custom policy family matrix
+
+- Enabled the existing hosted concurrency, retry and delegation policy transports in the production-like hosted invocation host after worker-process transport registration.
+- Added three external Python SDK scenarios that bind exactly the currently supported hosted policy families: concurrency on Python, retry on TypeScript, and delegation on .NET.
+- Used behavioral assertions instead of publication-only checks: concurrency must allow and complete, retry must enforce a custom `stop` decision against the fail-once fixture, and delegation must enforce a custom `deny` decision before child dispatch.
+- Kept custom policy execution on immutable publication material and the existing runtime policy checkpoints; native fallback remains forbidden for custom declarations.
+- Extended the local/process and docker/process matrix drivers and verifier to require the three custom-policy-family evidence records in addition to the existing nine core and six publication/dependency scenarios.
+- Added plan and host-registration regression coverage that fails closed when a supported family binding or hosted policy transport registration is missing.
+- Corrected the hosted retry-policy matrix upload to bind its immutable code to the step-scoped `work` call site, matching the declaration scope discovered by publication compilation.
+- Hardened the deterministic fail-once retry fixture so an uninitialized retry state is treated as retry count zero, ensuring the first attempt fails consistently before custom retry-policy evaluation.
+
+### Distributed custom Retry decision application
+
+- Corrected distributed and batch DAG failure handling so effective custom Retry declarations are evaluated by the existing retry policy engine before the claim-fenced store mutation.
+- Added a separate explicit retry/fail transition boundary to the distributed DAG store so hosted policy decisions can be committed atomically without allowing the Redis store to recompute or replace the policy result.
+- Preserved the historical Redis-owned automatic retry calculation and its Lua contract unchanged for native-only retry declarations; the separate explicit transition is selected only when an effective custom Retry binding is present.
+- Kept retry-budget evaluation in the existing retry policy engine while the explicit Redis transition atomically preserves claim-token fencing, retry-count updates, evaluated retry scheduling and terminal failure mutation.
+- Preserved durable invocation failure receipts when a custom Retry decision is applied to a hosted step failure.
+- Added regression coverage requiring both distributed and batch runners to route custom Retry failures through policy evaluation and the explicit atomic store decision path.
+
+### Nested Child DAG matrix
+
+- Bound three external Python SDK scenarios that publish a depth-two inline Child DAG definition and execute one immutable grandchild custom declaration through each hosted worker language: .NET, TypeScript and Python.
+- Addressed the exact grandchild declaration through publication `DefinitionPath` `/invoke-child/invoke-grandchild`, preserving immutable publication/run pinning across root, child and grandchild execution.
+- Reused the existing `execution.child-dag` scheduling, durable child-relation persistence, published child-run binding, hosted invocation journal, shared-queue continuation and DAG finalization authorities; no alternate Child DAG scheduler or worker-owned continuation path was introduced.
+- Added evidence and verifier requirements for exact nesting depth, recursive call-site identity, hosted worker language, root terminal completion and parent continuation.
+- Extended the executable matrix plan and local/docker feature drivers from nine to twelve bound feature scenarios while retaining the existing nine core scenarios as the regression gate.
+- Added fail-closed plan validation requiring exactly one nested Child DAG scenario for each supported hosted worker language.
+- Live Docker validation is required before nested Child DAG coverage is marked green.
+- Corrected the nested public-SDK fixture to encode the custom invocation discriminator using the canonical `kind` wire property expected by `AiInvocationDefinition`; the prior CLR-style `Kind` spelling was intentionally rejected by publication fail-closed validation.
+- Added regression coverage requiring the nested Child DAG fixture to keep the canonical lowercase invocation discriminator and reject the invalid CLR-style spelling.
+
+### Durable MCP effect evidence matrix
+
+- Bound two external Python SDK scenarios to the public MCP step invocation contract without assigning a hosted worker language.
+- Enabled the existing Mongo-backed durable MCP effect evidence journal and real outbound Streamable HTTP transport only inside the explicit matrix harness.
+- Added a matrix-only loopback MCP probe process with deterministic call counting; it has no runtime/engine project dependency and receives only server-catalogued tools.
+- Added `completed-local-replay` evidence: a confirmed MCP tool-error result is persisted as `Completed`, one DAG retry is observed, and the same logical effect is replayed locally while the remote probe remains at one physical `tools/call`.
+- Added `uncertain-blocks-blind-resend` evidence: a dispatched MCP call exceeds the server-owned deadline, durable evidence becomes `Uncertain`, one DAG retry is observed, and the durable fence blocks that retry before any second physical `tools/call`.
+- Added matrix-only diagnostics for durable effect status and retained DAG retry count. The diagnostics are disabled outside the matrix harness and do not expose outbound endpoints, credentials or secret headers.
+- Preserved server ownership of MCP endpoint, connection revision, tool capability and transport timeout; external SDK input carries only the opaque connection reference, tool name and declared arguments.
+- Extended local/process and docker/process feature execution from twelve to fourteen bound feature scenarios while preserving all previous twenty-one executed scenarios as the regression gate.
+- Extended the Docker verifier target from 21/21 to 23/23 executed scenarios.
+- No generic exactly-once delivery claim, automatic uncertain-effect reconciliation, or blind retry authority is introduced.
+### Explicit execution retry budget materialization
+
+- Preserved explicit step `Execution` metadata on resolved pipeline steps so retry orchestration can distinguish declared execution budgets from historical undeclared defaults.
+- Made explicitly declared `Execution.MaxRetries` and `Execution.RetryDelayMs` authoritative for the durable retry definition while preserving legacy `config.retry` policy/backoff metadata.
+- Kept historical pipeline behavior unchanged when no explicit `Execution` section is declared.
+- Added matrix regression coverage preventing public SDK retry budgets from being accepted at the boundary but replaced by the runtime retry engine default before durable state creation.
+### Durable MCP timeout evidence finalization
+
+- Separated execution cancellation from the server-owned MCP request deadline for the durable transport path so deadline expiry is classified by the outbound transport instead of racing the adapter wrapper.
+- Allowed the durable transport to finish its post-dispatch `Uncertain` or `NotSent` evidence transition before the adapter observes the terminal transport exception.
+- Made post-`Dispatching` evidence finalization independent of the already-cancelled request token; a failed evidence CAS still leaves `Dispatching` as the conservative fail-closed state.
+- Preserved bounded `WaitAsync` handling for non-durable/custom MCP transports, so uncooperative dependencies remain deadline-bounded.
+- Added regression coverage requiring cancellation after dispatch authority to persist `Uncertain` evidence without granting any re-emission authority.
+
+## Multilanguage runtime matrix - cancellation
+
+### Validation coverage
+
+- Added production-like ProcessHostPool cancellation scenarios through each external SDK client: .NET, TypeScript, and Python.
+- Each client submits a same-language hosted execution, waits until the hosted step is active, invokes `sdk.execution.cancel`, validates durable cancellation acknowledgement metadata, and requires terminal `Cancelled` convergence through public observation and result operations.
+- Cancellation scenarios preserve the distinction between explicit durable execution cancellation and cancellation of an in-flight SDK transport request.
+- The previously validated 23-scenario matrix remains a mandatory regression gate; this increment raises the expected executed matrix to 26 scenarios.
+
+### Compatibility and limits
+
+- Cancellation is cooperative. The matrix validates durable control-state convergence and does not claim immediate operating-system termination of hosted user code.
+- Recovery and replay/journal-result-acceptance coverage remain outside this increment.
+- Existing worker fixtures are intentionally retained for matrix validation; fixture removal and non-fixture execution will be validated as a separate closure gate after the remaining matrix increments.
+
+
+### Parked DAG cancellation terminalization
+
+- Bridged durable execution-control cancellation into the authoritative DAG terminal record so executions parked in `WaitingForExternal` cannot remain indefinitely non-terminal after `sdk.execution.cancel`.
+- Reused the existing claim-fenced execution finalization boundary with `Cancelled` status and `ExecutionStepKey` optimistic concurrency instead of mutating distributed step state directly.
+- Kept execution-control intent and DAG terminal status as separate authorities: the control store records `Cancelling`, the DAG store commits terminal `Cancelled`, and the control state is then acknowledged as `Cancelled`.
+- Preserved terminal-state monotonicity by refusing to rewrite a concurrently completed or failed execution as cancelled.
+- Preserved late hosted-result safety: a worker result arriving after parent cancellation remains handled by the existing durable invocation continuation coordinator and is suppressed instead of reopening the terminal execution.
+- Added regression coverage requiring public SDK cancellation to route through the DAG cancellation coordinator and the existing terminal-parent durable invocation suppression path.
+
+## Multilanguage runtime matrix - recovery and durable journal result acceptance
+
+### Runtime recovery coverage
+
+- Added two matrix-only recovery scenarios over the existing production recovery reconciler, runtime registry, runtime execution index, shared-run store and shared queue authorities.
+- Added `in-flight-resume` coverage that starts a public durable execution, observes active runtime ownership, marks the owning runtime unavailable, invokes the production recovery reconciler and requires the same durable `ExecutionId` to resume and converge to `Completed`.
+- Added `local-queued-redispatch` coverage that seeds real shared-run, queue-claim and runtime-index ownership without a durable execution id, marks the owning runtime unavailable, invokes the production recovery reconciler and requires healthy-capacity redispatch to create a distinct durable `ExecutionId`.
+- Kept recovery mutation inside the existing recovery transition authority; the matrix probe does not write Redis or MongoDB through concrete store implementations.
+- Added matrix-only recovery diagnostics behind the existing explicit harness enablement. Normal hosts do not expose the recovery probe.
+
+### Durable journal result-acceptance coverage
+
+- Added two result-acceptance scenarios over the configured production `IAiDurableInvocationStore` and `AiDurableInvocationJournal`.
+- Added `accepted-result-replay` coverage that acquires a real lease/epoch, accepts the first durable result, reconstructs a fresh journal over the same store and requires an identical result replay to converge as `AlreadyAccepted`.
+- Added `duplicate-delivery-convergence` coverage that submits eight concurrent identical completions against one durable lease and requires exactly one `Accepted`, seven `AlreadyAccepted` and zero `LeaseRejected` outcomes.
+- Required both journal scenarios to preserve terminal `Succeeded` state, pending continuation ownership, durable result hash and lease epoch evidence.
+- No alternate result store, replay cache or matrix-owned lease authority was introduced.
+
+### Matrix gate and limits
+
+- Extended the executable matrix from 26 to 30 scenarios: nine core scenarios plus twenty-one bound feature scenarios.
+- Preserved all previously validated publication pinning, dependency packaging, hosted custom policy, nested Child DAG, durable MCP effect and cancellation scenarios as mandatory regression coverage.
+- Live Docker ProcessHostPool execution is required before this increment can be marked green.
+- Recovery coverage validates control-plane recovery after runtime ownership becomes unavailable; it does not claim a provider-level process crash injection in this increment.
+- Existing execution fixtures remain intentionally available for matrix validation. Fixture removal and complete non-fixture execution remain a separate closure gate after the remaining matrix increments.
+
+### Deterministic recovery replacement capacity
+
+- Preprovisioned two local runtime instances in the matrix ProcessHostPool topology so in-flight recovery always has a distinct healthy replacement target instead of depending on dynamic scale-out after the failed owner is already requeued.
+- Added an in-flight recovery precondition that requires a `Ready` replacement runtime with available capacity before the owning runtime is marked unavailable and the production recovery reconciler is invoked.
+- Preserved the failed-runtime exclusion carried by recovery metadata; the original runtime may continue heartbeating in the matrix process, but recovery dispatch is required to target distinct healthy capacity.
+- Kept recovery state mutation inside the existing runtime registry, recovery reconciler, shared queue, shared-run ownership and runtime execution-index authorities.
+- Mirrored the two-instance topology in the local/process runner so local and Docker recovery validation use the same replacement-capacity assumption.
+
+### Local-queued recovery seed correctness
+
+- Corrected the matrix local-queued recovery seed so synthetic runtime failure is declared only after shared-run, shared-queue and runtime-index ownership are fully durable, preventing the one-second background reconciler from observing a partially constructed crash state.
+- Normalized the public-SDK template run request into a true not-yet-started local-queued request by clearing the preallocated `RequestedExecutionId` and immutable definition snapshot while preserving the executable pipeline definition, input and execution context.
+- Aligned matrix recovery metadata with the production recovery seed shape by carrying explicit shared-run and pipeline identities through queue and runtime-index records.
+- Kept recovery mutation inside the existing runtime registry, recovery reconciler, shared queue, shared-run store and runtime execution-index authorities; no production recovery algorithm was changed.
+- Improved matrix diagnostic POST failures so HTTP error status and response payload are surfaced by the feature driver instead of collapsing to a generic `urllib` exception.
+
+### Race-free local-queued recovery ownership seed
+
+- Removed the live `Pending -> Claim -> Dispatched` seed sequence from the matrix local-queued recovery probe because the production shared-queue pump can legitimately claim a pending item concurrently.
+- Seeded the crash-surviving queue record atomically through the existing `IAiSharedQueue.EnqueueAsync` contract as `Dispatched` with explicit runtime owner, worker owner, claim token and claim timestamps; non-pending queue records remain excluded from pending indexes by the existing Redis queue script.
+- Preserved the shared-run and runtime-index ownership authorities and the production recovery transition path; no direct Redis write or alternate recovery mutation was introduced.
+- Added bounded matrix-only recovery error responses containing only exception type and message so failed diagnostics remain actionable without exposing stack traces, endpoints, credentials or secret headers.
+
+### Active shared-run template acquisition for local-queued recovery
+
+- Corrected the matrix local-queued recovery setup to capture its template `RunRequest` while the public template execution is still active and its authoritative shared-run dispatch record is available.
+- Replaced the short completed template step with a bounded delay step and waits for active execution before invoking the recovery probe; the probe continues to clear `RequestedExecutionId` and `PipelineDefinitionSnapshot` when creating the not-yet-started local-queued request.
+- Removed the invalid assumption that completed public executions remain discoverable through the shared-run store after terminal cleanup.
+- Preserved production recovery, shared-run, queue, runtime-index and publication authorities unchanged; the correction is limited to matrix evidence setup and regression coverage.
+
+
+### Authority-correct local-queued recovery seed
+
+- Removed the matrix local-queued recovery dependency on finding a transient shared-run template by execution id. Shared-run dispatch records are not a durable publication/template catalog and may be cleaned independently of an active or terminal DAG execution.
+- The Python matrix driver now sends the exact public SDK pipeline definition, input and metadata as an explicit matrix-only recovery seed. The host converts that definition through the existing `AiPublicSdkContractMapper` and creates a true not-yet-started runtime request with no `RequestedExecutionId` and no immutable execution snapshot.
+- Added a matrix execution-context snapshot from the explicit harness tenant/user/namespace settings rather than copying context from an unrelated shared run.
+- Local-queued recovery terminal convergence is now observed through the authoritative `IAiDagExecutionStore`, because the redispatched execution is intentionally not a published public-SDK execution and therefore has no immutable publication run pin.
+- Preserved the production recovery reconciler, runtime registry, shared-run store, shared queue and runtime execution index as the only recovery mutation authorities.
+
+### Authority-correct local-queued redispatch identity and Redis record collection repair
+
+- Corrected local-queued recovery observation to treat shared-run ownership as authoritative for the replacement runtime and `LocalRunId`, then resolve the asynchronously created replacement `ExecutionId` through the runtime run execution index.
+- Required the replacement runtime-index entry to converge to canonical `completed` after the replacement DAG reaches terminal `Completed`, preventing a matrix pass when DAG and runtime-run authorities disagree.
+- Repaired Redis DAG execution-record reads when Redis Lua `cjson` round-trips empty execution-context collections as JSON objects: `ExecutionContextSnapshot.Namespaces` and namespace `Trns` are normalized back to arrays before `AiExecutionRecord` deserialization.
+- Preserved valid non-empty execution-context collections unchanged and retained the existing `CompletedSteps` compatibility repair.
+- Added regression coverage for Lua-corrupted empty execution-context collection shapes and for the local-queued authority chain `SharedRun -> LocalRunId -> runtime index -> ExecutionId -> DAG terminal state`.
+
+
+## Multilanguage runtime matrix - exact executed coverage closure
+
+### External client dependency firewall
+
+- Added one executable dependency-firewall scenario for each external SDK client language: .NET, TypeScript and Python.
+- The .NET client inspects the SDK/public-contract assembly reference graph and its published client bundle and rejects any repository engine/runtime assembly outside the SDK and public-contract boundary.
+- The TypeScript client inspects declared package dependencies and compiled distribution import specifiers and rejects repository-internal package dependencies.
+- The Python client inspects declared project dependencies and absolute SDK source imports and rejects repository-internal runtime/engine dependencies.
+- Dependency-firewall evidence is language-owned and does not claim a hosted worker language or runtime execution result.
+
+### Exact executed-coverage reporting
+
+- Extended the canonical Docker gate from 30 to 33 executed scenarios by adding the three external-client dependency-firewall checks.
+- Added verifier-side exact coverage closure derived from the matrix plan and passed evidence set. The closure records the canonical topology/provider as `docker` / `ProcessHostPool` and writes `executed-coverage-closure.json`.
+- Added fail-closed validation requiring the only unbound roadmap targets after ProcessHost matrix coverage to be `worker-isolation-provider` and `isolation-artifact-selection`.
+- Explicitly records `sandboxed-container` and `OciImage` as not executed; ProcessHost `TrustedProcess` / `HostRuntime` evidence is not promoted into OCI/container coverage.
+- Preserved the fixture-backed ProcessHost matrix execution model. Fixture removal remains a separate full-matrix closure gate before the ProcessHost matrix is considered fixture-independent.
+
+
+## Fixture-free matrix closure
+
+### Execution artifacts
+
+- Removed the matrix-owned published-function fixture tree.
+- Added engine-independent, reusable published-function samples for .NET, TypeScript and Python under the public SDK sample area.
+- Added deterministic .NET assembly-closure samples for dependency packaging without runtime or engine references.
+- Replaced the matrix-owned MCP effect executable with a standalone MCP sample server outside the matrix tree.
+
+### Runtime topology
+
+- Docker and local runners stage SDK sample artifacts through `MATRIX_SAMPLE_ROOT`; `MATRIX_FIXTURE_ROOT` is no longer used.
+- Production hosted-invocation workers remain the only worker executables used by the ProcessHostPool topology.
+- Docker client images no longer build or copy `implementations/matrix/fixtures`.
+
+### Validation
+
+- Fixture-free structural validation requires `implementations/matrix/fixtures` to be absent and rejects matrix/runtime/client references to `MATRIX_FIXTURE_ROOT` or `implementations/matrix/fixtures`.
+- The existing 33-scenario Docker ProcessHostPool matrix remains the live regression gate; no additional capability is inferred by this closure.
+
+---
+
+## 0.0.9.3 - 2026-09-17 - External SDK protocol and package foundation
+
+### Added
+
+- Added a canonical language-neutral protocol manifest for the external SDK operation surface.
+- Added stable public operation-name constants for pipeline publication, execution submission, observation, result retrieval and cancellation.
+- Added protocol-version metadata with fail-closed schema-version behavior and no implicit downgrade.
+- Established permanent package roots for the .NET, TypeScript and Python external SDKs.
+- Added transport abstractions that keep physical connection details outside public publication and execution payloads.
+- Added credential-provider boundaries so authentication is injected by the transport rather than serialized into business requests.
+- Added a common client-normalized error taxonomy without exposing runtime or infrastructure exception types.
+- Restricted automatic transport retry to read-only observation and result operations; publication, submission and cancellation remain non-retryable at the SDK transport layer.
+- Defined request cancellation as cancellation of the in-flight client call only; durable execution cancellation remains an explicit server operation.
+- Added an external .NET SDK dependency firewall that permits only the public SDK contracts project from the repository.
+- Added lightweight TypeScript and Python foundation validation against the canonical operation protocol.
+
+## .NET external SDK
+
+### Added
+
+- Added the typed `IAiSdkClient` and `AiSdkClient` surface for publication, submission, observation, result retrieval and cooperative cancellation.
+- Added fail-closed request and response schema-version validation around the portable public contracts.
+- Added Streamable HTTP MCP transport support using the existing public MCP tool boundary.
+- Added authorization credential injection through the transport without adding credentials to business payloads.
+- Added a static credential provider for simple external client scenarios.
+- Added bounded automatic retry for transport failures on safe-read operations only.
+- Added client-side normalization for authentication, authorization, transport, remote-tool and invalid-response failures.
+- Added package README and NuGet package metadata for independent .NET SDK consumption.
+- Added focused client and transport tests that do not depend on runtime or server assemblies.
+
+### Server compatibility
+
+- Replaced duplicated MCP tool-name literals with constants from the portable public contract assembly.
+- Existing publication, submission, observation, result, cancellation, queue, recovery, journal and execution authorities are unchanged.
+- The .NET SDK invokes the existing MCP public boundary and does not add an HTTP/REST execution boundary.
+
+## TypeScript external SDK
+
+### Added
+
+- Added portable TypeScript contract models for publication, pipeline, execution, observation and cancellation documents.
+- Added a typed `AiSdkClient` surface for publication, submission, observation, result retrieval and cooperative cancellation.
+- Added deterministic materialization of wire defaults so TypeScript requests preserve the public contract defaults used by the .NET SDK.
+- Added fail-closed response schema-version validation and normalized SDK exceptions for transport-returned errors.
+- Added a Streamable HTTP MCP transport over the existing public MCP tool boundary.
+- Pinned the official `@modelcontextprotocol/client` transport dependency to `2.0.0`.
+- Added transport-owned authorization credential injection without serializing credentials into business payloads.
+- Added a static credential provider for simple TypeScript client scenarios.
+- Restricted automatic transport retry to observation and result safe-read operations.
+- Added `AbortSignal` propagation for cancellation of the in-flight MCP call without changing durable execution cancellation semantics.
+- Added a Node.js `>=20` runtime floor derived from the MCP client dependency, without an artificial Node 22/24 restriction or experimental TypeScript runtime flags.
+- Added focused TypeScript client and transport tests plus source/protocol dependency-boundary validation.
+
+### Compatibility
+
+- TypeScript enum literals preserve the existing public JSON string values.
+- Optional public fields remain omitted when absent, while contract-defined collection/default fields are materialized before transport dispatch.
+- The SDK remains independent from runtime, control-plane, persistence, worker, queue, lease, epoch and journal implementation types.
+- The TypeScript SDK invokes the existing MCP public boundary and does not add an HTTP/REST execution boundary.
+
+### Current limitations
+
+- Live external .NET and TypeScript client-to-server MCP integration remains to be exercised in the multi-language validation matrix.
+- Package publication, install smoke tests and cross-language JSON parity remain to be validated before branch closure.
+
+## Python external SDK
+
+### Added
+
+- Added portable Python dataclass contract models for publication, pipeline, execution, observation and cancellation documents.
+- Added typed string enums that preserve the public JSON enum literals shared by the .NET and TypeScript SDKs.
+- Added a typed asynchronous `AiSdkClient` surface for publication, submission, observation, result retrieval and cooperative cancellation.
+- Added deterministic wire-model serialization with camel-case field names, omission of absent optional values and materialization of contract defaults.
+- Added fail-closed request and response schema-version validation, including rejection of responses that omit `schemaVersion`.
+- Added a Streamable HTTP MCP transport over the existing public MCP tool boundary.
+- Added transport-owned authorization credential injection without serializing credentials into business payloads.
+- Added a static credential provider for simple Python client scenarios.
+- Restricted automatic transport retry to observation and result safe-read operations.
+- Preserved task cancellation as cancellation of the in-flight client call only; durable execution cancellation remains an explicit SDK operation.
+- Added focused Python client, transport and protocol/dependency-boundary validation using the standard-library test runner.
+- Added Python package metadata for independent installation on Python 3.10 or later.
+
+### Compatibility
+
+- Python enum values and camel-case wire names preserve the existing public JSON contract.
+- Optional public fields are omitted when absent, while contract-defined collection/default fields are serialized explicitly.
+- The SDK remains independent from runtime, control-plane, persistence, worker, queue, lease, epoch and journal implementation types.
+- The Python SDK invokes the existing MCP public boundary and does not add an HTTP/REST execution boundary.
+
+## Cross-language contract parity
+
+### Added
+
+- Added one language-neutral parity fixture consumed by the .NET, TypeScript and Python SDK validation suites.
+- Added cross-language checks for protocol version, operation names, schema versions, enum literals, full request wire shapes, minimal defaults and response models.
+- Added structural JSON parity checks that ignore object-property order while preserving exact field names, values and omission behavior.
+- Added normalized error-semantics parity checks across the three SDK clients.
+- Expanded external SDK source firewalls to cover tenant, run, runtime-instance, worker, claim, assignment-epoch and control-plane identity terms.
+- Added canonical parity validation documentation and an isolated package build/install/import smoke runner for .NET, TypeScript and Python artifacts.
+
+### Fixed
+
+- Aligned TypeScript optional execution-input handling with .NET and Python so a top-level `null` input is omitted rather than emitted as a distinct request shape.
+- Clarified canonical null handling: absent optional contract fields are omitted, while explicit JSON payload objects may contain JSON `null` values.
+- Fixed the generated .NET package-smoke consumer to import `System` explicitly instead of relying on implicit global usings.
+
+### Compatibility
+
+- No scheduler, queue, recovery, journal, lease/epoch, publication-pinning or result-acceptance authority was added or changed.
+- External SDKs continue to target the existing MCP public boundary and remain independent from runtime/control-plane implementation contracts.
+- Live client-to-server transport combinations remain intentionally outside this branch closure and are validated by the multi-language runtime matrix.
+
+---
+
+## 0.0.9.2 - 2026-09-16 - Public SDK Boundary
+
+
+- Added a dedicated `Multiplexed.AI.Sdk.Contracts` assembly as the public SDK wire-contract boundary.
+- Kept the public contract assembly independent from runtime, control-plane, persistence, transport, hosting and infrastructure projects.
+- Added a build-time dependency firewall that rejects repository project references and package references from the public contract assembly.
+- Added boundary tests that reject engine/infrastructure assembly coupling and keep exported contract types under the public SDK contract namespace.
+- Added the public contract and boundary-test projects to the main .NET solution under the existing `src` and `Tests` solution folders.
+- Added versioned portable pipeline, step, execution and invocation wire models without reusing engine CLR models.
+- Added versioned public pipeline publication request and response contracts.
+- Added portable custom declaration call-site identity including nested Child DAG definition paths and ordered policy indices.
+- Added deterministic dependency-package descriptors for Python wheel, Node locked-source and .NET managed-assembly closures.
+- Represented public source/dependency content as explicit Base64 text rather than CLR byte arrays.
+- Represented extensible pipeline input/config values as JSON values rather than arbitrary CLR objects.
+- Added JSON roundtrip and reflection validation for stable property names, string enum values and public CLR leakage prevention.
+- Added versioned public execution submission request/response contracts using immutable publication references and durable execution identity.
+- Added caller idempotency and correlation fields without exposing shared/local run identifiers or runtime placement.
+- Added portable execution observation and step-observation contracts with independent string lifecycle enums.
+- Added portable terminal execution result and sanitized failure contracts using JSON values rather than arbitrary CLR objects.
+- Added cooperative cancellation request/response contracts that distinguish cancellation request acceptance from terminal execution cancellation.
+- Added reflection and JSON validation preventing worker, runtime-instance, claim, lease and epoch identities from entering the new public contract areas.
+
+## Compatibility
+
+- No existing runtime, publication, DAG, recovery, worker, MCP or control-plane contract is changed by this branch.
+- Existing `Multiplexed.Abstractions` remains a server/runtime abstraction assembly and is not promoted to an SDK dependency.
+- Public pipeline and publication models have independent schema versions and explicit JSON property names.
+- Internal enum numeric values, storage identities and runtime implementation details are not part of the public wire contract.
+- Submission, observation, result and cancellation wire contracts are transport-neutral; no HTTP or gRPC endpoint is introduced yet.
+
+## Validation
+
+- The public contract project remains BCL-only with no project/package references.
+- The dependency firewall remains enforced during project build.
+- Boundary tests validate the compiled assembly reference graph independently of the MSBuild guard.
+- Pipeline tests validate roundtrip of DAG mode, invocation descriptors, dependencies and JSON config/input.
+- Publication tests validate nested call-sites, deterministic package descriptors, explicit Base64 content and stable publication responses.
+- Reflection tests reject public `object` and `byte[]` properties from the new portable contract areas.
+- Execution-contract tests validate idempotency/correlation roundtrips, JSON input/output, string lifecycle statuses and absence of shared/local/runtime placement identifiers.
+- Observation tests validate stable step progress while rejecting distributed claim, lease and recovery metadata.
+- Cancellation tests validate asynchronous/cooperative semantics without exposing server ownership fields.
+
+## Limitations
+
+- External .NET, TypeScript and Python SDK client libraries remain outside this branch.
+- Generated HTTP/gRPC client surfaces are not introduced by this branch.
+- Public runtime-instance, worker, lease/epoch, recovery and infrastructure administration remain intentionally excluded.
+
+### Server boundary and compatibility
+
+- Add explicit server-side mapping from dependency-free SDK publication/pipeline contracts into existing engine publication contracts.
+- Add public MCP operations for immutable publication, published execution submission, logical observation and cooperative cancellation.
+- Derive tenant/control-plane scope from the authenticated server context; public request bodies do not carry tenant ownership or runtime placement.
+- Route execution submission through the existing published-run pinning service and shared runtime controller rather than introducing a queue or scheduler.
+- Project logical execution and step status without exposing shared/local run ids, runtime instance ids, worker ids, claims, leases or epochs.
+- Reject unsupported public schema versions and malformed Base64 input explicitly before invoking server publication.
+- Exposed authorized publication-definition and immutable run-pin reads through the existing publication services for the public server adapter.
+
+### Boundary closure
+
+- Add closure reflection tests that reject server-owned identity names from exported SDK contract properties.
+- Add closure validation that exported SDK property types remain portable and do not expose `object`, `byte[]`, `Exception` or `Type`.
+- Add server-boundary reflection tests that keep the public adapter interface limited to SDK contract types, strings and cancellation tokens.
+- Add MCP boundary validation for the existing submit, read and cancel capability gates.
+- Add explicit closure documentation and a validation matrix covering dependency isolation, wire compatibility, publication authorization and immutable submission semantics.
+- Keep immutable submission convergence/conflict behavior delegated to the existing published-run pinning authority rather than duplicating idempotency logic in the public boundary.
+
+---
+
+## 0.0.9.1 - 2026-09-16 — Durable MCP Effect Evidence
+
+## Durable Effect Evidence Foundation
+
+### Added
+
+- Add a durable outbound MCP effect evidence model separate from the hosted-function invocation journal and DAG state.
+- Persist one immutable logical intent per tenant-scoped `EffectId`, including the existing effect schema, request digest, trusted invocation context, exact connection reference/revision, tool and bounded resolved arguments.
+- Keep physical request id and deadline outside the immutable intent so claim replacement and host replacement do not create a new logical effect.
+- Add explicit evidence states for `Prepared`, `Dispatching`, `Completed` and `Uncertain` without granting any state authority to an MCP worker or remote tool.
+- Add explicit physical-attempt, confirmed-result and uncertainty evidence records.
+- Add a MongoDB persistence boundary with majority reads, majority journaled writes, tenant-scoped unique effect identity and revision CAS.
+- Add reconciliation discovery for uncertain records and old `Dispatching` records. Discovery grants no automatic re-emission authority.
+- Add explicit DI registration reusing the host `IMongoDatabase` and optional `TimeProvider`.
+
+### Behavior and Compatibility
+
+- Preserve the existing outbound MCP transport and step adapter behavior in this foundation delivery; no network request is gated or retried by the new store yet.
+- Preserve the existing `EffectId` and `RequestDigest` algorithms as the logical identity and canonical-intent authority.
+- Reject the same logical `EffectId` with different frozen intent instead of overwriting the first durable record.
+- Keep endpoint URIs, credentials, secret headers, worker identities, claim tokens and deadlines out of durable logical intent.
+- Keep confirmed MCP tool errors distinct from uncertain outcomes: a remote `isError` response is still a known result and can be stored as completed evidence.
+- Allow only the bounded evidence transitions `Prepared -> Dispatching`, `Dispatching -> Completed`, `Dispatching -> Uncertain`, and `Uncertain -> Completed`.
+- Do not introduce a scheduler, retry engine, DAG transition authority or provider-recognized idempotency claim.
+
+### Validation
+
+- Add pure preparation tests proving attempt/deadline changes do not change durable intent, changed intent under one effect identity is rejected, historical effectless envelopes cannot create stronger evidence, and tenant scope remains explicit.
+- Add opt-in MongoDB integration tests for concurrent unique preparation, conflicting-intent protection, revision CAS and tenant-scoped reconciliation discovery.
+
+### Limits
+
+- This foundation does not yet place the durable dispatch fence in front of the real outbound MCP network call.
+- It does not automatically retry or suppress existing MCP calls until the next integration delivery consumes the evidence lifecycle.
+- No claim of exactly-once external side effects is made. A remote system still requires its own idempotency or reconciliation capability for stronger guarantees.
+
+## Durable Dispatch Fence and Confirmed Result Replay
+
+### Added
+
+- Add `AiDurableMcpToolTransport` as a bounded decorator around the existing physical MCP transport.
+- Add a revision-CAS dispatch fence that transitions `Prepared -> Dispatching` before the physical `tools/call` boundary.
+- Add durable confirmed-result acceptance before a normalized MCP response is returned to the existing DAG path.
+- Add local replay of `Completed` evidence without a second external tool invocation while rebinding only the current internal physical request id.
+- Add explicit fail-closed handling for existing `Dispatching` and `Uncertain` evidence.
+- Add conditional host integration so the existing outbound MCP registration uses the durable decorator when an `AiMcpEffectEvidenceJournal` is installed.
+
+### Behavior and Compatibility
+
+- Preserve the existing physical MCP transport, server-owned connection catalog, RBAC path, DAG execution path and retry/recovery authorities.
+- Grant outbound network authority only to the caller that wins the `Prepared -> Dispatching` CAS.
+- Keep concurrent CAS losers from invoking the remote tool; they reload authoritative evidence and either replay `Completed` or fail closed.
+- Keep expired requests in `Prepared`; no dispatch attempt is recorded when the deadline has already elapsed before the durable fence.
+- Conservatively record post-fence physical transport failures as `Uncertain` when persistence remains available.
+- Leave evidence as `Dispatching` when runtime cancellation or evidence persistence prevents an uncertainty transition; both states forbid blind re-emission.
+- Refuse historical schema-1 effectless envelopes when the durable decorator is active instead of silently bypassing the fence.
+- Preserve the original physical attempt and response in durable evidence when a later logical replay uses a new request id.
+
+### Validation
+
+- Add deterministic tests proving the dispatch fence is visible before the substituted physical transport is entered.
+- Add completed-result replay proof showing two physical request ids produce one external invocation.
+- Add concurrent same-effect proof showing only one caller can cross the physical transport boundary.
+- Add transport-failure proof showing `Uncertain` blocks a later blind re-emission.
+- Add expired-deadline proof showing no dispatch authority and no physical invocation.
+- Add DI-selection proof showing the existing outbound MCP registration resolves the durable decorator when the journal is installed.
+
+### Limits
+
+- Physical transport failures are still classified conservatively after the durable fence; no distinction is yet made between definitively-not-sent and possibly-sent failures.
+- `Dispatching` and `Uncertain` records are not automatically reconciled or retried.
+- No provider idempotency-key, provider query or compensating-action contract is introduced by this change.
+
+## Physical Outcome Classification and Explicit Reconciliation
+
+### Added
+
+- Add a one-way MCP `tools/call` boundary contract that lets the durable wrapper distinguish a confirmed pre-call failure from a failure after the business call may have been emitted.
+- Make the real Streamable HTTP outbound transport mark the possibly-sent boundary immediately before `CallToolAsync`; target resolution, client/session setup and argument preparation remain before that mark.
+- Add durable `NotSent` evidence with a bounded non-emission reason for a physical attempt that is confirmed not to have crossed the business-call boundary.
+- Add `IAiMcpEffectReconciliationProvider` and `AiMcpEffectReconciliationService` for explicit provider/tool reconciliation without reissuing the original `tools/call`.
+- Add reconciliation outcomes for confirmed normalized result, confirmed non-emission and still-unknown state.
+- Register the reconciliation service with the existing durable evidence opt-in while keeping providers explicit.
+
+### Behavior and Compatibility
+
+- Preserve the existing `IAiMcpToolTransport` contract. Boundary classification is optional; transports without the richer boundary contract remain conservatively possibly-sent.
+- Preserve direct outbound MCP behavior when the durable decorator is not installed.
+- Record classified pre-`tools/call` failures as `NotSent` when the evidence store remains available.
+- Continue to record failures after the boundary mark as `Uncertain`; cancellation or evidence-store failure may leave `Dispatching`, which remains fail-closed.
+- Keep `Completed` replay local and prevent `NotSent`, `Dispatching` and `Uncertain` from granting automatic outbound redelivery.
+- Permit explicit reconciliation of `Dispatching` or `Uncertain` evidence to `Completed` or `NotSent`; an unknown reconciliation leaves or creates `Uncertain` evidence.
+- Require exactly one reconciliation provider for the frozen connection/tool intent. No provider and ambiguous provider selection fail without issuing a business call.
+- Keep the original physical attempt immutable across reconciliation.
+
+### Validation
+
+- Add deterministic classification tests proving failure before the business boundary becomes `NotSent`, failure after the boundary becomes `Uncertain`, and an unclassified transport remains conservative.
+- Add real outbound-transport boundary tests proving exact-target rejection occurs before the boundary mark and a real loopback `tools/call` crosses it.
+- Add reconciliation tests for confirmed result, confirmed non-emission, unknown outcome, unsupported provider and ambiguous provider selection.
+- Prove a reconciled completed result is replayed without invoking the physical transport again.
+- Add opt-in MongoDB roundtrip coverage for persisted `NotSent` evidence.
+
+### Limits
+
+- `NotSent` is evidence, not retry authority. This delivery does not automatically redeliver a confirmed non-emitted effect.
+- Reconciliation providers are explicit contracts; no universal provider-side idempotency, generic remote lookup or compensating action is invented.
+- No automatic reconciliation scanner is introduced. Candidate discovery remains separate from explicit reconciliation execution.
+- Real crash-after-send and provider-specific reconciliation failure injection remain for the adversarial validation delivery.
+
+## Recovery, Restart and Adversarial Validation
+
+### Added
+
+- Add deterministic crash-boundary proofs for a remote MCP result followed by a failed durable completion write.
+- Add ambiguous-write proof where completion is durably committed but the persistence acknowledgement is lost; a reconstructed runtime replays the committed result without a second outbound call.
+- Add restart proof for a process loss after `Prepared -> Dispatching` but before the physical business call.
+- Add concurrent reconciliation proof showing revision CAS converges multiple reconciliation attempts on one authoritative terminal record.
+- Add tenant-scope recovery isolation proof that a mismatched tenant group cannot observe or reconcile another scope's effect.
+- Add opt-in MongoDB restart tests using reconstructed store/journal instances over the same durable records.
+
+### Behavior and Compatibility
+
+- Preserve fail-closed behavior when a remote result exists but durable `Completed` evidence cannot be authoritatively confirmed. A restarted runtime does not infer success and does not re-emit from `Dispatching`.
+- Preserve local replay when `Completed` was committed even if the caller observed an ambiguous persistence failure.
+- Preserve `Dispatching` after a crash between durable dispatch authority and the physical call; restart alone does not grant a second attempt.
+- Preserve explicit reconciliation as evidence resolution only. A reconciled `NotSent` state remains non-redeliverable by the MCP evidence layer.
+- Preserve tenant and tenant-group scope as part of the durable evidence address during recovery.
+- Preserve the existing DAG, retry, recovery, journal lease/epoch and worker ownership authorities; no automatic reconciliation scanner or competing recovery scheduler is introduced.
+
+### Validation
+
+- Prove no second physical call after a completion write fails before commit.
+- Prove no second physical call when a completion write commits but its acknowledgement is lost.
+- Prove reconstructed journals keep `Dispatching` fail-closed until explicit reconciliation.
+- Prove concurrent reconciliation of the same confirmed result converges on one `Completed` revision.
+- Prove wrong-scope reconciliation fails before the provider is called.
+- Add opt-in MongoDB proofs that `Dispatching` remains a reconciliation candidate after journal reconstruction and `Completed` remains replayable without physical transport.
+
+### Limits
+
+- Crash safety is achieved by refusing blind re-emission, not by claiming generic exactly-once behavior in the external MCP provider.
+- A stranded `Dispatching` or `Uncertain` effect still requires an explicit provider/tool reconciliation contract or operator resolution.
+- `NotSent` remains evidence only and does not grant automatic retry authority.
+- This change does not add background scanning, provider-specific idempotency keys, compensation workflows or DAG recovery decisions.
+
+## Documentation and Branch Closure
+
+### Added
+
+- Add a final validation matrix covering logical effect identity, immutable intent, dispatch fencing, concurrency, confirmed replay, outcome classification, explicit reconciliation, restart behavior and tenant-scoped evidence access.
+- Add branch-closure documentation that separates deterministic runtime evidence, real outbound MCP boundary evidence and opt-in MongoDB persistence evidence.
+- Document final authority boundaries and the exact guarantees attached to `Completed`, `NotSent`, `Uncertain` and stale `Dispatching` states.
+
+### Behavior and Compatibility
+
+- Freeze the branch rule that durable MCP evidence never grants automatic redelivery authority for `NotSent`, `Dispatching` or `Uncertain` effects.
+- Preserve the existing DAG, retry, recovery, lease/epoch, publication and continuation authorities as external to the MCP evidence layer.
+- Preserve direct outbound MCP behavior when durable effect evidence is not configured.
+- Preserve explicit reconciliation as evidence resolution only; reconciliation cannot reissue the original business `tools/call`.
+
+### Validation
+
+- Define the deterministic durable-MCP suite as the primary branch validation.
+- Define the existing outbound MCP suite as compatibility and real transport-boundary validation.
+- Keep MongoDB persistence validation explicitly opt-in and do not count skipped or unconfigured infrastructure tests as passing evidence.
+
+### Limits
+
+- Do not claim generic exactly-once external side effects.
+- Do not claim provider-specific reconciliation, idempotency or compensation behavior without explicit provider/tool integration evidence.
+- Do not add a background reconciliation scanner, automatic MCP retry loop or competing recovery authority as part of branch closure.
+
+---
+
+## 0.0.9.0 - 2026-09-16 — Multilanguage Hosted Worker Isolation
+
+### Isolated Provider Contract and Admission
+
+### Added
+
+- Add a separate OCI-backed worker profile contract for the isolated hosted-worker provider. The existing trusted-process provider is not reclassified or upgraded.
+- Select the first isolated provider target as Linux amd64 with an exact OCI image-manifest artifact, `SandboxedContainer`, `DenyAll`, and `SealedClosure`.
+- Add `AiContainerWorkerResourceLimits` for server-owned CPU millicores, memory bytes, process-count and writable-workspace bounds.
+- Add `AiContainerWorkerProfile` with exact container-engine executable identity, explicit engine environment, approved host launch roots, immutable execution descriptor, server-owned image repository and explicit non-root numeric container user.
+- Compose the executable OCI image reference from the server-owned repository plus the immutable manifest digest stored in the existing execution descriptor. Mutable tags and tenant-supplied digest/repository combinations are rejected.
+- Add `IAiContainerWorkerCatalog` and `AiConfiguredContainerWorkerCatalog` for exact runtime-profile resolution without `latest`, language fallback or mutable tenant registration.
+- Add `AiContainerWorkerExecutionAdmission` as the isolated-provider pre-launch capability guard.
+
+### Behavior and Compatibility
+
+- Preserve `AiWorkerExecutionAdmission.ProcessCapabilities` as `HostRuntime` / `TrustedProcess` / `HostNetwork` / `ValidatedPaths`.
+- Do not report the trusted-process provider as satisfying sandbox, denied-egress or sealed-closure requirements.
+- Keep the OCI image-manifest digest distinct from the canonical environment-document hash and historical runtime SHA-256.
+- Refuse descriptor-free legacy execution and unsupported isolation/network/path combinations on the isolated provider.
+- Preserve publication pinning, deterministic dependency packaging, RBAC, durable invocation journal, leases/epochs, worker protocol, DAG transitions, recovery and continuation.
+
+### Validation
+
+- Add targeted provider-contract and admission coverage without claiming container enforcement from declarations alone.
+
+### Limits
+
+- The initial isolated provider target is Linux amd64 only.
+- `PinnedPolicy` egress, OCI registry access, image pulling, Kubernetes and additional platforms remain outside this bounded target.
+
+## OCI Container Transport and Exact Image Launch
+
+### Added
+
+- Add `AiContainerWorkerLaunchPlan` as a pure server-owned launch projection for one exact immutable OCI image reference.
+- Add `AiContainerWorkerTransport` implementing the existing `IAiWorkerInvocationTransport`; the durable supervisor, journal, leases, epochs and result acceptance remain unchanged.
+- Launch only `<repository>@sha256:<manifest-digest>` with `--pull=never`; no mutable tag, registry fallback or implicit image update is accepted.
+- Reuse the existing private newline-framed worker protocol over redirected container-engine stdin/stdout.
+- Verify the configured container-engine executable digest and approved host launch paths before starting the engine process.
+- Clear inherited engine environment and pass only explicit host-owned values.
+- Generate a server-owned opaque container name without tenant or execution identity.
+- Carry initial isolation controls into the launch: non-root user, denied network, read-only root filesystem, dropped capabilities, no-new-privileges, bounded pids/memory/CPU and bounded memory-backed `/tmp`.
+- Add deterministic direct cleanup and explicit force removal after interrupted attached execution.
+- Surface unconfirmed cleanup through the existing `AiWorkerProcessCleanupException` so capacity remains quarantined by the existing supervisor.
+
+### Fixed
+
+- Resolve the build-owned container-engine probe apphost with an explicit `.exe` path on Windows and the extensionless apphost path on non-Windows platforms instead of relying on `$(ExeExtension)`.
+
+### Validation
+
+- Add a build-owned Docker-compatible engine probe for exact process arguments, private protocol correlation, engine digest refusal, deadline handling, cancellation cleanup and cleanup-failure signaling.
+
+### Limits
+
+- Argument selection and a process probe are not by themselves proof of kernel/container enforcement.
+- Exact images must already be available to the configured engine; image acquisition remains deliberately absent.
+
+## Applied Isolation Attestation and Fail-Closed Enforcement
+
+### Added
+
+- Add `AiContainerWorkerIsolationAttestation` to verify the running container state reported by the configured engine before tenant invocation bytes are released to the worker.
+- Require exact attestation of the immutable OCI image reference and configured non-root numeric `uid:gid`.
+- Require the applied root filesystem to be read-only, non-privileged and configured for automatic removal.
+- Require applied `NetworkMode=none` before the worker receives its invocation request.
+- Require applied memory, memory+swap, CPU and PID bounds to equal the server-owned `AiContainerWorkerResourceLimits`.
+- Add `--memory-swap=<memory-limit>` so the selected provider does not silently expand the memory bound through additional swap allowance.
+- Require no host bind mounts and no added Linux capabilities.
+- Require `CapDrop=ALL` and `no-new-privileges` in the applied container state.
+- Require the only writable filesystem surface represented by the provider contract to be `/tmp` as a bounded `tmpfs` with `noexec`, `nosuid`, `nodev` and the exact configured size.
+- Reject persistent or host-backed mounts other than the selected `/tmp` tmpfs representation.
+- Delay writing the existing `AiWorkerInvocationRequest` until the running container passes attestation. The host-owned worker process may start, but tenant code/input is not released through stdin before verification succeeds.
+- Add bounded container inspection through the same verified engine executable and explicit engine environment used for launch and cleanup.
+- Extend the build-owned engine probe with an `inspect` surface so tests can prove request-release ordering and fail-closed behavior for applied-state mismatches.
+
+### Behavior and Compatibility
+
+- Keep `AiContainerWorkerExecutionAdmission` as the pre-launch requirements/capability guard; runtime attestation is an additional post-launch/pre-request gate, not a replacement.
+- Preserve the existing worker protocol, supervisor, durable journal, assignment authority, RBAC, publication pinning, DAG lifecycle, recovery and continuation.
+- Preserve the trusted-process provider unchanged; it still does not satisfy `SandboxedContainer`, `DenyAll` or `SealedClosure`.
+- If runtime inspection cannot identify the launched container before the existing startup bound, execution fails closed and direct cleanup is attempted.
+- If applied isolation differs from the profile, the request is never written and the container is terminated/removed through the existing cleanup path.
+- Runtime attestation trusts the deployment-owned engine as infrastructure; it does not treat tenant code or the publication as an authority over isolation controls.
+
+### Validation
+
+- Add targeted coverage proving successful invocation only after the engine probe has completed isolation inspection.
+- Add fail-closed mismatch coverage for network mode, read-only root, memory, memory+swap, CPU quota, PID limit, tmpfs options/size, user identity, privileged mode, capability drop, no-new-privileges, image identity, host binds and automatic removal.
+- Verify attestation failure occurs before the probe receives the tenant invocation request.
+- Verify unexpected persistent mounts are rejected by the attestation parser.
+- Preserve existing cancellation and cleanup-failure coverage through the attested launch path.
+
+### Limits
+
+- The engine probe models Docker-compatible inspection state; it is not a kernel isolation proof.
+- Real-engine adversarial tests for outbound connectivity, rootfs writes, writable-workspace exhaustion, CPU/memory pressure, PID exhaustion, descendant containment and host-loss cleanup remain required before branch closure.
+- The initial provider continues to support only `DenyAll`; immutable pinned egress policies remain deferred.
+
+## Provider Routing and Lifecycle Integration
+
+### Added
+
+- Add `AiWorkerInvocationTransportRouter` behind the existing `IAiWorkerInvocationTransport` boundary so the durable supervisor and hosted policy transports remain provider-agnostic.
+- Select the trusted-process or isolated-container provider only from the immutable execution descriptor restored with the prepared code bundle.
+- Keep descriptor-free historical execution on the explicit trusted-process compatibility path.
+- Route `HostRuntime` artifacts to the trusted-process provider and `OciImage` artifacts to the isolated provider. An unavailable OCI profile cannot fall back to trusted-process execution.
+- Add explicit `AddAiHostedInvocationContainerWorkers` registration that composes only with the default hosted process transport, installs one router and preserves the existing shared supervisor/capacity boundary.
+- Refuse duplicate isolated-provider configuration and refuse silent replacement of an unknown preconfigured worker transport.
+- Add `--init` to the selected OCI launch and require applied PID-1 init/reaping through runtime attestation before request release.
+
+### Fixed
+
+- Treat exit of an interrupted attached container-engine client as insufficient proof of container cleanup. Abnormal or cancelled execution continues to require direct container removal, and unconfirmed removal retains the existing shared-capacity quarantine behavior.
+- Keep provider/supervisor integration tests on one shared `TimeProvider`, matching production dependency injection and preventing deterministic journal clocks from being compared against wall-clock transport deadlines.
+
+### Behavior and Compatibility
+
+- Preserve `AiWorkerInvocationSupervisor` as the only durable dispatch owner. Provider routing occurs after immutable preparation and does not change operation identity, worker lease/epoch, result acceptance or continuation behavior.
+- Preserve one process-wide `AiWorkerProcessCapacity` across trusted-process and isolated-container invocations. Provider selection does not create a second capacity authority.
+- Preserve existing cleanup-quarantine behavior. An unconfirmed isolated-container cleanup still surfaces as `AiWorkerProcessCleanupException` and permanently withholds the acquired shared capacity slot until host recovery.
+- Preserve the trusted-process provider unchanged for historical and explicitly trusted `HostRuntime` environments.
+- Do not downgrade an OCI/sandbox request when the isolated provider or exact runtime profile is unavailable.
+- Require the container runtime to report applied init/reaping support in addition to the previously attested isolation controls.
+
+### Validation
+
+- The preceding applied-isolation enforcement target has a reported passing target-environment result. No raw TRX artifact is included, so no aggregate pass total is inferred.
+- Add provider-selection coverage for descriptor-free trusted-process compatibility and exact OCI routing.
+- Add registration coverage proving one router is installed behind the existing transport contract and duplicate/unknown transport composition fails closed.
+- Add supervisor integration coverage proving isolated execution persists its authoritative result through the existing journal and releases the shared slot after confirmed cleanup.
+- Add cleanup-failure integration coverage proving an isolated-container cleanup failure yields `CapacityQuarantined`, retains the invocation for reconciliation and leaves the shared slot quarantined.
+- Extend applied-isolation tests with required PID-1 init/reaping attestation and fail-closed mismatch coverage.
+
+### Limits
+
+- PID-1 init/reaping and container PID namespace confinement do not by themselves prove operating-system host-crash orphan cleanup.
+- Startup reconciliation of containers left by an abruptly terminated runtime host and real-engine descendant/resource adversarial tests remain branch-closure work.
+
+## Adversarial Isolation Closure and Restart Reconciliation
+
+### Added
+
+- Add an explicit server-owned container owner scope to isolated worker profiles. The scope is physical provider configuration and is not derived from tenant, execution, publication or operation identity.
+- Label every OCI worker with a managed-worker marker and the exact configured owner scope.
+- Require both ownership labels in applied-state attestation before tenant request bytes are released.
+- Add one fail-closed stale-container reconciliation per container-engine/owner-scope pair before the first isolated launch in a transport lifetime.
+- Enumerate only containers carrying both provider labels and require returned names to remain in the server-generated `multiplexed-ai-*` namespace before force removal.
+- Reuse `AiWorkerProcessCleanupException` when startup enumeration or stale cleanup cannot be confirmed, preserving the existing supervisor capacity-quarantine authority.
+- Add explicit cleanup of an in-flight engine inspection subprocess when startup attestation is cancelled.
+- Extend the independent container-engine probe with startup enumeration, owner-label inspection, delayed inspection, engine-client loss and packaged-dependency wire evidence.
+- Add adversarial provider tests for startup stale cleanup, fail-closed reconciliation, cancellation during attestation, engine-client loss and Python/TypeScript/.NET package metadata compatibility.
+- Add opt-in real Docker-compatible engine tests for applied inspection state, denied outbound networking, read-only root filesystem, writable bounded `/tmp`, non-root identity, zero effective capabilities, no-new-privileges, CPU/memory/PID cgroup bounds and descendant removal.
+- Add a repository-owned Linux/amd64 isolation fixture Dockerfile and PowerShell preparation script. The script resolves the fixture base to an exact digest, builds and publishes through a loopback test registry, preloads the resulting exact OCI manifest reference and can execute the opt-in real-engine matrix without weakening `--pull=never` runtime behavior.
+
+### Behavior and Compatibility
+
+- Keep stale-container reconciliation strictly physical. It does not read or mutate durable invocation state, choose recovery work, change leases/epochs, accept results or select continuation behavior.
+- Preserve the existing `AiWorkerInvocationSupervisor`, durable journal, shared `AiWorkerProcessCapacity`, publication/run pinning, RBAC, DAG lifecycle and recovery authorities.
+- Require the owner scope to be stable across restart of one physical runtime host and exclusive among simultaneously active hosts sharing the same container engine.
+- Preserve `--pull=never` and exact OCI manifest selection. Real-engine validation requires the exact image to be present before execution.
+- Preserve deterministic dependency package identities. The isolated transport forwards the already-validated `PythonWheelBundle`, `NodeLockedBundle` and `DotNetAssemblyClosure` metadata without introducing runtime package resolution.
+
+### Fixed
+
+- Prevent cancellation during applied-state inspection from leaving the inspection control process unreaped.
+- Preserve direct container cleanup after abnormal attached engine-client loss even when applied-state inspection completed immediately before the client exited.
+
+### Validation
+
+- The targeted provider lifecycle integration tests for the preceding delivery were reported passing in the target environment; no raw TRX artifact is included, so no aggregate pass total is inferred.
+- Add build-owned probe coverage for startup reconciliation ordering, cleanup failure, unexpected stale identity, startup cancellation, abnormal engine-client exit and owner-label attestation.
+- Add transport-boundary compatibility coverage for all three deterministic dependency package kinds.
+- Add explicit `ContainerRealEngine` tests. These tests are skipped unless `MULTIPLEXED_AI_TEST_CONTAINER_ENGINE` and `MULTIPLEXED_AI_TEST_CONTAINER_IMAGE` are configured; a skip is not treated as enforcement evidence.
+- Add a one-command `Prepare-RealEngineTestImage.ps1 -RunTests` path for preparing the exact local fixture image and executing the real-engine evidence target. Mutable image acquisition remains outside worker execution.
+- Resolve the container-engine probe apphost from the actual SDK build outputs instead of relying on an inherited `OS` environment property, preserving Windows `.exe` discovery when the probe target is invoked through nested MSBuild.
+- Add a Windows `.cmd` launcher that applies `ExecutionPolicy Bypass` only to the child PowerShell process, allowing repository-owned test setup to run under restrictive local PowerShell execution policies without changing machine or user policy.
+- Make the real-engine preparation helper compatible with Windows PowerShell 5.1 native stderr semantics so expected failed discovery probes can be inspected without being promoted to terminating PowerShell errors.
+
+### Limits
+
+- The selected isolated provider remains Linux/amd64 with `DenyAll` networking and `SealedClosure` filesystem semantics.
+- The container engine and its daemon remain trusted deployment infrastructure.
+- A machine or container-daemon outage cannot be reconciled while that infrastructure is unavailable; stale owned containers are reconciled before the next isolated launch after engine availability returns.
+- Concurrent runtime hosts sharing one engine must use distinct owner scopes. Reusing one owner scope across simultaneously active hosts is unsupported.
+- Real-engine tests require a preloaded exact image containing `/bin/sh` and basic BusyBox/Alpine-compatible utilities. They validate the selected container boundary, not arbitrary OCI runtimes or platforms.
+- No universal hostile-code, throughput or cross-platform guarantee is made.
+
+---
+
+## 0.0.8.9 - 2026-09-16 — Multilanguage — Custom policy family capability contracts
+
+### Custom policy family capability contracts
+
+#### Added
+
+- Add a finite server-side capability matrix covering every currently declared `AiPolicyKind` value exactly once.
+- Classify `Concurrency` as hosted, `Retry` and `Delegation` as contract-defined, `Retention` as native-only, and `Timeout`, `CircuitBreaker`, `RateLimit`, `Validation`, and `Routing` as taxonomy entries without independent runtime checkpoints.
+- Add explicit `concurrency/v1`, `retry/v1`, and `delegation/v1` contract identifiers. The new contracts remain server-side transport contracts and are not public SDK wire models.
+- Add a portable `retry/v1` request containing bounded execution/step identity, retry counters, failure classification fields, policy configuration, immutable implementation identity, and a server deadline. Exclude exception objects, services, stores, mutable execution state, RBAC snapshots, and retry-transition authority.
+- Add a closed `retry/v1` response contract with `pass`, `retry`, and `stop` decisions. Permit a bounded `suggestedDelayMs` only for `retry`; require a reason for `stop`; reject unknown fields, wrong schema/family/correlation, and malformed values.
+- Add a portable `delegation/v1` request containing immutable parent-to-child logical identity before child allocation. Deliberately omit `ChildExecutionId`, relation mutation authority, and continuation/recovery commands.
+- Add a closed `delegation/v1` response contract with `approve` and `deny`; require a reason for denial and reject unknown or malformed response shapes.
+- Add `RetryPolicy` and `DelegationPolicy` immutable publication call-site kinds while preserving the historical values of `Step` and `ConcurrencyPolicy`.
+- Capture custom `Retry` and `Delegation` declarations through the existing content-addressed publication closure, including policy index, declaration scope, language resolution, immutable implementation/environment material, and nested Child DAG `DefinitionPath` when applicable.
+- Add 30 targeted source cases covering the capability matrix, request authority boundaries, closed response validation, immutable Retry/Delegation publication, and the distinction between publication support and hosted execution support.
+
+#### Behavior and compatibility
+
+- Preserve the existing hosted custom `Concurrency` path unchanged.
+- Preserve existing native `Retry`, `Delegation`, and `Retention` engines and checkpoints unchanged.
+- Keep `Retry` and `Delegation` hosted execution disabled in this change. Their current engines continue to reject custom declarations through the existing native-only guard until the corresponding contextual adapters are installed.
+- Do not infer runtime support from an `AiPolicyKind` enum value. Families without an independent checkpoint remain explicitly unavailable for custom publication/execution.
+- Keep `Retention` native-only because its engine coordinates full execution-state retention and physical compaction/eviction actions that are not represented by a short remote policy contract.
+- Preserve the existing retry engine as the authority for retry budget, backoff, jitter, delay selection, waiting transitions, and terminal failure. A future hosted Retry policy may classify or suggest; it cannot perform the transition.
+- Preserve the existing delegation coordinator and durable relation CAS as the authority for approval/denial persistence, child allocation, and parent continuation. A future hosted Delegation policy cannot allocate or resume a child execution.
+- Preserve existing RBAC, immutable publication, run pinning, Child DAG publication binding, hosted worker supervision, durable invocation journal, recovery, and continuation contracts.
+- Preserve the rule that missing custom capability never falls back to a native policy with the same name.
+
+#### Validation
+
+- Source-declared target inventory: 30 cases across `AiCustomPolicyFamilyContractTests` and `AiCustomPolicyFamilyPublicationTests`.
+- Update the historical unsupported-family publication test so `Retry` is no longer classified as an unsupported publication family; `Validation`, `Routing`, and `Retention` remain explicitly rejected as custom publication checkpoints.
+- No .NET build or test execution is claimed during preparation because the preparation environment does not provide the .NET SDK. Static checks cover changed-file boundaries, CRLF preservation, delimiter balance, family matrix completeness by inspection, and archive contents.
+
+#### Limits
+
+- No hosted Retry transport/adapter is installed yet.
+- No hosted Delegation transport/adapter is installed yet.
+- No additional policy family is enabled.
+- No second policy engine, scheduler, queue, retry state machine, Child DAG authority, recovery path, or public SDK model is introduced.
+- Dependency packaging, worker isolation, durable MCP effect evidence, public wire contracts, and external SDK libraries remain separately scoped work.
+
+### Hosted custom Retry policy execution
+
+#### Added
+
+- Activate `Retry` as a hosted custom policy family using the previously frozen `retry/v1` contract while retaining `DefaultAiRetryEngine` as the existing checkpoint and decision authority.
+- Add `IAiRetryPolicyTransport`, `AiRetryPolicyAdapterFactory`, and a contextual `AiRetryPolicyAdapter` that evaluates one custom Retry declaration without registering it as a native singleton policy.
+- Add `AiRetryPolicyBindingResolver` and non-serialized `RetryPolicyBindings` on resolved steps so step/pipeline declaration scope, order, effective language source, and immutable implementation reference survive plan resolution without introducing another durable binding format.
+- Add explicit hosted Retry registration for Python, TypeScript, and .NET through the existing `IAiWorkerInvocationTransport`. Registration remains opt-in and refuses missing worker/publication prerequisites and conflicting Retry transport/factory registration.
+- Add `IAiRetryPolicyCodePreparer` and `AiRetryPolicyPublicationPreparer` to restore the durable execution owner, apply the existing publication execute capability, and materialize the exact Retry implementation pinned to a root or published Child DAG execution.
+- Extend immutable policy-code materialization with exact `RetryPolicy` call-site selection, including declaration scope, owner step, execution language, implementation reference, immutable publication, and nested `DefinitionPath`.
+- Add a .NET hosted test function for a valid `retry/v1` retry recommendation and real Python, TypeScript, and .NET process coverage.
+- Add 39 targeted source cases covering contextual Retry binding, fail-closed technical errors, transport envelopes, registration, and immutable publication/ownership across all three hosted language identities.
+
+#### Behavior and compatibility
+
+- Preserve the existing retry engine as the sole owner of retry budget, backoff strategy, maximum delay, jitter, final delay, `WaitingForRetry`, and terminal failure transitions.
+- Interpret hosted `pass`, `retry`, and `stop` only as family-specific policy evidence. A worker cannot mutate retry counters, schedule another attempt, select DAG lifecycle transitions, or control recovery.
+- Preserve historical native Retry policy resolution through `IAiPolicyRegistry`. Custom declarations are never inserted into that registry and cannot fall back to a same-named native policy.
+- Preserve existing native multi-policy retry semantics. A hosted `stop` retains its typed reason while native blocking and retry-classification behavior remain unchanged.
+- Preserve effective configuration precedence: a step Retry section replaces the pipeline Retry section for that step; otherwise the pipeline declaration applies.
+- Preserve existing language hierarchy for custom policies: explicit policy language, declaring custom-step language when applicable, then pipeline language.
+- Use the existing root run pin or published Child DAG binding for immutable code selection. No mutable publication lookup or second nested-execution identity is introduced.
+- Keep Retry policy evaluation non-durable as a policy operation. The failed step and retry state remain durable through existing runtime state; no policy-specific journal, lease, queue, scheduler, or recovery authority is added.
+- Treat worker failure, timeout, cancellation, malformed output, wrong schema/family/correlation, missing immutable material, ownership mismatch, and unsupported language as technical failures. None can become an implicit Retry decision.
+- Keep `Concurrency` hosted behavior unchanged, `Delegation` contract-defined, `Retention` native-only, and policy kinds without checkpoints unavailable.
+- Preserve existing DAG, RBAC, durable custom-step journal, worker supervisor, Child DAG continuation, recovery, Redis transition, and publication contracts.
+
+#### Validation
+
+- Add 10 contextual Retry binding/capability cases in `AiCustomRetryPolicyTests`.
+- Add 15 hosted Retry transport cases across eight facts and seven theory rows.
+- Add five explicit registration cases.
+- Add nine immutable publication/ownership cases, including Python, TypeScript, and .NET materialization.
+- Update family capability/publication expectations so `Retry` is `Hosted` while the native-only guard still rejects custom declarations at native resolution boundaries.
+- No .NET build or test execution is claimed during preparation because the preparation environment does not provide the .NET SDK. Static checks are not passing-test evidence.
+
+#### Limits
+
+- Hosted Retry execution uses the existing trusted-process boundary and does not add sandbox/container isolation.
+- Side-effect-free policy behavior remains a semantic requirement rather than an OS-enforced property.
+- No durable policy-evaluation replay record, package installer, dependency resolver, public SDK API, or client builder is added.
+- Hosted Delegation execution remains separately scoped.
+
+## Fixed - Custom policy publication native-fallback validation
+
+### Fixed
+
+- Correct the custom policy family publication tests so native-fallback rejection is evaluated with a structurally valid resolved custom invocation descriptor.
+- Provide an explicit immutable `ImplementationRef` only to the assertions that call `AiInvocationBindingResolver.EnsureNativePolicy`.
+- Keep publication-compilation scenarios unchanged: unresolved custom declarations continue to omit `ImplementationRef` so the immutable publication compiler remains responsible for assigning it.
+- Preserve the production descriptor-validation order. Invalid custom descriptors still fail with `InvalidOperationException`; valid custom descriptors passed to a native-only checkpoint fail with `NotSupportedException`.
+- No runtime, publication compiler, Retry engine, Delegation checkpoint, hosted worker, RBAC, DAG, recovery, or persistence behavior changed.
+
+### Validation
+
+- Re-run `AiCustomPolicyFamilyPublicationTests` after applying this correction.
+- The correction is test-only and does not alter the hosted Retry execution contract.
+
+### Hosted custom Delegation policy execution
+
+#### Added
+
+- Activate `Delegation` as a hosted custom policy family using the frozen `delegation/v1` contract while retaining the existing Child DAG delegation engine and coordinator as the checkpoint and durable decision authorities.
+- Add `IAiDelegationPolicyTransport`, `AiDelegationPolicyAdapterFactory`, and a contextual `AiDelegationPolicyAdapter` that evaluates one custom Delegation declaration without registering it as a native singleton policy.
+- Add `AiDelegationPolicyBindingResolver` and non-serialized `DelegationPolicyBindings` on resolved steps so pipeline/step declaration scope, order, effective language, and immutable implementation reference survive plan resolution without another durable binding format.
+- Restrict Delegation binding resolution to the existing `ExecuteChildDag` checkpoint. Pipeline-scoped Delegation declarations remain available to that checkpoint, while unrelated steps do not acquire a Delegation execution surface.
+- Add explicit hosted Delegation registration for Python, TypeScript, and .NET through the existing `IAiWorkerInvocationTransport`. Registration remains opt-in and refuses missing worker/publication prerequisites and conflicting Delegation transport/factory registration.
+- Add `IAiDelegationPolicyCodePreparer` and `AiDelegationPolicyPublicationPreparer` to restore the durable parent execution owner, apply the existing publication execute capability, and materialize the exact Delegation implementation pinned to the parent execution.
+- Extend immutable policy-code materialization with exact `DelegationPolicy` call-site selection, including declaration scope, owner step, execution language, implementation reference, immutable publication, and nested `DefinitionPath`.
+- Project only preallocation relation identity into the hosted request. The request includes parent execution/call-site identity, child DAG id/version, deterministic child invocation key and invocation generation, but no `ChildExecutionId`.
+
+#### Behavior and compatibility
+
+- Preserve `DelegationPolicyPending` as the only state in which hosted Delegation evaluation is valid. A relation that already has a child execution id cannot be evaluated by the hosted adapter.
+- Map hosted `approve` to the existing successful policy result and hosted `deny` to the existing blocking result. The adapter does not mutate the relation.
+- Preserve `AiChildDelegationPolicyCoordinator` as the only owner of the durable decision snapshot and compare-and-swap transition to `DelegationApproved` or `DelegationDenied`.
+- Preserve child allocation as a separate runtime action after durable approval. Hosted code cannot allocate/select `ChildExecutionId`, dispatch a child, park/resume the parent, choose continuation behavior, or request recovery.
+- Preserve historical native Delegation policy resolution through `IAiPolicyRegistry`. Custom declarations are never inserted into that registry and cannot fall back to a same-named native policy.
+- Preserve step-override/pipeline-fallback configuration precedence used by the existing delegation definition resolver.
+- Reuse the existing root publication run pin or published-child execution binding for immutable code selection. No current/latest publication lookup or second nested identity model is introduced.
+- Treat worker failure, timeout, cancellation, malformed output, wrong schema/family/correlation, missing immutable material, ownership mismatch, and unsupported language as technical failures. None can become implicit approval.
+- Keep `Concurrency` and `Retry` hosted behavior unchanged, `Retention` native-only, and policy kinds without independent checkpoints unavailable.
+- Preserve existing DAG, RBAC, Child DAG relation persistence, durable custom-step journal, worker supervisor, recovery, continuation, and publication contracts.
+
+#### Validation
+
+- Add 33 targeted Delegation cases across binding/adapter, hosted transport, registration, and immutable publication preparation. Coverage includes pipeline/step scope, checkpoint isolation, language resolution, declaration ordering, approve/deny mapping, and technical failure propagation.
+- Add hosted Delegation transport coverage for canonical language identities, exact preallocation request projection, technical worker failure, immutable implementation substitution rejection, expired deadlines, and cancellation.
+- Add explicit hosted Delegation registration coverage for prerequisites, canonical transports, duplicate registration, and conflicting custom transports.
+- Add immutable publication/ownership coverage for exact pinned Delegation material, changed implementation references, tenant isolation, and scope/owner mismatch.
+- Update the finite family capability matrix so `Delegation` is `Hosted` while the native-only guard continues to reject custom declarations at native resolution boundaries.
+- No .NET build or test execution is claimed during preparation because the preparation environment does not provide the .NET SDK. Static checks are not passing-test evidence.
+
+#### Limits
+
+- Hosted Delegation evaluation remains non-durable as a worker operation; the durable child relation and its decision snapshot remain the recovery boundary.
+- Real Python/TypeScript/.NET cross-family process closure remains part of the final finite branch validation.
+- Trusted-process execution does not add sandbox/container isolation.
+- No additional policy family, package installer, dependency resolver, public SDK model, scheduler, queue, or recovery authority is introduced.
+
+### Custom policy family compatibility closure
+
+#### Added
+
+- Add a finite branch-closure suite for the three hosted custom policy families implemented by the runtime: `Concurrency`, `Retry`, and `Delegation`.
+- Add one real-process closure scenario per hosted language. Each Python, TypeScript, and .NET scenario executes all three family contracts through the existing one-assignment worker transport.
+- Add a .NET test-function entry point that emits only the closed `concurrency/v1`, `retry/v1`, or `delegation/v1` payload selected by the portable request's `policyKind`.
+- Freeze the final capability boundary in closure tests: `Concurrency`, `Retry`, and `Delegation` are hosted; `Retention` remains native-only; `Timeout`, `CircuitBreaker`, `RateLimit`, `Validation`, and `Routing` remain without independent runtime checkpoints.
+
+#### Behavior and compatibility
+
+- Preserve separate family-specific response contracts rather than introducing a universal boolean policy protocol.
+- Preserve the existing Concurrency, Retry, Delegation, and Retention engines/checkpoints as runtime authorities.
+- Preserve Retry ownership of retry budget, backoff, jitter, final delay, waiting transitions, and terminal failure.
+- Preserve Delegation ownership of durable decision persistence, child allocation, dispatch, recovery, and parent continuation.
+- Preserve native policy discovery and prevent custom declarations from falling back to same-named native policies.
+- Preserve immutable publication, root run pins, published Child DAG execution bindings, RBAC, hosted worker transport, DAG scheduling, recovery, and durable custom-step journal behavior.
+- No production runtime source changes are included in this closure delivery.
+
+#### Validation
+
+- Add five cases in `AiCustomPolicyFamilyCompatibilityClosureTests`: two finite contract/capability checks and three real hosted-language process cases.
+- Each real hosted-language case executes `Concurrency`, `Retry`, and `Delegation` sequentially through the existing process transport and validates the family-specific result contract.
+- Python and TypeScript continue to use the repository's existing opt-in worker facts. A skipped process case is not counted as branch-closure evidence.
+- The preceding hosted Retry and hosted Delegation targets have reported passing target-environment results. No raw TRX artifacts are bundled here, so no aggregate passing-test total is inferred.
+- No .NET execution is claimed during package preparation because the preparation environment does not provide the .NET SDK.
+
+#### Limits
+
+- `Retention` remains native-only.
+- Policy kinds without independent runtime checkpoints remain unavailable for custom publication/execution.
+- Trusted-process execution is not sandbox/container isolation.
+- No additional policy family, second policy engine, scheduler, queue, recovery authority, package installer, dependency resolver, public SDK wire model, or external SDK library is added.
+
+## Deterministic Dependency Packaging Contract Foundation
+
+### Added
+
+- Add `AiPublicationDependencyPackageKind` with explicit `PythonWheelBundle`, `NodeLockedBundle`, and `DotNetAssemblyClosure` formats.
+- Add an optional versioned `AiPublicationDependencyPackage` descriptor to publication-upload and immutable dependency records while preserving the historical positional constructors.
+- Bind each package descriptor to one portable immutable JSON manifest already present in the dependency's file set. The manifest bytes participate in the existing environment/publication content identity.
+- Add a finite `AiDependencyPackagingContracts` capability matrix mapping Python wheels to `python`, locked Node bundles to `typescript`, and managed assembly closures to `dotnet`.
+- Mark all three new package formats as `ContractDefined` until their language-specific runtime projection is implemented.
+- Capture package metadata inside the existing immutable `AiPublicationEnvironmentSnapshot`; no second environment identity, mutable package pointer, or package registry identity is introduced.
+- Add targeted contract tests for capability boundaries, serialization compatibility, language/package matching, manifest validation, immutable identity changes, fail-closed execution and historical explicit-file behavior.
+
+### Behavior and Compatibility
+
+- Preserve historical dependencies with no package descriptor. Null package metadata is omitted from JSON and existing explicit-file worker behavior remains unchanged.
+- Require package schema version 1, a portable JSON manifest path, exactly one matching manifest file, and a package kind compatible with the implementation's effective language.
+- Preserve the existing environment-document hash as the immutable environment identity. Package metadata and manifest bytes change that hash naturally through the existing canonical environment document.
+- Keep environment-document SHA-256 distinct from host-runtime artifact digests and future OCI image-manifest digests.
+- Fail closed during worker materialization when a published dependency uses a package format whose capability remains `ContractDefined`. The old worker wire model cannot silently reinterpret packaged material as a historical source dependency.
+- Preserve immutable publication/run pinning, published Child DAG definition paths, custom policy publication, RBAC, durable invocation journal, worker leases/epochs, process supervision, recovery and continuation contracts.
+- Perform no package extraction, installation, registry lookup, network download, tenant compilation or package-manager restore in this delivery.
+
+### Validation
+
+- Add targeted cases in `AiDependencyPackagingContractTests` covering the finite capability matrix, historical JSON omission, matching/mismatched languages, required manifests, schema/path rejection, immutable publication identity, fail-closed worker projection and existing explicit-file compatibility.
+- No target-environment .NET execution is claimed during preparation. Static source/package checks are not passing-test evidence.
+
+### Limits
+
+- Pure-Python wheel consumption, locked Node bundle consumption and managed .NET closure collection remain the next bounded implementations in this branch.
+- Python native extensions, Node native addons, .NET native dependency resolution and arbitrary package ecosystems remain deferred.
+- Dependency packaging does not provide sandbox/container enforcement or network isolation.
+- Public SDK wire models and external SDK builders remain outside this branch.
+
+## Pure-Python Wheel Dependency Packaging
+
+### Added
+
+- Promote `PythonWheelBundle` from `ContractDefined` to `Hosted` while leaving `NodeLockedBundle` and `DotNetAssemblyClosure` fail-closed.
+- Add the portable `AiPythonWheelBundleManifest` schema carrying the exact wheel path, wheel SHA-256, distribution, version, and sorted import roots.
+- Validate one immutable pure-Python wheel per packaged dependency before publication visibility. Require the manifest and referenced wheel bytes to be present in the existing dependency file closure.
+- Validate wheel ZIP paths, entry bounds, case collisions, link entries, `.dist-info/WHEEL`, `METADATA`, `RECORD`, `Root-Is-Purelib`, runtime-compatible pure-Python tags, distribution/version identity, regular-package boundaries, and exact import roots.
+- Add the optional immutable package descriptor to `AiWorkerDependency`. Null descriptors remain omitted from the worker JSON wire shape.
+- Project verified Python wheel package metadata and exact bytes through the existing step and hosted-policy publication materializers.
+- Extend the standalone Python worker to revalidate packaged wheel material and load `.py` modules directly from the wheel bytes through the existing in-memory module loader.
+- Add standalone Python, publication, real hosted-process, pinned-publication, and dependency-republication coverage for the supported wheel subset.
+
+### Behavior and Compatibility
+
+- Preserve historical explicit-file Python dependencies and their existing three-field worker dependency shape.
+- Perform no `pip install`, PyPI lookup, package-cache mutation, extraction to a worker directory, `site` processing, `PYTHONPATH` resolution, or runtime network dependency lookup.
+- Preserve the existing immutable environment document as the dependency/environment identity. The wheel manifest and wheel file descriptors participate in the existing environment digest; no package-specific durable identity is added.
+- Preserve whole-run pinning and published Child DAG binding. Republishing changed wheel bytes under the same logical dependency does not alter an already admitted run.
+- Preserve the existing Python 3.12/3.13 hosted-process profile and one-assignment worker transport.
+- Preserve durable invocation journal identity, worker lease/epoch authority, accepted-result rules, RBAC, DAG/Child DAG transitions, recovery, and continuation.
+- Keep `NodeLockedBundle` and `DotNetAssemblyClosure` blocked during worker preparation until their own bounded implementations are delivered.
+
+### Validation
+
+- The standalone Python hosted-invocation suite now contains 53 tests and passes in the preparation environment.
+- New Python coverage executes a pure wheel directly from immutable in-memory bytes and rejects wheel-digest mismatch, native extension content, non-purelib metadata, and wheel path traversal.
+- Add nine publication-side Python wheel validation cases covering immutable capture, digest mismatch, native content, non-purelib wheels, path traversal, namespace packages, import-root mismatch, incompatible runtime tags, and package metadata identity.
+- Add a real hosted Python process case that imports a function from an immutable wheel without package installation.
+- Add pinned publication/DAG cases proving execution from the captured wheel and preservation of the original wheel after dependency republication.
+- Extend the combined Python validator so complete .NET/Python validation requires the live wheel execution and pinned wheel scenarios; a skipped process case is not closure evidence.
+- No .NET build or C# test execution is claimed during preparation because the preparation environment does not provide the .NET SDK.
+
+### Limits
+
+- The initial hosted subset supports exactly one wheel artifact per packaged dependency; multiple dependencies may each supply one wheel.
+- Only pure-Python regular packages and top-level modules are supported. Namespace packages, `.data` install trees, package resources, console-script installation, native extensions, ABI-specific wheels, and platform-specific wheels remain deferred.
+- Transitive dependency discovery is not performed. Every dependency must be supplied explicitly as immutable publication material.
+- Dependency packaging does not provide sandbox/container isolation or external-effect guarantees.
+
+
+## Locked Node Dependency Packaging
+
+### Added
+
+- Promote `NodeLockedBundle` from `ContractDefined` to `Hosted` while leaving `DotNetAssemblyClosure` fail-closed.
+- Add `AiNodeLockedBundleManifest` and exact per-file digest entries for a bounded immutable TypeScript dependency source closure.
+- Validate package name/version identity, manifest schema, complete sorted file coverage, portable TypeScript paths, UTF-8 source bytes, executable entry point, and SHA-256 equality before publication visibility.
+- Extend deterministic dependency capture so Node package manifests are validated against the effective TypeScript runtime before entering the existing immutable environment snapshot.
+- Extend the hosted TypeScript worker to accept the optional package descriptor, independently revalidate the locked manifest and all source digests, and bind the package import alias to the declared entry point.
+- Preserve the existing host-pinned TypeScript compiler and one-assignment workspace; packaged sources use the same compiler and process transport as historical explicit-file dependencies.
+- Add standalone Node, publication, real hosted-process, and pinned-publication/republication coverage for locked dependency bundles.
+
+### Behavior and Compatibility
+
+- Preserve historical explicit TypeScript dependencies and their existing three-field worker dependency shape.
+- Perform no `npm install`, `npm ci`, `npx`, yarn/pnpm invocation, package-registry lookup, `node_modules` resolution, lifecycle script, or runtime dependency download.
+- Require the manifest to enumerate the complete TypeScript source closure. Undeclared extra material, missing material, changed bytes, case ambiguity, invalid paths, declaration-only entry points, and identity substitution fail before authoritative execution.
+- Preserve the existing immutable environment document as the canonical dependency/environment identity. No package-specific durable identity or mutable registry pointer is introduced.
+- Preserve whole-run pinning and published Child DAG binding so later dependency republication cannot alter an already admitted execution.
+- Preserve existing TypeScript runtime/compiler identity, RBAC, durable invocation journal, worker lease/epoch authority, DAG/Child DAG transitions, recovery, continuation, and hosted custom-policy execution.
+- Keep `PythonWheelBundle` hosted and `DotNetAssemblyClosure` blocked until its bounded implementation is delivered.
+
+### Validation
+
+- Extend the standalone Node worker suite from 38 to 45 tests; all 45 pass in the preparation environment with Node.js 22.16.0.
+- Add real locked-bundle execution and fail-closed cases for source digest mismatch, package identity substitution, undeclared material, declaration-only entry point, wrong package kind, and noncanonical manifest ordering.
+- Add server-side locked-bundle publication cases covering immutable capture, source digest validation, identity matching, entry-point coverage, complete file enumeration, ordering, TypeScript-only source paths, and closed manifest fields.
+- Add real .NET/Node transport coverage and immutable publication/republication coverage using the existing TypeScript process-test opt-in.
+- No .NET build or C# test execution is claimed during preparation because the preparation environment does not provide the .NET SDK.
+
+### Limits
+
+- The initial Node package subset is a closed TypeScript source bundle, not a general npm ecosystem implementation.
+- `.tsx`, `.cts`, `.mts`, JavaScript packages, CommonJS package semantics, native addons, package scripts, arbitrary `package.json`/`exports` behavior, and registry-derived transitive dependencies remain unsupported.
+- Trusted-process execution remains unchanged; dependency determinism does not provide filesystem, network, CPU, memory, or descendant-process isolation.
+
+
+## Managed .NET Assembly Dependency Packaging
+
+### Added
+
+- Promote `DotNetAssemblyClosure` from `ContractDefined` to `Hosted` for the bounded managed-IL dependency subset.
+- Add `AiDotNetAssemblyClosureManifest` and exact per-assembly declarations carrying portable path, SHA-256, CLR assembly simple name and exact four-part assembly version.
+- Validate complete managed assembly package material before publication visibility without loading or executing tenant assemblies.
+- Inspect PE/CLI metadata directly from immutable bytes and reject non-managed/native DLL material, malformed assemblies, digest mismatches, identity mismatches, undeclared extra assemblies, path ambiguity and duplicate assembly identities.
+- Extend deterministic dependency capture so managed .NET package manifests participate in the existing immutable environment snapshot and publication digest.
+- Extend the hosted .NET worker to accept the optional package descriptor and independently revalidate package kind, manifest identity, complete assembly coverage, digests and assembly metadata before `ready`.
+- Reuse the existing private one-assignment workspace and collectible `AssemblyLoadContext`; no package-specific process transport or loader authority is introduced.
+- Add real hosted-process coverage for packaged dependency loading and fail-closed worker validation, plus immutable publication/DAG execution coverage.
+
+### Behavior and Compatibility
+
+- Preserve historical explicit-file .NET dependencies and their existing worker dependency shape when `package` is absent.
+- Perform no NuGet restore, MSBuild/Roslyn compilation, package-registry lookup, runtime download or mutable `latest` resolution.
+- Require the manifest to enumerate the complete supplied managed assembly set and bind each assembly's exact bytes and CLR identity.
+- Preserve the existing immutable environment document as the canonical dependency/environment identity; no package-specific durable identity is introduced.
+- Preserve root run pinning and published Child DAG bindings so later republication cannot change an already admitted managed assembly closure.
+- Preserve existing .NET runtime identity, RBAC, durable invocation journal, worker lease/epoch authority, DAG/Child DAG transitions, recovery, continuation and custom policy execution.
+- Keep `PythonWheelBundle` and `NodeLockedBundle` hosted and unchanged.
+
+### Validation
+
+- Add server-side managed assembly-closure validation covering immutable capture, dependency identity, digest and CLR identity matching, managed-IL enforcement, complete file enumeration, DLL-only paths and closed manifest fields.
+- Extend existing .NET worker tests with real packaged dependency execution, wrong-package rejection and package-manifest digest mismatch rejection before readiness.
+- Add immutable publication/DAG coverage executing a function that consumes the packaged dependency through the existing worker supervisor and durable invocation journal.
+- Update the finite dependency packaging capability matrix so all three selected package kinds are `Hosted`.
+- No .NET build or C# test execution is claimed during preparation because the preparation environment does not provide the .NET SDK. Static checks are not passing-test evidence.
+
+### Limits
+
+- This is not general NuGet compatibility or transitive package resolution. Non-framework managed dependencies must be supplied explicitly.
+- Native DLLs, RID-specific native assets, P/Invoke dependency packaging, binding redirects, ReadyToRun/native AOT-specific contracts and NuGet runtime asset selection remain deferred.
+- Managed assembly validation does not provide sandbox/container isolation.
+- No scheduler, queue, journal, recovery authority, dependency installer or public SDK contract is introduced.
+
+## Deterministic Dependency Packaging Compatibility Closure
+
+### Added
+
+- Add a finite cross-language closure suite for the three supported deterministic dependency formats: `PythonWheelBundle`, `NodeLockedBundle`, and `DotNetAssemblyClosure`.
+- Add real hosted-process republication proofs for Python, TypeScript, and .NET using the existing immutable publication, run pin, durable invocation journal, worker supervisor, and DAG application path.
+- Add fail-closed immutable-material proofs for all three package formats by removing one exact dependency artifact after run admission and verifying worker preparation refuses the missing pinned material.
+- Freeze the branch capability boundary with all three selected package formats marked `Hosted` while historical explicit-file dependencies remain package-metadata-free and compatible.
+
+### Behavior and Compatibility
+
+- Preserve the existing immutable environment document as the only dependency-environment identity. No package-specific mutable pointer or second environment identity is introduced.
+- Preserve whole-run publication pinning. Python wheel and Node locked-bundle closure cases republish changed dependency material after admission and verify the existing run continues to use the original package bytes.
+- Preserve the same publication/run-pin path for managed .NET assembly closures and verify the admitted run remains associated with its original immutable publication after a later publication is created.
+- Preserve fail-closed materialization. Missing pinned wheel, locked source, or managed assembly material is not replaced from a newer publication and fails before worker launch.
+- Preserve historical explicit-file dependency behavior and JSON omission of null package metadata.
+- Preserve existing DAG, published Child DAG, RBAC, durable invocation journal, worker supervision, recovery, and continuation authorities.
+- No package manager, registry lookup, network resolution, compilation, restore, scheduler, queue, journal, or recovery mechanism is added by this closure.
+
+### Validation
+
+- Add seven targeted cases in `AiDependencyPackagingCompatibilityClosureTests`: one finite capability/compatibility case, three real hosted-language republication/pinning cases, and three missing-material refusal cases.
+- Python and TypeScript closure cases retain the repository's existing executable opt-in attributes. A skipped process case is not closure evidence for that language.
+- The pure-Python wheel, locked Node bundle, and managed .NET assembly closure deliveries have reported passing target-environment results before this closure. No raw TRX artifacts are bundled here, so no aggregate passing-test total is inferred.
+- The new closure suite is not claimed passing during preparation because the preparation environment does not provide the .NET SDK and does not reproduce the user's configured Python/Node/.NET target environment.
+
+### Limits
+
+- The supported subsets remain intentionally bounded: pure-Python wheels, locked TypeScript source closures, and already-compiled managed .NET assemblies.
+- Native Python extensions, Node native addons/general npm semantics, .NET native/RID assets, transitive package-manager resolution, and runtime downloads remain outside this branch.
+- Trusted-process execution is not sandbox/container isolation. Filesystem, network, CPU, memory, and descendant-process enforcement remain assigned to the hosted-worker isolation workstream.
+- The final closure does not claim Redis/Mongo restart, operating-system host-kill, Kubernetes provider, or database-failover evidence.
+
+---
+
+## 0.0.8.8 - 2026-09-14 — Multilanguage - Nested Publication Identity and Compilation
+
+### Added
+
+- Add an optional `DefinitionPath` to the existing server-side `AiPublicationCallSite` contract. A null path continues to identify the root pipeline; nested paths identify the exact inline Child DAG declaration site through the ordered parent `ExecuteChildDag` step-name chain.
+- Use canonical JSON-Pointer segment escaping for nested definition paths: `~` becomes `~0` and `/` becomes `~1`. Reject non-canonical, empty, over-depth, or malformed paths before publication persistence.
+- Recursively discover custom step and existing custom `Concurrency` policy declarations inside exact inline Child DAG definitions. Each nested declaration receives its own publication call-site identity and immutable implementation reference.
+- Resolve execution language independently for each embedded definition. The child pipeline default is authoritative for that child and a child step/policy local override retains the existing precedence. No mutable parent runtime state is consulted to resolve a child language.
+- Introduce publication manifest schema 2 for publications that contain at least one nested custom declaration. Root-only publications and publications with native-only inline Child DAGs remain schema 1.
+- Add targeted publication coverage for nested custom steps, recursive Child DAG paths, duplicate local step names across parent/child definitions, child language defaults and overrides, nested custom concurrency policy declarations, canonical path validation, missing/wrong code attachments, root resolver isolation, and schema compatibility.
+
+### Behavior and Compatibility
+
+- Preserve the existing three-argument `AiPublicationCallSite` positional constructor and deconstruction shape. `DefinitionPath` is an additive init-only property and is omitted from canonical JSON when null.
+- Preserve historical root call-site JSON and schema-1 publication behavior. Existing root-only declaration sites do not acquire a path field and do not move to schema 2.
+- Require schema 1 manifests to contain no nested declaration paths and schema 2 manifests to contain at least one nested declaration path.
+- Keep root durable invocation and hosted policy materialization explicitly scoped to `DefinitionPath == null`.
+- Continue to require exact inline Child DAG definitions for publication. Name-only child lookup remains unsupported.
+- Preserve exact declaration coverage. Every nested custom declaration requires one matching code upload at its canonical call site.
+- Reuse the existing content-addressed file, dependency, environment, implementation, definition, and manifest stores.
+- No DAG scheduler, queue, child relation, recovery coordinator, RBAC path, durable invocation journal, worker supervisor/provider, result acceptance rule, or parent continuation implementation is changed.
+
+### Validation
+
+- Add 15 targeted cases in `AiPublishedCustomChildDagCompilationTests`.
+- Update the historical custom-child compatibility case to require explicit nested code uploads rather than classify all custom Child DAG publication as unsupported.
+- Target-environment validation was reported passing before the next branch delivery proceeded.
+
+### Limits
+
+- This scope adds publication/compiler support only.
+- It does not itself create a child execution publication binding, resolve nested worker material for a `ChildExecutionId`, or alter parent continuation.
+- Nested `Concurrency` policy declarations are captured only because that family is already supported by the merged foundation.
+- Dependency installation, sandbox/container enforcement, durable MCP effect evidence, public wire models, and external SDK builders remain outside this branch.
+
+---
+
+## Immutable Child Execution Binding
+
+### Added
+
+- Add an immutable server-side child execution binding keyed by `ChildExecutionId`.
+- Record the original publication reference and digest, exact nested `DefinitionPath`, nested definition digest, child pipeline identity, parent execution id, tenant partition, and original user identity.
+- Add canonical nested definition-path resolution shared by publication compilation and child execution binding.
+- Add optional `AiPublishedChildDagBindingCoordinator` integration at the existing `ChildAllocated` boundary.
+- Persist the immutable child publication binding before calling the existing child dispatcher.
+- Add a unified internal publication execution association used by root and nested executions.
+- Keep root executions on the existing `AiPublicationRunPin`; resolve nested executions through the child binding without fabricating a root run pin.
+- Extend durable custom-step target resolution and worker-code materialization to select the exact publication call site matching the child execution binding's `DefinitionPath`.
+- Add targeted coverage for binding persistence, binding-before-dispatch ordering, nested target selection, nested worker materialization, republish stability, native-only compatibility, unpublished-child authorization compatibility, frozen-definition conflict rejection, and delegated-owner rejection.
+
+### Behavior and Compatibility
+
+- Preserve the existing Child DAG relation as lifecycle authority.
+- Preserve the root run pin as the immutable publication authority for root executions.
+- A child binding references the publication already selected by its parent and cannot select a newer publication.
+- Bind before the existing child dispatcher is called.
+- Propagate publication authority recursively through an already-bound parent execution.
+- Create a child binding when the child subtree contains direct or descendant published custom material.
+- Do not create a publication binding for a subtree that is entirely native.
+- Do not add a publication RBAC requirement to historical unpublished/native Child DAG execution.
+- Preserve existing RBAC authority and execution ownership.
+- Preserve the existing durable invocation journal, assignment lease/epoch rules, result acceptance, worker supervisor/provider, shared queue, and continuation implementation.
+- Preserve root custom-step resolution and worker materialization.
+
+### Validation
+
+- Add 9 targeted cases in `AiPublishedCustomChildDagExecutionBindingTests`.
+- Exercise the real `ExecuteChildDagStep` `ChildAllocated` path and verify binding persistence before dispatch.
+- Verify exact nested target resolution when a child-local step name collides with a root-local step name.
+- Verify child worker publication preparation against the exact nested source bytes.
+- Verify republication does not replace the original publication or implementation digest of an already-bound child.
+- Verify native-only and unpublished compatibility.
+- Verify frozen-definition and delegated-owner conflicts fail explicitly.
+- Target-environment validation was reported passing before durability/recovery work proceeded.
+
+### Limits
+
+- No new worker transport, scheduler, queue, durable journal, result-acceptance rule, or parent continuation mechanism is introduced.
+- Nested hosted policy execution is not expanded.
+- Dependency packaging, sandbox/container enforcement, durable MCP effect evidence, public wire models, and external SDK libraries remain outside this branch.
+
+---
+
+## Durability and Recovery
+
+### Added
+
+- Reuse the existing immutable JSON payload reader at the published-child binding boundary so persisted parent and child definition bytes are reloaded and verified before a child publication binding can be committed.
+- Require the verified canonical frozen child definition to equal the exact nested definition resolved from the immutable publication before dispatch.
+- Register the existing immutable JSON payload reader through the publication service module with `TryAddScoped` when a host has not already registered it.
+- Add targeted durability coverage for controlled service rehydration, republication pinning, lost binding-write acknowledgement, missing binding, missing/changed publication material, corrupted snapshot bytes, tenant isolation, stale lease/result rejection, accepted-submission redrive, duplicate terminal child projection, and deterministic parent-continuation redrive.
+
+### Behavior and Compatibility
+
+- Preserve root and nested publication identity across recovery.
+- Continue to use the existing root run pin or immutable child binding; never resolve a mutable publication by name/version or `latest`.
+- Preserve exact `ChildExecutionId` reuse across dispatch redrive.
+- Preserve immutable child binding semantics under ambiguous write acknowledgement.
+- Strengthen pre-dispatch integrity by reloading durable parent and child definition bytes and verifying their canonical SHA-256 values.
+- Preserve the existing durable invocation journal for hosted child result acceptance.
+- Preserve stale assignment rejection, current-epoch result acceptance, identical duplicate acknowledgement, and conflicting terminal duplicate rejection.
+- Preserve existing Child DAG terminal projection and parent continuation ownership.
+- Preserve tenant and execution-owner isolation during restoration.
+- Missing child publication binding or missing/changed immutable publication material fails explicitly.
+- Recovery does not rebuild missing publication identity from a newer publication.
+
+### Validation
+
+- Add 12 targeted cases in `AiPublishedCustomChildDagDurabilityTests`.
+- Reconstruct publication payload documents, durable invocation journal state, and child execution state in controlled rehydration scenarios.
+- Verify a newer publication does not replace the original publication reference, operation id, or source bytes.
+- Inject lost acknowledgement after immutable binding persistence and verify retry converges on the same immutable key and bytes.
+- Verify missing binding, missing implementation document, changed implementation bytes, and corrupted snapshots fail explicitly.
+- Verify stale result rejection and authoritative duplicate-result handling through the existing durable invocation journal.
+- Inject interruption after accepted child submission and verify recovery reuses the same `ChildExecutionId` and child publication binding.
+- Verify duplicate child completion converges through the existing `AiChildExecutionCompletionCoordinator`.
+- Verify parent-continuation redrive preserves one deterministic continuation identity.
+- Correct the redrive test harness so interrupted submission and recovery re-entry execute under the trusted publication context required by published runtime operations.
+- Target-environment validation was reported passing after the trusted publication-context correction.
+
+### Limits
+
+- Controlled rehydration reconstructs serialized services and in-memory test stores; it is not an operating-system host-kill, Redis restart, MongoDB failover, or network-partition claim.
+- Parent continuation behavior remains the existing Child DAG continuation contract.
+- Dependency packaging, sandbox/container enforcement, durable MCP effect evidence, public wire models, and external SDK libraries remain outside this branch.
+
+---
+
+## Compatibility Closure
+
+### Added
+
+- Add a finite branch-closure validation suite for published custom Child DAG execution without changing production runtime code.
+- Add an explicit two-level nested Child DAG proof covering `root -> child -> grandchild` publication propagation.
+- Verify both child bindings retain the same immutable publication while their definition paths remain `/invoke-child` and `/invoke-child/invoke-grandchild`.
+- Add a native-only compatibility proof showing that a child subtree with no published custom material receives no publication binding.
+- Add real hosted-worker scenarios for Python, TypeScript, and .NET.
+- Execute a mixed child DAG containing one native step followed by one published custom step for each hosted language.
+- Carry hosted child results through the existing durable invocation journal, external-wait application, child finalization, child-result projection, and parent continuation lifecycle.
+
+### Behavior and Compatibility
+
+- Preserve the existing immutable root publication as the only publication authority across nested child execution.
+- Preserve child-local language resolution and the existing hosted worker transports for Python, TypeScript, and .NET.
+- Preserve native-only behavior when publication services are present.
+- Preserve the existing durable invocation journal as authority for operation identity, assignment leases/epochs, and accepted hosted results.
+- Preserve the existing `AiChildExecutionCompletionCoordinator` and `AiChildContinuationCoordinator` as child-result and parent-continuation authorities.
+- Preserve the deterministic continuation identity and `Pending -> Scheduled -> Resumed` lifecycle.
+- No production source, scheduler, shared queue, recovery coordinator, worker provider, RBAC contract, or persistence model is changed by the closure validation.
+
+### Validation
+
+- Add 5 targeted closure cases in `AiPublishedCustomChildDagCompatibilityClosureTests`.
+- Exercise two actual nested Child DAG levels. This is the recursive depth explicitly claimed by this branch.
+- For Python, TypeScript, and .NET, verify native-step completion, durable hosted invocation preparation, real worker dispatch, authoritative result persistence, invocation-receipt application, child terminal completion, authoritative child-result projection, continuation scheduling, and final `Resumed` convergence.
+- Python and TypeScript retain the repository's existing process-test opt-in configuration. A skipped language scenario is not closure evidence for that language.
+- Final closure requires the three hosted-language scenarios to execute rather than be skipped.
+
+### Limits
+
+- The exercised recursive depth is two Child DAG levels below the published root. No unlimited-depth or arbitrary recursive-replay claim is made.
+- Hosted language scenarios use the existing trusted-process boundary and do not claim sandbox/container isolation.
+- The closure suite does not constitute Redis/MongoDB restart, database failover, Kubernetes provider, or operating-system host-kill evidence.
+- Dependency installation, broader dependency packaging, additional policy families, durable MCP effect evidence, public wire contracts, and external SDK libraries remain outside this branch.
+
+---
+
+## Branch Architectural Invariants Preserved
+
+Across all four deliveries:
+
+- Existing DAG structure, claims, transitions, retries, recovery, and finalization remain authoritative.
+- Existing RBAC and durable execution ownership remain authoritative.
+- Immutable publication and run pinning remain authoritative for code, dependency, language, and environment selection.
+- The durable invocation journal remains authoritative for custom invocation identity, assignment epoch, and accepted result.
+- Hosted worker supervision and provider contracts remain unchanged.
+- Existing DAG persistence and application receipts remain authoritative for exact result application.
+- Existing Child DAG completion and parent continuation components remain authoritative.
+- No second scheduler, queue, recovery authority, worker authority, or publication identity model is introduced.
+
+
+---
+
 ## 0.0.8.7 - 2026-09-14 — Multilanguage SDK Server Foundations
 
 ## Unreleased

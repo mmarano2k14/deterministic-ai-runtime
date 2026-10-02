@@ -56,6 +56,18 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
         public const string PoolFailureJournalAppend = "Mongo.PoolFailureJournal.Append";
         public const string PoolFailureJournalQuery = "Mongo.PoolFailureJournal.Query";
 
+        public const string InvocationGet = "Mongo.Invocation.Get";
+        public const string InvocationPrepareInsert = "Mongo.Invocation.PrepareInsert";
+        public const string InvocationDispatchScan = "Mongo.Invocation.DispatchScan";
+        public const string InvocationContinuationScan = "Mongo.Invocation.ContinuationScan";
+        public const string InvocationCas = "Mongo.Invocation.CAS";
+        public const string InvocationResultAcceptance = "Mongo.Invocation.ResultAcceptance";
+
+        public const string McpEffectGet = "Mongo.McpEffect.Get";
+        public const string McpEffectPrepareInsert = "Mongo.McpEffect.PrepareInsert";
+        public const string McpEffectReconcileScan = "Mongo.McpEffect.ReconcileScan";
+        public const string McpEffectCas = "Mongo.McpEffect.CAS";
+
         public const string TestHarnessLedgerExecutionLoad = "TestHarness.Mongo.Ledger.Execution.Load";
         public const string TestHarnessLedgerQuery = "TestHarness.Mongo.Ledger.Query";
         public const string TestHarnessTraceExecutionLoad = "TestHarness.Mongo.Trace.Execution.Load";
@@ -306,6 +318,16 @@ namespace Multiplexed.AI.Runtime.Observability.Performance
                 AiMongoAttributionOperations.RecoveryForensicsQuery,
                 AiMongoAttributionOperations.PoolFailureJournalAppend,
                 AiMongoAttributionOperations.PoolFailureJournalQuery,
+                AiMongoAttributionOperations.InvocationGet,
+                AiMongoAttributionOperations.InvocationPrepareInsert,
+                AiMongoAttributionOperations.InvocationDispatchScan,
+                AiMongoAttributionOperations.InvocationContinuationScan,
+                AiMongoAttributionOperations.InvocationCas,
+                AiMongoAttributionOperations.InvocationResultAcceptance,
+                AiMongoAttributionOperations.McpEffectGet,
+                AiMongoAttributionOperations.McpEffectPrepareInsert,
+                AiMongoAttributionOperations.McpEffectReconcileScan,
+                AiMongoAttributionOperations.McpEffectCas,
                 AiMongoAttributionOperations.TestHarnessLedgerExecutionLoad,
                 AiMongoAttributionOperations.TestHarnessLedgerQuery,
                 AiMongoAttributionOperations.TestHarnessTraceExecutionLoad,

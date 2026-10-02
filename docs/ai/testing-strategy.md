@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Status: Actively validated by a large unit and integration suite covering MCP, Redis, local runtime pools, HTTP/gRPC ProcessHostPool, KubernetesPool, historical one-runtime-per-Pod Kubernetes hosting, real process and Pod failure, hierarchical child/full-boundary recovery, operator-triggered external parent-boundary failure, multi-tenant isolation, replay, ledger, lifecycle, trace, and forensics proof.
+Status: Actively validated by a large unit and integration suite covering MCP, Redis, local runtime pools, HTTP/gRPC ProcessHostPool, KubernetesPool, historical one-runtime-per-Pod Kubernetes hosting, real process and Pod failure, hierarchical child/full-boundary recovery, operator-triggered external parent-boundary failure, multi-tenant isolation, hosted worker provider isolation, replay, ledger, lifecycle, trace, and forensics proof.
 
 This document describes the testing strategy used to validate the Deterministic AI Runtime.
 
@@ -70,13 +70,72 @@ The purpose of the testing strategy is to validate that the runtime behaves like
 
 ## Hosted Multilanguage Validation Evidence
 
-[Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the supplied results for invocation durability, environment/provider admission, launch paths, Python/TypeScript/.NET execution, custom `Concurrency` policies, outgoing MCP, and real MongoDB/Redis integration.
+[Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the historical supplied results for invocation durability, environment/provider admission, launch paths, Python/TypeScript/.NET execution, custom `Concurrency` policies, outgoing MCP, and real MongoDB/Redis integration. [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) records the later fixture-free 37/37 Docker closure: the 33-scenario `ProcessHostPool` baseline plus four worker-isolation-provider and isolation-artifact-selection scenarios using `runtimeProvider=ProcessHostPool` with explicit trusted-process/container-isolation worker selection.
 
 The broad invocation/publication artifact contains 1,098 passing results and 54 individual skipped results. Dedicated Python, TypeScript, and infrastructure artifacts execute the previously inactive paths. Counts overlap and must not be presented as one combined run or an additive unique-test total.
 
 Cold-restoration tests reconstruct services and serialized state; a real .NET worker produces the initial result in one case. This differs from an OS-level host kill. The HTTP/gRPC ProcessHostPool continuation scenarios have reported passing results, recorded separately because their final TRX/log is not included in the inspected evidence set.
 
-Capability-refusal and symbolic-link tests validate declared boundaries without claiming a hostile-code sandbox. MCP identity/transport tests validate authorized read-only/idempotent calls without claiming durable replay of external effects. The existing production harnesses and historical evidence below are unchanged.
+The earlier trusted-process capability-refusal and symbolic-link tests validate declared process-provider boundaries; they do not become sandbox evidence retroactively. A separate OCI isolation suite now validates the selected `SandboxedContainer` provider, including explicit real Docker/Linux enforcement tests. Historical MCP identity/transport tests likewise remain evidence for their original boundary; durable external-effect fencing/replay/reconciliation has a separate suite and must not be inferred from those older artifacts. The existing production harnesses and historical evidence below are unchanged.
+
+## Durable Invocation Journal hardening validation
+
+The Invocation hardening work has its own targeted proof ladder in addition to the historical runtime matrices.
+
+It covers:
+
+```text
+hosted policy ownership revalidation
+execution-language authority
+TimeProvider propagation
+worker lease-guard fake-clock behavior
+dispatch snapshot -> first lease CAS
+classified CAS outcomes
+continuation keyset fairness
+process/container stdio protocol parity
+MongoDB attribution
+dispatch/continuation production query plans
+```
+
+The controlled MongoDB tests use temporary databases and `explain("executionStats")` to compare candidate indexes before production promotion. The final production-plan test verifies the exact index hint used by each branch.
+
+The performance experiments are not substitutes for correctness tests. A candidate index is rejected if it improves one distribution while materially regressing another, even if average command counts fall.
+
+At documentation-review time, targeted Invocation tests and the final production query-plan verification are green. Broader legacy/new runtime matrix revalidation is being rerun before branch closure. Historical matrix evidence is not relabeled as a fresh run.
+
+See [Durable Invocation Journal and Hosted Worker Authority](durable-invocation-journal.md) and [MongoDB Performance Diagnostics](mongodb-performance-diagnostics.md).
+
+## Durable MCP Effect Evidence
+
+[Durable MCP Effect Evidence Validation](durable-mcp-effect-evidence-validation.md) separates three proof layers: deterministic durable-effect state/authority tests, the existing real outbound MCP boundary/compatibility suite, and opt-in MongoDB persistence/reconstruction tests.
+
+The deterministic layer proves immutable intent, pre-call dispatch fencing, same-effect concurrency, local `Completed` replay, conservative `NotSent`/`Uncertain` handling, explicit reconciliation, crash windows, restart behavior, and tenant scope. The outbound layer proves where the selected real transport crosses the `tools/call` boundary. MongoDB tests count only when a test connection string is configured and the tests actually execute; `SKIP` is not persistence evidence.
+
+The branch does not claim generic exactly-once external side effects, provider-specific idempotency, automatic redelivery, or a universal reconciliation mechanism.
+
+## KubernetesPool public-SDK closure
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
+The external Python function runs through `HostRuntime` / `TrustedProcess` inside the Runtime Pool Pod. This does not reinterpret the historical HTTP/gRPC production profiles as a new all-language SDK matrix, prove control-plane crash recovery, or provide a Kubernetes sandbox-worker guarantee.
+
+## Interactive Agent SDK topology validation
+
+A separate live public-SDK campaign validates the same runtime-native interactive agent flow through all three external clients on both `ProcessHostPool/HTTP` and `KubernetesPool/HTTP`. Every accepted path requires terminal completion, unchanged `ExecutionId` after accepted human input, root-step completion, runtime-native OpenAI provider/model/response evidence, public result availability, replay success, replay determinism, and unchanged replay execution identity.
+
+The Kubernetes path additionally requires exact-pool Pod/Service/image attestation and observed QueueFirst scale-out into real Runtime Pool capacity. Replay readiness is bounded and retries only the exact transient `Snapshot not found.` result; unrelated failures remain fail-fast.
+
+This campaign is not added to the 37/37 Docker matrix, the historical KubernetesPool 3/3 closure, or the 36-row adversarial matrix. See [Interactive Agent SDK Topology Validation](interactive-agent-sdk-topology-validation.md).
+
+## Hosted Worker Isolation Evidence
+
+[Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) records the final selected-provider evidence. The deterministic isolation/provider layer proves runtime-side contracts such as exact provider routing, no sandbox-to-process downgrade, OCI digest admission, launch/inspect ordering, applied-state fail-closed behavior, cleanup/quarantine, startup orphan reconciliation, cancellation/failure lifecycle handling, package metadata preservation, lease/epoch behavior, and reuse of the existing journal/result-acceptance path.
+
+The explicit real-engine target completed with **4 passed, 0 failed, 0 skipped**. Those tests use a preloaded exact `repository@sha256:<manifest>` image and a real Docker-compatible Linux engine to observe non-root identity, capability removal, `no-new-privileges`, read-only root, writable bounded `/tmp`, denied outbound networking, cgroup CPU/memory/PID limits, production Python hosted-worker execution, active cancellation cleanup, and force-removal of a running descendant workload.
+
+A third live layer is the fixture-free **37/37** public-SDK Docker matrix. It closes `TrustedProcess` versus `SandboxedContainer` and `HostRuntime` versus `OciImage` selection across the existing `ProcessHostPool` baseline and bounded `ContainerIsolationProvider` scenarios.
+
+The three layers must remain distinct. A simulated/probe result demonstrates runtime logic and deterministic failure handling; a real-engine result demonstrates selected kernel/container enforcement and real worker lifecycle; the matrix proves live SDK/runtime selection. None is a claim about every OCI engine, every operating system, a Kubernetes sandbox-Pod provider, or universal hostile-code safety.
 
 ---
 
@@ -2317,7 +2376,7 @@ This is especially important for:
 - durable decision ledger
 - observability dashboard
 - cluster autoscaling/HPA and production deployment packaging
-- public SDK polish
+- public SDK registry distribution, CLI polish, and live client/runtime matrix coverage beyond the implemented external .NET/TypeScript/Python libraries
 - cost governance
 
 ---

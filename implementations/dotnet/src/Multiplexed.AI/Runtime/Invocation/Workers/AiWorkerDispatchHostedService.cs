@@ -56,7 +56,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers
                     {
                         using var invocationScope = _scopes.CreateScope();
                         var result = await invocationScope.ServiceProvider.GetRequiredService<AiWorkerInvocationSupervisor>()
-                            .DispatchAsync(tenant, candidate.Definition.Identity, cancellation).ConfigureAwait(false);
+                            .DispatchAsync(tenant, candidate, cancellation).ConfigureAwait(false);
                         if (result.Disposition is AiWorkerDispatchDisposition.ReconciliationRequired or AiWorkerDispatchDisposition.CapacityQuarantined)
                             _logger.LogWarning("Worker dispatch requires attention. OperationId={OperationId}, Disposition={Disposition}.",
                                 result.OperationId, result.Disposition);

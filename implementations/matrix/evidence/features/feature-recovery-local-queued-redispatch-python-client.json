@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-recovery-local-queued-redispatch-python-client",
+  "status": "passed",
+  "coverageTarget": "recovery",
+  "coverageValues": [
+    "local-queued-redispatch"
+  ],
+  "clientLanguage": "python",
+  "workerLanguage": null,
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-4f9c7fc9eaab9c0a7dcec28dd883ba2a6f217c547c15b717e67f0b9ebd735a9e",
+  "seedIdentity": "matrix-local-queued-7015eb52b4644b5cbd2cbfe1026e4686",
+  "preRecoveryExecutionId": null,
+  "redispatchedExecutionId": "6930c61443b543a78e7fbf2455a5d33f",
+  "sharedRunId": "matrix-recovery-shared-380e23de88e049d79051e48fead2b73d",
+  "failedRuntimeInstanceId": "matrix-recovery-failed-runtime-380e23de88e049d79051e48fead2b73d",
+  "failedLocalRunId": "matrix-recovery-local-380e23de88e049d79051e48fead2b73d",
+  "replacementRuntimeInstanceId": "host-4840e5f810c3447d8b321d84663073d0:runtime-instance-2",
+  "replacementLocalRunId": "61d21ee85f394abc9e6372dd9ca6b135",
+  "runtimeIndexStatus": "requeued-for-recovery",
+  "replacementRuntimeIndexStatus": "completed",
+  "recoveryAction": "requeue-shared-run",
+  "recoveryReason": "transitionReason=runtime-local-queued-recovery-requeue;accepted=True;changed=True;ownershipReason=shared-run-ownership-resolved;queueStatus=Dispatched;sharedRunStatus=Dispatched;claimTokenPresent=True;requestSharedRunIdPresent=True",
+  "recoveryObservedBy": "explicit-reconciler",
+  "terminalStatus": "Completed",
+  "evidence": [
+    "public-sdk-definition-seed",
+    "local-queued-no-execution-id",
+    "local-queued-ownership-seeded",
+    "production-recovery-reconciler",
+    "shared-run-requeued-for-recovery",
+    "healthy-runtime-redispatch",
+    "new-execution-id-created",
+    "terminal-result"
+  ],
+  "recordedAtUtc": null
+}

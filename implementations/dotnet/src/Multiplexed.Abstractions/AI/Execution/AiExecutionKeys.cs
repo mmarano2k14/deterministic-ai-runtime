@@ -1,4 +1,4 @@
-﻿namespace Multiplexed.Abstractions.AI.Execution
+namespace Multiplexed.Abstractions.AI.Execution
 {
     /// <summary>
     /// Defines well-known keys used by the AI execution runtime.
@@ -28,6 +28,11 @@
         /// The default summary output key used by summary-oriented steps.
         /// </summary>
         public const string Summary = "summary";
+
+        /// <summary>
+        /// The explicit public/business result selected by a pipeline for execution-level result projection.
+        /// </summary>
+        public const string Result = "result";
 
         // ---------------------------------------------------------------------
         // METADATA KEYS (State.Metadata)

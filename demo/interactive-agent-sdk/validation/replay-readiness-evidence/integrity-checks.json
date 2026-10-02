@@ -1,0 +1,11 @@
+{
+  "python_gates_unchanged": true,
+  "typescript_gates_unchanged": true,
+  "dotnet_gates_unchanged": true,
+  "validation/validate_evidence.py_unchanged": true,
+  "validation/evidence.schema.json_unchanged": true,
+  "validation/run_e2e.py_unchanged": true,
+  "validation/launch_processhostpool_matrix.py_unchanged": true,
+  "validation/processhostpool-bridge/ProcessHostPoolInteractiveSdkValidationHook.cs_unchanged": true,
+  "trace_upgrade_installer_unchanged": true
+}

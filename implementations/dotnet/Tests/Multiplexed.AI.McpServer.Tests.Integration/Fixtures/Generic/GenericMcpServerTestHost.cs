@@ -171,18 +171,78 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Fixtures.Generic
 
             builder.ConfigureTestServices(services =>
             {
-                services
-                    .AddAuthentication(options =>
-                    {
-                        options.DefaultAuthenticateScheme = FakeAuthHandler.AuthenticationScheme;
-                        options.DefaultChallengeScheme = FakeAuthHandler.AuthenticationScheme;
-                        options.DefaultScheme = FakeAuthHandler.AuthenticationScheme;
-                    })
-                    .AddScheme<AuthenticationSchemeOptions, FakeAuthHandler>(
-                        FakeAuthHandler.AuthenticationScheme,
-                        _ => { });
+                var useRealJwtAuthentication =
+                    settings.TryGetValue("Tests:UseRealJwtAuthentication", out var useRealJwtAuthenticationValue) &&
+                    bool.TryParse(useRealJwtAuthenticationValue, out var parsedUseRealJwtAuthentication) &&
+                    parsedUseRealJwtAuthentication;
 
-                services.AddAuthorization();
+                if (!useRealJwtAuthentication)
+                {
+                    services
+                        .AddAuthentication(options =>
+                        {
+                            options.DefaultAuthenticateScheme = FakeAuthHandler.AuthenticationScheme;
+                            options.DefaultChallengeScheme = FakeAuthHandler.AuthenticationScheme;
+                            options.DefaultScheme = FakeAuthHandler.AuthenticationScheme;
+                        })
+                        .AddScheme<AuthenticationSchemeOptions, FakeAuthHandler>(
+                            FakeAuthHandler.AuthenticationScheme,
+                            _ => { });
+                    
+                    services.AddAuthorization();
+                }
+                else
+                {
+                    // Register an isolated real JwtBearer handler for this validation path.
+                    // This path is used only by the external interactive SDK validation.
+                    // Interactive SDK dedicated JwtBearer scheme.
+                    // This test-only scheme is isolated from MatrixBearer and from historical
+                    // FakeAuthHandler tests. It performs real signature/issuer/audience/lifetime validation.
+                    const string interactiveSdkJwtScheme = "InteractiveSdkJwtBearer";
+                    var interactiveSdkJwtIssuer = GetRequiredSetting(settings, "AiMcpAuthentication:Issuer");
+                    var interactiveSdkJwtAudience = GetRequiredSetting(settings, "AiMcpAuthentication:Audience");
+                    var interactiveSdkJwtSigningKey = GetRequiredSetting(settings, "AiMcpAuthentication:SymmetricSigningKey");
+
+                    Microsoft.Extensions.DependencyInjection.JwtBearerExtensions.AddJwtBearer(
+                        services.AddAuthentication(),
+                        interactiveSdkJwtScheme,
+                        options =>
+                        {
+                            options.RequireHttpsMetadata = false;
+                            options.SaveToken = false;
+                            options.MapInboundClaims = false;
+                            options.TokenValidationParameters =
+                                new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+                                {
+                                    ValidateIssuer = true,
+                                    ValidIssuer = interactiveSdkJwtIssuer,
+                                    ValidateAudience = true,
+                                    ValidAudience = interactiveSdkJwtAudience,
+                                    ValidateIssuerSigningKey = true,
+                                    IssuerSigningKey =
+                                        new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(
+                                            System.Text.Encoding.UTF8.GetBytes(interactiveSdkJwtSigningKey)),
+                                    ValidateLifetime = true,
+                                    RequireExpirationTime = true,
+                                    RequireSignedTokens = true,
+                                    ClockSkew = TimeSpan.FromSeconds(30),
+                                    NameClaimType = "sub"
+                                };
+                        });
+
+                    services.AddAuthorization();
+                    services.PostConfigure<Microsoft.AspNetCore.Authentication.AuthenticationOptions>(options =>
+                    {
+                        options.DefaultScheme = interactiveSdkJwtScheme;
+                        options.DefaultAuthenticateScheme = interactiveSdkJwtScheme;
+                        options.DefaultChallengeScheme = interactiveSdkJwtScheme;
+                        options.DefaultForbidScheme = interactiveSdkJwtScheme;
+                    });
+                    Console.WriteLine(
+                        "[TEST MCP HOST] Dedicated interactive SDK JwtBearer authentication registered; MatrixBearer remains registered for historical matrix tests.");
+                    Console.WriteLine(
+                        "[TEST MCP HOST] Real JWT authentication preserved for interactive SDK validation.");
+                }
 
                 var testConfiguration =
                     new ConfigurationBuilder()

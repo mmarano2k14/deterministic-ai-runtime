@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-dependency-package-python-client-typescript-worker",
+  "status": "passed",
+  "coverageTarget": "deterministic-dependency-packaging",
+  "coverageValues": [
+    "NodeLockedBundle"
+  ],
+  "clientLanguage": "python",
+  "workerLanguage": "typescript",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-74215c78b1a23269a9b20a98c6441148fa1277abdba456747934a293432fb1f2",
+  "executionId": "published-848f1e599e39da744c1e75a74a0aca7fc7f8346007076068275e0a6c5861c9e2",
+  "terminalStatus": "Completed",
+  "packageKind": "NodeLockedBundle",
+  "evidence": [
+    "publish",
+    "submit",
+    "packaged-dependency",
+    "observe",
+    "terminal-result"
+  ],
+  "recordedAtUtc": "2026-09-21T23:12:46.212+00:00"
+}

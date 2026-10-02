@@ -8,7 +8,7 @@ The result counts below are derived from the individual `UnitTestResult` entries
 
 The HTTP and gRPC ProcessHostPool continuation scenarios have a reported passing result. Their final TRX/log artifact is not included in this evidence set, so this record does not assign inspected per-scenario counts, durations, or a new crash-volume total to that report.
 
-This is a consolidation of existing evidence, not an additional test execution. The selections overlap, and the broader regression run predates the TypeScript compatibility update. Their counts must not be added into a single unique-test total or described as one full-suite run on a single revision.
+This is a consolidation of the hosted-language/publication evidence, not an additional test execution. The selections overlap, and the broader regression run predates the TypeScript compatibility update. Their counts must not be added into a single unique-test total or described as one full-suite run on a single revision. Hosted worker container isolation is validated separately in [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md).
 
 ## Inspected result artifacts
 
@@ -39,7 +39,7 @@ The 152-result selection contains 24 lease tests, 31 DAG execution/continuation 
 
 Twelve cold-restoration cases use controlled transport across language bindings and success/failure/continuation states. A thirteenth produces the initial result with a real hosted .NET process. After reconstruction, preparation and transport calls are configured to fail if reused.
 
-These tests prove restoration from serialized state and interaction with the existing local DAG. They are not an operating-system kill of the runtime host, a database restart, or a complete distributed-queue recovery scenario. MCP-effect identity tests in this selection do not make MCP effects durable in the custom-function journal.
+These tests prove restoration from serialized state and interaction with the existing local DAG. They are not an operating-system kill of the runtime host, a database restart, or a complete distributed-queue recovery scenario. The MCP-effect identity tests in this historical selection do not themselves prove durable external-effect fencing or reconciliation; those capabilities are validated separately in [Durable MCP Effect Evidence Validation](durable-mcp-effect-evidence-validation.md).
 
 ## Authorization, execution requirements, and paths
 
@@ -55,7 +55,7 @@ The 185-result selection covers:
 
 All three symbolic-link cases ran and passed. The protocol-process case validates the explicitly trusted process profile; it is not execution of tenant functions in all three languages.
 
-The tests establish refusal of requirements that the process provider cannot enforce, consistent server-side environment binding, checked launch paths, and authorization before the outgoing tool call. They do not establish a container sandbox, enforced network denial, a fully sealed filesystem, or a durable remote-effect replay implementation.
+These earlier trusted-process tests establish refusal of requirements that the process provider cannot enforce, consistent server-side environment binding, checked launch paths, and authorization before the outgoing tool call. They do not by themselves establish a container sandbox, enforced network denial, a fully sealed filesystem, or durable remote-effect replay. Container guarantees are covered by the isolated-provider evidence, while durable MCP effect fencing/replay/reconciliation is covered by the separate durable-effect evidence suite.
 
 ## Real language execution
 
@@ -69,6 +69,38 @@ The TypeScript selection validates the bundled compiler backend, including suppo
 The broader regression artifact also includes the 31 .NET profile, process, and publication/DAG cases. Real process execution is distinct from profile-only acceptance of a version string. The dedicated TRX artifacts do not themselves record the selected interpreter's exact version; they must not be used to certify an unrecorded version or every future runtime release.
 
 Standalone Python/Node test-runner results are not part of these .NET TRX counts. Published-DAG language tests use real language processes with controlled in-memory stores; database coverage is recorded separately below.
+
+## Hosted custom policy family branch evidence
+
+Hosted custom policy-family expansion is tracked separately from the earlier closure TRX artifacts. The implemented server capability matrix is finite:
+
+| Family | Hosted status | Contract | Evidence status in this documentation update |
+|---|---|---|---|
+| `Concurrency` | Hosted | `concurrency/v1` | Existing hosted-policy evidence is part of the earlier language foundation. |
+| `Retry` | Hosted | `retry/v1` | Targeted implementation tests were reported passing in the target .NET environment. |
+| `Delegation` | Hosted | `delegation/v1` | Targeted implementation tests were reported passing in the target .NET environment. |
+| `Retention` | Native-only | None | Explicitly not advertised as hosted. |
+| `Timeout`, `CircuitBreaker`, `RateLimit`, `Validation`, `Routing` | No independent hosted checkpoint | None | Explicitly not advertised as hosted capabilities. |
+
+The final cross-family closure suite defines five cases: capability-matrix closure, contract-identity separation, and real Python, TypeScript, and .NET process execution of all three hosted families. Python and TypeScript retain explicit process-test prerequisites, so a skipped language case is not closure evidence. A final all-language passing result is not claimed by this document until that closure run is recorded.
+
+During the .NET real-process rerun, a validation-fixture environment issue was isolated: the test profile intentionally clears inherited environment variables but originally forwarded `SystemRoot` without `TEMP`/`TMP`, causing `Path.GetTempPath()` in the hosted .NET worker to resolve under `C:\Windows` and fail workspace creation before the required `ready` frame. The test profile now forwards the host temporary directory explicitly. The legacy direct .NET worker test was reported passing after that correction. This correction changes the validation fixture environment, not policy authority, worker protocol semantics, or DAG behavior.
+
+## Deterministic dependency packaging branch evidence
+
+Deterministic dependency packaging is tracked separately from the earlier hosted-language closure artifacts. Three finite package kinds are implemented on top of the existing immutable publication and environment identity:
+
+| Package kind | Runtime status | Supported boundary | Evidence status in this documentation update |
+|---|---|---|---|
+| `PythonWheelBundle` | Hosted | Pure-Python wheel, exact manifest/hash/import roots, no native extension or namespace-package expansion | Targeted .NET tests were reported passing; the standalone Python worker suite also passed 53/53 during preparation. |
+| `NodeLockedBundle` | Hosted | Closed TypeScript source bundle with exact package/version/entry point/file hashes; no package-manager or registry resolution | Targeted .NET tests were reported passing; the standalone Node suite also passed 45/45 during preparation. |
+| `DotNetAssemblyClosure` | Hosted | Precompiled managed DLL closure with exact hashes and CLR assembly identity/version; no NuGet/MSBuild/native resolution | Targeted .NET worker/publication tests were reported passing in the target environment. |
+
+The packaging model does not introduce another environment identity. Package manifests and captured bytes participate in the existing immutable publication/environment material; the canonical environment-document SHA-256 retains its existing meaning and remains distinct from host-runtime and OCI image-manifest digests.
+
+The final cross-language compatibility closure defines seven cases: final capability/legacy compatibility, one republish-and-pin proof for each supported package kind using the real hosted worker path, and one missing-pinned-material refusal for each package kind. A final all-language closure result is not claimed by this document until that closure run is recorded. Python and TypeScript process prerequisites must execute rather than be skipped for complete branch closure.
+
+The supported packaging boundary is deliberately narrower than a general package manager. No `pip install`, PyPI lookup, npm/yarn/pnpm install, `npx`, Node registry resolution, NuGet restore, tenant compilation, native extension/add-on discovery, or mutable `latest` lookup occurs in the runtime execution path.
 
 ## MongoDB and Redis integration
 
@@ -89,7 +121,50 @@ The existing HTTP and gRPC ProcessHostPool `ContinuationConsume` scenarios were 
 
 The broad regression artifact also contains passing policy discovery/startup tests. Discovery compatibility matters because contextual adapters must not enter native singleton registration.
 
-Reported host success is recorded separately from inspected TRX results. It does not promote nested published custom Child DAG execution, hostile-code containment, or durable MCP external effects into supported capabilities. Historical runtime-pool evidence remains documented in [Runtime Pool Production Validation](runtime-pool-production-validation.md) and is not recomputed here.
+Reported host success is recorded separately from inspected TRX results. Historical runtime-pool evidence remains documented in [Runtime Pool Production Validation](runtime-pool-production-validation.md) and is not recomputed here. That native host evidence is not used as proof for published custom Child DAG execution, hostile-code containment, or durable MCP external effects; the latter has its own dedicated validation boundary in [Durable MCP Effect Evidence Validation](durable-mcp-effect-evidence-validation.md).
+
+## Published custom Child DAG branch evidence
+
+Published custom Child DAG support is validated through a separate bounded branch-level suite rather than being inferred from the earlier hosted-execution TRX artifacts above. The branch adds four finite proof groups:
+
+| Proof group | Boundary |
+|---|---|
+| Nested publication identity and compilation | Canonical nested `DefinitionPath`, child-local language resolution, exact code attachment, schema compatibility, and root/nested resolver isolation. |
+| Immutable child execution binding | `ChildExecutionId` is bound before dispatch to the original publication and exact nested definition; nested target/material resolution reuses the existing hosted path. |
+| Durability and recovery | Rehydration, republication pinning, lost binding-write acknowledgement, missing/changed material, snapshot-integrity checks, tenant isolation, stale result rejection, dispatch redrive, and duplicate continuation convergence. |
+| Compatibility closure | Native-only compatibility, two explicit nested Child DAG levels, and mixed native/custom hosted execution for Python, TypeScript, and .NET through the existing journal, worker, completion, and continuation path. |
+
+The compilation, execution-binding, and durability/recovery targets have reported passing target-environment results. The closure suite defines five targeted cases. Python and TypeScript retain their existing explicit process-test configuration; a skipped hosted-language case is not closure evidence for that language. No aggregate passing-test total is inferred without the corresponding result artifacts.
+
+The published-custom nesting claim is intentionally bounded to the depth actually exercised by the closure suite: two Child DAG levels below the published root. The existing native Child DAG Depth3 evidence remains a separate proof domain and is not automatically transferred to published custom execution.
+
+## Hosted worker isolation evidence
+
+The selected OCI-backed `SandboxedContainer` provider is validated separately from the earlier trusted-process artifacts. The current closure contains three complementary evidence layers:
+
+- a deterministic provider/isolation suite validating admission, immutable provider selection, no downgrade, launch/inspect ordering, applied-state refusal, cancellation/failure handling, cleanup, quarantine, owner-scope orphan reconciliation, journal/result-path compatibility, lease/epoch behavior, and deterministic package metadata crossing the isolated transport;
+- explicit opt-in real Docker/Linux tests validating the selected kernel/cgroup-visible boundary plus real production-worker execution and cancellation;
+- the fixture-free public-SDK runtime matrix validating live provider/artifact selection through the existing runtime path.
+
+The recorded real-engine target is **4 passed, 0 failed, 0 skipped**. The real tests verify non-root execution, zero effective capabilities, `NoNewPrivs=1`, read-only root filesystem, writable bounded `/tmp`, denied outbound networking with only loopback visible, exact memory/PID/CPU cgroup limits, production Python hosted-worker execution, active cancellation cleanup, and force-removal of a running descendant container workload.
+
+These results do not mean that deterministic provider tests, the 4 real-engine tests, and the public-SDK matrix prove the same thing. The deterministic layer proves runtime contracts and failure behavior, frequently through a controlled engine probe. The real-engine layer proves selected kernel/container enforcement plus production Python worker execution and cancellation. The 37/37 matrix separately proves live SDK/runtime provider and artifact selection. See [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) for commands, image preparation, and limitations.
+
+## Public SDK fixture-free runtime matrix closure
+
+The historical TRX evidence above is now supplemented by a separate live public-SDK matrix. The Docker verifier reports **37/37** scenarios with `.NET`, TypeScript/JavaScript, and Python external clients, production hosted workers, publication pinning, deterministic dependency packages, hosted policy families, nested published Child DAGs, durable MCP effect evidence, cancellation, recovery, journal result acceptance, provider/artifact selection, and external-client dependency firewalls.
+
+The final matrix run is fixture-free at the execution layer: the `implementations/matrix/fixtures` tree is not required. Reusable public SDK samples provide publishable user code, while execution uses the production hosted workers.
+
+The executed provider boundary is exact: the original 33 scenarios remain the Docker `ProcessHostPool` baseline, while four additional scenarios close `TrustedProcess` versus `SandboxedContainer` and `HostRuntime` versus `OciImage` selection under `runtimeProvider=ProcessHostPool` with explicit worker-execution provider selection. This does not imply `KubernetesPool` parity or a rerun of all baseline scenarios under container isolation.
+
+See [Multilanguage Runtime Matrix Validation](multilanguage-runtime-matrix-validation.md) for the exact scenario counts and non-claims.
+
+## KubernetesPool external SDK evidence
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
+The current external Kubernetes path is Python-to-Python using `HostRuntime` and `TrustedProcess` in the runtime Pod. The image contains the three production language workers, but worker presence is not evidence of executing all three in Kubernetes. Historical TRX artifacts and their hashes below are unchanged and are not reclassified as Kubernetes SDK results.
 
 ## Artifact integrity
 
@@ -106,9 +181,9 @@ SHA-256 identifies the exact supplied result files used for this summary.
 
 ## Interpretation limits
 
-The evidence supports the stated implementation boundaries, not a completed public SDK product. No new public publication endpoint, SDK package, sandbox, package installer, or external-effect ledger is implied by these results.
+The historical TRX evidence in this document predates the later public SDK boundary. It is now supplemented, rather than retroactively reinterpreted, by the dedicated fixture-free public-SDK runtime matrix evidence described above. Deterministic package bundles are captured before publication; no general runtime package installer, language-specific SDK client package, or durable external-effect guarantee is implied by these historical results. The public contract/server boundary, container isolation, and durable MCP effect evidence are separate implemented boundaries with their own dedicated evidence and limits.
 
-Dedicated reruns supplement the earlier regression artifact without changing its recorded outcomes. The available evidence does not certify every runtime version, deployment topology, or failure mode.
+Dedicated reruns supplement the earlier regression artifact without changing its recorded outcomes. The available hosted-language evidence does not certify every runtime version, deployment topology, or failure mode. Published custom Child DAG evidence does not establish operating-system host-kill recovery, Redis/MongoDB restart or failover, Kubernetes sandbox-provider coverage, or unlimited recursive depth. Selected OCI container isolation is evidenced separately and must not be generalized beyond its tested provider/platform boundary.
 
 ## Related documents
 

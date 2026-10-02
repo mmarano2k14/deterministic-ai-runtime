@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -670,6 +670,7 @@ namespace Multiplexed.AI.DI
             services.TryAddSingleton<IAiExecutionControlStore, RedisAiExecutionControlStore>();
             services.AddScoped<IAiExecutionControlService, AiExecutionControlService>();
             services.AddScoped<IAiExecutionControlGate, AiExecutionControlGate>();
+            services.AddScoped<AiDagExecutionCancellationCoordinator>();
 
             // ------------------------------------------------------------
             // global execution engine runtime services

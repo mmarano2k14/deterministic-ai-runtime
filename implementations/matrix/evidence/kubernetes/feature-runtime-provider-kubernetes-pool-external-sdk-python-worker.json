@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-runtime-provider-kubernetes-pool-external-sdk-python-worker",
+  "status": "passed",
+  "clientLanguage": "python",
+  "workerLanguage": "python",
+  "environmentRef": "matrix-kubernetes-python",
+  "endpoint": "http://127.0.0.1:8081/mcp",
+  "topology": "kubernetes",
+  "provider": "KubernetesPool",
+  "runtimeProvider": "KubernetesPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-cfa3e5c8ab71c0db5bf22f9aee78b92bf4a64b2e6ee5e3a39c6174e1d0573133",
+  "executionId": "published-7a53a8a4c77e006662fcedb833843e677f16814bb059f045a817850023de5869",
+  "terminalStatus": "Completed",
+  "outputMarkerVerified": true,
+  "evidence": [
+    "publish",
+    "submit",
+    "observe",
+    "terminal-result",
+    "public-execution-id"
+  ],
+  "recordedAtUtc": "2026-09-21T23:40:11.26+00:00"
+}

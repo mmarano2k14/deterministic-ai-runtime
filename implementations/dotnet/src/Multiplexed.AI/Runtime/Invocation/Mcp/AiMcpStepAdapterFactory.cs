@@ -14,15 +14,18 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp
         private readonly IAiMcpToolResolver _resolver;
         private readonly IAiMcpToolTransport _transport;
         private readonly TimeSpan _timeout;
+        private readonly TimeProvider _timeProvider;
 
         public AiMcpStepAdapterFactory(
             IAiMcpToolResolver resolver,
             IAiMcpToolTransport transport,
-            AiMcpStepInvocationOptions? options = null)
+            AiMcpStepInvocationOptions? options = null,
+            TimeProvider? timeProvider = null)
         {
             _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
             _transport = transport ?? throw new ArgumentNullException(nameof(transport));
             _timeout = (options ?? new AiMcpStepInvocationOptions()).InvocationTimeout;
+            _timeProvider = timeProvider ?? TimeProvider.System;
             if (_timeout <= TimeSpan.Zero || _timeout > TimeSpan.FromSeconds(30))
             {
                 throw new ArgumentOutOfRangeException(nameof(options), "MCP invocation timeout must be positive and at most 30 seconds.");
@@ -47,7 +50,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Mcp
             {
                 throw new InvalidOperationException("An MCP adapter requires a language-free binding, an opaque connection reference and a concrete tool name.");
             }
-            return new AiMcpStepAdapter(context, _resolver, _transport, _timeout);
+            return new AiMcpStepAdapter(context, _resolver, _transport, _timeout, _timeProvider);
         }
     }
 }

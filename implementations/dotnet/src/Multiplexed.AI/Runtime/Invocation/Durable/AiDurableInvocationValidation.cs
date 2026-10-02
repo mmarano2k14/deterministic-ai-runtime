@@ -1,3 +1,4 @@
+using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Invocation.Durable;
 
 namespace Multiplexed.AI.Runtime.Invocation.Durable
@@ -38,7 +39,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Durable
 
         internal static void ValidateLanguage(string language)
         {
-            Require(language is "python" or "typescript" or "dotnet", "An effective supported custom language is required.");
+            Require(AiExecutionLanguages.IsSupported(language), "An effective supported custom language is required.");
         }
 
         internal static AiDurableInvocationDefinition Freeze(AiDurableInvocationDefinition definition)

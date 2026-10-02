@@ -17,22 +17,44 @@ namespace Multiplexed.AI.Runtime.Publication
         {
             ArgumentNullException.ThrowIfNull(request);
             var guard = await _identity.AuthorizeAsync(request.Scope, _options.Execute, cancellationToken).ConfigureAwait(false);
-            var pin = await _store.ReadPinAsync(request.ExecutionId, guard, cancellationToken).ConfigureAwait(false)
-                ?? throw new InvalidOperationException("No whole-run publication was pinned before execution.");
-            if (pin.DefinitionSha256 != request.DefinitionSha256)
-                throw new InvalidOperationException("The invocation definition differs from its run admission.");
-            var frozen = await _store.ReadVerifiedAsync(pin.PublicationRef, guard, cancellationToken).ConfigureAwait(false);
-            var manifest = frozen.Publication.Manifest;
-            if (manifest.Definition.Sha256 != request.DefinitionSha256 || manifest.PipelineName != request.PipelineName ||
-                manifest.PipelineVersion != request.PipelineVersion || frozen.Publication.PublicationSha256 != pin.PublicationSha256)
+            var binding = await _store.ReadExecutionBindingAsync(request.ExecutionId, guard, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("No immutable publication binding was pinned before execution.");
+            if (!string.Equals(binding.DefinitionSha256, request.DefinitionSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The invocation definition differs from its publication binding.");
+
+            var frozen = await _store.ReadVerifiedAsync(binding.PublicationRef, guard, cancellationToken).ConfigureAwait(false);
+            if (!string.Equals(frozen.Publication.PublicationSha256, binding.PublicationSha256, StringComparison.Ordinal))
                 throw new InvalidOperationException("The invocation does not belong to the exact admitted publication.");
-            var function = manifest.Functions.SingleOrDefault(f => f.Site.Kind == AiPublicationFunctionKind.Step && f.Site.StepName == request.StepName)
+
+            var definition = binding.DefinitionPath is null
+                ? frozen.Definition
+                : AiPublicationDefinitionPath.Resolve(frozen.Definition, binding.DefinitionPath);
+            var definitionSha256 = AiPublicationJson.Hash(AiPublicationJson.Serialize(definition));
+            if (!string.Equals(definitionSha256, binding.DefinitionSha256, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(definition.Name, request.PipelineName, StringComparison.Ordinal) ||
+                !string.Equals(definition.Version, request.PipelineVersion, StringComparison.Ordinal))
+                throw new InvalidOperationException("The invocation does not belong to the exact publication-bound definition.");
+
+            var function = frozen.Publication.Manifest.Functions.SingleOrDefault(f =>
+                f.Site.Kind == AiPublicationFunctionKind.Step &&
+                string.Equals(f.Site.DefinitionPath, binding.DefinitionPath, StringComparison.Ordinal) &&
+                f.Site.StepName == request.StepName)
                 ?? throw new InvalidOperationException("The published custom call site is missing.");
-            if (function.LogicalName != request.StepKey || function.ExecutionLanguage != request.ExecutionLanguage || function.ImplementationRef != request.ImplementationRef)
+            if (function.LogicalName != request.StepKey || function.ExecutionLanguage != request.ExecutionLanguage ||
+                function.ImplementationRef != request.ImplementationRef)
                 throw new InvalidOperationException("The invocation binding differs from its immutable code declaration.");
-            return new AiDurableInvocationTarget(request.PipelineName, request.PipelineVersion, request.DefinitionSha256,
-                pin.PublicationRef, pin.PublicationSha256, function.ImplementationRef, function.Implementation.Sha256,
-                function.ExecutionLanguage, "env-" + function.Environment.Sha256, function.Environment.Sha256);
+
+            return new AiDurableInvocationTarget(
+                definition.Name,
+                definition.Version!,
+                binding.DefinitionSha256,
+                binding.PublicationRef,
+                binding.PublicationSha256,
+                function.ImplementationRef,
+                function.Implementation.Sha256,
+                function.ExecutionLanguage,
+                "env-" + function.Environment.Sha256,
+                function.Environment.Sha256);
         }
     }
 }

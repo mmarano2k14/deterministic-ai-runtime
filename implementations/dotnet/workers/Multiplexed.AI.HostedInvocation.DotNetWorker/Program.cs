@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Runtime.Loader;
 using System.Security.Cryptography;
 using System.Text;
@@ -267,10 +269,11 @@ internal static class Program
         {
             long total = 0; int count = 0;
             var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            void WriteFiles(JsonElement files, string owner, string basePath)
+            IReadOnlyDictionary<string, byte[]> WriteFiles(JsonElement files, string owner, string basePath)
             {
                 if (files.ValueKind != JsonValueKind.Array || files.GetArrayLength() is < 1 or > MaxFiles)
                     throw new InvalidOperationException("An explicit published file list is required.");
+                var captured = new Dictionary<string, byte[]>(StringComparer.Ordinal);
                 foreach (var file in files.EnumerateArray())
                 {
                     RequireExact(file, "path", "sha256", "sizeBytes", "base64Url");
@@ -281,20 +284,26 @@ internal static class Program
                     if (bytes.LongLength != size || Hash(bytes) != hash) throw new InvalidOperationException("Published file content integrity mismatch.");
                     total += size; count++; if (total > MaxBundleBytes || count > MaxFiles) throw new InvalidOperationException("Published .NET closure exceeds its bound.");
                     var key = owner + ":" + relative; if (!paths.Add(key)) throw new InvalidOperationException("Duplicate published path.");
+                    captured.Add(relative, bytes);
                     var target = Path.Combine(basePath, relative.Replace('/', Path.DirectorySeparatorChar));
                     Directory.CreateDirectory(Path.GetDirectoryName(target)!); File.WriteAllBytes(target, bytes);
                 }
+                return captured;
             }
-            WriteFiles(code.GetProperty("sources"), "source", root);
+            _ = WriteFiles(code.GetProperty("sources"), "source", root);
             var dependencies = code.GetProperty("dependencies");
             if (dependencies.ValueKind != JsonValueKind.Array || dependencies.GetArrayLength() > MaxDependencies)
                 throw new InvalidOperationException("Invalid dependency list.");
             foreach (var dependency in dependencies.EnumerateArray())
             {
-                RequireExact(dependency, "name", "version", "files");
+                if (dependency.ValueKind != JsonValueKind.Object)
+                    throw new InvalidOperationException("Invalid dependency.");
+                var hasPackage = dependency.TryGetProperty("package", out var package);
+                RequireExact(dependency, hasPackage ? new[] { "name", "version", "files", "package" } : new[] { "name", "version", "files" });
                 var name = SafeSegment(dependency.GetProperty("name").GetString());
-                _ = Text(dependency.GetProperty("version").GetString());
-                WriteFiles(dependency.GetProperty("files"), "dependency:" + name, Path.Combine(root, ".dependencies", name));
+                var version = Text(dependency.GetProperty("version").GetString());
+                var files = WriteFiles(dependency.GetProperty("files"), "dependency:" + name, Path.Combine(root, ".dependencies", name));
+                if (hasPackage) ValidateDotNetAssemblyClosure(package, name, version, files);
             }
             var assembly = Path.Combine(root, entry.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(assembly)) throw new InvalidOperationException("The configured .NET entry assembly is absent.");
@@ -305,6 +314,116 @@ internal static class Program
             try { Directory.Delete(root, recursive: true); } catch { }
             throw;
         }
+    }
+
+    private static void ValidateDotNetAssemblyClosure(
+        JsonElement package,
+        string dependencyName,
+        string dependencyVersion,
+        IReadOnlyDictionary<string, byte[]> files)
+    {
+        RequireExact(package, "schemaVersion", "kind", "manifestPath");
+        if (package.GetProperty("schemaVersion").GetInt32() != 1 ||
+            package.GetProperty("kind").GetString() != "DotNetAssemblyClosure")
+            throw new InvalidOperationException("This .NET worker supports only managed assembly-closure dependency packages.");
+        var manifestPath = PortablePath(package.GetProperty("manifestPath").GetString(), requireDll: false);
+        if (!manifestPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase) || !files.TryGetValue(manifestPath, out var manifestBytes))
+            throw new InvalidOperationException("The .NET assembly-closure manifest is missing.");
+        if (manifestBytes.Length is < 2 or > 128 * 1024)
+            throw new InvalidOperationException("The .NET assembly-closure manifest exceeds its supported bound.");
+
+        using var manifest = JsonDocument.Parse(manifestBytes, new JsonDocumentOptions { MaxDepth = 24 });
+        var root = manifest.RootElement;
+        RequireExact(root, "schemaVersion", "packageName", "version", "assemblies");
+        _ = PackageNameText(dependencyName);
+        _ = DependencyVersionText(dependencyVersion);
+        if (root.GetProperty("schemaVersion").GetInt32() != 1 ||
+            root.GetProperty("packageName").GetString() != dependencyName ||
+            root.GetProperty("version").GetString() != dependencyVersion)
+            throw new InvalidOperationException("The .NET assembly-closure manifest identity does not match the dependency.");
+        var assemblies = root.GetProperty("assemblies");
+        if (assemblies.ValueKind != JsonValueKind.Array || assemblies.GetArrayLength() == 0 ||
+            assemblies.GetArrayLength() != files.Count - 1 || assemblies.GetArrayLength() > 256)
+            throw new InvalidOperationException("The .NET assembly-closure manifest must enumerate the complete managed assembly set.");
+
+        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string? previous = null;
+        foreach (var declaration in assemblies.EnumerateArray())
+        {
+            RequireExact(declaration, "path", "sha256", "assemblyName", "assemblyVersion");
+            var path = PortablePath(declaration.GetProperty("path").GetString(), requireDll: true);
+            var digest = declaration.GetProperty("sha256").GetString();
+            if (!IsHash(digest)) throw new InvalidOperationException("Invalid .NET assembly digest.");
+            var declaredName = AssemblyIdentityText(declaration.GetProperty("assemblyName").GetString());
+            var declaredVersion = AssemblyVersionText(declaration.GetProperty("assemblyVersion").GetString());
+            if (!seenPaths.Add(path) || !seenNames.Add(declaredName))
+                throw new InvalidOperationException("The .NET assembly closure contains ambiguous assembly identities or paths.");
+            if (previous is not null && string.CompareOrdinal(previous, path) >= 0)
+                throw new InvalidOperationException(".NET assembly-closure files must be ordinally sorted.");
+            previous = path;
+            if (!files.TryGetValue(path, out var bytes) || Hash(bytes) != digest)
+                throw new InvalidOperationException("A .NET assembly does not match its manifest digest.");
+            var identity = InspectManagedAssembly(bytes);
+            if (identity.Name != declaredName || identity.Version != declaredVersion)
+                throw new InvalidOperationException("A .NET assembly identity does not match its manifest declaration.");
+        }
+    }
+
+    private static ManagedAssemblyIdentity InspectManagedAssembly(byte[] bytes)
+    {
+        try
+        {
+            using var stream = new MemoryStream(bytes, writable: false);
+            using var pe = new PEReader(stream, PEStreamOptions.LeaveOpen);
+            if (!pe.HasMetadata || pe.PEHeaders.CorHeader is null ||
+                (pe.PEHeaders.CorHeader.Flags & CorFlags.ILOnly) == 0)
+                throw new InvalidOperationException("A .NET assembly closure supports managed IL assemblies only.");
+            var metadata = pe.GetMetadataReader();
+            if (!metadata.IsAssembly) throw new InvalidOperationException("A .NET closure file is not an assembly.");
+            var definition = metadata.GetAssemblyDefinition();
+            return new(AssemblyIdentityText(metadata.GetString(definition.Name)), definition.Version.ToString());
+        }
+        catch (BadImageFormatException exception)
+        {
+            throw new InvalidOperationException("A .NET assembly closure contains malformed or non-managed bytes.", exception);
+        }
+    }
+
+    private static string PackageNameText(string? value)
+    {
+        var text = Text(value);
+        if (text.Length > 128 || !char.IsAsciiLetter(text[0]) ||
+            text.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '_' or '.' or '-')))
+            throw new InvalidOperationException("Invalid .NET dependency package name.");
+        return text;
+    }
+
+    private static string DependencyVersionText(string? value)
+    {
+        var text = Text(value);
+        if (!char.IsAsciiDigit(text[0]) ||
+            text.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_' or '+')))
+            throw new InvalidOperationException("An exact .NET dependency version label is required.");
+        return text;
+    }
+
+    private static string AssemblyIdentityText(string? value)
+    {
+        var text = Text(value);
+        if (text.Length > 256 || !(char.IsAsciiLetter(text[0]) || text[0] == '_') ||
+            text.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '_' or '.' or '-')))
+            throw new InvalidOperationException("Invalid managed assembly simple name.");
+        return text;
+    }
+
+    private static string AssemblyVersionText(string? value)
+    {
+        var text = Text(value);
+        if (!Version.TryParse(text, out var version) || version is null || version.ToString() != text ||
+            version.Major < 0 || version.Minor < 0 || version.Build < 0 || version.Revision < 0)
+            throw new InvalidOperationException("An exact four-part managed assembly version is required.");
+        return text;
     }
 
     private static object BuildContext(JsonElement request) => new Dictionary<string, object?>
@@ -414,6 +533,7 @@ internal static class Program
     }
 
     private sealed record ParentOptions(RuntimeIdentity Runtime, int HeartbeatMilliseconds);
+    private sealed record ManagedAssemblyIdentity(string Name, string Version);
     private sealed record RuntimeIdentity(string Reference, string ExecutionLanguage, string RuntimeVersion, string RuntimeSha256);
     private sealed record Workspace(string Root, string EntryAssembly, string EntryPointSymbol);
 

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "watch-python-client-python-worker",
+  "status": "passed",
+  "coverageTarget": "execution-watch-e2e",
+  "coverageValues": [],
+  "clientLanguage": "python",
+  "workerLanguage": "python",
+  "environmentRef": "matrix-python",
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-571812264c990947f8a1cf4607dc2a406c2f527f8afc500d79c6ca163cde64d6",
+  "executionId": "published-620d3da00275d6ec19f63a6ed2f03557677ccd1f10cc63691a75aa7e75a614db",
+  "initialSnapshotObserved": true,
+  "incrementalEventObserved": true,
+  "resyncObserved": false,
+  "publicSequences": [
+    3,
+    4,
+    5,
+    6
+  ],
+  "publicEventTypes": [
+    "step.started",
+    "step.completed",
+    "execution.completed"
+  ],
+  "terminalStatus": "Completed",
+  "evidence": [
+    "publish",
+    "submit",
+    "sdk-execution-watch",
+    "mcp-http-public-boundary",
+    "initial-snapshot",
+    "ordered-incremental-event",
+    "terminal-watch-convergence",
+    "terminal-result",
+    "public-execution-id"
+  ],
+  "recordedAtUtc": null
+}

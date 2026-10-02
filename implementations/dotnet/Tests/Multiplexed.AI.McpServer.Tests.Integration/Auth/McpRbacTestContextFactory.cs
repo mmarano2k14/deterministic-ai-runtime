@@ -117,6 +117,7 @@ namespace Multiplexed.AI.McpServer.Tests.Integration.Auth
                             $"trn:{Project}:execution:control:pause",
                             $"trn:{Project}:execution:control:resume",
                             $"trn:{Project}:execution:control:cancel",
+                            $"trn:{Project}:execution:control:input",
                             $"trn:{Project}:execution:control:read",
 
                             $"trn:{Project}:observability:ledger:read",

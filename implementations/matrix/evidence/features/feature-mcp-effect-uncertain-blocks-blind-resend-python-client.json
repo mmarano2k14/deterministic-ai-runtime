@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-mcp-effect-uncertain-blocks-blind-resend-python-client",
+  "status": "passed",
+  "coverageTarget": "mcp-effect-evidence",
+  "coverageValues": [
+    "uncertain-blocks-blind-resend"
+  ],
+  "clientLanguage": "python",
+  "workerLanguage": null,
+  "endpoint": "http://localhost:8081/mcp",
+  "topology": "local",
+  "provider": "ProcessHostPool",
+  "runtimeProvider": "ProcessHostPool",
+  "workerExecutionProvider": "TrustedProcess",
+  "publicationRef": "pub-862763d446a101b3cc703bed354446926e379039204a9f69760208fd28b2e1dd",
+  "executionId": "published-68cf00b94fb1c7fe8404a06a4dd918eb5523a472ca79b5404a53475e5d44d5d9",
+  "terminalStatus": "Failed",
+  "stepStatus": "Failed",
+  "durableEvidenceStatus": "Uncertain",
+  "durableEvidenceRevision": 2,
+  "effectId": "mcp-effect-v1-52ceeecaa6d09886d865fd7c847bc1243f07f9e719713a8e182ac9160865ca24",
+  "retryCount": 1,
+  "physicalCallCount": 1,
+  "durableResultIsError": null,
+  "uncertaintyReasonCode": "transport-timeout",
+  "evidence": [
+    "publish",
+    "submit",
+    "durable-effect-uncertain",
+    "logical-retry-observed",
+    "blind-resend-blocked",
+    "single-physical-tools-call",
+    "terminal-result"
+  ],
+  "recordedAtUtc": "2026-09-21T23:13:48.144+00:00"
+}

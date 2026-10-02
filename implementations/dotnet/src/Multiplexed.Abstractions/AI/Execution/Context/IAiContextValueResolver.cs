@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -112,6 +112,25 @@ namespace Multiplexed.Abstractions.AI.Execution.Context
         Task<T?> ResolveAsync<T>(
             AiStepExecutionContext context,
             object? valueOrPath,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Resolves a required runtime path and converts the resolved value to the requested type.
+        ///
+        /// STRICT PATH BEHAVIOR:
+        /// - The supplied value must be a supported runtime path expression.
+        /// - Raw/literal fallback is NOT applied.
+        /// - Throws when the path cannot be resolved.
+        /// - Throws when the resolved value is null.
+        /// - Throws when conversion fails.
+        ///
+        /// USE CASE:
+        /// - Control/infrastructure steps that must fail closed rather than accidentally
+        ///   persist an unresolved path string as business data.
+        /// </summary>
+        Task<T> ResolveRequiredPathAsync<T>(
+            AiStepExecutionContext context,
+            string path,
             CancellationToken cancellationToken = default);
 
         /// <summary>

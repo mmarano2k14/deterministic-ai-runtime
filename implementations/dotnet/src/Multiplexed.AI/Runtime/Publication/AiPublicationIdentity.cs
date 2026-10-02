@@ -17,6 +17,21 @@ namespace Multiplexed.AI.Runtime.Publication
         public AiPublicationIdentity(IServiceProvider services, IExecutionContextAccessor accessor, IAiControlPlaneIdResolver controlPlane)
         { _services = services; _accessor = accessor; _controlPlane = controlPlane; }
 
+        internal async Task<Guard> CaptureGuardAsync(AiDurableInvocationScope scope, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            AiDurableInvocationValidation.ValidateScope(scope);
+            var live = _accessor.Current ?? throw new UnauthorizedAccessException("No trusted publication context is active.");
+            AiPublicationJson.Text(live.Project, "Project"); AiPublicationJson.Text(live.UserId, "UserId");
+            AiPublicationJson.Text(live.CurrentNamespace, "Namespace");
+            var guard = new Guard(_accessor, new AiPublicationPartition(scope, live.Project, live.CurrentNamespace), live.UserId);
+            guard.RequireCurrent();
+            if (await _controlPlane.ResolveAsync(cancellationToken).ConfigureAwait(false) != scope.ControlPlaneId)
+                throw new UnauthorizedAccessException("Publication scope does not match this control plane.");
+            guard.RequireCurrent(); cancellationToken.ThrowIfCancellationRequested();
+            return guard;
+        }
+
         internal async Task<Guard> AuthorizeAsync(AiDurableInvocationScope scope,
             AiPublicationCapability capability, CancellationToken cancellationToken)
         {

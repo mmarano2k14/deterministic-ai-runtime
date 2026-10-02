@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "feature-runtime-provider-kubernetes-pool-http-command-routing",
+  "status": "passed",
+  "topology": "kubernetes",
+  "runtimeProvider": "KubernetesPool",
+  "transport": "http",
+  "runtimeImage": "multiplexed-ai-runtime:k8s-debug-150",
+  "immutableRuntimeImage": false,
+  "kubernetes": {
+    "namespaceName": "ai-runtime",
+    "podName": "runtime-pool-pool-5e-http-56e3370b-request-56e3",
+    "serviceName": "runtime-pool-pool-5e-http-56e3370b-request-56e3-svc",
+    "runtimeInstanceIds": [
+      "pool-5e-http-56e3370b-primary",
+      "runtime-pool-2-request-56e3370b",
+      "runtime-pool-3-request-56e3370b"
+    ],
+    "runtimeInstanceCount": 3,
+    "commandCount": 3,
+    "cleanupSucceeded": true
+  },
+  "evidenceKinds": [
+    "kubernetes-sdk-pod-created",
+    "runtime-pool-pod-ready",
+    "stable-service-command-routing",
+    "exact-inpod-runtime-identities",
+    "kubernetes-sdk-delete-accepted"
+  ]
+}

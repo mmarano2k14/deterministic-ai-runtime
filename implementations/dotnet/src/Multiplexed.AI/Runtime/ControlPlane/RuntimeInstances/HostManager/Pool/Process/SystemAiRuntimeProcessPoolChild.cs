@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
+
 namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.Process
 {
     /// <summary>
@@ -61,11 +62,25 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
 
             if (redirectOutput)
             {
-                this.standardOutputDrain =
-                    process.StandardOutput.ReadToEndAsync();
+                var interactiveTrace =
+                    string.Equals(
+                        System.Environment.GetEnvironmentVariable("MULTIPLEXED_INTERACTIVE_SDK_CHILD_TRACE"),
+                        "1",
+                        StringComparison.Ordinal);
 
-                this.standardErrorDrain =
-                    process.StandardError.ReadToEndAsync();
+                this.standardOutputDrain = interactiveTrace
+                    ? DrainInteractiveTraceAsync(
+                        process.StandardOutput,
+                        "OUT",
+                        request.RuntimeInstanceId)
+                    : process.StandardOutput.ReadToEndAsync();
+
+                this.standardErrorDrain = interactiveTrace
+                    ? DrainInteractiveTraceAsync(
+                        process.StandardError,
+                        "ERR",
+                        request.RuntimeInstanceId)
+                    : process.StandardError.ReadToEndAsync();
             }
 
             this.completion = this.ObserveCompletionAsync();
@@ -171,6 +186,42 @@ namespace Multiplexed.AI.Runtime.ControlPlane.RuntimeInstances.HostManager.Pool.
             {
                 this.stopGate.Release();
             }
+        }
+
+        private static async Task<string> DrainInteractiveTraceAsync(
+            System.IO.StreamReader reader,
+            string stream,
+            string runtimeInstanceId)
+        {
+            var captured = new System.Text.StringBuilder();
+
+            while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
+            {
+                captured.AppendLine(line);
+
+                if (IsInteractiveDiagnosticLine(line))
+                {
+                    Console.Error.WriteLine(
+                        $"[INTERACTIVE CHILD TRACE] ObservedAtUtc={System.DateTimeOffset.UtcNow:O} RuntimeInstanceId={runtimeInstanceId} Stream={stream} {line}");
+                }
+            }
+
+            return captured.ToString();
+        }
+
+        private static bool IsInteractiveDiagnosticLine(string line)
+        {
+            return line.Contains("plan", StringComparison.OrdinalIgnoreCase) ||
+                   line.Contains("openai", StringComparison.OrdinalIgnoreCase) ||
+                   line.Contains("exception", StringComparison.OrdinalIgnoreCase) ||
+                   line.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+                   line.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+                   line.Contains("retry", StringComparison.OrdinalIgnoreCase) ||
+                   line.Contains("invocation", StringComparison.OrdinalIgnoreCase) ||
+                   line.Contains("MONGO SNAPSHOT STORE", StringComparison.OrdinalIgnoreCase) ||
+                   line.Contains("[AI SNAPSHOT]", StringComparison.OrdinalIgnoreCase) ||
+                   line.Contains("ai.execution.snapshot", StringComparison.OrdinalIgnoreCase) ||
+                   line.Contains("[AI DAG BATCH PHASE]", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

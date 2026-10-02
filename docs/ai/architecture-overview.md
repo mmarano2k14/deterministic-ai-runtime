@@ -801,13 +801,15 @@ Step executors receive resolved context from the context resolution layer.
 
 The runtime also supports opt-in hosted Python, TypeScript, and .NET functions through contextual adapters. Invocation kind is separate from language: native implementations remain native, custom declarations select an approved language environment, and MCP declarations select an authorized tool connection.
 
-Immutable publication binds code, supplied dependencies, and the environment to the whole run. The custom-function journal freezes invocation inputs, controls worker assignment through leases and epochs, and records an authoritative result. Continuation uses the existing DAG; acknowledgement requires the exact application receipt and terminal parent, not only queue acceptance.
+Immutable publication binds code, supplied dependencies, deterministic package bundles, and the environment to the whole run. Supported dependency packaging includes pure-Python wheel bundles, locked Node source bundles, and managed .NET assembly closures; package-manager/network resolution remains outside runtime execution. The custom-function journal freezes invocation inputs, controls worker assignment through leases and epochs, and records an authoritative result. Continuation uses the existing DAG; acknowledgement requires the exact application receipt and terminal parent, not only queue acceptance.
+
+The invocation journal now reuses dispatch-page snapshots for the first lease CAS, distinguishes revision contention from authoritative predicate rejection, and uses keyset continuation paging without durable writes whose only purpose is scanner fairness. MongoDB dispatch discovery is split between an ordered Prepared branch and the existing expiry-oriented leased branch, while continuation uses a filter/order-aware v2 index. These are datastore-efficiency changes only; lease, epoch, result acceptance, and DAG continuation authority are unchanged. See [Durable Invocation Journal and Hosted Worker Authority](durable-invocation-journal.md).
 
 A hosted function process is not a trusted `RuntimeInstance` and does not own DAG claims, retries, `Park`, recovery, or successor selection. The existing RBAC engine authorizes publication and execution. Contextual policy adapters are excluded from native singleton discovery.
 
-The process provider validates declared requirements against actual capabilities before launch. It remains a trusted-process provider and refuses sandbox, denied-egress, OCI-image, or sealed-closure requirements it cannot enforce. This foundation does not include the external SDK library or a public publication endpoint.
+Physical execution is provider-specific. The trusted-process provider validates declared requirements against actual capabilities and refuses sandbox, denied-egress, OCI-image, or sealed-closure requirements it cannot enforce. A separate selected OCI provider implements `SandboxedContainer` execution for Linux/amd64 with an exact image digest, non-root identity, denied egress, read-only root, bounded tmpfs, dropped capabilities, `no-new-privileges`, CPU/memory/PID limits, applied-state attestation before tenant material release, and fail-closed cleanup/quarantine. It reuses the same supervisor, capacity, journal, lease/epoch, result-acceptance, DAG, and recovery authorities. A separate public SDK boundary supplies portable publication/execution contracts and an authorized server adapter without exposing those internal authorities. Independent .NET, TypeScript/JavaScript, and Python SDK clients now consume that same boundary without embedding runtime authority. KubernetesPool still does not materialize hosted sandboxes as ephemeral Pods.
 
-See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md) for the language backends, environment identity, custom `Concurrency` policy checkpoint, outbound MCP effect metadata, and remaining scope. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) records the evidence boundaries.
+See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md) for the language backends, environment identity, hosted custom `Concurrency`, `Retry`, and `Delegation` policy checkpoints, outbound MCP integration, and remaining scope. [Hosted Worker Isolation](hosted-worker-isolation.md) describes the physical OCI provider and [Hosted Worker Isolation Validation](hosted-worker-isolation-validation.md) records the deterministic and real-engine evidence boundaries. [Durable MCP Effect Evidence](durable-mcp-effect-evidence.md) documents the optional durable external-effect fence/reconciliation boundary, while [Durable MCP Effect Evidence Validation](durable-mcp-effect-evidence-validation.md) separates deterministic, outbound-boundary, and MongoDB evidence. [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) remains the language/publication evidence reference. [Public SDK Boundary](public-sdk-boundary.md) documents the portable external contract/server-adapter split, [Public SDK Boundary Validation](public-sdk-boundary-validation.md) records its boundary evidence, and [External SDK Libraries](external-sdk-libraries.md) with [External SDK Libraries Validation](external-sdk-libraries-validation.md) document the independent .NET, TypeScript/JavaScript, and Python clients.
 
 ---
 
@@ -818,6 +820,7 @@ Policies provide reusable runtime decision logic.
 Policy-driven behavior applies to:
 
 - retry decisions
+- Child DAG delegation approval/denial
 - retention decisions
 - concurrency admission
 - distributed throttling
@@ -835,6 +838,9 @@ Retention policy context
 
 Concurrency context
 = pipeline + step + provider + model + operation + runtime instance
+
+Delegation policy context
+= parent execution + child definition + deterministic invocation relation + declaration scope
 ```
 
 Policies decide.
@@ -1513,13 +1519,17 @@ Plugins remain responsible for domain-specific execution.
 | Observability dashboard | Planned |
 | Kubernetes runtime host provider | Implemented / validated for Host Manager lifecycle, Kubernetes SDK Pod/Service creation, layered readiness, HTTP/gRPC transport preservation, and Pod crash-recovery scenarios |
 | Full Kubernetes deployment packaging and cluster operations | Ongoing |
-| Hosted Python, TypeScript and .NET execution | Implemented / targeted validation; opt-in trusted-process hosting |
+| Hosted Python, TypeScript and .NET execution | Implemented / targeted validation through the existing hosted-worker abstraction; trusted-process execution remains supported |
 | Immutable publication and whole-run pinning | Implemented / validated within the supported published DAG path |
+| Deterministic dependency packaging | Pure-Python wheels, locked Node source bundles, and managed .NET assembly closures implemented on the existing immutable publication/environment identity; no runtime package-manager resolution |
 | Durable function journal and DAG continuation | Implemented / validated; recorded result and exact application receipt remain distinct |
-| Hosted custom Concurrency policies | Implemented / validated at the existing admission checkpoint |
-| Outbound MCP tool transport and effect identity | Implemented / validated for read-only/idempotent targets; durable effect evidence is not included |
-| Execution requirements and artifact descriptors | Implemented / validated capability refusal; not a hostile-code sandbox |
-| External SDK library and public publication/submission API | Planned; no engine-DLL dependency in the target contract |
+| Hosted custom policy families | `Concurrency`, `Retry`, and `Delegation` implemented at their existing checkpoints with distinct family contracts; `Retention` remains native-only |
+| Outbound MCP tool transport and effect identity | Implemented with stable logical effect identity and server-owned target/RBAC validation |
+| Durable MCP external-effect evidence | Implemented as an opt-in server boundary with immutable intent, pre-`tools/call` dispatch CAS, `Completed` local replay, `NotSent`/`Uncertain` classification, explicit reconciliation, restart-safe fail-closed behavior, and tenant-scoped Mongo persistence; no generic exactly-once or automatic redelivery claim |
+| Hosted worker physical isolation | Selected Linux/amd64 OCI `SandboxedContainer` provider implemented / validated with fail-closed attestation, cleanup/quarantine, orphan reconciliation, 4 explicit real-engine tests, production Python hosted-worker execution/cancellation, and bounded live matrix closure; not a universal platform or Kubernetes sandbox claim |
+| Public SDK contract/server boundary | Implemented and validated; portable contracts have no engine-DLL dependency and the server boundary exposes publication, submission, observation, result, and cancellation while reusing existing authorities |
+| External language SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python with shared protocol/parity validation, local package smoke, and a fixture-free 37/37 Docker runtime matrix with `runtimeProvider=ProcessHostPool` and bounded `ContainerIsolationProvider` worker-selection scenarios; no engine-DLL dependency |
+| CLI / public SDK registry distribution | Planned productization on the same public boundary |
 | Process-host Runtime Pool Manager | Implemented / validated |
 | Independent `PoolId` / `HostId` / `RuntimeInstanceId` identity | Implemented / validated |
 | Stable HTTP and gRPC pool routing | Implemented / validated |
@@ -1527,6 +1537,8 @@ Plugins remain responsible for domain-specific execution.
 | Shared durable Runtime Pool failure journal and exact capacity suppression | Implemented / validated |
 | Deterministic assigned-work claim and exact child/full-boundary recovery | Implemented / validated |
 | Kubernetes Runtime Pool Pod with multiple independent child runtimes | Implemented / validated over HTTP and gRPC |
+
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
 
 ---
 

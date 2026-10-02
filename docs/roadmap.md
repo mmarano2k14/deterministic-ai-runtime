@@ -535,23 +535,40 @@ See:
 
 ## Phase 5 — Public API / SDK Polish
 
-**Status:** Planned
+**Status:** External SDK foundation completed / broader public API productization in progress
 
 Goal: make the runtime easier to consume from external applications.
 
-Possible work:
+Implemented foundation:
 
-- cleaner execution API
-- stable request/response contracts
-- SDK-friendly abstractions
-- clearer controller APIs
+- independent `Multiplexed.AI.Sdk.Contracts` dependency firewall;
+- portable publication/pipeline wire models;
+- execution submission, observation, result, and cancellation wire contracts;
+- authorized server adapter and MCP public operations;
+- explicit mapping to existing immutable publication, run pinning, shared submission, authorization, and execution control;
+- independent .NET, TypeScript/JavaScript, and Python external SDK clients;
+- shared protocol manifest and cross-language parity fixtures;
+- local NuGet/npm/wheel build-install-import smoke validation;
+- fixture-free 37/37 Docker runtime matrix: the existing 33-scenario `ProcessHostPool` baseline plus four isolation-provider/artifact-selection scenarios using `runtimeProvider=ProcessHostPool` with explicit trusted-process/container-isolation worker selection;
+- reusable public published-function samples plus an initial .NET/TypeScript/Python SDK quickstart;
+- a separate 3/3 KubernetesPool closure covering HTTP routing, hierarchical runtime/Pod recovery, and Python SDK publication/execution with `Completed` and the uploaded-function marker verified. The combined record is 37 Docker + 3 Kubernetes scenarios, not a homogeneous 40-scenario topology matrix. See [KubernetesPool Matrix Validation](ai/kubernetes-pool-matrix-validation.md).
+
+Remaining productization work:
+
+- public registry distribution/versioning for external SDK packages;
+- CLI packaging;
+- broader HTTP/Gateway packaging where useful;
+- replay/ledger/forensics public client surfaces;
+- generated API documentation and compatibility/deprecation policy;
+- broader example catalog beyond the implemented SDK quickstart and published-function samples;
+- public helper/context resolver documentation.
+
+Additional controller/API work may still include:
+
 - replay controller contracts
 - recovery incident query contracts
 - forensics query contracts
 - control-plane causal-chain query contracts
-- better examples
-- public helper/context resolver documentation
-- CLI or developer utilities
 
 The runtime internals should remain powerful, but the external entry points should become simpler.
 
@@ -804,6 +821,8 @@ All roadmap work should respect these principles:
 The current priorities are:
 
 ```text
+Durable Invocation hardening: implementation and targeted persistence/query-plan validation complete on the current branch; finish legacy/new matrix revalidation before closure
+SDK v1 execution.watch(): next public-boundary feature after Invocation regression closure; ordered stream + snapshot + resume/resync + server-side RBAC
 EventDriven Engine Observation: maintain canonical events, centralized projections, and deterministic lifecycle waits
 Recursive Child DAG: maintain the green Depth3 + exact nested-step + deterministic nine-row multi-seed/multi-schedule adversarial baseline
 Multi-agent orchestration proof on top of durable Child DAG composition
@@ -830,7 +849,7 @@ Phase 0 documentation restructure is complete as V1.
 
 The runtime foundations are already implemented and validated through distributed integration scenarios, MCP control-plane scenarios, HTTP process-host scenarios, replay/ledger/trace scenarios, and runtime crash recovery scenarios.
 
-The Runtime Pool correctness phase is closed at the current proof boundary. Native durable Child DAG composition is implemented and validated through recursive `ChildDepth = 3` scenarios, including an intermediate Depth3 proof and larger high-scale profiles. Centralized EventDriven engine observation is in place through canonical events, the existing Event Manager, durable Ledger, Runtime Lifecycle Journal, and Recovery Forensics. Exact recursive child-step accounting is closed for the bounded Depth3 production proof, and runtime-ownership handoff / interval semantics are covered by complementary scenario and Redis claim-token / exact-owner CAS proofs. Deterministic multi-seed and multi-schedule failure coverage is now green through the canonical nine-row matrix across HTTP/gRPC × ProcessHostPool/KubernetesPool. The immediate hardening focus moves to datastore efficiency, recovery-of-recovery, dedicated recursive-child replay, multi-agent orchestration, operational polish, broader Kubernetes operations, multi-control-plane ownership, and public positioning.
+The Runtime Pool correctness phase is closed at the current proof boundary. The current Invocation hardening work preserves lease/epoch/CAS/result-acceptance/continuation authority while reducing redundant journal reads, fairness-only writes, duplicated policy/stdio infrastructure, and measured MongoDB scan amplification. The next planned public SDK feature after regression closure is `execution.watch()`; it remains separate from future Admin/Ops streaming. Native durable Child DAG composition is implemented and validated through recursive `ChildDepth = 3` scenarios, including an intermediate Depth3 proof and larger high-scale profiles. Centralized EventDriven engine observation is in place through canonical events, the existing Event Manager, durable Ledger, Runtime Lifecycle Journal, and Recovery Forensics. Exact recursive child-step accounting is closed for the bounded Depth3 production proof, and runtime-ownership handoff / interval semantics are covered by complementary scenario and Redis claim-token / exact-owner CAS proofs. Deterministic multi-seed and multi-schedule failure coverage is now green through the canonical nine-row matrix across HTTP/gRPC × ProcessHostPool/KubernetesPool. After Invocation regression closure, the immediate hardening focus moves to recovery-of-recovery, dedicated recursive-child replay, multi-agent orchestration, operational polish, broader Kubernetes operations, multi-control-plane ownership, and public positioning.
 
 Canonical matrix definition: [`docs/ai/adversarial-runtime-validation-matrix.md`](ai/adversarial-runtime-validation-matrix.md). Raw row-level provenance: [`docs/ai/adversarial-runtime-validation-evidence-index.md`](ai/adversarial-runtime-validation-evidence-index.md).
 

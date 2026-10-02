@@ -23,7 +23,7 @@ namespace Multiplexed.AI.Runtime.Invocation.Workers.Policies
             IAiWorkerInvocationTransport transport,
             TimeProvider? timeProvider = null)
         {
-            if (executionLanguage is not (AiExecutionLanguages.DotNet or AiExecutionLanguages.Python or AiExecutionLanguages.TypeScript))
+            if (!AiExecutionLanguages.IsSupported(executionLanguage))
             {
                 throw new ArgumentOutOfRangeException(nameof(executionLanguage), "A canonical hosted execution language is required.");
             }

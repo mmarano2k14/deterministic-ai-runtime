@@ -1,0 +1,38 @@
+[
+  {
+    "sdk": "dotnet",
+    "execution_id": "published-3ff2012df79a43fc248980f344bd64121242128556a607705e7a4e1ed30bca6a",
+    "creation_line": 3036,
+    "upsert_start_line": 7801,
+    "get_start_line": 8005,
+    "get_missing_line": 9198,
+    "upsert_result_line": 9199,
+    "upsert_started_observed_at": "2026-09-30T09:58:16.688044+00:00",
+    "upsert_result_observed_at": "2026-09-30T09:58:28.688279+00:00",
+    "observed_elapsed_ms": 12000.235
+  },
+  {
+    "sdk": "typescript",
+    "execution_id": "published-114d20fd71c559f8fab8fef88220b3eaa7517372a5ae54e5366bb2640a9af606",
+    "creation_line": 9536,
+    "upsert_start_line": 13369,
+    "get_start_line": 13552,
+    "get_missing_line": 14459,
+    "upsert_result_line": 14461,
+    "upsert_started_observed_at": "2026-09-30T09:58:43.000103+00:00",
+    "upsert_result_observed_at": "2026-09-30T09:58:51.987488+00:00",
+    "observed_elapsed_ms": 8987.385
+  },
+  {
+    "sdk": "python",
+    "execution_id": "published-3e8483616f414eb559bf2d990e593d14bf81acf08c1b36bb7289a292d5e44df4",
+    "creation_line": 14948,
+    "upsert_start_line": 19964,
+    "get_start_line": 20250,
+    "get_missing_line": 21237,
+    "upsert_result_line": 21238,
+    "upsert_started_observed_at": "2026-09-30T09:59:08.925144+00:00",
+    "upsert_result_observed_at": "2026-09-30T09:59:18.879232+00:00",
+    "observed_elapsed_ms": 9954.088
+  }
+]

@@ -401,9 +401,9 @@ The outbound adapter restores trusted execution identity, resolves the server-ow
 
 Outgoing requests distinguish a per-attempt `RequestId` from a stable `EffectId` and canonical `RequestDigest`; the existing `ConnectionRevision` participates in that digest. Physical claim replacement does not create a new logical effect. These fields are not remote idempotency keys and are not injected into tool arguments or headers.
 
-The transport uses HTTPS except for explicitly enabled loopback HTTP, disables redirects/cookies, and does not automatically retry an uncertain tool effect. Durable outbound-effect evidence, reconciliation, and replay without re-emission remain outside this integration. Read-only or explicitly idempotent tools define the validated network boundary.
+The transport uses HTTPS except for explicitly enabled loopback HTTP, disables redirects/cookies, and does not automatically retry an uncertain tool effect. When the optional durable MCP evidence journal is installed, the outbound transport is wrapped by a durable dispatch fence: `Prepared -> Dispatching` is committed before `tools/call`, confirmed `Completed` results replay locally, classified pre-call failures may become `NotSent`, and possibly-sent outcomes fail closed as `Uncertain` or stale `Dispatching`. Explicit reconciliation may query provider/tool evidence, but it cannot reissue the original business call or schedule a retry.
 
-See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md#outbound-mcp-and-effect-identity) for the contract and [Hosted Multilanguage Validation](hosted-multilanguage-validation.md) for the evidence. This does not add a public SDK publication/submission endpoint to the inbound tool catalog below.
+See [Hosted Multilanguage Execution](hosted-multilanguage-execution.md#outbound-mcp-and-effect-identity) for the transport contract, [Durable MCP Effect Evidence](durable-mcp-effect-evidence.md) for the durable state/reconciliation boundary, and [Durable MCP Effect Evidence Validation](durable-mcp-effect-evidence-validation.md) for its evidence. A separate public SDK server adapter now exposes `sdk.publish_pipeline` and execution submit/observe/result/cancel operations through the MCP server; those tools map into existing runtime authorities and are not the outbound business-effect transport described here. None of these boundaries claim generic exactly-once provider behavior.
 
 ---
 
@@ -622,6 +622,14 @@ Runtime role
 This prevents admission from accidentally assigning work to `mcp-control-plane`.
 
 ---
+
+## Published-code KubernetesPool host roles
+
+The real external Python SDK scenario uses the MCP public boundary for immutable publication and `QueueFirst` execution submission. Its control plane advertises the Linux environment through `PublicationOnlyRuntimes`, with `AiHostedInvocation:EnableLocalWorkerProfiles=false`, `EnableWorkerPolling=false`, and `EnableDagReconciliation=true`. RuntimeInstanceOnly children enable their production worker profiles and polling but keep background DAG reconciliation disabled.
+
+Custom invocation adapters remain registered on runtime children independently of that reconciliation setting. The `matrix` RBAC project is explicitly configured in the context, control plane, and child TRN builder; the matrix bootstrap sets a positive snapshot TTL before persistence. Neither a restored project field nor context-store expiration replaces those host/bootstrap settings.
+
+The recorded result is public `Completed` with the uploaded-function marker verified. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md) for exact configuration keys, diagnostics, and the three-scenario closure boundary.
 
 ## Runtime Instance Identity
 

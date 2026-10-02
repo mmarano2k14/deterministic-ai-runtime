@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "profiles": [
+    {
+      "runtimeProvider": "ProcessHostPool",
+      "runtimeTransport": "HTTP",
+      "requiresExternalAttestation": true,
+      "attestationAuthority": "process-host-inspection"
+    },
+    {
+      "runtimeProvider": "ProcessHostPool",
+      "runtimeTransport": "gRPC",
+      "requiresExternalAttestation": true,
+      "attestationAuthority": "process-host-inspection"
+    },
+    {
+      "runtimeProvider": "KubernetesPool",
+      "runtimeTransport": "HTTP",
+      "requiresExternalAttestation": true,
+      "attestationAuthority": "kubernetes-cluster-inspection"
+    },
+    {
+      "runtimeProvider": "KubernetesPool",
+      "runtimeTransport": "gRPC",
+      "requiresExternalAttestation": true,
+      "attestationAuthority": "kubernetes-cluster-inspection"
+    }
+  ]
+}

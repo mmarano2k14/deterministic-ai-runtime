@@ -1,4 +1,4 @@
-﻿using Multiplexed.Abstractions.AI.Steps;
+using Multiplexed.Abstractions.AI.Steps;
 using Multiplexed.Abstractions.AI.Invocation;
 using System.Text.Json.Serialization;
 
@@ -38,6 +38,13 @@ namespace Multiplexed.Abstractions.AI.Pipeline
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public AiInvocationDefinition? Invocation { get; init; }
 
+        /// <summary>
+        /// Original explicit execution metadata. A null value preserves historical retry configuration/default behavior;
+        /// a non-null value lets runtime policy materialization honor the dedicated execution budget and delay.
+        /// </summary>
+        [JsonIgnore]
+        public AiPipelineStepExecutionDefinition? Execution { get; init; }
+
         /// <summary>Effective immutable metadata; null on historical undeclared native steps.</summary>
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public AiInvocationBinding? InvocationBinding { get; init; }
@@ -48,6 +55,16 @@ namespace Multiplexed.Abstractions.AI.Pipeline
         /// </summary>
         [JsonIgnore]
         public IReadOnlyList<AiPolicyInvocationBinding> ConcurrencyPolicyBindings { get; init; }
+            = Array.Empty<AiPolicyInvocationBinding>();
+
+        /// <summary>Ordered Retry policy bindings preserving their declaration scope.</summary>
+        [JsonIgnore]
+        public IReadOnlyList<AiPolicyInvocationBinding> RetryPolicyBindings { get; init; }
+            = Array.Empty<AiPolicyInvocationBinding>();
+
+        /// <summary>Ordered Delegation policy bindings for the ExecuteChildDag checkpoint.</summary>
+        [JsonIgnore]
+        public IReadOnlyList<AiPolicyInvocationBinding> DelegationPolicyBindings { get; init; }
             = Array.Empty<AiPolicyInvocationBinding>();
 
         /// <summary>

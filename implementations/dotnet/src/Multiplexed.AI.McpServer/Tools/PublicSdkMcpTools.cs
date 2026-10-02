@@ -1,0 +1,88 @@
+using System.ComponentModel;
+using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol.Server;
+using Multiplexed.AI.McpServer.PublicSdk;
+using Multiplexed.AI.Sdk.Contracts.Common;
+using Multiplexed.AI.Sdk.Contracts.Control;
+using Multiplexed.AI.Sdk.Contracts.Executions;
+using Multiplexed.AI.Sdk.Contracts.Observation;
+using Multiplexed.AI.Sdk.Contracts.Publication;
+using Multiplexed.AI.Sdk.Contracts.Replay;
+using Multiplexed.AI.Sdk.Contracts.Watch;
+using Multiplexed.Rbac.Core.Authorization.Attributes;
+
+namespace Multiplexed.AI.McpServer.Tools
+{
+    /// <summary>Public wire boundary for SDK publication, submission, observation, Watch, result and cancellation.</summary>
+    [McpServerToolType]
+    public sealed class PublicSdkMcpTools
+    {
+        private readonly IServiceScopeFactory _scopeFactory;
+        public PublicSdkMcpTools(IServiceScopeFactory scopeFactory) => _scopeFactory = scopeFactory;
+
+        [McpServerTool(Name = AiSdkOperationNames.PublishPipeline, UseStructuredContent = true)]
+        [Description("Publishes one immutable pipeline using the versioned public SDK contract.")]
+        public Task<AiSdkPipelinePublicationResponse> PublishPipelineAsync(AiSdkPipelinePublicationRequest request, CancellationToken cancellationToken = default) =>
+            InScopeAsync(boundary => boundary.PublishAsync(request, cancellationToken));
+
+        [McpServerTool(Name = AiSdkOperationNames.SubmitExecution, UseStructuredContent = true)]
+        [Description("Creates and submits one published execution through the existing shared submission path.")]
+        [RequireCapability("shared-run", "execution", "submit")]
+        public Task<AiSdkExecutionSubmissionResponse> SubmitExecutionAsync(AiSdkExecutionSubmissionRequest request, CancellationToken cancellationToken = default) =>
+            InScopeAsync(boundary => boundary.SubmitAsync(request, cancellationToken));
+
+        [McpServerTool(Name = AiSdkOperationNames.ObserveExecution, UseStructuredContent = true)]
+        [Description("Returns the logical state of one published execution without exposing runtime placement or leases.")]
+        [RequireCapability("execution", "control", "read")]
+        public Task<AiSdkExecutionObservation> ObserveExecutionAsync(string executionId, CancellationToken cancellationToken = default) =>
+            InScopeAsync(boundary => boundary.ObserveAsync(executionId, cancellationToken));
+
+        [McpServerTool(Name = AiSdkOperationNames.WatchExecution, UseStructuredContent = true)]
+        [Description("Returns the next ordered public execution Watch item. The request may remain open until a new public event is available.")]
+        [RequireCapability("execution", "control", "read")]
+        public Task<AiSdkExecutionWatchEvent> WatchExecutionAsync(AiSdkExecutionWatchRequest request, CancellationToken cancellationToken = default) =>
+            InScopeAsync(boundary => boundary.WatchAsync(request, cancellationToken));
+
+        [McpServerTool(Name = AiSdkOperationNames.GetExecutionResult, UseStructuredContent = true)]
+        [Description("Returns the sanitized terminal result of one published execution.")]
+        [RequireCapability("execution", "control", "read")]
+        public Task<AiSdkExecutionResult> GetExecutionResultAsync(string executionId, CancellationToken cancellationToken = default) =>
+            InScopeAsync(boundary => boundary.GetResultAsync(executionId, cancellationToken));
+
+        [McpServerTool(Name = AiSdkOperationNames.CancelExecution, UseStructuredContent = true)]
+        [Description("Requests cooperative cancellation of one published execution.")]
+        [RequireCapability("execution", "control", "cancel")]
+        public Task<AiSdkExecutionCancellationResponse> CancelExecutionAsync(string executionId, AiSdkExecutionCancellationRequest request, CancellationToken cancellationToken = default) =>
+            InScopeAsync(boundary => boundary.CancelAsync(executionId, request, cancellationToken));
+
+        [McpServerTool(Name = AiSdkOperationNames.PauseExecution, UseStructuredContent = true)]
+        [Description("Requests cooperative pause of one published execution.")]
+        [RequireCapability("execution", "control", "pause")]
+        public Task<AiSdkExecutionControlResponse> PauseExecutionAsync(string executionId, AiSdkExecutionControlRequest request, CancellationToken cancellationToken = default) =>
+            InScopeAsync(boundary => boundary.PauseAsync(executionId, request, cancellationToken));
+
+        [McpServerTool(Name = AiSdkOperationNames.ResumeExecution, UseStructuredContent = true)]
+        [Description("Requests cooperative resume of one published execution.")]
+        [RequireCapability("execution", "control", "resume")]
+        public Task<AiSdkExecutionControlResponse> ResumeExecutionAsync(string executionId, AiSdkExecutionControlRequest request, CancellationToken cancellationToken = default) =>
+            InScopeAsync(boundary => boundary.ResumeAsync(executionId, request, cancellationToken));
+
+        [McpServerTool(Name = AiSdkOperationNames.SubmitExecutionInput, UseStructuredContent = true)]
+        [Description("Submits human or external input for one published execution waiting on a stable input key.")]
+        [RequireCapability("execution", "control", "input")]
+        public Task<AiSdkExecutionControlResponse> SubmitExecutionInputAsync(string executionId, AiSdkExecutionInputSubmissionRequest request, CancellationToken cancellationToken = default) =>
+            InScopeAsync(boundary => boundary.SubmitInputAsync(executionId, request, cancellationToken));
+
+        [McpServerTool(Name = AiSdkOperationNames.ReplayExecution, UseStructuredContent = true)]
+        [Description("Runs deterministic replay validation for one published execution without creating a new execution.")]
+        [RequireCapability("replay", "execution", "run")]
+        public Task<AiSdkExecutionReplayResponse> ReplayExecutionAsync(string executionId, AiSdkExecutionReplayRequest request, CancellationToken cancellationToken = default) =>
+            InScopeAsync(boundary => boundary.ReplayAsync(executionId, request, cancellationToken));
+
+        private async Task<T> InScopeAsync<T>(Func<IAiPublicSdkBoundary, Task<T>> action)
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            return await action(scope.ServiceProvider.GetRequiredService<IAiPublicSdkBoundary>()).ConfigureAwait(false);
+        }
+    }
+}

@@ -950,6 +950,14 @@ The router should only resolve a provider for a descriptor that admission alread
 
 ---
 
+## Runtime-host and hosted-worker evidence dimensions
+
+The matrix uses `runtimeProvider` for `ProcessHostPool` versus `KubernetesPool` and `workerExecutionProvider` for `TrustedProcess` versus `ContainerIsolationProvider`. These are not interchangeable provider lists. HTTP/gRPC runtime command transport remains a separate existing boundary.
+
+KubernetesPool is not a third `IAiWorkerInvocationTransport`. The validated Kubernetes external-SDK case uses a Python `TrustedProcess` worker inside an OCI-packaged runtime Pod; it does not create an isolated worker container through `ContainerIsolationProvider`.
+
+A separate **3/3 KubernetesPool** closure adds live HTTP routing, hierarchical recovery, and Python SDK-to-Python `TrustedProcess` execution with `Completed` and an uploaded-function marker verified. This is not full Kubernetes client/worker parity or Kubernetes sandbox-Pod validation. See [KubernetesPool Matrix Validation](kubernetes-pool-matrix-validation.md).
+
 ## Runtime Pool Provider and Router Boundary
 
 The opt-in Runtime Pool introduces a stable transport endpoint without changing provider selection semantics.

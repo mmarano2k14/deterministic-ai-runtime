@@ -1,10 +1,13 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Multiplexed.Abstractions.AI.Execution;
+using Multiplexed.Abstractions.AI.Execution.Composition.ChildDag.Delegation;
 using Multiplexed.Abstractions.AI.Invocation;
 using Multiplexed.Abstractions.AI.Pipeline;
 using Multiplexed.Abstractions.AI.Policies;
 using Multiplexed.Abstractions.AI.Publication;
+using Multiplexed.AI.Abstractions.AI.Policies;
+using Multiplexed.AI.Abstractions.AI.Retry;
 using Multiplexed.AI.Runtime.AI.Concurrency;
 using Multiplexed.AI.Runtime.Invocation;
 using Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Execution;
@@ -73,7 +76,21 @@ namespace Multiplexed.AI.Runtime.Publication
                         dependency.Name.Contains("..", StringComparison.Ordinal) || !names.Add(dependency.Name))
                         throw new InvalidOperationException("Invalid or duplicate dependency name.");
                     AiPublicationJson.Version(dependency.Version);
-                    dependencies.Add(dependency with { Files = CopyFiles(dependency.Files) });
+                    var dependencyFiles = CopyFiles(dependency.Files);
+                    if (dependency.Package is not null)
+                    {
+                        if (dependency.Package.SchemaVersion != 1 || !Enum.IsDefined(dependency.Package.Kind))
+                            throw new InvalidOperationException("Unsupported deterministic dependency package contract.");
+                        AiPublicationJson.Path(dependency.Package.ManifestPath);
+                        if (dependencyFiles.Count(file => string.Equals(
+                                file.Path, dependency.Package.ManifestPath, StringComparison.Ordinal)) != 1)
+                            throw new InvalidOperationException("The deterministic dependency package manifest must be present exactly once.");
+                    }
+                    dependencies.Add(dependency with
+                    {
+                        Files = dependencyFiles,
+                        Package = dependency.Package is null ? null : dependency.Package with { }
+                    });
                 }
                 functions.Add(function with { Sources = sources,
                     Dependencies = dependencies.OrderBy(d => d.Name, StringComparer.Ordinal).ToArray() });
@@ -109,7 +126,18 @@ namespace Multiplexed.AI.Runtime.Publication
                 AiPublicationJson.ValidateEnvironment(runtime);
                 if (runtime.Reference != source.EnvironmentRef || runtime.ExecutionLanguage != slot.Language)
                     throw new InvalidOperationException("Host environment does not match the declared reference and effective language.");
-                var dependencies = source.Dependencies.Select(d => new AiPublicationDependency(d.Name, d.Version, d.Files.Select(File).ToArray())).ToArray();
+                var dependencies = source.Dependencies.Select(dependency =>
+                {
+                    var package = AiDependencyPackagingContracts.Capture(
+                        dependency.Package, dependency.Files, runtime, dependency.Name, dependency.Version);
+                    return new AiPublicationDependency(
+                        dependency.Name,
+                        dependency.Version,
+                        dependency.Files.Select(File).ToArray())
+                    {
+                        Package = package
+                    };
+                }).ToArray();
                 var environment = Add("environment", AiPublicationExecutionDescriptors.Capture(runtime, dependencies, catalog));
                 var implementation = Add("implementation", new AiPublicationImplementation(1, slot.Language,
                     source.EntryPointPath, source.EntryPointSymbol, source.Sources.Select(File).ToArray(), environment));
@@ -119,7 +147,8 @@ namespace Multiplexed.AI.Runtime.Publication
             }
             var definition = AiPublicationJson.Read<AiPipelineDefinition>(root.ToJsonString());
             var definitionDocument = Add("definition", definition);
-            var manifest = new AiPipelinePublicationManifest(1, partition, definition.Name, definition.Version!, definitionDocument,
+            var manifestSchemaVersion = functions.Any(function => function.Site.DefinitionPath is not null) ? 2 : 1;
+            var manifest = new AiPipelinePublicationManifest(manifestSchemaVersion, partition, definition.Name, definition.Version!, definitionDocument,
                 functions.OrderBy(f => AiPublicationJson.Serialize(f.Site), StringComparer.Ordinal).ToArray());
             var manifestJson = AiPublicationJson.Serialize(manifest);
             AiPublicationJson.ValidateJson(manifestJson, AiPublicationJson.MaxManifestBytes);
@@ -130,50 +159,164 @@ namespace Multiplexed.AI.Runtime.Publication
 
         internal static IReadOnlyList<Slot> FindSlots(JsonObject root, bool fillTemporaryReferences)
         {
-            var definitions = new List<(AiPublicationCallSite Site, string Name, JsonObject Invocation)>();
+            var result = new List<Slot>();
             var handled = new HashSet<JsonNode>(ReferenceEqualityComparer.Instance);
-            var raw = AiPublicationJson.Read<AiPipelineDefinition>(root.ToJsonString());
-            if (raw.ExecutionMode != AiExecutionMode.Dag) throw new NotSupportedException("Published durable execution requires an explicit DAG.");
-            AiPublicationJson.Text(raw.Name, "PipelineName"); AiPublicationJson.Text(raw.Version, "PipelineVersion");
-            if (raw.Steps.Count is < 1 or > 1024) throw new InvalidOperationException("A bounded nonempty DAG is required.");
-            var steps = root["Steps"]!.AsArray();
-            void Attach(AiPublicationCallSite site, string name, JsonObject invocation)
+            var resolver = new AiInvocationBindingResolver();
+
+            void Attach(
+                AiPublicationCallSite site,
+                string name,
+                JsonObject invocation,
+                List<(AiPublicationCallSite Site, string Name, JsonObject Invocation)> definitions)
             {
+                ValidateSite(site);
                 if (fillTemporaryReferences)
                 {
                     if (Get(invocation, "implementationRef") is not null)
                         throw new InvalidOperationException("Attach code to the declaration; implementation references are generated by publication.");
                     invocation["implementationRef"] = "publication-pending";
                 }
-                handled.Add(invocation); definitions.Add((site, name, invocation));
+
+                handled.Add(invocation);
+                definitions.Add((site, name, invocation));
             }
-            void Policies(JsonObject? config, string? stepName)
+
+            void CollectPipeline(JsonObject pipeline, string? definitionPath, int depth)
             {
-                if (config?["concurrency"] is not JsonObject section) return;
-                var list = Get(section, "policies") as JsonArray;
-                if (list is null) return;
-                for (var index = 0; index < list.Count; index++)
+                if (depth > 16)
+                    throw new NotSupportedException("Embedded Child DAG nesting exceeds the publication bound.");
+
+                var definitions = new List<(AiPublicationCallSite Site, string Name, JsonObject Invocation)>();
+                var raw = AiPublicationJson.Read<AiPipelineDefinition>(pipeline.ToJsonString());
+                if (raw.ExecutionMode != AiExecutionMode.Dag)
+                    throw new NotSupportedException("Published durable execution requires an explicit DAG.");
+                AiPublicationJson.Text(raw.Name, "PipelineName");
+                AiPublicationJson.Text(raw.Version, "PipelineVersion");
+                if (raw.Steps.Count is < 1 or > 1024)
+                    throw new InvalidOperationException("A bounded nonempty DAG is required.");
+
+                var steps = pipeline["Steps"]?.AsArray()
+                    ?? throw new InvalidOperationException("Published DAG steps are required.");
+
+                void Policies(
+                    JsonObject? config,
+                    string? stepName,
+                    string configKey,
+                    AiPolicyKind family,
+                    AiPublicationFunctionKind functionKind)
                 {
-                    var policy = AiPublicationJson.Read<AiConfiguredPolicyDefinition>(list[index]!.ToJsonString());
-                    if (policy.Invocation?.Kind != AiInvocationKind.Custom) continue;
-                    if (policy.Kind is not null && !string.Equals(policy.Kind, "Concurrency", StringComparison.OrdinalIgnoreCase))
-                        throw new NotSupportedException("Only concurrency policy publication is supported by this checkpoint.");
-                    // Canonicalize custom policy aliases with the existing converter, not an alternate parser.
-                    var canonical = JsonNode.Parse(AiPublicationJson.Serialize(policy))!.AsObject();
-                    list[index] = canonical;
-                    Attach(new AiPublicationCallSite(AiPublicationFunctionKind.ConcurrencyPolicy, stepName, index), policy.Name,
-                        canonical["invocation"]!.AsObject());
+                    if (config is null || Get(config, configKey) is not JsonObject section) return;
+                    var list = Get(section, "policies") as JsonArray;
+                    if (list is null) return;
+
+                    var capability = AiCustomPolicyFamilyCapabilities.Get(family);
+                    for (var index = 0; index < list.Count; index++)
+                    {
+                        var policy = AiPublicationJson.Read<AiConfiguredPolicyDefinition>(list[index]!.ToJsonString());
+                        if (policy.Invocation?.Kind != AiInvocationKind.Custom) continue;
+
+                        if (!capability.SupportsCustomPublication)
+                        {
+                            throw new NotSupportedException(
+                                $"Custom {family} policy publication is not supported by the current family capability contract.");
+                        }
+
+                        if (policy.Kind is not null && !string.Equals(policy.Kind, family.ToString(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new NotSupportedException(
+                                $"Policy '{policy.Name}' declares family '{policy.Kind}' inside the '{configKey}' checkpoint.");
+                        }
+
+                        // Canonicalize custom policy aliases with the existing converter, not an alternate parser.
+                        var canonical = JsonNode.Parse(AiPublicationJson.Serialize(policy))!.AsObject();
+                        list[index] = canonical;
+                        Attach(
+                            new AiPublicationCallSite(functionKind, stepName, index)
+                            {
+                                DefinitionPath = definitionPath
+                            },
+                            policy.Name,
+                            canonical["invocation"]!.AsObject(),
+                            definitions);
+                    }
+                }
+
+                foreach (var node in steps)
+                {
+                    var step = node!.AsObject();
+                    var declaration = AiPublicationJson.Read<AiPipelineStepDefinition>(step.ToJsonString());
+                    if (declaration.Invocation?.Kind == AiInvocationKind.Custom)
+                    {
+                        Attach(
+                            new AiPublicationCallSite(AiPublicationFunctionKind.Step, declaration.Name)
+                            {
+                                DefinitionPath = definitionPath
+                            },
+                            declaration.StepKey,
+                            step["Invocation"]!.AsObject(),
+                            definitions);
+                    }
+
+                    Policies(step["Config"] as JsonObject, declaration.Name, "concurrency", AiPolicyKind.Concurrency, AiPublicationFunctionKind.ConcurrencyPolicy);
+                    Policies(step["Config"] as JsonObject, declaration.Name, "retry", AiPolicyKind.Retry, AiPublicationFunctionKind.RetryPolicy);
+                    if (declaration.StepKey == ExecuteChildDagStep.StepKey)
+                    {
+                        Policies(step["Config"] as JsonObject, declaration.Name, "delegation", AiPolicyKind.Delegation, AiPublicationFunctionKind.DelegationPolicy);
+                    }
+                }
+
+                Policies(pipeline["Config"] as JsonObject, null, "concurrency", AiPolicyKind.Concurrency, AiPublicationFunctionKind.ConcurrencyPolicy);
+                Policies(pipeline["Config"] as JsonObject, null, "retry", AiPolicyKind.Retry, AiPublicationFunctionKind.RetryPolicy);
+                Policies(pipeline["Config"] as JsonObject, null, "delegation", AiPolicyKind.Delegation, AiPublicationFunctionKind.DelegationPolicy);
+
+                var prepared = AiPublicationJson.Read<AiPipelineDefinition>(pipeline.ToJsonString());
+                resolver.ValidatePipelineLanguage(prepared);
+                foreach (var entry in definitions)
+                {
+                    var owner = entry.Site.StepName is null
+                        ? null
+                        : prepared.Steps.Single(step => step.Name == entry.Site.StepName);
+                    var binding = entry.Site.Kind == AiPublicationFunctionKind.Step
+                        ? resolver.ResolveStep(prepared, owner!)
+                        : resolver.ResolvePolicy(
+                            prepared,
+                            ReadPolicyDeclaration(
+                                entry.Site.Kind,
+                                owner?.Config ?? prepared.Config,
+                                entry.Site.PolicyIndex!.Value),
+                            owner is null ? AiPolicyBindingScope.Pipeline : AiPolicyBindingScope.Step,
+                            owner).Invocation;
+                    result.Add(new Slot(entry.Site, entry.Name, binding.ExecutionLanguage!, entry.Invocation));
+                }
+
+                foreach (var node in steps)
+                {
+                    var step = node!.AsObject();
+                    var declaration = AiPublicationJson.Read<AiPipelineStepDefinition>(step.ToJsonString());
+                    if (declaration.StepKey != ExecuteChildDagStep.StepKey) continue;
+
+                    var config = step["Config"] as JsonObject;
+                    if (config?[ExecuteChildDagStep.ChildDagDefinitionConfigKey] is not JsonObject child)
+                    {
+                        throw new NotSupportedException(
+                            "Published Child DAGs require an exact inline child definition, not a mutable provider lookup.");
+                    }
+
+                    var childDefinition = AiPublicationJson.Read<AiPipelineDefinition>(child.ToJsonString());
+                    if (childDefinition.ExecutionMode != AiExecutionMode.Dag ||
+                        config[ExecuteChildDagStep.ChildDagIdConfigKey]?.GetValue<string>() != childDefinition.Name ||
+                        config[ExecuteChildDagStep.ChildDagVersionConfigKey]?.GetValue<string>() != childDefinition.Version)
+                    {
+                        throw new InvalidOperationException("Embedded Child DAG identity/version does not match its invocation.");
+                    }
+
+                    AiPublicationJson.Text(declaration.Name, "ChildDagStepName");
+                    CollectPipeline(child, AiPublicationDefinitionPath.Append(definitionPath, declaration.Name), depth + 1);
                 }
             }
-            foreach (var node in steps)
-            {
-                var step = node!.AsObject();
-                var declaration = AiPublicationJson.Read<AiPipelineStepDefinition>(step.ToJsonString());
-                if (declaration.Invocation?.Kind == AiInvocationKind.Custom)
-                    Attach(new AiPublicationCallSite(AiPublicationFunctionKind.Step, declaration.Name), declaration.StepKey, step["Invocation"]!.AsObject());
-                Policies(step["Config"] as JsonObject, declaration.Name);
-            }
-            Policies(root["Config"] as JsonObject, null);
+
+            CollectPipeline(root, definitionPath: null, depth: 0);
+
             // Recognizable custom invocation descriptors outside supported sites must not remain unpinned.
             void RejectUnhandled(JsonNode? node)
             {
@@ -181,52 +324,75 @@ namespace Multiplexed.AI.Runtime.Publication
                 {
                     foreach (var property in obj)
                     {
-                        if (property.Key.Equals("invocation", StringComparison.OrdinalIgnoreCase) && property.Value is JsonObject descriptor &&
+                        if (property.Key.Equals("invocation", StringComparison.OrdinalIgnoreCase) &&
+                            property.Value is JsonObject descriptor &&
                             Get(descriptor, "kind") is JsonValue kind &&
                             (kind.ToJsonString().Equals("\"Custom\"", StringComparison.OrdinalIgnoreCase) || kind.ToJsonString() == "1") &&
                             !handled.Contains(descriptor))
+                        {
                             throw new NotSupportedException("A custom invocation exists outside supported publication declaration sites.");
+                        }
+
                         RejectUnhandled(property.Value);
                     }
                 }
-                else if (node is JsonArray array) foreach (var child in array) RejectUnhandled(child);
+                else if (node is JsonArray array)
+                {
+                    foreach (var child in array) RejectUnhandled(child);
+                }
             }
+
             RejectUnhandled(root);
-            ValidateEmbeddedChildren(root, 0);
-            var prepared = AiPublicationJson.Read<AiPipelineDefinition>(root.ToJsonString());
-            var resolver = new AiInvocationBindingResolver(); resolver.ValidatePipelineLanguage(prepared);
-            var result = new List<Slot>();
-            foreach (var entry in definitions)
-            {
-                var owner = entry.Site.StepName is null ? null : prepared.Steps.Single(s => s.Name == entry.Site.StepName);
-                var binding = entry.Site.Kind == AiPublicationFunctionKind.Step
-                    ? resolver.ResolveStep(prepared, owner!)
-                    : resolver.ResolvePolicy(prepared,
-                        new DefaultAiConcurrencyDefinitionResolver().ReadPolicyDeclarations(owner?.Config ?? prepared.Config)[entry.Site.PolicyIndex!.Value],
-                        owner is null ? AiPolicyBindingScope.Pipeline : AiPolicyBindingScope.Step, owner).Invocation;
-                result.Add(new Slot(entry.Site, entry.Name, binding.ExecutionLanguage!, entry.Invocation));
-            }
             return result;
         }
-        // Existing native Child DAGs can keep their exact inline definitions. Name-only lookup
-        // and custom child publications are not silently treated as part of the root code closure.
-        private static void ValidateEmbeddedChildren(JsonObject pipeline, int depth)
+
+        private static AiConfiguredPolicyDefinition ReadPolicyDeclaration(
+            AiPublicationFunctionKind kind,
+            IReadOnlyDictionary<string, object?> config,
+            int index)
         {
-            if (depth > 16) throw new NotSupportedException("Embedded native Child DAG nesting exceeds the publication bound.");
-            foreach (var node in pipeline["Steps"]!.AsArray())
+            IReadOnlyList<AiConfiguredPolicyDefinition> policies = kind switch
             {
-                var step = node!.AsObject();
-                if (step["StepKey"]?.GetValue<string>() != ExecuteChildDagStep.StepKey) continue;
-                var config = step["Config"] as JsonObject;
-                if (config?[ExecuteChildDagStep.ChildDagDefinitionConfigKey] is not JsonObject child)
-                    throw new NotSupportedException("Published native Child DAGs require an exact inline child definition, not a mutable provider lookup.");
-                var childDefinition = AiPublicationJson.Read<AiPipelineDefinition>(child.ToJsonString());
-                if (childDefinition.ExecutionMode != AiExecutionMode.Dag ||
-                    config[ExecuteChildDagStep.ChildDagIdConfigKey]?.GetValue<string>() != childDefinition.Name ||
-                    config[ExecuteChildDagStep.ChildDagVersionConfigKey]?.GetValue<string>() != childDefinition.Version)
-                    throw new InvalidOperationException("Embedded Child DAG identity/version does not match its invocation.");
-                ValidateEmbeddedChildren(child, depth + 1);
+                AiPublicationFunctionKind.ConcurrencyPolicy =>
+                    new DefaultAiConcurrencyDefinitionResolver().ReadPolicyDeclarations(config),
+                AiPublicationFunctionKind.RetryPolicy =>
+                    ReadConfiguredPolicies<AiRetryPolicyDefinition>(config, "retry", value => value.Policies),
+                AiPublicationFunctionKind.DelegationPolicy =>
+                    ReadConfiguredPolicies<AiChildDelegationPolicyDefinition>(config, "delegation", value => value.Policies),
+                _ => throw new InvalidOperationException($"Publication site '{kind}' is not a policy declaration.")
+            };
+
+            if (index < 0 || index >= policies.Count)
+            {
+                throw new InvalidOperationException("Published policy index is outside its frozen declaration list.");
             }
+
+            return policies[index];
+        }
+
+        private static IReadOnlyList<AiConfiguredPolicyDefinition> ReadConfiguredPolicies<TDefinition>(
+            IReadOnlyDictionary<string, object?> config,
+            string configKey,
+            Func<TDefinition, IReadOnlyList<AiConfiguredPolicyDefinition>> select)
+            where TDefinition : class
+        {
+            var matches = config
+                .Where(pair => pair.Key.Equals(configKey, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (matches.Length > 1)
+            {
+                throw new InvalidOperationException($"Ambiguous '{configKey}' policy configuration casing.");
+            }
+            if (matches.Length == 0 || matches[0].Value is null)
+            {
+                return Array.Empty<AiConfiguredPolicyDefinition>();
+            }
+
+            var raw = matches[0].Value;
+            var definition = raw as TDefinition
+                ?? JsonSerializer.Deserialize<TDefinition>(AiPublicationJson.Serialize(raw))
+                ?? throw new InvalidOperationException($"Invalid '{configKey}' policy definition.");
+            return select(definition);
         }
 
         // Preserve the historical simple-symbol grammar while also allowing the explicit
@@ -261,10 +427,15 @@ namespace Multiplexed.AI.Runtime.Publication
         internal static void ValidateSite(AiPublicationCallSite site)
         {
             ArgumentNullException.ThrowIfNull(site);
-            if (!Enum.IsDefined(site.Kind) || site.Kind == AiPublicationFunctionKind.Step && (site.StepName is null || site.PolicyIndex is not null) ||
-                site.Kind == AiPublicationFunctionKind.ConcurrencyPolicy && (site.PolicyIndex is null || site.PolicyIndex < 0))
+            var policySite = site.Kind is AiPublicationFunctionKind.ConcurrencyPolicy
+                or AiPublicationFunctionKind.RetryPolicy
+                or AiPublicationFunctionKind.DelegationPolicy;
+            if (!Enum.IsDefined(site.Kind) ||
+                site.Kind == AiPublicationFunctionKind.Step && (site.StepName is null || site.PolicyIndex is not null) ||
+                policySite && (site.PolicyIndex is null || site.PolicyIndex < 0))
                 throw new InvalidOperationException("Invalid publication declaration site.");
             if (site.StepName is not null) AiPublicationJson.Text(site.StepName, "StepName");
+            if (site.DefinitionPath is not null) AiPublicationDefinitionPath.Validate(site.DefinitionPath);
         }
         private static JsonNode? Get(JsonObject value, string name)
         {

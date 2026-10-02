@@ -69,23 +69,66 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Delegation
             }
 
             var results = new List<AiPolicyResult>(definition.Policies.Count);
+            var bindings = StepContext.DelegationPolicyBindings;
+            var bindingIndex = 0;
+            var customFactory = StepContext.Services
+                .GetService(typeof(Multiplexed.AI.Runtime.Invocation.AiDelegationPolicyAdapterFactory))
+                as Multiplexed.AI.Runtime.Invocation.AiDelegationPolicyAdapterFactory;
 
             foreach (var configuredPolicy in definition.Policies)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // Name-only resolution is native-only until the family's contextual adapter exists.
-                Multiplexed.AI.Runtime.Invocation.AiInvocationBindingResolver.EnsureNativePolicy(configuredPolicy);
-
                 if (string.IsNullOrWhiteSpace(configuredPolicy.Name))
                 {
+                    Multiplexed.AI.Runtime.Invocation.AiInvocationBindingResolver.EnsureNativePolicy(configuredPolicy);
                     throw new InvalidOperationException(
                         "Configured child delegation policies must declare a non-empty registered policy name.");
                 }
 
-                var policies = ResolvePolicies(
-                    new[] { configuredPolicy.Name },
-                    AiPolicyKind.Delegation);
+                IAiPolicy policy;
+                if (bindings.Count == 0)
+                {
+                    // Preserve historical native-only contexts and fail closed for custom declarations
+                    // that were not compiled through the Delegation binding resolver.
+                    Multiplexed.AI.Runtime.Invocation.AiInvocationBindingResolver.EnsureNativePolicy(configuredPolicy);
+                    policy = ResolvePolicies(
+                        new[] { configuredPolicy.Name },
+                        AiPolicyKind.Delegation).Single();
+                }
+                else
+                {
+                    if (bindingIndex >= bindings.Count)
+                    {
+                        throw new InvalidOperationException(
+                            "Delegation policy bindings do not match the frozen declaration list.");
+                    }
+
+                    var binding = bindings[bindingIndex++];
+                    if (!string.Equals(binding.PolicyName, configuredPolicy.Name, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            "Delegation policy binding order does not match the frozen declaration list.");
+                    }
+
+                    if (binding.Invocation.Kind == Multiplexed.Abstractions.AI.Invocation.AiInvocationKind.Custom)
+                    {
+                        if (customFactory is null)
+                        {
+                            throw new NotSupportedException(
+                                "Custom Delegation policy execution is not installed; native fallback is forbidden.");
+                        }
+
+                        policy = customFactory.Bind(StepContext, configuredPolicy, binding);
+                    }
+                    else
+                    {
+                        Multiplexed.AI.Runtime.Invocation.AiInvocationBindingResolver.EnsureNativePolicy(configuredPolicy);
+                        policy = ResolvePolicies(
+                            new[] { configuredPolicy.Name },
+                            AiPolicyKind.Delegation).Single();
+                    }
+                }
 
                 var policyContext = new AiChildDelegationPolicyContext
                 {
@@ -97,11 +140,17 @@ namespace Multiplexed.AI.Runtime.Execution.Composition.ChildDag.Delegation
 
                 var policyResults = await ExecutePoliciesAsync(
                         policyContext,
-                        policies,
+                        new[] { policy },
                         cancellationToken)
                     .ConfigureAwait(false);
 
                 results.AddRange(policyResults);
+            }
+
+            if (bindings.Count > 0 && bindingIndex != bindings.Count)
+            {
+                throw new InvalidOperationException(
+                    "Delegation policy bindings contain declarations not present in the frozen definition.");
             }
 
             return results;

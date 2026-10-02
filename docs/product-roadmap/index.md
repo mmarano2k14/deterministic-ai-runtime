@@ -141,6 +141,8 @@ The key difference is:
 
 ## Current Foundation Summary
 
+The separate KubernetesPool closure is **3/3**: live HTTP routing, hierarchical runtime/Pod failure recovery, and external Python SDK publication/execution with a public `Completed` result and the uploaded-function marker verified. The combined record is **40 validated scenarios across two topologies (37 Docker + 3 Kubernetes)**, not a homogeneous `40/40` matrix. The final SDK invocation revalidated retained routing/recovery evidence; it did not rerun those campaigns. See [KubernetesPool Matrix Validation](../ai/kubernetes-pool-matrix-validation.md).
+
 The project already contains important foundations.
 
 This roadmap should not present the platform as idea-stage only.
@@ -163,6 +165,7 @@ This roadmap should not present the platform as idea-stage only.
 | ARN-inspired resource scoping | Foundation exists / active direction |
 | Runtime control through pause/resume/cancel | Foundation exists |
 | MCP control-plane foundation | Foundation exists |
+| Durable outbound MCP effect evidence | Implemented / bounded server capability |
 | Multiple runtime instances | Foundation exists / active direction |
 | Multiple workers | Foundation exists |
 | Shared queue and local queue model | Foundation exists |
@@ -184,7 +187,9 @@ This roadmap should not present the platform as idea-stage only.
 | Runtime telemetry and diagnostics | Foundation exists |
 | Execution control and state lifecycle | Foundation exists |
 | Testing and reliability strategy | Foundation exists |
-| Developer experience and API packaging | Productization target |
+| Public SDK contract/server boundary | Implemented / validated foundation |
+| External SDK libraries | Implemented / validated for .NET, TypeScript/JavaScript, and Python |
+| CLI, public SDK registry distribution, and broader API packaging | Productization target |
 | Security and encryption hardening | Planned hardening direction |
 | Memory, context, and reasoning lifecycle | Productization target |
 | Memory decay policy direction | Productization target |
@@ -236,7 +241,7 @@ The platform is evolving toward a complete LLMOps execution infrastructure compo
 - runtime telemetry and diagnostics;
 - execution control and state lifecycle;
 - testing and reliability strategy;
-- developer API, SDK, and CLI direction;
+- implemented public SDK boundary plus .NET/TypeScript/Python clients and remaining CLI/public-distribution direction;
 - security and encryption hardening;
 - memory, context, and reasoning lifecycle;
 - memory decay and freshness direction.
@@ -763,9 +768,10 @@ Developer experience turns the runtime into an adoptable platform.
 
 This pillar covers:
 
-- public API surface;
-- RunId / ExecutionId clarity;
-- SDK direction;
+- implemented portable public publication/execution contracts and server boundary;
+- public `ExecutionId` semantics with private scheduling identities kept server-side;
+- implemented external .NET/TypeScript/Python SDK clients;
+- public SDK registry distribution and CLI direction;
 - CLI direction;
 - local setup;
 - examples;

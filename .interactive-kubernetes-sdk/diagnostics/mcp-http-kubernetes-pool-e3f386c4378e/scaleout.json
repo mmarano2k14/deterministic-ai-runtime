@@ -1,0 +1,10 @@
+{
+    "watcherRegistered":  true,
+    "watcherReady":  true,
+    "watcherId":  "mcp-scaleout-watcher",
+    "resolvedControlPlaneId":  "matrix-kubernetes-sdk-9d6e7aae",
+    "readyAtUtc":  "2026-09-30T15:04:56.2329112+00:00",
+    "requests":  [
+
+                 ]
+}

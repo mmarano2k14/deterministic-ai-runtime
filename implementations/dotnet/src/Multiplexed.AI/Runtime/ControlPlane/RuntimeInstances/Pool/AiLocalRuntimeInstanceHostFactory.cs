@@ -125,6 +125,13 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                     continue;
                 }
 
+                // The control plane owns pool topology. A pooled runtime child must not
+                // inherit the scaler after the host factory itself has been removed.
+                if (descriptor.ServiceType == typeof(IAiLocalRuntimeInstanceScaler))
+                {
+                    continue;
+                }
+
                 if (descriptor.ServiceType == typeof(IAiLocalRuntimeInstanceServiceCollectionProvider))
                 {
                     continue;
@@ -362,7 +369,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                         this.metadata,
                         StringComparer.OrdinalIgnoreCase)
                     {
-                        [AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName] = AiRuntimeInstanceProviderNames.LocalPool,
+                        [AiRuntimeInstanceProviderMetadataKeys.LegacyProviderName] = AiRuntimeInstanceProviderNames.Local,
                         ["machineName"] = hostName,
                         ["processId"] = processId.ToString(),
                         [AiRuntimeHostMetadataKeys.CamelCaseHostId] = hostId,
@@ -373,7 +380,7 @@ namespace Multiplexed.AI.ControlPlane.RuntimeInstances.Pool
                 return Task.FromResult(
                     new AiRuntimeEnvironmentSnapshot
                     {
-                        ProviderName = AiRuntimeInstanceProviderNames.LocalPool,
+                        ProviderName = AiRuntimeInstanceProviderNames.Local,
                         RuntimeInstanceId = runtimeInstanceId,
                         HostId = hostId,
                         RuntimeId = runtimeId,

@@ -248,6 +248,159 @@ namespace Multiplexed.AI.Tests.Unit.ControlPlane.RuntimeInstances.HostManager.Po
         }
 
         /// <summary>
+        /// Verifies deterministic matrix profiles can route one exact OCI runtime image into the Pod spec.
+        /// </summary>
+        [Fact]
+        public void Build_Should_Resolve_Exact_RepositoryDigest_RuntimeImage()
+        {
+            var options = CreatePoolOptions("http");
+            var hostOptions = CreateHostOptions();
+            hostOptions.RuntimeImage = string.Empty;
+            hostOptions.RuntimeImageRepository = "registry.example/multiplexed-ai-runtime";
+            hostOptions.RuntimeImageDigest = "sha256:" + new string('a', 64);
+            hostOptions.RequireImmutableRuntimeImage = true;
+
+            var plan =
+                AiKubernetesRuntimePoolPodPlanFactory.Create(
+                    options,
+                    "request-0001");
+
+            var spec =
+                new AiKubernetesRuntimePoolPodSpecBuilder(
+                    options,
+                    hostOptions)
+                    .Build(plan);
+
+            Assert.Equal(
+                "registry.example/multiplexed-ai-runtime@sha256:" + new string('a', 64),
+                spec.RuntimeImage);
+        }
+
+        /// <summary>
+        /// Verifies deterministic Kubernetes profiles fail closed on incomplete immutable image configuration.
+        /// </summary>
+        [Fact]
+        public void Build_Should_Reject_Partial_Immutable_RuntimeImage()
+        {
+            var options = CreatePoolOptions("http");
+            var hostOptions = CreateHostOptions();
+            hostOptions.RuntimeImage = string.Empty;
+            hostOptions.RuntimeImageRepository = "registry.example/multiplexed-ai-runtime";
+
+            var plan =
+                AiKubernetesRuntimePoolPodPlanFactory.Create(
+                    options,
+                    "request-0001");
+
+            var builder =
+                new AiKubernetesRuntimePoolPodSpecBuilder(
+                    options,
+                    hostOptions);
+
+            var exception =
+                Assert.Throws<InvalidOperationException>(
+                    () => builder.Build(plan));
+
+            Assert.Contains(
+                "requires both",
+                exception.Message,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Verifies one runtime image cannot be configured through two competing authorities.
+        /// </summary>
+        [Fact]
+        public void Build_Should_Reject_Ambiguous_RuntimeImage_Authorities()
+        {
+            var options = CreatePoolOptions("http");
+            var hostOptions = CreateHostOptions();
+            hostOptions.RuntimeImageRepository = "registry.example/multiplexed-ai-runtime";
+            hostOptions.RuntimeImageDigest = "sha256:" + new string('a', 64);
+
+            var plan =
+                AiKubernetesRuntimePoolPodPlanFactory.Create(
+                    options,
+                    "request-0001");
+
+            var builder =
+                new AiKubernetesRuntimePoolPodSpecBuilder(
+                    options,
+                    hostOptions);
+
+            var exception =
+                Assert.Throws<InvalidOperationException>(
+                    () => builder.Build(plan));
+
+            Assert.Contains(
+                "cannot combine",
+                exception.Message,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Verifies immutable runtime image selection rejects malformed SHA-256 digests.
+        /// </summary>
+        [Fact]
+        public void Build_Should_Reject_Invalid_RuntimeImage_Digest()
+        {
+            var options = CreatePoolOptions("http");
+            var hostOptions = CreateHostOptions();
+            hostOptions.RuntimeImage = string.Empty;
+            hostOptions.RuntimeImageRepository = "registry.example/multiplexed-ai-runtime";
+            hostOptions.RuntimeImageDigest = "sha256:not-a-digest";
+
+            var plan =
+                AiKubernetesRuntimePoolPodPlanFactory.Create(
+                    options,
+                    "request-0001");
+
+            var builder =
+                new AiKubernetesRuntimePoolPodSpecBuilder(
+                    options,
+                    hostOptions);
+
+            var exception =
+                Assert.Throws<InvalidOperationException>(
+                    () => builder.Build(plan));
+
+            Assert.Contains(
+                "SHA-256",
+                exception.Message,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Verifies immutable-image enforcement rejects mutable tags while preserving legacy compatibility by default.
+        /// </summary>
+        [Fact]
+        public void Build_Should_Reject_Mutable_RuntimeImage_When_Immutable_Is_Required()
+        {
+            var options = CreatePoolOptions("http");
+            var hostOptions = CreateHostOptions();
+            hostOptions.RequireImmutableRuntimeImage = true;
+
+            var plan =
+                AiKubernetesRuntimePoolPodPlanFactory.Create(
+                    options,
+                    "request-0001");
+
+            var builder =
+                new AiKubernetesRuntimePoolPodSpecBuilder(
+                    options,
+                    hostOptions);
+
+            var exception =
+                Assert.Throws<InvalidOperationException>(
+                    () => builder.Build(plan));
+
+            Assert.Contains(
+                "repository@sha256",
+                exception.Message,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// Creates valid fixed-size Runtime Pool topology options.
         /// </summary>
         private static AiKubernetesRuntimePoolOptions CreatePoolOptions(
